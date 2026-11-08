@@ -147,6 +147,39 @@ pub(super) fn put_in(
     Ok(())
 }
 
+/// Reads the model used by the native Done report for this exact try. The
+/// generation is the terminal PACK receipt's, never the queue's current one.
+pub(super) fn done_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    generation: u32,
+    task: EntityId,
+    report_key: &str,
+) -> crate::Result<Option<String>> {
+    let mut prefix = attempt.as_bytes().to_vec();
+    prefix.extend_from_slice(&u64::from(generation).to_be_bytes());
+    for row in REPORTS.iter_from(&vault.store, txn, &prefix)? {
+        let (_, entry) = row?;
+        if entry.identity.attempt != attempt
+            || entry.identity.attempt_count != generation
+            || entry.identity.task_ref != task
+            || entry.identity.report_key != report_key
+        {
+            continue;
+        }
+        let Some(lifecycle) = entry.receipt.lifecycle else {
+            continue;
+        };
+        if lifecycle.call == "report"
+            && lifecycle.fields.get("body").map(String::as_str) == Some("done")
+        {
+            return Ok(lifecycle.fields.get("done_judge_model").cloned());
+        }
+    }
+    Ok(None)
+}
+
 /// Drops every entry journaled for TASK `id`, in the transaction that erases
 /// it; a no-op for any other entity. The journal keys on the try, so its
 /// entries are found by the TASK each one names, and a row that does not
@@ -160,6 +193,45 @@ pub(crate) fn erase_in_txn(
         if entry.identity.task_ref == *id {
             REPORTS.delete(store, txn, &key)?;
         }
+    }
+    Ok(())
+}
+
+/// The owner's discard of TASK `id`'s local copy (FIX 14534 rule 4): each
+/// entry journaled for it stays identifier-only history: its key, try,
+/// reporter, TASK, report key, digest and receipt, outcome, refs, times and
+/// every lifecycle field but those that hold the call's words
+/// ([`super::lifecycle_receipt::lifecycle_field_holds_words`]); a Done's
+/// judge model stays for the runs that read it. Rewritten in place, in the
+/// discard's transaction, with no receipt of its own. A no-op for any other
+/// entity.
+///
+/// # Errors
+///
+/// Storage errors, or an entry that cannot be read.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    let mut entries = Vec::new();
+    for (key, mut entry) in REPORTS.scan(store, txn)? {
+        if entry.identity.task_ref != *id {
+            continue;
+        }
+        let Some(lifecycle) = entry.receipt.lifecycle.as_mut() else {
+            continue;
+        };
+        let before = lifecycle.fields.len();
+        lifecycle
+            .fields
+            .retain(|name, _| !super::lifecycle_receipt::lifecycle_field_holds_words(name));
+        if lifecycle.fields.len() != before {
+            entries.push((key, entry));
+        }
+    }
+    for (key, entry) in entries {
+        REPORTS.put(store, txn, &key, &entry)?;
     }
     Ok(())
 }

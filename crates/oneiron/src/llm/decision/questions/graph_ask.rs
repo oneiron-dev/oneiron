@@ -15,6 +15,7 @@ use crate::llm::decision::{
     DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
     PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
+use crate::ports::PointRead;
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -78,6 +79,18 @@ pub enum GraphDecision {
 /// its own model locality and egress policy; this callback cannot grant reads or
 /// writes. `None` means missing input or refusal, never a negative prediction.
 pub trait GraphAnswerer {
+    /// Configure the actual immutable saved definition before its media or
+    /// decision call. Custom answerers retain their own configuration.
+    fn prepare_saved_question(&mut self, _record: &super::QuestionRecord) -> Result<()> {
+        Ok(())
+    }
+
+    /// Explicit saved-question criteria, if this run overrides the definition.
+    /// Such answers have their own dedup identity, including for an empty triple.
+    fn saved_criteria_override(&self) -> Option<&QuestionCriteria> {
+        None
+    }
+
     fn answer(
         &mut self,
         question: &DecisionQuestion,
@@ -247,7 +260,8 @@ impl GraphAskFailure {
 /// read lane `lane`. The type index only nominates IDs: no raw row or count
 /// from that index reaches the answerer or the result without a scoped point
 /// read. The scan pages 256 index rows at a time, invisible ones included,
-/// until `limit` units are selected or the index ends.
+/// until `limit` units are selected or the index ends. Every page and its
+/// scoped admission share one read snapshot.
 pub fn select_graph_units_by_type(
     lane: &ScopedRead<'_>,
     entity_type: u8,
@@ -255,16 +269,24 @@ pub fn select_graph_units_by_type(
 ) -> Result<Vec<EntityId>> {
     let vault = lane.vault();
     let mut selected = Vec::new();
+    if limit == 0 {
+        return Ok(selected);
+    }
+    let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+    lane.persist_grant_clock()?;
+    let txn = vault.store.env.read_txn()?;
     let mut after = None;
     while selected.len() < limit {
-        let page = vault.entities_by_type_page(entity_type, after.as_ref(), 256)?;
+        let page = vault.entities_by_type_page_in_txn(&txn, entity_type, after.as_ref(), 256)?;
         if page.is_empty() {
             break;
         }
         after = page.last().copied();
-        let values = lane.get_entities_parts_with_receipt(&page, None)?;
+        let reads: Vec<_> = page.iter().copied().map(PointRead::id).collect();
+        let values =
+            lane.read_projected_in_txn(&txn, &reads, None, |_, rows| Ok::<_, Error>(rows))?;
         for (id, value) in page.into_iter().zip(values.value) {
-            if matches!(value, Some((kind, _, _)) if kind == entity_type)
+            if matches!(value, Some(row) if row.body.is_some() && row.entity_type == entity_type)
                 && kind_is_graph_evidence(entity_type)
             {
                 selected.push(id);
@@ -937,7 +959,10 @@ pub fn validate_decision(
             if pin.rung == DecisionRung::Human {
                 return !(asked && at == last);
             }
-            crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+            // A pin is a provider's own name and version, as every other decision door
+            // checks it: the house read names its engine model id and a recipe-stamped
+            // revision, which no `ModelId` parse of the two joined admits.
+            crate::model_decision::validate_pin(pin, pin.rung).is_err()
         })
         || receipt
             .time
@@ -966,11 +991,8 @@ pub(super) fn validate_prediction(
         || !prediction.probability.is_finite()
         || !(0.0..=1.0).contains(&prediction.probability)
         || prediction.provider.rung == DecisionRung::Human
-        || crate::llm::ModelId::new(format!(
-            "{}@{}",
-            prediction.provider.model, prediction.provider.version
-        ))
-        .is_err()
+        || crate::model_decision::validate_pin(&prediction.provider, prediction.provider.rung)
+            .is_err()
         || !prediction.cost_per_thousand.is_finite()
         || prediction.cost_per_thousand < 0.0
         || prediction.paired.is_some_and(|reading| {

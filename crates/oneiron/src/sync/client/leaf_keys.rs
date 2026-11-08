@@ -37,8 +37,9 @@ impl SyncClient {
     /// # Errors
     ///
     /// [`TransportError::UnknownTag`] on a federation lane; a frame that does
-    /// not decode; [`TransportError::Storage`] where secret custody could not
-    /// take an answer or a failure.
+    /// not decode, or an answer custody refuses; [`TransportError::Storage`]
+    /// where a fault of this vault's own kept custody from taking an answer
+    /// or a failure.
     pub(super) fn handle_leaf_key_frame(
         &mut self,
         tag: u8,
@@ -59,14 +60,17 @@ impl SyncClient {
                             logged(tag, &id, holder, executor, "answered");
                             return Ok(vec![frame]);
                         }
-                        Err(error) => LeafKeyFailureCause::HolderRefused(error.to_string()),
+                        // An own answer that does not encode is this holder's
+                        // fault, not a refusal: HolderFault keeps the ask
+                        // pending (FIX 22236).
+                        Err(_) => LeafKeyFailureCause::HolderFault,
                     },
                     // A fault, not a refusal: HolderFault keeps the ask pending (FIX 12131).
                     Err(error) => LeafKeyFailureCause::of_refusal(&error)
                         .unwrap_or(LeafKeyFailureCause::HolderFault),
                 };
                 logged(tag, &id, holder, executor, "not_answered");
-                Ok(vec![encode_leaf_key_failure(&id, &cause).into_result()?])
+                Ok(vec![encode_leaf_key_failure(&id, &cause).into_own_frame()?])
             }
             TAG_LEAF_KEY_ANSWER => {
                 let answer = decode_leaf_key_answer(payload)?;
@@ -76,10 +80,12 @@ impl SyncClient {
                     logged(tag, &id, holder, executor, "no_request_out");
                     return Ok(Vec::new());
                 };
+                // This vault's own fault is its own; any other is the
+                // answer refused (FIX 22153).
                 self.vault
                     .accept_leaf_key_answer(&request, &answer)
                     .map_err(|error| {
-                        TransportError::Storage(format!("accept leaf key answer: {error}"))
+                        TransportError::from_applied(&error, "leaf key answer refused")
                     })?;
                 self.leaf_key_sends.sent.remove(&id);
                 logged(tag, &id, holder, executor, "accepted");

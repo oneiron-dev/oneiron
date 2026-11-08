@@ -46,6 +46,8 @@ pub struct ScopedReadActorKey {
     pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// Every phone call this key reads inside; each is an independent ceiling.
+    pub(super) phone_lines: Vec<crate::phone_line::PhoneLineReadCeiling>,
     /// The room whose signed facets a named-room read outside a turn reads
     /// inside (FIX 643); see [`Self::within_room_facets`].
     pub(super) room_facets: Option<EntityId>,
@@ -371,6 +373,7 @@ impl ScopedReadActorKey {
             owner: None,
             owner_exemption: None,
             room_turn: None,
+            phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
@@ -411,6 +414,7 @@ impl ScopedReadActorKey {
             owner: Some(owner),
             owner_exemption: None,
             room_turn: None,
+            phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
@@ -465,7 +469,9 @@ impl ScopedReadActorKey {
     /// owner act does (`AuthenticatedOwner::revalidate_in_txn`: this vault, a
     /// live person who owns it now, any credential or host action the proof
     /// bound), so a key built before the owner lapsed reads nothing after.
-    /// Only [`crate::Vault::owner_proof_read_key`] builds one.
+    /// Built by [`crate::Vault::owner_proof_read_key`] or the queue-exhaust
+    /// reader's [`crate::Vault::queue_check_owner_read_key`], which also
+    /// retains the request's actual credential or host-action bounds.
     #[must_use]
     pub(crate) fn guarded_by_owner_proof(
         mut self,
@@ -541,6 +547,49 @@ impl ScopedReadActorKey {
     #[must_use]
     pub(crate) fn in_room_turn(mut self, ceiling: RoomTurnCeiling) -> Self {
         self.room_turn = Some(Box::new(ceiling));
+        self
+    }
+
+    /// Add a phone call's consent ceiling without dropping an earlier one.
+    #[must_use]
+    /// Copies only a genuine call ceiling to a Memory handle holding this
+    /// exact credential. Neither an actor label nor a raw Scope can bind it.
+    pub(crate) fn phone_line_ceilings_for(
+        &self,
+        proof: &crate::authority::VerifiedSlip,
+        actor: EntityId,
+    ) -> crate::Result<&[crate::phone_line::PhoneLineReadCeiling]> {
+        if self.actor_ref != actor.to_hex()
+            || self.proof.as_ref() != Some(proof)
+            || self.phone_lines.is_empty()
+        {
+            return Err(crate::phone_line::invalid());
+        }
+        Ok(&self.phone_lines)
+    }
+
+    /// Keeps the original call credential beside a newly resolved identity
+    /// key, so a later proof or host-action binder cannot replace it.
+    pub(crate) fn within_phone_read(mut self, original: &Self) -> crate::Result<Self> {
+        let proof = self.proof.as_ref().ok_or_else(crate::phone_line::invalid)?;
+        let actor = EntityId::from_hex(&self.actor_ref)?;
+        let ceilings = original.phone_line_ceilings_for(proof, actor)?;
+        self = self.at(CallerLocality::OffDevice);
+        for ceiling in ceilings {
+            self = self.within_phone_line(ceiling.clone());
+        }
+        if let Some(worlds) = &original.worlds {
+            self = self.within_worlds(worlds.clone());
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn within_phone_line(
+        mut self,
+        ceiling: crate::phone_line::PhoneLineReadCeiling,
+    ) -> Self {
+        self = self.within_authority(Self::read_authority(ceiling.frozen_scope()));
+        self.phone_lines.push(ceiling);
         self
     }
 
@@ -689,6 +738,43 @@ impl ScopedReadActorKey {
         key.authority = Some(Self::read_authority(proof.scope()));
         key.proof = Some(proof.clone());
         Some(key)
+    }
+
+    /// The read key of a rendered brief only. The presented credential has
+    /// no read verb, so no generic read constructor accepts it. Callers keep
+    /// this key inside the shared view and never return it to the holder.
+    pub(crate) fn from_share_view_slip(
+        proof: &crate::authority::VerifiedSlip,
+        verb: &str,
+    ) -> Option<Self> {
+        if proof.claims().share_ref.is_none()
+            || !matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+            || !proof.allows_verb(verb)
+            || proof.allows_verb("read")
+            || proof.allows_verb("core:read")
+        {
+            return None;
+        }
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        let holder = EntityId::from_hex(&proof.claims().holder_ref).ok()?;
+        let mut authority = proof.scope().clone();
+        authority.verbs = ["read".to_owned()].into_iter().collect();
+        key.authority = Some(authority);
+        key.proof = Some(proof.clone());
+        Some(key.require_relationship_grants(Some(holder)))
+    }
+
+    /// A renderer-confined credential's share, never a resident key's.
+    pub(crate) fn share_view_ref(&self) -> Option<EntityId> {
+        self.proof
+            .as_ref()?
+            .claims()
+            .share_ref
+            .as_deref()
+            .and_then(|value| EntityId::from_hex(value).ok())
     }
 
     /// [`Self::from_verified_slip`] for a credential that names a row it

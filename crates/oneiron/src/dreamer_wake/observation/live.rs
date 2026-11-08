@@ -194,10 +194,42 @@ impl<'a> StepCalls<'a> {
         lease: &BudgetLease,
         ordinal: u32,
     ) -> ObservedCall<'a> {
+        self.record_owed(guard, lease);
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
             stated_reset: None,
+        }
+    }
+
+    fn record_owed(&self, guard: &BudgetGuard, lease: &BudgetLease) {
+        let Some(line) = self
+            .deadline
+            .and_then(|deadline| deadline.admitted_budget_line(self.attempt_id))
+        else {
+            return;
+        };
+        let reserved_units = match guard.lease_observation(lease.id()) {
+            Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
+            Some(BudgetLeaseState::Settled { .. }) | Some(BudgetLeaseState::Aborted) | None => 0,
+        };
+        let owed = crate::dreamer_wake::owed::WakeOwedCall {
+            boot: self.vault.active_wakes.boot(),
+            line: line.to_owned(),
+            lease: lease.id().to_owned(),
+            reserved_units,
+            at: crate::unix_seconds_now(),
+        };
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_wake::owed::put_owed_call_in_txn(
+                self.vault,
+                wtxn,
+                self.attempt_id,
+                &self.step_hash,
+                &owed,
+            )
+        }) {
+            skipped(&error, "owed call");
         }
     }
 
@@ -228,35 +260,10 @@ impl<'a> StepCalls<'a> {
             lease_id: lease.id().to_owned(),
             admitted_elapsed_ms,
         };
-        match self.vault.with_write_txn_grouped(|wtxn| {
-            let bound = bind_call_in_txn(self.vault, wtxn, &admitted)?;
-            // The owed row for this send, beside its call row (FIX 11450): a
-            // crash before the attempt settles still charges it. None when the
-            // attempt reserved on no recorded line.
-            if let Some(line) = binding.live.attempt_line(self.attempt_id) {
-                let reserved_units = match guard.lease_observation(lease.id()) {
-                    Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
-                    Some(BudgetLeaseState::Settled { .. })
-                    | Some(BudgetLeaseState::Aborted)
-                    | None => 0,
-                };
-                let owed = crate::dreamer_wake::owed::WakeOwedCall {
-                    boot: self.vault.active_wakes.boot(),
-                    line,
-                    lease: lease.id().to_owned(),
-                    reserved_units,
-                    at: crate::unix_seconds_now(),
-                };
-                crate::dreamer_wake::owed::put_owed_call_in_txn(
-                    self.vault,
-                    wtxn,
-                    self.attempt_id,
-                    &self.step_hash,
-                    &owed,
-                )?;
-            }
-            Ok(bound)
-        }) {
+        match self
+            .vault
+            .with_write_txn_grouped(|wtxn| bind_call_in_txn(self.vault, wtxn, &admitted))
+        {
             Ok(true) => Some(BoundCall {
                 key,
                 live,
@@ -289,7 +296,7 @@ impl ObservedCall<'_> {
     /// Which call this step's terminal claim closes.
     pub(crate) fn terminal(&self) -> StepTerminal {
         StepTerminal::Fresh {
-            bound: self.bound.is_some(),
+            key: self.bound.as_ref().map(|bound| bound.key),
         }
     }
 

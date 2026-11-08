@@ -4,15 +4,19 @@
 //! through the imported witness, so the vault indexes and extracts it as
 //! imported evidence and wakes no agent. In the same commit each row is
 //! bound to its thread's source audience, so it reads to the source's people
-//! alone from its first moment.
+//! alone from its first moment. Each row also carries the source-audience
+//! obligation in its own bytes, stamped under the landing's proof (fix list
+//! row 16256), so a read knows it for a source's row even where its binding
+//! or its TURN has not arrived.
 
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Value};
 
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
-    BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
-    occurrence_key, record_occurrence_rows_in_txn,
+    BODY_QUEUE, MailOccurrence, MailPresence, MailReplyHeaders, MailStage, OCCURRENCES, SYNC,
+    THREAD_EPOCHS, body_queue_key, occurrence_key, owe_header_retirements_in_txn,
+    record_occurrence_rows_in_txn, thread_hash,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -51,6 +55,19 @@ pub(super) enum LandOutcome {
     Refused(String),
 }
 
+/// What a landing that met `error` did: an engine fault fails it; any other
+/// refusal is the landing's outcome, and the import goes on.
+fn refused(error: MemoryError) -> MemoryResult<LandOutcome> {
+    if error.code == MEMORY_CODE_INTERNAL {
+        return Err(error);
+    }
+    Ok(LandOutcome::Refused(format!(
+        "{}: {}",
+        error.code.to_ascii_lowercase(),
+        error.message
+    )))
+}
+
 fn label(text: &str) -> String {
     if text.len() <= MAX_LABEL_BYTES {
         return text.to_owned();
@@ -65,6 +82,22 @@ fn label(text: &str) -> String {
 fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
     let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
     EntityId::derive(domain, &parts)
+}
+
+/// The CONVERSATION a thread's new message lands in: the thread's own, or
+/// after its forgotten ones, the one of its current epoch.
+fn conversation_of(source_hex: &str, thread_key: &str, epoch: u64) -> Result<EntityId> {
+    if epoch == 0 {
+        return derive(
+            derived_domains::MAIL_CONVERSATION,
+            &[source_hex, thread_key],
+        );
+    }
+    let epoch = epoch.to_string();
+    derive(
+        derived_domains::MAIL_CONVERSATION,
+        &[source_hex, thread_key, epoch.as_str()],
+    )
 }
 
 /// The thread a message lands in: the provider's thread id, else the root
@@ -209,6 +242,11 @@ pub(super) struct Landing<'v> {
 }
 
 impl<'v> Landing<'v> {
+    /// The actor the landings are written as.
+    pub(super) const fn actor(&self) -> EntityId {
+        self.actor
+    }
+
     pub(super) fn new(
         vault: &'v Vault,
         owner: &'v AuthenticatedOwner,
@@ -249,13 +287,28 @@ impl<'v> Landing<'v> {
         let text = content(headers, full.and_then(|full| full.body_text.as_deref()));
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let key = occurrence_key(source, &headers.provider_id);
-        let (prior, order) = {
+        let epoch_key = (source, thread_hash(&thread_key));
+        let (prior, order, epoch, birth) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let epoch = THREAD_EPOCHS
+                .get(&vault.store, &txn, &epoch_key)?
+                .unwrap_or(0);
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
             if let Some(prior) = &prior
-                && (prior.content_hashes.contains(&hash)
-                    || matches!(prior.presence, MailPresence::Forgotten { .. }))
+                && matches!(prior.presence, MailPresence::Forgotten { .. })
             {
+                return Ok(LandOutcome::Same);
+            }
+            if let Some(prior) = &prior
+                && prior.content_hashes.contains(&hash)
+            {
+                drop(txn);
+                // The same words: the reply headers land on the occurrence
+                // whole (a message landed before its To and Cc were kept
+                // gains them, fix list row 17645), and with the whole
+                // message read, so do the body stage and its attachments; no
+                // new revision.
+                self.settle_same_in_place(&key, headers, full)?;
                 return Ok(LandOutcome::Same);
             }
             let turn = prior.as_ref().map_or(
@@ -266,14 +319,19 @@ impl<'v> Landing<'v> {
                 |prior| Ok(prior.turn),
             )?;
             let order = crate::memory::next_witness_message_order(&vault.store, &txn, &turn)?;
-            (prior, order)
+            // The landing's proof, under the mailbox's source policy: every
+            // row it lands is stamped with the source-audience obligation
+            // (fix list row 16256). The writer mints it again below.
+            let birth =
+                match source_audience::SourceAudienceBirth::mint_in(vault, &txn, &row.audience) {
+                    Ok(birth) => birth,
+                    Err(error) => return refused(error.into()),
+                };
+            (prior, order, epoch, birth)
         };
         let conversation = match &prior {
             Some(prior) => prior.conversation,
-            None => derive(
-                derived_domains::MAIL_CONVERSATION,
-                &[&source_hex, &thread_key],
-            )?,
+            None => conversation_of(&source_hex, &thread_key, epoch)?,
         };
         let turn = match &prior {
             Some(prior) => prior.turn,
@@ -316,6 +374,7 @@ impl<'v> Landing<'v> {
                 headers.subject.as_deref(),
             )?,
             message_occurred: vec![occurred],
+            source_audience: Some(birth),
         };
         let landed = self.memory.witness_imported(&witness, &stamp, |wtxn| {
             self.owner.revalidate_in_txn(vault, wtxn)?;
@@ -335,6 +394,32 @@ impl<'v> Landing<'v> {
                 return Err(MemoryError::new(
                     MEMORY_CODE_INVALID_STATE,
                     "another landing wrote this message first",
+                    &[],
+                ));
+            }
+            // A forget that took the thread's CONVERSATION since the read
+            // above moved the thread on: the message lands in its new one at
+            // the next step, never in the one being forgotten.
+            if prior.is_none()
+                && THREAD_EPOCHS
+                    .get(&vault.store, wtxn, &epoch_key)?
+                    .unwrap_or(0)
+                    != epoch
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the thread was forgotten meanwhile; the message lands at the next step",
+                    &[],
+                ));
+            }
+            // The proof the rows were stamped under is the one this writer
+            // mints from the mailbox's live source policy.
+            let minted =
+                source_audience::SourceAudienceBirth::mint_in(vault, wtxn, &current.audience)?;
+            if stamp.source_audience.as_ref() != Some(&minted) {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "the mail source's audience is not the one its rows were stamped under",
                     &[],
                 ));
             }
@@ -361,15 +446,33 @@ impl<'v> Landing<'v> {
                 content_hashes: Vec::new(),
                 stage,
                 presence: MailPresence::Present,
+                presence_generation: 0,
                 labels: Vec::new(),
                 rfc_message_id: None,
                 from: None,
                 subject: None,
                 received_at: headers.received_at,
                 searched,
+                attachments: Vec::new(),
+                reply: None,
+                listed_in: None,
+                content_digest: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
+            // The body supersedes the header-only revisions before it (FIX
+            // 15413): they leave the message's erase reach, so their delete
+            // does not forget it, and are owed that delete, which runs once
+            // this landing commits.
+            if stage == MailStage::Body && occurrence.stage == MailStage::Headers {
+                owe_header_retirements_in_txn(
+                    vault,
+                    wtxn,
+                    &key,
+                    &occurrence.messages,
+                    self.imported_at,
+                )?;
+            }
             occurrence.messages.push(message);
             occurrence.content_hashes.push(hash.clone());
             if stage == MailStage::Body || occurrence.stage == MailStage::Headers {
@@ -388,6 +491,13 @@ impl<'v> Landing<'v> {
                     .clone_from(&headers.rfc_message_id);
             }
             occurrence.searched |= searched;
+            if let Some(full) = full {
+                occurrence.attachments.clone_from(&full.attachments);
+                // The first whole read names what the id holds (fix list
+                // row 19145).
+                occurrence.content_digest = occurrence.content_digest.or(full.content_digest);
+            }
+            occurrence.reply = Some(MailReplyHeaders::of(headers));
             occurrence.updated_at = self.imported_at;
             let queued = body_queue_key(source, occurrence.received_at, &headers.provider_id);
             if occurrence.stage == MailStage::Headers {
@@ -414,13 +524,11 @@ impl<'v> Landing<'v> {
             Ok(())
         });
         match landed {
-            Ok(_) => Ok(LandOutcome::Landed),
-            Err(error) if error.code == MEMORY_CODE_INTERNAL => Err(error),
-            Err(error) => Ok(LandOutcome::Refused(format!(
-                "{}: {}",
-                error.code.to_ascii_lowercase(),
-                error.message
-            ))),
+            Ok(_) => {
+                super::header_retire::retire_superseded_headers(vault, source);
+                Ok(LandOutcome::Landed)
+            }
+            Err(error) => refused(error),
         }
     }
 
@@ -440,5 +548,66 @@ impl<'v> Landing<'v> {
             }
             Ok(())
         })
+    }
+}
+
+impl Landing<'_> {
+    /// Records the occurrence `key` landed again with the words it landed
+    /// with already: it keeps the reply headers `headers` give, whole, and
+    /// when the message was read whole (`full`), its stage is the body, it
+    /// keeps the message's attachments and the digest of its first whole
+    /// read (fix list row 19145), and it leaves the body queue. It writes
+    /// nothing when none of these changed.
+    fn settle_same_in_place(
+        &self,
+        key: &(EntityId, [u8; 32]),
+        headers: &MailHeaders,
+        full: Option<&MailFull>,
+    ) -> MemoryResult<()> {
+        let vault = self.vault;
+        let reply = MailReplyHeaders::of(headers);
+        vault.with_write_txn_grouped(|wtxn| {
+            let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
+                return Ok(());
+            };
+            // A message erased meanwhile stays forgotten: its fence is not
+            // given its headers or attachments again.
+            if matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
+                return Ok(());
+            }
+            let reply_changed = occurrence.reply.as_ref() != Some(&reply);
+            // The whole read settles when it gives the body stage, other
+            // attachments, or the first digest of the message.
+            let full = full.filter(|full| {
+                occurrence.stage != MailStage::Body
+                    || occurrence.attachments != full.attachments
+                    || (occurrence.content_digest.is_none() && full.content_digest.is_some())
+            });
+            if !reply_changed && full.is_none() {
+                return Ok(());
+            }
+            occurrence.reply = Some(reply);
+            occurrence.updated_at = self.imported_at;
+            if let Some(full) = full {
+                let first_body = occurrence.stage == MailStage::Headers;
+                occurrence.stage = MailStage::Body;
+                occurrence.attachments.clone_from(&full.attachments);
+                // The first whole read names what the id holds (fix list
+                // row 19145).
+                occurrence.content_digest = occurrence.content_digest.or(full.content_digest);
+                BODY_QUEUE.delete(
+                    &vault.store,
+                    wtxn,
+                    &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
+                )?;
+                if first_body {
+                    let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
+                    sync.bodies += 1;
+                    SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+                }
+            }
+            OCCURRENCES.put(&vault.store, wtxn, key, &occurrence)
+        })?;
+        Ok(())
     }
 }

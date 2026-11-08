@@ -20,15 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
 use super::receipts::{already_settled, settlement_receipt_record};
-use super::records::{
-    SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome, SettledReview,
-};
+use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
 use crate::Vault;
-use crate::anchored_annotation::ReanchorSummary;
-use crate::blob_artifact::{
-    BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobVersionProvenance, CalcEngineStamp, VersionReconciliation,
-    read_blob_artifact_head_in_txn,
-};
+use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, CalcEngineStamp};
 use crate::edit_roundtrip::{
     EditManifest, EditProposal, OfficeFormat, RecalcStatus, SheetAnswerBundle, StructureSummary,
     ValidationCheck, ValidationReport,
@@ -41,6 +35,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod admission;
+// The native output's Keep.
+mod keep_output;
 mod output_retention;
 mod output_settle;
 mod view;
@@ -51,6 +47,12 @@ pub use view::{PendingProposalKind, PendingProposalView};
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
 pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_PENDING_PROPOSAL);
+
+/// The delta receipt id a Selected Keep answered (FIX 11706): the same key
+/// as its pending row, so the undo door anchors the routing outcome.
+/// Key: id16 + hash32 (blake3 of the proposal ref).
+pub(super) const LINK: SideTable<(EntityId, [u8; 32]), String, Named> =
+    SideTable::new(&side_table::EDIT_SETTLE_KEEP_LINK);
 
 /// The most report text one native output may carry.
 pub const NATIVE_OUTPUT_REPORT_MAX_BYTES: usize = 1 << 20;
@@ -83,6 +85,11 @@ pub(super) struct PendingRow {
     /// A deck export's projection, which its Keep rebinds the deck to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deck: Option<DeckExportHold>,
+    /// The delta receipt id this rework answered (FIX 11967): its Keep
+    /// carries the stamp onto the keep link, and the committed rework's
+    /// settle carries it onto the receipt. `None` when no amendment stood
+    /// behind the proposal.
+    pub(super) delta_receipt: Option<String>,
 }
 
 /// A deck export waiting for Keep (FIX 2700): what its Keep needs to bind
@@ -122,6 +129,13 @@ enum PendingBody {
         name: String,
         media_type: String,
         report: String,
+        /// The world and facet its producing run's host bound, frozen as it
+        /// is retained (FIX 3171): Keep births the version's claim there,
+        /// never at the keeper's. Absent for an unbound producer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_world: Option<EntityId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_facet: Option<EntityId>,
     },
 }
 
@@ -229,6 +243,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.retain_edit_proposal_with_reads(
             artifact_id,
@@ -237,6 +252,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -251,9 +267,17 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         let kind = self.get_entity_type(&actor.entity_ref())?;
-        let row = edit_pending_row(proposal, made_by, (actor, kind), retained_at, read_rows)?;
+        let row = edit_pending_row(
+            proposal,
+            made_by,
+            (actor, kind),
+            retained_at,
+            read_rows,
+            delta_receipt,
+        )?;
         self.put_pending(artifact_id, &row, reader)
     }
 
@@ -273,6 +297,7 @@ impl Vault {
         lane: Option<&crate::claim::ScopedRead<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.retain_edit_proposal_with_reads_in_txn(
             wtxn,
@@ -282,6 +307,7 @@ impl Vault {
             lane,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -297,6 +323,7 @@ impl Vault {
         lane: Option<&crate::claim::ScopedRead<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         match (lane, made_by) {
             (Some(lane), Some(made_by)) => {
@@ -307,7 +334,14 @@ impl Vault {
             }
         }
         let kind = self.get_entity_type_in_txn(wtxn, &actor.entity_ref())?;
-        let row = edit_pending_row(proposal, made_by, (actor, kind), retained_at, read_rows)?;
+        let row = edit_pending_row(
+            proposal,
+            made_by,
+            (actor, kind),
+            retained_at,
+            read_rows,
+            delta_receipt,
+        )?;
         self.put_pending_in_txn(wtxn, artifact_id, &row)?;
         Ok(row.view(*artifact_id))
     }
@@ -335,6 +369,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_native_output_with_reads(
             artifact_id,
@@ -342,6 +377,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -355,6 +391,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -365,6 +402,7 @@ impl Vault {
             None,
             false,
             read_rows,
+            delta_receipt,
         )
     }
 
@@ -379,6 +417,7 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
         fork_base: Option<(u64, [u8; 32])>,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -389,6 +428,7 @@ impl Vault {
             fork_base,
             true,
             &[],
+            delta_receipt,
         )
     }
 
@@ -403,6 +443,7 @@ impl Vault {
         (actor, retained_at): (WriteActor, u64),
         base: (u64, [u8; 32]),
         hold: DeckExportHold,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -413,6 +454,7 @@ impl Vault {
             None,
             false,
             &[],
+            delta_receipt,
         )
     }
 
@@ -426,6 +468,7 @@ impl Vault {
         base_override: Option<(u64, [u8; 32])>,
         authorize_content_write: bool,
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -450,6 +493,9 @@ impl Vault {
             base_override.is_some(),
             deck.map(|(_, hold)| hold),
             report,
+            delta_receipt,
+            // An organ's output binds no producing host position (FIX 3171).
+            crate::federation::record_scope::BirthPosition::default(),
         );
         row.read_rows.extend_from_slice(read_rows);
         row.read_rows.sort_unstable();
@@ -515,26 +561,8 @@ impl Vault {
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
         let outcome = if let Some(proposal) = row.edit_proposal()? {
-            // A held answer whose units changed under it lands what is
-            // untouched and withdraws the rest (ARCH-0075 §4).
-            match self.split_typed_answers(
-                artifact_id,
-                &proposal,
-                row.retained_by,
-                row.made_by.as_ref(),
-                true,
-            )? {
-                Some(split) => self.keep_split(
-                    artifact_id,
-                    &proposal,
-                    split,
-                    row.made_by.as_ref(),
-                    consent,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.settle_select_edit_proposal_made_by(
+            if proposal.sheet_answers.is_some() {
+                self.settle_select_edit_proposal_made_by(
                     artifact_id,
                     &proposal,
                     row.made_by.as_ref(),
@@ -542,7 +570,40 @@ impl Vault {
                     actor,
                     occurred,
                     learned_at,
-                )?,
+                    row.delta_receipt.as_deref(),
+                )?
+            } else {
+                // A held answer whose units changed under it lands what is
+                // untouched and withdraws the rest (ARCH-0075 §4).
+                match self.split_typed_answers(
+                    artifact_id,
+                    &proposal,
+                    row.retained_by,
+                    row.made_by.as_ref(),
+                    true,
+                )? {
+                    Some(split) => self.keep_split(
+                        artifact_id,
+                        &proposal,
+                        split,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                        row.delta_receipt.as_deref(),
+                    )?,
+                    None => self.settle_select_edit_proposal_made_by(
+                        artifact_id,
+                        &proposal,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                        row.delta_receipt.as_deref(),
+                    )?,
+                }
             }
         } else {
             self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
@@ -604,95 +665,6 @@ impl Vault {
         Ok(outcome)
     }
 
-    fn keep_native_output(
-        &self,
-        artifact_id: &EntityId,
-        row: &PendingRow,
-        consent: &SettleConsent,
-        actor: WriteActor,
-        occurred: TimeRange,
-        learned_at: u64,
-    ) -> Result<SettleSelectOutcome> {
-        self.authorize_settle(consent, actor)?;
-        let key = settlement_key_parts(artifact_id, &row.proposal_ref);
-        let provenance = BlobVersionProvenance::AgentRun {
-            run_ref: row.proposal_ref.clone(),
-        };
-        let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
-            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
-            // The output forks from the version it was made against; a later
-            // head keeps both, as a person may keep a machine version beside
-            // their own. Made against nothing, it lands on whatever head is.
-            // A deck export was made against the version its deck projected
-            // over, whatever head it found then (FIX 2700). An explicit fork
-            // lands a fork version even against the current head; anything
-            // else forks only from an older head (blind review of #4387).
-            let fork_parent = row.base_version.filter(|base| {
-                row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
-            });
-            let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    &row.new_bytes,
-                    &provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_engine_and_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    &row.new_bytes,
-                    &provenance,
-                    None,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                    None,
-                )?,
-            };
-            if let Some(hold) = &row.deck {
-                self.keep_deck_export_in_txn(
-                    wtxn,
-                    artifact_id,
-                    hold,
-                    (row.base_version, row.base_content_hash),
-                    &version,
-                    (actor, row.made_by.as_ref(), learned_at),
-                )?;
-            }
-            // The head it replaced is the version an Undo restores.
-            let replaced = row.base_version.and(head.as_ref().map(|head| head.version));
-            let record = output_record(
-                row,
-                SettleOutcomeKind::Selected,
-                (consent, actor),
-                learned_at,
-                (Some(&version), replaced),
-                grant_ref,
-            );
-            RECORD.put(&self.store, wtxn, &key, &record)?;
-            let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
-            Ok((version, record, reconciliation))
-        })?;
-        Ok(SettleSelectOutcome {
-            stranded_proposal: None,
-            version,
-            reanchor: ReanchorSummary::default(),
-            receipt: settlement_receipt_record(*artifact_id, &record)?,
-            reconciliation,
-            review: SettledReview::of(record),
-        })
-    }
-
     fn put_pending(
         &self,
         artifact_id: &EntityId,
@@ -752,6 +724,9 @@ impl Vault {
                 "a proposal already waits under this ref",
             )));
         }
+        if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
+            return Err(Error::EntityNotFound);
+        }
         PENDING.put(&self.store, wtxn, &key, row)
     }
 
@@ -790,6 +765,7 @@ fn edit_pending_row(
     (actor, kind): (WriteActor, Option<u8>),
     retained_at: u64,
     read_rows: &[EntityId],
+    delta_receipt: Option<&str>,
 ) -> Result<PendingRow> {
     if !proposal.validation.ok || proposal.new_bytes.is_empty() {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
@@ -813,6 +789,7 @@ fn edit_pending_row(
             rows
         },
         deck: None,
+        delta_receipt: delta_receipt.map(str::to_owned),
         body: PendingBody::Edit {
             format: proposal.format,
             manifest: proposal.manifest.to_msgpack()?,
@@ -834,4 +811,15 @@ pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
         )));
     }
     crate::batch::secret_scan::scan_metadata_field(proposal_ref)
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in PENDING.scan_keys(store, txn, artifact_id.as_bytes())? {
+        PENDING.delete(store, txn, &key)?;
+    }
+    Ok(())
 }

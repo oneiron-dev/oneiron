@@ -380,6 +380,16 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     if let Some(team) = &body.team {
         entries.push((Value::from("team"), team_stamp_value(team)));
     }
+    // FIX685: elided the same way, so a TASK with no due annotation keeps
+    // its bytes. Its own `due_at` key; never the `ttl` map.
+    if let Some(due_at) = body.due_at {
+        entries.push((Value::from("due_at"), Value::from(due_at)));
+    }
+    // FIX 22121: elided the same way, so a TASK that is no watch keeps its
+    // bytes.
+    if body.watch {
+        entries.push((Value::from("watch"), Value::from(true)));
+    }
     canonical_bytes(&Value::Map(entries))
 }
 

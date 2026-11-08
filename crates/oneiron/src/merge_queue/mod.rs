@@ -6,13 +6,18 @@
 mod batch_index;
 mod candidate_intake;
 mod check_execute;
+mod check_exhaust;
 mod check_inputs;
 mod check_requests;
 mod check_store;
 mod check_tree;
 mod checks;
+mod composition;
+mod contract_review;
+mod diagnosis;
 mod driver;
 mod driver_materialize;
+mod driver_resolution;
 mod driver_store;
 mod driver_types;
 mod file_metadata;
@@ -21,6 +26,7 @@ mod landing;
 mod mirror_green;
 mod plan;
 mod receipt_index;
+mod receipts;
 mod received_enqueue;
 mod review_policy;
 mod reviewed;
@@ -30,6 +36,7 @@ mod source_materialize;
 mod source_types;
 mod staging;
 mod storage;
+mod survivors;
 mod tested;
 mod tested_export;
 mod tested_received;
@@ -49,13 +56,18 @@ use crate::{
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
     QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
-    QueueCheckLimits, QueueCheckNeed, QueueCheckReceipt, QueueCheckRun, QueueCheckTarget,
-    QueueCheckTreeSource, QueueCommandReceipt,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt, QueueCheckRun,
+    QueueCheckTarget, QueueCheckTreeSource, QueueCommandReceipt, StoredQueueCheckReceipt,
 };
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
     QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork,
 };
+// FIX 7227: the unforgeable completion token (private fields, no pub ctor),
+// minted only in finish after SAME plus closed-approval validation; the BLOB
+// child and the versions authority name it via this parent alias, never via
+// the private child path. Child modules stay PRIVATE (no pub(crate) mod).
+pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{
@@ -64,6 +76,13 @@ pub use driver_types::{
     QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
+// A queue entry's admission and completion receipts (FIX 4338) and the
+// failure a repair names (FIX 4364).
+pub(crate) use receipts::{QueueBatchReceipts, proposal_queue_failure_in_txn};
+// Same-file line composition and the staged-tree file reader a reviewed
+// stack's application proof reads (FIX 4360).
+pub(crate) use check_tree::read_tree_file;
+pub(crate) use composition::LineComposition;
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,

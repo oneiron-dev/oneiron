@@ -30,6 +30,7 @@ use zeroize::Zeroizing;
 
 #[cfg(feature = "sync")]
 use super::WorldCapsuleImport;
+use super::frame_seal::write_counted;
 use super::{
     Cursor, Kind, OpenedKeyPads, OpenedVaultBundle, SealPlan, SealedBundleGeneration, SealedObject,
     open_outer, parse_frame, put_counted, seal_outer, seal_slots,
@@ -186,20 +187,20 @@ impl SealedWorldAuthority {
     }
 
     /// `world (16) ‖ root (1 ‖ the root's id (32), or 0) ‖ the capsule
-    /// u32-length-prefixed`.
-    pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(self.world.as_bytes());
+    /// u32-length-prefixed`, into a stream (FIX 11947).
+    pub(super) fn write(&self, put: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+        put(self.world.as_bytes())?;
         match self.root {
             Some(root) => {
-                out.push(1);
-                out.extend_from_slice(&root.0);
+                put(&[1])?;
+                put(&root.0)?;
             }
-            None => out.push(0),
+            None => put(&[0])?,
         }
-        put_counted(out, &self.object.bytes)
+        write_counted(put, &self.object.bytes)
     }
 
-    /// `count (4) ‖ each capsule ([`Self::encode`])`; a world appears once.
+    /// `count (4) ‖ each capsule ([`Self::write`])`; a world appears once.
     pub(super) fn parse_all(cursor: &mut Cursor<'_>) -> Result<Vec<Self>> {
         let malformed = || refused("the bundle's body is malformed");
         let count = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);

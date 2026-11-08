@@ -16,7 +16,9 @@
 //! 5. The per-`(system × UID)` diff: create/attach, skip, update, or mark
 //!    one source's passport absent. EVENT cancellation derives through
 //!    `calendar.status` only when every live inbound passport reports
-//!    absence — never on a parse/fetch failure.
+//!    absence — never on a parse/fetch failure. The diff and its writes run
+//!    in the vault's one calendar admission turn (`turn.rs`, FIX 4797), which
+//!    every inbound door holds, so two admissions never both mint one UID.
 //! 6. Every semantic claim candidate is `ClaimSource::Imported` and crosses
 //!    the Gate through `admit_imported_evidence_claim*`; immediately before
 //!    each admission the candidate passes through CAL-09's
@@ -44,16 +46,24 @@
 //!   [`IcsHttpTransport`]; the reqwest reservation lands with its owner.
 
 mod admission;
+mod calendar_source;
 pub mod door;
 pub(crate) use admission::ensure_ics_import_actor;
 pub(in crate::calendar) use admission::{
-    ConnectorAdmissionSource, admit_connector_event, connector_event_ref,
+    ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
+    sweep_connector_uids,
+};
+pub(crate) use calendar_source::{
+    CalendarSourceChange, apply_calendar_source_change, apply_calendar_source_feed,
+    apply_calendar_source_omissions,
 };
 pub mod feed_door;
 mod fetch;
 mod poll;
 pub(in crate::calendar) mod property_claims;
+mod turn;
+pub(in crate::calendar) use turn::admission_turn;
 
 // Moved bodies still spell `super::ics`, `super::passport`, and
 // `super::safeguard` (their `super` used to be `calendar`); these aliases keep

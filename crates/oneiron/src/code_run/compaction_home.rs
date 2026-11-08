@@ -6,19 +6,37 @@
 //! is named absent: it is never filled from the owner's memory or another
 //! agent's diary. Home words go to the writing call only; they are not the
 //! summary's evidence, which stays the span's retained turns.
+//!
+//! FIX 4570: the self-model is the SUMMARY the agent's binding names, read
+//! through its own scoped SUMMARY read ([`self_model`]). FIX 4817: every row
+//! a part was read from keeps the live revision its words were read at, in
+//! the same snapshot, so what wore it lands, serves and keeps its words only
+//! while each row still reads at it ([`crate::compaction::CompactionHomeRef`]).
+//!
+//! FIX 4571: the voice wears the persona scenario its host selected on the
+//! binding ([`CompactionHostBinding::with_placement_scenario`]), else the
+//! PERSON baseline. The scenario FACET is a persona input row like any other,
+//! so an edit to it withdraws the worn home too.
+
+mod self_model;
+
+pub(crate) use self_model::{bound_self_model_in, erase_self_model_binding_actor_in_txn};
 
 use crate::authority::VerifiedSlip;
 use crate::claim::{
     CallerLocality, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimReadStatus, ClaimSubject,
     PointRead, ReadRow, decode_claim_body,
 };
-use crate::compaction::{CompactionHomeRef, HOME_PART_WORN, SelfCompactionUnavailable};
+use crate::compaction::{
+    CompactionHomeRef, HOME_PART_SELF_MODEL, HOME_PART_WORN, SelfCompactionUnavailable,
+};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::memory::DiaryReadOutcome;
+use crate::memory::{DiaryReadOutcome, Memory};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::subject_model::SubjectKind;
 use crate::tokenizer::count_context_pack_tokens;
+use crate::vault::RevisionRef;
 use crate::{Vault, WriteActor};
 
 /// The reason a home read gives the diary door's log.
@@ -33,6 +51,12 @@ pub struct CompactionHostBinding {
     actor: WriteActor,
     locality: CallerLocality,
     read_proof: Option<VerifiedSlip>,
+    /// The persona scenario FACET the home's voice wears (FIX 4571): only
+    /// [`Self::with_placement_scenario`] sets it, from the host's own
+    /// authenticated placement. `None` wears the PERSON baseline.
+    scenario: Option<EntityId>,
+    /// The dispatch's frozen provenance, never a home-read ceiling.
+    caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 impl CompactionHostBinding {
@@ -42,10 +66,61 @@ impl CompactionHostBinding {
         self.actor
     }
 
+    /// Records the frozen origin of the actual dispatch this flight runs.
+    /// This changes no read binding and is never used by an admission check.
+    #[must_use]
+    pub const fn with_caller_origin(mut self, origin: crate::agent_dispatch::CallerOrigin) -> Self {
+        self.caller_origin = origin;
+        self
+    }
+
+    /// The provenance this flight's producer supplied, not its read locality.
+    #[must_use]
+    pub const fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin
+    }
+
     /// Where the run's caller sits, as its host found it.
     #[must_use]
     pub const fn locality(&self) -> CallerLocality {
         self.locality
+    }
+
+    /// The binding with the persona scenario its home's voice wears (FIX
+    /// 4571): `facet`, the FACET its host authenticated the run's placement
+    /// in, kept only when it is an explicit persona scenario of the run's own
+    /// PERSON, as the persona compile recognizes one under the run's own
+    /// Grant at its caller's place. Any other facet, one that read cannot
+    /// prove, or none keeps the PERSON baseline. A host passes its own
+    /// placement only: never a tool's or a model's words, a label or a
+    /// searched scenario.
+    #[must_use]
+    pub fn with_placement_scenario(mut self, vault: &Vault, facet: Option<EntityId>) -> Self {
+        let scenario = facet.filter(|facet| owns_scenario(vault, &self, *facet));
+        self.scenario = scenario;
+        self
+    }
+}
+
+/// Whether `facet` is an explicit persona scenario of `host`'s own PERSON,
+/// read as its home's voice is: under its own Grant at its caller's place
+/// (FIX 4571). An actor with no readable identity owns none.
+fn owns_scenario(vault: &Vault, host: &CompactionHostBinding, facet: EntityId) -> bool {
+    let Ok(identity) = resolve_compaction_identity(vault, host) else {
+        return false;
+    };
+    home_memory(vault, host, identity.agent)
+        .read_lane(ClaimReadStatus::Surfaceable)
+        .is_ok_and(|read| read.owns_persona_scenario(&identity.person, facet))
+}
+
+/// The agent's own memory a home is read through: its Grant, at the place
+/// its caller sits, under the credential it proved, when it proved one.
+fn home_memory<'v>(vault: &'v Vault, host: &CompactionHostBinding, agent: EntityId) -> Memory<'v> {
+    let memory = vault.memory(agent, EdgeActorClass::Agent).at(host.locality);
+    match &host.read_proof {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
     }
 }
 
@@ -64,6 +139,8 @@ pub fn bind_compaction_caller(
         actor,
         locality,
         read_proof,
+        scenario: None,
+        caller_origin: crate::agent_dispatch::CallerOrigin::Unknown,
     }
 }
 
@@ -127,18 +204,19 @@ impl HomePart {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Voice => "voice",
-            Self::SelfModel => "self_model",
+            Self::SelfModel => HOME_PART_SELF_MODEL,
             Self::Diary => "diary",
             Self::Lessons => "lessons",
         }
     }
 }
 
-/// One home part and every row its text was read from.
+/// One home part and every row its text was read from, each with the live
+/// revision it was read at (FIX 4817).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeItem {
     part: HomePart,
-    rows: Vec<EntityId>,
+    rows: Vec<(EntityId, Option<RevisionRef>)>,
     text: String,
 }
 
@@ -178,22 +256,20 @@ pub const fn compaction_home_budget(
 }
 
 /// Reads `host`'s home through the existing doors under its own Grant
-/// (FIX 4465): its voice through the persona compile, its lessons as the
-/// admitted active `actor.lesson` and `actor.failure_mode` claims about it,
-/// its diary through the diary door as its own reader. No self-model binding
-/// exists yet, so that part is absent. An actor with no readable identity
-/// holds the flight; any other part it cannot read is absent.
+/// (FIX 4465): its voice through the persona compile, wearing the scenario
+/// its host selected or the PERSON baseline (FIX 4571), its self-model as the
+/// SUMMARY its binding names through its own scoped SUMMARY read (FIX 4570),
+/// its lessons as the admitted active `actor.lesson` and
+/// `actor.failure_mode` claims about it, its diary through the diary door as
+/// its own reader. Each row keeps the revision its words were read at, read
+/// in that door's own snapshot (FIX 4817). An actor with no readable
+/// identity holds the flight; any other part it cannot read is absent.
 pub fn load_compaction_home(
     vault: &Vault,
     host: &CompactionHostBinding,
 ) -> Result<CompactionHome, SelfCompactionUnavailable> {
     let identity = resolve_compaction_identity(vault, host)?;
-    let mut memory = vault
-        .memory(identity.agent, EdgeActorClass::Agent)
-        .at(host.locality);
-    if let Some(proof) = &host.read_proof {
-        memory = memory.with_read_proof(proof);
-    }
+    let memory = home_memory(vault, host, identity.agent);
     let read = memory
         .read_lane(ClaimReadStatus::Surfaceable)
         .map_err(|_| SelfCompactionUnavailable::IdentityUnreadable)?;
@@ -202,21 +278,38 @@ pub fn load_compaction_home(
         items: Vec::new(),
         absent: Vec::new(),
     };
-    match read.compile_persona(&identity.person, None) {
+    // A selected scenario that no longer reads or belongs to this PERSON
+    // leaves the voice absent, never another mask (FIX 4571).
+    match read.compile_persona(&identity.person, host.scenario) {
         Ok(persona) => home.items.push(HomeItem {
             part: HomePart::Voice,
-            rows: persona.made_by.inputs,
+            rows: persona
+                .made_by
+                .inputs
+                .into_iter()
+                .zip(persona.input_revisions)
+                .collect(),
             text: persona.value.to_string(),
         }),
         Err(_) => home.absent.push((HomePart::Voice, "no_readable_persona")),
     }
-    home.absent
-        .push((HomePart::SelfModel, "no_self_model_binding"));
+    match self_model::read_self_model_part(vault, &memory, identity.agent) {
+        self_model::SelfModelPart::Worn {
+            summary,
+            revision,
+            text,
+        } => home.items.push(HomeItem {
+            part: HomePart::SelfModel,
+            rows: vec![(summary, revision)],
+            text,
+        }),
+        self_model::SelfModelPart::Absent(why) => home.absent.push((HomePart::SelfModel, why)),
+    }
     let lessons = vault
         .claims_for_subject(&identity.agent)
         .and_then(|ids| {
             let reads: Vec<_> = ids.into_iter().map(PointRead::id).collect();
-            read.read(&reads, None)
+            read.read_revisions(&reads)
         })
         .map(|rows| lessons_of(identity.agent, rows.value.into_iter().flatten()));
     match lessons {
@@ -225,17 +318,23 @@ pub fn load_compaction_home(
         Err(_) => home.absent.push((HomePart::Lessons, "unreadable")),
     }
     drop(read);
-    match memory.read_agent_diary(None, identity.agent, HOME_READ_REASON) {
-        Ok(DiaryReadOutcome::Granted { entries, .. }) if !entries.is_empty() => {
+    match memory.read_agent_diary_pinned(None, identity.agent, HOME_READ_REASON) {
+        Ok((DiaryReadOutcome::Granted { entries, .. }, pins)) if !entries.is_empty() => {
             let mut entries = entries;
             entries.sort_by(|a, b| b.learned_at.cmp(&a.learned_at).then(b.id.cmp(&a.id)));
-            home.items.extend(entries.into_iter().map(|entry| HomeItem {
-                part: HomePart::Diary,
-                rows: vec![entry.id],
-                text: entry.markdown,
+            home.items.extend(entries.into_iter().map(|entry| {
+                let revision = pins
+                    .iter()
+                    .find(|(id, _)| *id == entry.id)
+                    .and_then(|(_, revision)| *revision);
+                HomeItem {
+                    part: HomePart::Diary,
+                    rows: vec![(entry.id, revision)],
+                    text: entry.markdown,
+                }
             }));
         }
-        Ok(DiaryReadOutcome::Granted { .. }) => home.absent.push((HomePart::Diary, "none")),
+        Ok((DiaryReadOutcome::Granted { .. }, _)) => home.absent.push((HomePart::Diary, "none")),
         Ok(_) => home.absent.push((HomePart::Diary, "not_granted")),
         Err(_) => home.absent.push((HomePart::Diary, "unreadable")),
     }
@@ -243,10 +342,13 @@ pub fn load_compaction_home(
 }
 
 /// The admitted, active craft notes about `agent`: its lessons and failure
-/// modes, never a proposed candidate.
-fn lessons_of(agent: EntityId, rows: impl Iterator<Item = ReadRow>) -> Vec<HomeItem> {
+/// modes, never a proposed candidate, each with the revision it was read at.
+fn lessons_of(
+    agent: EntityId,
+    rows: impl Iterator<Item = (ReadRow, Option<RevisionRef>)>,
+) -> Vec<HomeItem> {
     let mut lessons = Vec::new();
-    for row in rows {
+    for (row, revision) in rows {
         let ReadRow {
             id,
             body: Some(data),
@@ -273,7 +375,7 @@ fn lessons_of(agent: EntityId, rows: impl Iterator<Item = ReadRow>) -> Vec<HomeI
         };
         lessons.push(HomeItem {
             part: HomePart::Lessons,
-            rows: vec![id],
+            rows: vec![(id, revision)],
             text: format!("{}: {text}", body.predicate),
         });
     }
@@ -311,10 +413,11 @@ impl CompactionHome {
                 cut = true;
             }
             let state = if fits { HOME_PART_WORN } else { "truncated" }.to_owned();
-            refs.extend(item.rows.iter().map(|row| CompactionHomeRef {
+            refs.extend(item.rows.iter().map(|(row, revision)| CompactionHomeRef {
                 part: item.part.as_str().to_owned(),
                 row: Some(*row),
                 state: state.clone(),
+                revision: *revision,
             }));
         }
         for (part, why) in &self.absent {
@@ -322,6 +425,7 @@ impl CompactionHome {
                 part: part.as_str().to_owned(),
                 row: None,
                 state: format!("absent:{why}"),
+                revision: None,
             });
         }
         RenderedHome { text, refs }

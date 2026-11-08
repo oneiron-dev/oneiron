@@ -5,7 +5,7 @@ use crate::scan_kind::EngineScan;
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 139] = [
+    pub const ALL: [Self; 142] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -68,6 +68,7 @@ impl EngineScan {
         Self::PrefilterReceiptRows,
         Self::MachineHandoffChain,
         Self::MachineHistoryTargetRows,
+        Self::MachineTransitionFrontier,
         Self::ClaimVadIncidentEdges,
         Self::RetrievalRunRows,
         Self::CallReceiptRows,
@@ -80,6 +81,7 @@ impl EngineScan {
         Self::AudienceEdgeRows,
         Self::RoomAncestryRecords,
         Self::PrivateThreadAncestryRecords,
+        Self::WordSourceRecords,
         Self::RoomPolicyRows,
         Self::RoomThreadHolderRows,
         Self::ProjectDepthDefaultRows,
@@ -145,6 +147,7 @@ impl EngineScan {
         Self::ReceiptSourceRows,
         Self::SyncPrefixRows,
         Self::DependentWalkRows,
+        Self::ResearchContinuationRoots,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -221,6 +224,7 @@ impl EngineScan {
             Self::PrefilterReceiptRows => "prefilter_receipt_rows",
             Self::MachineHandoffChain => "machine_handoff_chain",
             Self::MachineHistoryTargetRows => "machine_history_target_rows",
+            Self::MachineTransitionFrontier => "machine_transition_frontier",
             Self::ClaimVadIncidentEdges => "claim_vad_incident_edges",
             Self::RetrievalRunRows => "retrieval_run_rows",
             Self::CallReceiptRows => "call_receipt_rows",
@@ -233,6 +237,7 @@ impl EngineScan {
             Self::AudienceEdgeRows => "audience_edge_rows",
             Self::RoomAncestryRecords => "room_ancestry_records",
             Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
+            Self::WordSourceRecords => "word_source_records",
             Self::RoomPolicyRows => "room_policy_rows",
             Self::RoomThreadHolderRows => "room_thread_holder_rows",
             Self::ProjectDepthDefaultRows => "project_depth_default_rows",
@@ -298,6 +303,7 @@ impl EngineScan {
             Self::ReceiptSourceRows => "receipt_source_rows",
             Self::SyncPrefixRows => "sync_prefix_rows",
             Self::DependentWalkRows => "dependent_walk_rows",
+            Self::ResearchContinuationRoots => "research_continuation_roots",
         }
     }
 
@@ -442,6 +448,9 @@ impl EngineScan {
             Self::ReceiptSourceRows => 153,
             Self::SyncPrefixRows => 154,
             Self::DependentWalkRows => 155,
+            Self::ResearchContinuationRoots => 156,
+            Self::WordSourceRecords => 246,
+            Self::MachineTransitionFrontier => 247,
         }]
     }
 }

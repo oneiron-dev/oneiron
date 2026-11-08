@@ -18,4 +18,4 @@ pub use self::email::{channel_identity_email_address, parse_email_inbound_surfac
 pub use self::vault::NapiVault;
 pub use facade::{ActorScopedVault, VaultBridge, seal_custody_submit};
 
-pub(crate) use self::boundary::{parse_search_limit, validate_query_len};
+pub(crate) use self::boundary::parse_search_limit;

@@ -42,7 +42,6 @@ use serde_json::json;
 use self::admission::{read_granted_in_txn, settle_in_txn};
 use self::candidate_run::ReplayCandidate;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
-use self::publisher_refs::publisher_candidates_with_refs;
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
     snapshot_job, untried,
@@ -52,7 +51,7 @@ use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
-    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay, ExactReplayRequest,
+    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplayRequest,
     FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage,
     ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
@@ -73,14 +72,16 @@ mod instruction;
 mod publisher;
 mod publisher_refs;
 mod work;
-pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
+pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission, admitting_grant_in};
 pub use self::candidate_run::CandidateRun;
 pub use self::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
     artifact_digest_text, parse_artifact_digest_text,
 };
-pub use self::publisher_refs::{PublisherCandidateInput, PublisherCandidateRef};
+pub use self::publisher_refs::{
+    PublisherCandidateInput, PublisherCandidateRef, publisher_candidates_with_refs,
+};
 pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 
 /// Key: `work::work_key`.
@@ -106,13 +107,6 @@ const CLASSES: [FailureClassV1; 9] = [
     FailureClassV1::SilentDegradation,
     FailureClassV1::Other,
 ];
-const CLASS_WORDING: &str = "Which kind of failure is this? refusal_overreach: the agent \
-    refused what it should have done; task_failure: it did not get its task done; \
-    user_frustration: it left the person frustrated; memory_miss: it missed something it \
-    should have remembered; memory_intrusion: it brought up something it should have left \
-    alone; persona_break: it broke its character or voice; latency_abandon: it took so long \
-    the work was given up; silent_degradation: its work got worse with no error; other: none \
-    of these.";
 
 /// One failure's code-fix work and its local verdicts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,11 +226,19 @@ pub trait CodeFixHost {
 /// answers are for, the dial and bands they run under, and each question's
 /// own budget.
 pub struct CodeFixDecisions<'a> {
+    /// The question asking whether a replay reproduced the failure.
+    pub reproduced_wording: String,
+    /// The question comparing the replies before and after a fix.
+    pub fixed_wording: String,
+    /// The question checking the invented example before export.
+    pub export_safe_wording: String,
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
     pub budget: Duration,
+    /// The host's wording of the failure-class question.
+    pub wording: String,
 }
 
 impl CodeFixDecisions<'_> {
@@ -288,7 +290,7 @@ impl CodeFixDecisions<'_> {
         Ok(
             match self.ask(
                 "class",
-                CLASS_WORDING,
+                &self.wording,
                 AnswerContract::Choice { options },
                 evidence,
                 state,
@@ -525,9 +527,9 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        // An erased capsule's call is never replayed, rebuilt or not (FIX
-        // 6251): nothing is classed or drafted for it.
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        // An erased capsule's call, or one whose route prompt is unavailable,
+        // is never replayed (FIX 6251, 6255): nothing is classed or drafted.
+        if snapshot.replay.exact.runs_none() {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::ReplayUnavailable,
@@ -651,7 +653,7 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        if snapshot.replay.exact.runs_none() {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
         let candidates = missing.to_vec();

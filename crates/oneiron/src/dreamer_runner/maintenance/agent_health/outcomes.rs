@@ -3,7 +3,8 @@
 //! outcomes do"). The reviewer of a T1 card is its deterministic evaluator,
 //! `coach.agent_health.<signal>.v1`. Each outcome set on a card appends one
 //! receipt that freezes what was judged: the evaluator, the dial and the
-//! number, the DIAGNOSTICs, the evidence and the brief pin.
+//! number and the brief pin. Its state's DIAGNOSTICs and evidence are frozen
+//! once per state, under the receipt's id (`review_state`, FIX 8082).
 //!
 //! An owner's verdict is an anchored outcome of the evaluator's diagnosis:
 //! it moves that evaluator's `learning.reliability`, never the reviewed
@@ -31,6 +32,8 @@ use crate::learning::{
 };
 use crate::{EntityId, Result, Vault};
 
+mod float_setting_fit;
+pub(crate) mod review_state;
 mod setting_fit;
 
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
@@ -39,11 +42,13 @@ pub use crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX;
 const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthReviewReceipt {
     /// The review state's id: `health_review:` and 64 hex. A re-settle of the
     /// same state reuses it, so its learning row is replaced, never doubled.
+    /// The DIAGNOSTICs and evidence the state froze are stored once under
+    /// this id (`review_state`, FIX 8082).
     pub receipt: String,
     /// The outcome set.
     pub outcome: AgentHealthOutcome,
@@ -63,10 +68,12 @@ pub struct HealthReviewReceipt {
     pub dial: i64,
     /// The number the card showed.
     pub measured: i64,
-    /// The card's DIAGNOSTICs when it was set, newest last.
-    pub diagnostics: Vec<EntityId>,
-    /// The card's receipt and attempt ids when it was set, newest last.
-    pub evidence: Vec<EntityId>,
+    /// The exact native dial and measured values, frozen from the card. Units
+    /// are signal-specific: `long_wait` share, `cost_spike` ratio, `silent`
+    /// minutes for the dial; `long_wait` share, `cost_spike` ratio, `silent`
+    /// quiet seconds for the measured.
+    pub exact_dial: Option<f64>,
+    pub exact_measured: Option<f64>,
     /// The brief the card's newest finding observed.
     pub observed_brief: Option<HealthBriefPin>,
     /// Whether the diagnosis was right: `Some` only for an owner's confirmed
@@ -142,10 +149,15 @@ fn review_state_id(card: &AgentHealthCard) -> String {
 }
 
 /// Settles `card` and appends the outcome's receipt: the one settlement both
-/// outcome doors run, the owner's and a recipient's. An identical retry (the
-/// same state, outcome and actor) appends none. An owner's verdict then moves
-/// the evaluator's reliability in a savepoint of `txn`, which never fails or
+/// outcome doors run, the owner's and a recipient's, and stores its state's
+/// DIAGNOSTICs and evidence once (FIX 8082). An identical retry (the same
+/// state, outcome and actor) appends none. An owner's verdict then moves the
+/// evaluator's reliability in a savepoint of `txn`, which never fails or
 /// rolls back the settlement. The caller writes the card.
+///
+/// # Errors
+///
+/// Storage errors writing the state row.
 pub(super) fn settle_with_review_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -154,7 +166,7 @@ pub(super) fn settle_with_review_receipt_in_txn(
     by_owner: bool,
     outcome: AgentHealthOutcome,
     at: u64,
-) {
+) -> Result<()> {
     settle(card, by, outcome, at);
     let receipt = review_state_id(card);
     let retry = card
@@ -165,6 +177,15 @@ pub(super) fn settle_with_review_receipt_in_txn(
         .is_some_and(|held| held.outcome == outcome && held.by == by);
     if !retry {
         let effect = review_effect(outcome, by_owner);
+        review_state::put_in_txn(
+            &vault.store,
+            txn,
+            &receipt,
+            &review_state::HealthReviewState {
+                diagnostics: card.diagnostics.clone(),
+                evidence: card.evidence.clone(),
+            },
+        )?;
         card.review_outcomes.push(HealthReviewReceipt {
             receipt: receipt.clone(),
             outcome,
@@ -175,8 +196,8 @@ pub(super) fn settle_with_review_receipt_in_txn(
             reviewer_revision: card.reviewer_revision,
             dial: card.dial,
             measured: card.measured,
-            diagnostics: card.diagnostics.clone(),
-            evidence: card.evidence.clone(),
+            exact_dial: card.exact_dial,
+            exact_measured: card.exact_measured,
             observed_brief: card.observed_brief.clone(),
             label: match effect {
                 Effect::Label(label) => Some(label),
@@ -186,6 +207,7 @@ pub(super) fn settle_with_review_receipt_in_txn(
         });
     }
     project_state(vault, txn, card, &receipt, at);
+    Ok(())
 }
 
 /// Applies the newest owner receipt of review state `receipt` on `card`
@@ -274,7 +296,8 @@ fn project_receipt(
     crate::skill_attribution::health_review::project_health_review_outcome_in_txn(
         vault, txn, card, held,
     )?;
-    setting_fit::project_in_txn(vault, txn, held, now)
+    setting_fit::project_in_txn(vault, txn, held, now)?;
+    float_setting_fit::project_float_setting_fit_in_txn(vault, txn, held, now)
 }
 
 /// The evaluator's `learning.reliability` cell, one per evaluator string:
@@ -341,7 +364,7 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
                 }
             }
             if changed {
-                CARDS.put(&vault.store, txn, key, &card)?;
+                super::receipt_index::put_card_in_txn(&vault.store, txn, key, &card)?;
             }
         }
         Ok(applied)
@@ -350,22 +373,33 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
 
 impl Vault {
     /// The card that holds reviewer receipt `receipt` (`health_review:` and
-    /// 64 hex), and its newest copy of that receipt: what the replay judge
-    /// replays a reviewer revision on. Every card is read. `None` when no card
-    /// holds it, or the id has another prefix.
+    /// 64 hex), and its newest copy of that receipt, with the DIAGNOSTICs and
+    /// evidence its state froze: what the replay judge replays a reviewer
+    /// revision on. Only the cards the receipt index names are read (FIX
+    /// 10880). `None` when no card holds it, the id has another shape, or its
+    /// state row is missing.
     ///
     /// # Errors
     ///
-    /// Storage errors reading the cards.
+    /// Storage errors reading the card or review state.
     pub fn health_review_receipt(
         &self,
         receipt: &str,
-    ) -> Result<Option<(AgentHealthCard, HealthReviewReceipt)>> {
-        if !receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+    ) -> Result<
+        Option<(
+            AgentHealthCard,
+            HealthReviewReceipt,
+            review_state::HealthReviewState,
+        )>,
+    > {
+        let Some(digest) = super::receipt_index::receipt_digest(receipt) else {
             return Ok(None);
-        }
+        };
         let rtxn = self.store.env.read_txn()?;
-        for (_, card) in CARDS.scan(&self.store, &rtxn)? {
+        for key in super::receipt_index::cards_holding(&self.store, &rtxn, &digest)? {
+            let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
+                continue;
+            };
             let held = card
                 .review_outcomes
                 .iter()
@@ -373,7 +407,11 @@ impl Vault {
                 .find(|held| held.receipt == receipt)
                 .cloned();
             if let Some(held) = held {
-                return Ok(Some((card, held)));
+                let Some(state) = review_state::get_in_txn(&self.store, &rtxn, &held.receipt)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some((card, held, state)));
             }
         }
         Ok(None)

@@ -27,7 +27,6 @@ use std::{
 };
 
 const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
-const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -57,8 +56,26 @@ enum GuestFrame {
         from: String,
         to: String,
     },
+    OutputText {
+        target: String,
+        start: bool,
+        frame: String,
+    },
+    OutputBytes {
+        path: String,
+        frame: Vec<u8>,
+    },
+    StoreBytes {
+        start: bool,
+        frame: Vec<u8>,
+    },
     StepResult {
         result_json: String,
+    },
+    /// The program's own error, header included, in place of a step result
+    /// (FIX 9209). Only a nonzero `finish` may follow it.
+    StepError {
+        message: String,
     },
     Finish {
         status: i32,
@@ -152,6 +169,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
     transport: Option<&dyn CredentialReadTransport>,
     spool: Option<&dyn ProposalSpoolFloor>,
     cancel: &StepCancellation,
+    output: &mut dyn crate::code_sandbox::microvm::MicroVmOutputSink,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let exchanged = (|| {
         cancel.check()?;
@@ -226,7 +244,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         cancel.check()?;
         write_frame(&mut stream, &HostFrame::Ready, deadline)?;
         let (mut exit, writes) = receive_proposals_cancellable(
-            stream, vm, &base, deadline, proxy, transport, spool, cancel,
+            stream, vm, &base, deadline, proxy, transport, spool, cancel, output,
         )?;
         let mut edits = Vec::new();
         for write in writes {
@@ -234,7 +252,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
                 SandboxProposalWrite::FileWrite(file) => {
                     let edit = match base.files.iter().find(|entry| entry.path == file.path) {
                         Some(entry) => file.lower_to_edit_spooled(&entry.body, cancel, deadline)?,
-                        None => file.lower_to_edit(b"")?,
+                        None => file.lower_to_edit_cancellable(b"", cancel, deadline)?,
                     };
                     if let Some(edit) = edit {
                         edits.push(SandboxProposalWrite::FileEdit(edit));
@@ -285,7 +303,9 @@ fn receive_proposals(
 /// measured disk floor, when one was lent: each chunk is admitted on the
 /// shared floor before it is written, and one that would cross it ends the
 /// exchange with [`crate::error::CodeError::SandboxProposalDiskFloor`]
-/// (FIX 7650). Without one it spools as before.
+/// (FIX 7650). Without one it spools as before. A step error drops every
+/// pending proposal and ends in a failed exit that carries the program's
+/// error; output its sink already admitted stays with the caller (FIX 9209).
 #[expect(
     clippy::too_many_arguments,
     reason = "the receiver takes the guest's stream, snapshot, policies, spool and token"
@@ -299,27 +319,27 @@ fn receive_proposals_cancellable(
     transport: Option<&dyn CredentialReadTransport>,
     spool: Option<&dyn ProposalSpoolFloor>,
     cancel: &StepCancellation,
+    output: &mut dyn crate::code_sandbox::microvm::MicroVmOutputSink,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
     let mut result_json = None;
+    let mut guest_error = None;
     // One effect per path: a deleted file or a rename endpoint is not
     // written again in the same run.
     let mut occupied = BTreeSet::new();
     // The snapshot tree (empty directories included) with every accepted
     // proposal applied, under the same rules as the guest and the walker.
     let mut shape = base.shape.clone();
-    // The file streaming in, if any. Its frames are not requests: a file's
-    // size never spends the request budget.
+    // The file streaming in, if any.
     let mut open: Option<(SandboxVirtualPath, SandboxProposalBodyWriter)> = None;
-    let mut requests = 0;
+    // No frame count ends a run: cancellation and the deadline bound it, and
+    // each frame is checked as it comes (FIX 8026).
     loop {
         cancel.check()?;
         let frame = read_frame(&mut stream, deadline)?;
-        if !matches!(frame, GuestFrame::WriteChunk { .. }) {
-            if requests == MAX_REQUESTS {
-                return Err(refused("guest protocol request budget exhausted"));
-            }
-            requests += 1;
+        // A step error is terminal: only the guest's nonzero finish follows.
+        if guest_error.is_some() && !matches!(frame, GuestFrame::Finish { status } if status != 0) {
+            return Err(refused("guest frame after its step error"));
         }
         if open.is_some()
             && !matches!(
@@ -327,6 +347,10 @@ fn receive_proposals_cancellable(
                 GuestFrame::WriteChunk { .. }
                     | GuestFrame::WriteClose
                     | GuestFrame::CredentialRead { .. }
+                    | GuestFrame::OutputText { .. }
+                    | GuestFrame::OutputBytes { .. }
+                    | GuestFrame::StoreBytes { .. }
+                    | GuestFrame::StepError { .. }
             )
         {
             return Err(refused("guest frame inside an open file proposal"));
@@ -493,30 +517,136 @@ fn receive_proposals_cancellable(
                     deadline,
                 )?;
             }
+            GuestFrame::OutputText {
+                target,
+                start,
+                frame,
+            } => {
+                let target = match target.as_str() {
+                    "console" => crate::engine_executor::JsCodeModeStream::Console,
+                    "finish" => crate::engine_executor::JsCodeModeStream::Finish { start },
+                    "store" => crate::engine_executor::JsCodeModeStream::Store { start },
+                    _ => return Err(refused("unknown streamed output target")),
+                };
+                receive_output(
+                    &mut stream,
+                    deadline,
+                    cancel,
+                    output,
+                    target,
+                    frame.into_bytes(),
+                )?;
+            }
+            GuestFrame::OutputBytes { path, frame } => {
+                let path = SandboxVirtualPath::try_new(path)?;
+                if path.mount() != SandboxMount::Outputs {
+                    return Err(refused("component output must be under /mnt/outputs"));
+                }
+                receive_output(
+                    &mut stream,
+                    deadline,
+                    cancel,
+                    output,
+                    crate::engine_executor::JsCodeModeStream::File(path.as_str()),
+                    frame,
+                )?;
+            }
+            GuestFrame::StoreBytes { start, frame } => {
+                receive_output(
+                    &mut stream,
+                    deadline,
+                    cancel,
+                    output,
+                    crate::engine_executor::JsCodeModeStream::Store { start },
+                    frame,
+                )?;
+            }
             GuestFrame::StepResult {
                 result_json: result,
             } => {
-                if result_json.is_some() || result.len() > oneiron_sandbox_contract::MAX_FILE_BYTES
-                {
-                    return Err(refused("duplicate or oversized guest step result"));
+                if result_json.is_some() {
+                    return Err(refused("duplicate guest step result"));
                 }
                 serde_json::from_str::<serde_json::Value>(&result)
                     .map_err(|_| refused("invalid guest result JSON"))?;
                 result_json = Some(result);
             }
+            GuestFrame::StepError { message } => {
+                if result_json.is_some() {
+                    return Err(refused("guest step error after its step result"));
+                }
+                // The open spool and every pending proposal go before the
+                // error is kept: a failed step proposes nothing.
+                drop(open.take());
+                writes.clear();
+                guest_error = Some(message);
+            }
             GuestFrame::Finish { status } => {
                 if status != 0 {
-                    return Err(refused("guest run failed; proposals discarded"));
+                    let Some(message) = guest_error else {
+                        return Err(refused("guest run failed; proposals discarded"));
+                    };
+                    let exit = MicroVmExit {
+                        status,
+                        overlay_dirty: false,
+                        result_json: None,
+                        guest_error: Some(message),
+                    };
+                    return Ok((exit, Vec::new()));
                 }
                 return Ok((
                     MicroVmExit {
                         status,
                         overlay_dirty: !writes.is_empty(),
                         result_json,
+                        guest_error: None,
                     },
                     writes.into_values().collect(),
                 ));
             }
+        }
+    }
+}
+
+fn receive_output(
+    stream: &mut UnixStream,
+    deadline: Instant,
+    cancel: &StepCancellation,
+    output: &mut dyn crate::code_sandbox::microvm::MicroVmOutputSink,
+    target: crate::engine_executor::JsCodeModeStream<'_>,
+    frame: Vec<u8>,
+) -> Result<()> {
+    if frame.len() > MAX_CHUNK_BYTES {
+        return Err(refused("output frame exceeds one message"));
+    }
+    cancel.check()?;
+    let stored = output.write_output_frame(target, frame);
+    cancel.check()?;
+    match stored {
+        Ok(()) => write_frame(stream, &HostFrame::Receipt { accepted: true }, deadline),
+        Err(error) => {
+            let code = if matches!(
+                &error,
+                crate::Error::Code(crate::error::CodeError::SandboxProposalDiskFloor { .. })
+            ) {
+                oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
+            } else {
+                "HOST_OUTPUT_FAILED"
+            };
+            if write_frame(
+                stream,
+                &HostFrame::Failure {
+                    code,
+                    detail: &error.to_string(),
+                },
+                deadline,
+            )
+            .is_ok()
+            {
+                cancel.check()?;
+                let _ = read_frame(stream, deadline);
+            }
+            Err(error)
         }
     }
 }

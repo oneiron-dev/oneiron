@@ -29,6 +29,15 @@ const TELEGRAM_MAX_TEXT_CHARS: usize = 4096;
 /// The prefixes a send names a Telegram chat or user by.
 const TELEGRAM_TARGET_PREFIXES: [&str; 2] = ["telegram:chat:", "telegram:user:"];
 
+/// Whether this machine holds the checked Telegram bot connection a send
+/// posts with (FIX 4747 slice 4): the check `telegram_send` makes before its
+/// call, as a read-only predicate.
+pub(super) fn telegram_connection_held(vault: &crate::Vault) -> bool {
+    vault
+        .verified_pack_connection_secret(TELEGRAM_PACK, TELEGRAM_CONNECTION)
+        .is_ok()
+}
+
 impl ServedChannelSink<'_> {
     pub(super) fn telegram_send(
         &self,

@@ -63,7 +63,7 @@ const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// settlement never reads one as its own.
 const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
 /// How often waiting work no change signals is looked at again.
-const WAITING_RECHECK: Duration = Duration::from_secs(30);
+pub(super) const WAITING_RECHECK: Duration = Duration::from_secs(30);
 
 /// What the pump waits for after a pass, beside the attempt signal (FIX
 /// 9467): the next real scheduled or backoff instant, and whether some
@@ -107,28 +107,26 @@ impl WorkflowPump {
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
-        let thread = std::thread::Builder::new()
-            .name("oneiron-workflows".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        tracing::error!(%error, "workflow pump runtime failed to start");
-                        status.update(|status| {
-                            status.workflows = WorkStatus::idle(IdleReason::StartFailed);
-                        });
-                        return;
-                    }
-                };
-                let recoveries = runner.models.recoveries();
-                pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
-                    stopped, recoveries,
-                );
-            })?;
+        let thread = crate::engine_thread("oneiron-workflows".into()).spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    tracing::error!(%error, "workflow pump runtime failed to start");
+                    status.update(|status| {
+                        status.workflows = WorkStatus::idle(IdleReason::StartFailed);
+                    });
+                    return;
+                }
+            };
+            let recoveries = runner.models.recoveries();
+            pump(
+                &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
+                recoveries,
+            );
+        })?;
         Ok(Self {
             stop,
             thread,
@@ -338,7 +336,17 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context, continuation);
+                    // FIX 15648: the workflow's wrapper carries the TASK it
+                    // realizes (its leaves carry no backlink), so a leaf of a
+                    // TASK-bound workflow opens as a task wake.
+                    let woken = AttemptQueue::new(vault)
+                        .get(*root)
+                        .ok()
+                        .flatten()
+                        .and_then(|wrapper| wrapper.task_ref)
+                        .or_else(|| step.attempt.task_ref.clone())
+                        .map(|_| oneiron::context_board::TurnWake::Task);
+                    let ran = runner.run(runtime, vault, step, context, continuation, woken);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
                     if !matches!(&ran, Err(fault) if fault.hook_wait) {
@@ -436,6 +444,16 @@ fn pump_once(
                     }
                 }
             });
+            // FIX 11532: the solo leaf's team receipt, after its own settle;
+            // a receipt failure logs and the workflow goes on.
+            if let Some((leaf, _)) = claimed
+                && progress.is_ok()
+                && leaf_completed(vault, leaf)
+            {
+                if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
+                    tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
+                }
+            }
             if hook_wait {
                 recheck = true;
                 break;
@@ -490,6 +508,13 @@ fn pump_once(
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
                                 runner.forget(step.leaf);
+                                // FIX 11532: the solo leaf's team receipt, after its
+                                // own end; a receipt failure logs and the stop stands.
+                                if let Err(error) =
+                                    oneiron::team::record_solo_receipt(vault, step.leaf, now_secs())
+                                {
+                                    tracing::warn!(kind = ?error.kind(), leaf = ?step.leaf, "a workflow leaf's solo receipt was not recorded");
+                                }
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
                             }
                             Err(settlement) => {

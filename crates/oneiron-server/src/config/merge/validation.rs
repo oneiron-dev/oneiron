@@ -37,6 +37,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "models" => struct_fields::<ModelsFile>(),
         "browser" => struct_fields::<super::BrowserConfig>(),
         "desktop" => struct_fields::<super::DesktopConfig>(),
+        "artifact_backend" => struct_fields::<crate::config::ArtifactBackendConfig>(),
         "merge_queue" => struct_fields::<super::MergeQueueCheckerConfig>(),
         "gpu" => struct_fields::<crate::runtime::GpuPoolConfig>(),
         "native_mail" => struct_fields::<super::NativeMailConfig>(),
@@ -44,6 +45,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
         "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
+        "apns" => struct_fields::<crate::config::ApnsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
@@ -99,11 +101,6 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     if config.ephemeral_timeout_ms <= 0 {
         return Err(invalid_sync_config(SyncConfigField::EphemeralTimeoutMs));
     }
-    if config.max_ephemeral_payload_bytes == 0 {
-        return Err(invalid_sync_config(
-            SyncConfigField::MaxEphemeralPayloadBytes,
-        ));
-    }
     if config.max_ephemeral_snapshot_bytes == 0 {
         return Err(invalid_sync_config(
             SyncConfigField::MaxEphemeralSnapshotBytes,
@@ -129,6 +126,9 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     if let Some(desktop) = &config.desktop {
         desktop.validate()?;
     }
+    if let Some(backend) = &config.artifact_backend {
+        backend.validate()?;
+    }
     if let Some(merge_queue) = &config.merge_queue {
         merge_queue.validate()?;
     }
@@ -146,6 +146,7 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     }
     config.line.validate()?;
     config.channel_endpoints.validate()?;
+    config.apns.validate()?;
     if let Some(linear) = &config.linear {
         linear.validate()?;
     }

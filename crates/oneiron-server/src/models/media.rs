@@ -51,6 +51,7 @@ use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
+mod agent;
 // FIX 3208: the video jobs an agent asked for under the owner's ai.video Grant.
 mod asked_jobs;
 mod bindings;
@@ -64,12 +65,15 @@ mod jobs;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
+mod run_replay;
 // FIX 780, 6083: a program's media jobs on its run's line.
 mod run_line;
 // FIX 1816: a video job charged by its length.
 mod video_length;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
+
+pub(crate) use agent::AgentMediaCall;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
 use run_line::{JobLine, ProgramLine};
@@ -310,6 +314,8 @@ pub struct MediaRuntime {
     host: Option<Arc<HostAccount>>,
     /// The jobs held here: running, or ended and not kept yet.
     jobs: Mutex<BTreeMap<String, Held>>,
+    /// Keyed non-job calls still in flight, shared before any second admission.
+    replay_runs: run_replay::ReplayRuns,
     /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
     store: Option<JobStore>,
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up
@@ -409,7 +415,7 @@ impl MediaRuntime {
         release: MediaDispatchRelease<'_>,
     ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
-        self.run_admitted_released(&run, request, voices, None, release)
+        self.run_admitted_released(&run, request, voices, None, release, None)
             .await
     }
 
@@ -658,7 +664,7 @@ fn media_backends(
 }
 
 /// `provider` as Cartesia takes it: every call names its API version.
-fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
+pub(super) fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     let mut provider = provider.clone();
     if !provider
         .headers
@@ -787,12 +793,7 @@ impl MediaRuntime {
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
-        if request.operation != AiOperation::Transcribe || bound_ms == 0 {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let ladder = self.ladder(&request)?;
-        let run = self.media_run(payer, sources)?;
-        ladder.open_media_stream(&run, request, bound_ms)
+        self.open_stream_with_agent(request, bound_ms, payer, sources, None)
     }
 }
 

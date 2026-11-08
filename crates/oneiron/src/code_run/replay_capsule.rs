@@ -7,25 +7,43 @@
 //!
 //! A capture is staged before the call and finalized with the rung that
 //! answered it: that rung's model and the route prompt it put first, so the
-//! capsule holds what was really sent. The host's ladder names the rung on
-//! the thread that made the call ([`note_answering_rung`]), and the capture
-//! site finalizes once the call is done ([`finalize_step_captures`]). A
-//! capture that fails, or a call no rung answered, leaves no replayable
-//! capsule, and the live step goes on as if none was asked.
+//! capsule holds what was really sent. A workflow owns its capture handle
+//! ([`WorkflowCaptureHandle`]) and finalizes it with the binding its call
+//! returned, on whichever thread the call answered. An executor step's
+//! capture is named on the thread that made the call
+//! ([`note_answering_rung`]) and finalized once the call is done
+//! ([`finalize_step_captures`]). A capture that fails, or a call no rung
+//! answered, leaves no replayable capsule, and the live step goes on as if
+//! none was asked. Both finalize through one writer, which writes the
+//! route prompt as a body the run owns, as the wall admits it (FIX 6255):
+//! the capsule names it by ref, with the digest of the prompt as sent
+//! ([`StoredRungBinding`]). A replay reads it from that body and sends it on
+//! the one rung's own call, never through a shared rung's prompt.
+//!
+//! Each capsule also keeps the role whose admission sent its call (FIX
+//! 6359), which admits every replay of it. A workflow passes its call's
+//! role to its handle. An executor step's host notes the role that actually
+//! admitted the call ([`note_step_admission_role`]). A capture with no
+//! noted role is never finalized: no role is guessed for it.
 //!
 //! An executor step's capsule also holds the run's state before the step
 //! (FIX 3694): its replay row as stored, with the config and teaching it ran
 //! under, in a body the run owns. A continuation of a failed run forks from
-//! the start of its failing step.
+//! the start of its failing step. The start also holds the run's epochs and
+//! fold ledger as they stood then, which the continuation inherits (FIX
+//! 4198).
 //!
 //! Each body a capsule names is written as the side-row wall admits it, each
 //! secret in it its custody handle, and the capsule names the actor whose
 //! step it was, so an erase of that actor releases them (FIX 6144, KEY STORE
-//! = A; `storage::replay_capsule`). Staged captures are kept and measured,
-//! never capped (FIX 6143). A request the wall refuses outright (a recovery
-//! phrase, a key split over members, an opaque codec) is withheld: no copy
-//! of it is kept, and the capsule keeps the step's start when that admits,
-//! so a continuation still forks from it (FIX 6254, [`CapsuleRequest`]).
+//! = A; `storage::replay_capsule`). The request is kept as pieces: each
+//! message and the rest of the request are held once per run and actor,
+//! and the capsule's own body is the manifest that names them (FIX 4192).
+//! Staged captures are kept and measured, never capped (FIX 6143). A
+//! request the wall refuses outright (a recovery phrase, a key split over
+//! members, an opaque codec) is withheld: no copy of it is kept, and the
+//! capsule keeps the step's start when that admits, so a continuation still
+//! forks from it (FIX 6254, [`CapsuleRequest`]).
 //!
 //! The answering rung also names the route it went out on
 //! ([`note_answering_route_pin`], PR-S1): its route, offer, catalog
@@ -33,15 +51,31 @@
 //! the same write. A strict replay checks it goes out on that route again
 //! (`shadow_runner`); a capture that pins no route leaves it `None`, and no
 //! live step is refused for it.
+//!
+//! An engine step's capsule also keeps where its request shows the step
+//! before's console whole ([`ConsoleSlot`], FIX 3608), as the request
+//! builder put it there: a callable's counterfactual renders each branch's
+//! observation into that one message, and into nothing else.
+//!
+//! A saved-workflow step that answered in one call, with no tool round,
+//! binds that answer to its capsule by the digest and length of its text
+//! ([`bind_workflow_step_answer`], FIX 3611). An audit of the step's result
+//! anchors a contribution check only through that binding.
 
 use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
+use super::FoldWordRef;
 use super::replay::CodeRunReplayRecord;
-use super::storage::{finalize_capsule, put_staged_capsule};
+use super::storage::{
+    StartCompaction, bind_capsule_answer, finalize_capsule, put_staged_capsule,
+    refresh_staged_request,
+};
 use crate::attempt_queue::AttemptId;
+use crate::compaction::output::OutputRef;
 use crate::llm::ReasoningEffort;
+use crate::model_binding::ModelRole;
 use crate::vault::VaultId;
 use crate::{
     ContentPart, EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, ModelTierRef, Result,
@@ -51,8 +85,9 @@ use crate::{
 pub use crate::team::task_exposure::TaskExposure;
 
 pub use crate::dreamer_runner::step_replay::{
-    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
+    ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
+    StepReplayCapsule, StoredRungBinding, StoredSpan, route_prompt_digest,
 };
 
 /// The body an [`ExecutorStepStart`] names: the run's replay row as stored
@@ -69,6 +104,10 @@ pub(crate) struct StepStartBody {
     pub(crate) soft_steps: u32,
     /// The resolved teaching the run's provider work was produced under.
     pub(crate) prompt_fingerprint: String,
+    /// The run's epochs and fold ledger as they stood at this start, inside
+    /// its prefix (FIX 4198): what a continuation from it inherits. It holds
+    /// no epoch's digest and no fold's words (FIX 928, FIX 18694).
+    pub(crate) compaction: StartCompaction,
 }
 
 /// One step a capture site is about to send.
@@ -84,8 +123,15 @@ pub(crate) struct StepCapture<'a> {
     /// The task the request carries, which `exposures` index into.
     pub(crate) task: &'a str,
     pub(crate) exposures: &'a [TaskExposure],
+    /// Where the request shows the step before's console whole, as the
+    /// request builder put it there (FIX 3608); `None` for a workflow step.
+    pub(crate) console: Option<ConsoleSlot>,
     /// Every row the request was read from, or `None` when any is unknown.
     pub(crate) source_rows: Option<Vec<EntityId>>,
+    /// The folds whose accepted summaries the request copies (FIX 18924):
+    /// the stubs it shows and the answers its consoles may print. Apart
+    /// from `source_rows`, and never a claim that they are complete.
+    pub(crate) fold_words: Vec<FoldWordRef>,
     /// An executor step's run state and config; `None` for a workflow step.
     pub(crate) start: Option<StepStartCapture<'a>>,
 }
@@ -110,11 +156,15 @@ pub(crate) struct CapsuleDraft<'a> {
     pub(crate) actor: EntityId,
     /// The request's canonical bytes as sent.
     pub(crate) request: Vec<u8>,
+    /// Where the run keeps the capsule's own request body: the manifest of
+    /// the request's shared pieces (FIX 4192).
     pub(crate) request_path: String,
     pub(crate) start_path: String,
     pub(crate) messages_digest: [u8; 32],
     /// Each exposure where it sits in the request as sent.
     pub(crate) exposures: Vec<ExposureSlot>,
+    /// The step before's console where it sits in the request as sent.
+    pub(crate) console: Option<ConsoleSlot>,
 }
 
 impl CapsuleDraft<'_> {
@@ -132,8 +182,15 @@ impl CapsuleDraft<'_> {
 struct Awaiting {
     vault: VaultId,
     key: (EntityId, u64, u64),
+    run: EntityId,
     messages: [u8; 32],
+    request_path: String,
+    exposures: Vec<ExposureSlot>,
+    console: Option<ConsoleSlot>,
     binding: Option<CapsuleRungBinding>,
+    /// The role whose admission sent the call (FIX 6359), as its host noted
+    /// it. A capture with none is not finalized.
+    role: Option<ModelRole>,
     /// The route the answering rung went out on, beside its binding.
     route_pin: Option<ReplayRoutePin>,
     /// The request bytes it captured.
@@ -153,6 +210,91 @@ thread_local! {
 fn messages_digest(messages: &[LlmMessage]) -> Option<[u8; 32]> {
     let bytes = serde_json::to_vec(messages).ok()?;
     Some(*blake3::hash(&bytes).as_bytes())
+}
+
+/// The actual admitted request replacing an unfinalized executor capture.
+pub(crate) struct CapsuleRequestUpdate<'a> {
+    pub(crate) key: (EntityId, u64, u64),
+    pub(crate) run: EntityId,
+    pub(crate) previous_messages: [u8; 32],
+    pub(crate) messages: [u8; 32],
+    pub(crate) request: &'a LlmRequest,
+    pub(crate) path: &'a str,
+    pub(crate) exposures: &'a [ExposureSlot],
+    pub(crate) console: Option<&'a ConsoleSlot>,
+}
+
+/// Keeps the actual request after the host appended browser handoff evidence.
+/// The original prefix identifies only this run's existing staged capture;
+/// its entire post-route request is admitted and committed before the digest
+/// used by the answering rung changes. Failure never fails the live call.
+pub fn refresh_step_capture_request(
+    vault: &Vault,
+    run: EntityId,
+    request: &LlmRequest,
+    staged_len: usize,
+) {
+    if request.messages.len() <= staged_len {
+        return;
+    }
+    let Some(prefix) = request.messages.get(..staged_len) else {
+        return;
+    };
+    let (Some(previous_messages), Some(messages)) =
+        (messages_digest(prefix), messages_digest(&request.messages))
+    else {
+        return;
+    };
+    let vault_id = vault.vault_id();
+    let staged: Vec<_> = AWAITING.with(|awaiting| {
+        awaiting
+            .borrow()
+            .iter()
+            .filter(|entry| {
+                entry.vault == vault_id
+                    && entry.run == run
+                    && entry.messages == previous_messages
+                    && entry.binding.is_none()
+            })
+            .map(|entry| {
+                (
+                    entry.key,
+                    entry.request_path.clone(),
+                    entry.exposures.clone(),
+                    entry.console.clone(),
+                )
+            })
+            .collect()
+    });
+    for (key, path, exposures, console) in staged {
+        let update = CapsuleRequestUpdate {
+            key,
+            run,
+            previous_messages,
+            messages,
+            request,
+            path: &path,
+            exposures: &exposures,
+            console: console.as_ref(),
+        };
+        match refresh_staged_request(vault, &update) {
+            Ok(Some(bytes)) => AWAITING.with(|awaiting| {
+                for entry in awaiting.borrow_mut().iter_mut().filter(|entry| {
+                    entry.vault == vault_id
+                        && entry.key == key
+                        && entry.run == run
+                        && entry.messages == previous_messages
+                }) {
+                    entry.messages = messages;
+                    entry.bytes = bytes;
+                }
+            }),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "a routed step request was not captured");
+            }
+        }
+    }
 }
 
 /// Notes the rung that answered `request` for the capture on this thread
@@ -202,11 +344,33 @@ pub fn note_answering_route_pin(request: &LlmRequest, pin: &ReplayRoutePin) {
     });
 }
 
+/// Notes `role`, the role whose admission sent a call (FIX 6359), for the
+/// capture on this thread that staged `messages`: the executor's own
+/// messages, before the host added anything to the call. A host calls it
+/// once the call is admitted, before it is sent; with no capture waiting on
+/// this thread it does nothing.
+pub fn note_step_admission_role(messages: &[LlmMessage], role: ModelRole) {
+    AWAITING.with(|awaiting| {
+        let mut awaiting = awaiting.borrow_mut();
+        if awaiting.is_empty() {
+            return;
+        }
+        let Some(digest) = messages_digest(messages) else {
+            return;
+        };
+        for entry in awaiting.iter_mut().filter(|entry| entry.messages == digest) {
+            entry.role = Some(role);
+        }
+    });
+}
+
 /// Finalizes this thread's staged captures for `vault`, once their calls are
-/// done: each that a rung answered takes that rung, and each that none did
+/// done: each that a rung answered takes that rung and its noted admission
+/// role, and each that none did, or whose role was not noted (FIX 6359),
 /// stays unreplayable. A capture site calls it after its step's call; a
 /// failure is logged and never fails the step. The drain is measured: how
-/// many took their rung, how many no rung answered and how many failed.
+/// many took their rung, how many no rung answered, how many had no noted
+/// role and how many failed.
 pub fn finalize_step_captures(vault: &Vault) {
     let id = vault.vault_id();
     let mine: Vec<Awaiting> = AWAITING.with(|awaiting| {
@@ -220,13 +384,18 @@ pub fn finalize_step_captures(vault: &Vault) {
     if mine.is_empty() {
         return;
     }
-    let (mut finalized, mut unanswered, mut failed) = (0_usize, 0_usize, 0_usize);
+    let (mut finalized, mut unanswered, mut role_missing, mut failed) =
+        (0_usize, 0_usize, 0_usize, 0_usize);
     for entry in mine {
         let Some(binding) = entry.binding else {
             unanswered += 1;
             continue;
         };
-        match finalize_capsule(vault, &entry.key, binding, entry.route_pin) {
+        let Some(role) = entry.role else {
+            role_missing += 1;
+            continue;
+        };
+        match finalize_capsule(vault, &entry.key, binding, role, entry.route_pin) {
             Ok(()) => finalized += 1,
             Err(error) => {
                 failed += 1;
@@ -237,15 +406,47 @@ pub fn finalize_step_captures(vault: &Vault) {
     tracing::debug!(
         finalized,
         unanswered,
+        role_missing,
         failed,
         "staged step replay captures drained"
     );
 }
 
-/// Captures a saved-workflow step's admitted request before it is sent: the
-/// step is its attempt's only call, made for `actor`. Finalize it with
-/// [`finalize_step_captures`] once the call is done. A failure is logged and
-/// never fails the step.
+/// One staged workflow call, identified by the key storage actually wrote.
+/// Its owner consumes it with that call's returned answering binding, even
+/// when the backend answered on another thread.
+pub struct WorkflowCaptureHandle {
+    vault: VaultId,
+    key: (EntityId, u64, u64),
+}
+
+impl WorkflowCaptureHandle {
+    /// Finalizes this call's capsule with its actual answering rung and route,
+    /// and `role`, the role whose admission sent the call (FIX 6359). A failed
+    /// write never fails the workflow. Erasure and already-finalized checks
+    /// stay in the native capsule writer.
+    pub fn finalize(
+        self,
+        vault: &Vault,
+        binding: CapsuleRungBinding,
+        role: ModelRole,
+        route_pin: Option<ReplayRoutePin>,
+    ) {
+        if self.vault != vault.vault_id() {
+            tracing::warn!("a workflow replay capture belongs to another vault");
+            return;
+        }
+        if let Err(error) = finalize_capsule(vault, &self.key, binding, role, route_pin) {
+            tracing::warn!(kind = ?error.kind(), "a workflow replay capsule was not finalized");
+        }
+    }
+}
+
+/// Captures a saved-workflow step's admitted request before it is sent:
+/// round `round` of the step's model calls (0 for its first, one more for
+/// each `self.use` tool round after it, FIX 7013), made for `actor`. The
+/// returned handle finalizes only that call with its actual returned
+/// binding. A failure is logged and never fails the step.
 pub fn capture_workflow_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -253,26 +454,71 @@ pub fn capture_workflow_step(
     actor: WriteActor,
     request: &LlmRequest,
     source_rows: Option<Vec<EntityId>>,
-) {
-    let Ok(run) = EntityId::from_bytes(*attempt.as_bytes()) else {
-        return;
+    round: u64,
+) -> Option<WorkflowCaptureHandle> {
+    let run = EntityId::from_bytes(*attempt.as_bytes()).ok()?;
+    let capture = StepCapture {
+        attempt,
+        lease_generation,
+        run,
+        step: round,
+        host: CapsuleHost::WorkflowStep,
+        actor,
+        request,
+        task: "",
+        exposures: &[],
+        console: None,
+        source_rows,
+        fold_words: Vec::new(),
+        start: None,
     };
-    capture_step(
-        vault,
-        &StepCapture {
-            attempt,
-            lease_generation,
-            run,
-            step: 0,
-            host: CapsuleHost::WorkflowStep,
-            actor,
-            request,
-            task: "",
-            exposures: &[],
-            source_rows,
-            start: None,
-        },
-    );
+    finalize_step_captures(vault);
+    match stage(vault, &capture) {
+        Ok(Some(awaiting)) => {
+            measure_staged(std::slice::from_ref(&awaiting));
+            Some(WorkflowCaptureHandle {
+                vault: awaiting.vault,
+                key: awaiting.key,
+            })
+        }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "a workflow replay capsule was not captured");
+            None
+        }
+    }
+}
+
+/// Binds a saved-workflow step's answer to the capsule its one call staged
+/// (FIX 3611): the digest and length of `answer`, the text that call
+/// returned and the step's durable result holds, on the capsule of
+/// `attempt`'s try `lease_generation` whose request was sent as `request`.
+/// The step's host calls it only for a step that answered in one call, with
+/// no tool round. No copy of the text is kept. A failure is logged and
+/// never fails the step.
+pub fn bind_workflow_step_answer(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_generation: u32,
+    request: &LlmRequest,
+    answer: &[u8],
+) {
+    let bound = EntityId::from_bytes(*attempt.as_bytes()).and_then(|run| {
+        let request_hash = request.canonical_hash().map_err(|error| {
+            crate::Error::InvalidConfig(format!("capsule answer request: {error}"))
+        })?;
+        // A step with no tool round answers in its first call, round 0
+        // (`capture_workflow_step`).
+        let key = (run, u64::from(lease_generation), 0);
+        bind_capsule_answer(vault, &key, request_hash, OutputRef::from_bytes(answer))
+    });
+    match bound {
+        Ok(true) => {}
+        Ok(false) => tracing::debug!("a workflow step's answer bound no replay capsule"),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "a workflow step's answer was not bound");
+        }
+    }
 }
 
 /// Stages `capture` as its attempt's capsule, after finalizing what this
@@ -330,7 +576,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         attempt: EntityId::from_bytes(*capture.attempt.as_bytes())?,
         actor: capsule_actor(capture.actor),
         request_path: format!(
-            "replay/capsule/{}/{:06}.request.json",
+            "replay/capsule/{}/{:06}.request.msgpack",
             capture.lease_generation, capture.step
         ),
         start_path: format!(
@@ -339,6 +585,10 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         ),
         messages_digest: messages,
         exposures: slots(capture),
+        console: capture
+            .console
+            .clone()
+            .filter(|console| console.locate(capture.request).is_some()),
         request,
     };
     if put_staged_capsule(vault, &draft)?.is_none() {
@@ -347,8 +597,13 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
     Ok(Some(Awaiting {
         vault: vault.vault_id(),
         key: draft.key(),
+        run: capture.run,
         messages,
+        request_path: draft.request_path,
+        exposures: draft.exposures,
+        console: draft.console,
         binding: None,
+        role: None,
         route_pin: None,
         bytes: draft.request.len() as u64,
     }))

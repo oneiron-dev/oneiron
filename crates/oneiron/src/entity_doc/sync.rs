@@ -31,6 +31,7 @@ use super::doc_actor::DocActor;
 use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes, stamp_with};
 use super::prose_admission::{LandedProse, admit_landed};
 use super::storage::{self, Head};
+use super::succession::Succession;
 use super::verbs::{Admitted, admitted_text_in_txn};
 use super::{EntityDoc, TextField, invalid};
 use crate::batch::secret_scan::{
@@ -189,7 +190,8 @@ pub(crate) fn edit_sync_text_in_txn(
 /// this vault's own birth of the same row first; a record's sequence rows
 /// take the update as their next one. `masked` is the re-masked copy text a
 /// copy edit landed from: the scan reads it in place of the document's
-/// text. Whether the text moved.
+/// text. A typed body's frame joins the body instead (FIX 2458). Whether the
+/// text moved.
 pub(crate) fn join_sync_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -197,6 +199,17 @@ pub(crate) fn join_sync_update_in_txn(
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<bool> {
+    // FIX 2458: whatever plane the record's text keeps here, a typed body's
+    // frame joins its body through the office merge preflight.
+    if let Some(moved) = crate::typed_body::sync_frame::join_typed_body_frame_in_txn(
+        vault,
+        txn,
+        entity,
+        update,
+        &super::office::OFFICE_BODY_OWNER,
+    )? {
+        return Ok(moved);
+    }
     let (mut h, whole) = match plane_in(vault, txn, entity)? {
         Plane::Document(h) => (h, whole_document(update)),
         Plane::Unborn => match whole_document(update) {
@@ -212,10 +225,20 @@ pub(crate) fn join_sync_update_in_txn(
     };
     let doc = storage::load(&vault.store, txn, &h)?;
     let before = doc.doc.oplog_vv();
-    // Operations after a birth build on it, so a whole document this one
-    // does not hold is another birth of the same text: it stands apart.
-    if whole.is_some_and(|whole| !before.includes_vv(&whole.oplog_vv())) {
-        return Err(invalid("sync text of another document birth"));
+    // Operations after a birth build on it, so a whole document that does
+    // not hold this one's birth is another birth of the same text: it stands
+    // apart. One born where this one was joins, its unseen edits with it
+    // (FIX 11795).
+    if let Some(whole) = whole
+        && !before.includes_vv(&whole.oplog_vv())
+        && !born_alike(entity, &h, &before, &whole)?
+    {
+        return match succession_in_txn(vault, txn, entity, h, &doc, whole, false)? {
+            Some(Succeeded::Taken) => Ok(true),
+            Some(Succeeded::Held) => Ok(false),
+            Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
+            None => Err(invalid("sync text of another document birth")),
+        };
     }
     import_whole(&doc.doc, update)?;
     if doc.doc.oplog_vv() == before {
@@ -231,6 +254,120 @@ pub(crate) fn join_sync_update_in_txn(
         synced(masked),
     )?;
     Ok(true)
+}
+
+/// What a peer's whole document of a record did here by a canonical
+/// restore's succession proof (FIX 3553).
+enum Succeeded {
+    /// It succeeds the history held here, and took its place.
+    Taken,
+    /// It is a copy of the history a restore of the text here replaced: the
+    /// text here stands, and the peer takes it in turn.
+    Held,
+    /// It succeeds the history held here, which stands against it
+    /// ([`super::adoption`]).
+    Stands(&'static str),
+}
+
+/// `whole`, a peer's document of `entity` that is no version of `old`, the
+/// one `h` heads here (FIX 3553; Engine 11-06 20:16, A). A copy of the
+/// history a restore of the text here replaced is held. A restore's
+/// successor of the history held here takes its place by the rules of
+/// [`super::adoption`], under a new incarnation, as a record's incarnation
+/// is this vault's own; a MESSAGE's successor comes with its window head and
+/// its incarnation instead (`carried`). The sync plane names no shared
+/// incarnation, so a history is held here where the two versions share an
+/// operation. Only a door with the owner's authority replaces history here,
+/// `privileged`: a STATE, never a peer's UPDATE, whose writer holds a text
+/// grant and no restore of its own, and whose proof alone certifies nothing.
+/// `None` where no proof relates them, or the door may not take one.
+fn succession_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    mut h: Head,
+    old: &EntityDoc,
+    whole: LoroDoc,
+    privileged: bool,
+) -> Result<Option<Succeeded>> {
+    let held = old.doc.oplog_vv();
+    let theirs = whole.oplog_vv();
+    let replaced_here = h
+        .succeeds
+        .as_ref()
+        .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok());
+    if replaced_here.is_some_and(|replaced| shares(&replaced, &theirs)) {
+        return Ok(Some(Succeeded::Held));
+    }
+    if !privileged {
+        return Ok(None);
+    }
+    let Some(proof) = Succession::read(&whole) else {
+        return Ok(None);
+    };
+    let Ok(replaced) = VersionVector::decode(&proof.version) else {
+        return Ok(None);
+    };
+    if !shares(&replaced, &held)
+        || vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE)
+    {
+        return Ok(None);
+    }
+    let incoming = EntityDoc::from_loro(whole)?;
+    if incoming.birth().entity != entity.to_hex() {
+        return Ok(None);
+    }
+    let pins = match super::adoption::twins_in(vault, txn, entity, old, &incoming, &replaced)? {
+        Ok(pins) => pins,
+        Err(
+            super::adoption::Stands::Deferred(reason) | super::adoption::Stands::Refused(reason),
+        ) => return Ok(Some(Succeeded::Stands(reason))),
+    };
+    h.incarnation = EntityId::now().to_hex();
+    h.birth_frontier = None;
+    h.succeeds = Some(proof);
+    storage::persist_scanned(vault, txn, entity, &mut h, &incoming, None, synced(None))?;
+    super::adoption::complete_in_txn(vault, txn, entity, &h, old, &incoming, &replaced, &pins)?;
+    Ok(Some(Succeeded::Taken))
+}
+
+/// Whether `a` and `b` hold operations of one peer: versions of one
+/// history. A restore's replay takes fresh peers, so its successor shares
+/// none with the history it replaced (FIX 3553).
+fn shares(a: &VersionVector, b: &VersionVector) -> bool {
+    a.iter()
+        .any(|(peer, counter)| *counter > 0 && b.get(peer).is_some_and(|theirs| *theirs > 0))
+}
+
+/// [`join_sync_update_in_txn`]'s honour of a canonical restore's succession
+/// proof, for `staged`, a STATE of `entity` (FIX 3553): `Some(true)` once a
+/// restore's successor of the text held here took its place, `Some(false)`
+/// for a copy of the history a restore of the text here replaced, which
+/// changes nothing. `None` where the two are versions of one history, no
+/// proof relates them, or the door is not `privileged` (the owner's own
+/// import, never a peer's text grant). A successor the text here stands
+/// against is refused.
+pub(crate) fn take_sync_successor_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    staged: &LoroDoc,
+    privileged: bool,
+) -> Result<Option<bool>> {
+    let Plane::Document(h) = plane_in(vault, txn, entity)? else {
+        return Ok(None);
+    };
+    let old = storage::load(&vault.store, txn, &h)?;
+    let (held, theirs) = (old.doc.oplog_vv(), staged.oplog_vv());
+    if theirs.is_empty() || held.includes_vv(&theirs) || theirs.includes_vv(&held) {
+        return Ok(None);
+    }
+    match succession_in_txn(vault, txn, entity, h, &old, staged.fork(), privileged)? {
+        Some(Succeeded::Taken) => Ok(Some(true)),
+        Some(Succeeded::Held) => Ok(Some(false)),
+        Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
+        None => Ok(None),
+    }
 }
 
 /// Replaces `entity`'s document with `staged`, a peer's state with this
@@ -261,7 +398,7 @@ pub(crate) fn replace_sync_text_in_txn(
     }
     let mut h = match head {
         Some(h) => h,
-        None => carried_head_in_txn(vault, txn, entity)?,
+        None => carried_head_in_txn(vault, txn, entity, &doc.doc)?,
     };
     storage::persist_scanned(vault, txn, entity, &mut h, &doc, None, synced(None))?;
     if doc.doc.is_shallow() {
@@ -507,15 +644,60 @@ fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
     Some((text, pointer))
 }
 
-/// A fresh document whose peer is derived from `entity`.
-fn seeded(entity: &EntityId) -> Result<LoroDoc> {
+/// The peer `entity`'s lazy birth's operations take, the same on every
+/// machine.
+fn birth_peer(entity: &EntityId) -> u64 {
     let key = blake3::derive_key(BIRTH_PEER_CONTEXT, entity.as_bytes());
     let mut peer = [0u8; 8];
     peer.copy_from_slice(&key[..8]);
+    u64::from_be_bytes(peer) >> 1
+}
+
+/// A fresh document whose peer is derived from `entity`.
+fn seeded(entity: &EntityId) -> Result<LoroDoc> {
     let doc = LoroDoc::new();
-    doc.set_peer_id(u64::from_be_bytes(peer) >> 1)
+    doc.set_peer_id(birth_peer(entity))
         .map_err(|_| invalid("document birth peer"))?;
     Ok(doc)
+}
+
+/// The incarnation of `entity`'s lazy birth, the same on every machine as
+/// its operations are (FIX 11795): two machines' lazy births of one row are
+/// one document wherever their heads meet.
+fn lazy_incarnation(entity: &EntityId) -> Result<String> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::SYNC_TEXT_BIRTH_INCARNATION,
+        &[entity.as_bytes()],
+    )
+    .map(|id| id.to_hex())
+}
+
+/// Whether `doc` holds `entity`'s lazy birth: the operations of its derived
+/// birth peer, which nothing but that birth writes.
+fn holds_lazy_birth(entity: &EntityId, doc: &LoroDoc) -> bool {
+    doc.oplog_vv().get(&birth_peer(entity)).is_some()
+}
+
+/// Whether `whole`, a peer's whole document of `entity`, was born where the
+/// document `h` heads, holding `before`, was (FIX 11795): it holds every
+/// operation of that document's birth here, or both hold the one lazy birth
+/// of the row, at the same counter. Its later edits then build on the same
+/// birth and join.
+fn born_alike(
+    entity: &EntityId,
+    h: &Head,
+    before: &VersionVector,
+    whole: &LoroDoc,
+) -> Result<bool> {
+    let held = whole.oplog_vv();
+    if let Some(birth) = &h.birth_frontier {
+        let birth = super::document::decode_frontier(birth)?;
+        if !birth.is_empty() && birth.iter().all(|id| held.includes_id(id)) {
+            return Ok(true);
+        }
+    }
+    let peer = birth_peer(entity);
+    Ok(before.get(&peer).is_some() && before.get(&peer) == held.get(&peer))
 }
 
 /// A birth that names no one: no stamp, at the record's time. Its commit
@@ -557,21 +739,31 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     )?;
     let mut head = Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
+        incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
         field: born.field,
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
+        succeeds: None,
     };
     storage::persist_scanned(vault, txn, entity, &mut head, &born.doc, None, synced(None))?;
     Ok(head)
 }
 
-/// The head a peer's document takes here for a MESSAGE, or another kind with
-/// a field rule (FIX 11794), that holds none: the document its row names, or,
-/// for a row still holding its text, its own id, its row then naming it.
-fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
+/// The head a peer's document `carried` takes here for a MESSAGE, or another
+/// kind with a field rule (FIX 11794), that holds none: the document its row
+/// names, or, for a row still holding its text, its own id, its row then
+/// naming it. A document holding the row's lazy birth takes that birth's
+/// incarnation, as every machine's lazy birth of it does (FIX 11795); any
+/// other takes a new one.
+fn carried_head_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    carried: &LoroDoc,
+) -> Result<Head> {
     let raw = vault
         .store
         .port_entity_raw(txn, entity)?
@@ -593,14 +785,21 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
             entity.to_hex()
         }
     };
+    let incarnation = if holds_lazy_birth(entity, carried) {
+        lazy_incarnation(entity)?
+    } else {
+        EntityId::now().to_hex()
+    };
     Ok(Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
+        incarnation,
         document,
         field,
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        succeeds: None,
     })
 }
 

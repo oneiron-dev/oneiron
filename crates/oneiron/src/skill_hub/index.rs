@@ -269,6 +269,7 @@ impl Vault {
                 ClaimLifecycleStatus::Active,
             )?;
             body.source = Some(ClaimSource::Observed);
+            body.scope_facet = self.default_facet_in_txn(wtxn)?;
             self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
             replacement_id
         };
@@ -319,6 +320,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        body.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {
             self.supersede_reserved_claim_in_txn(

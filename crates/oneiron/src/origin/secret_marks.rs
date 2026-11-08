@@ -125,6 +125,14 @@ impl RepoSecretMark {
     /// The one schema these facts are written at.
     pub(crate) const SCHEMA: u16 = 1;
 
+    /// The fact's id, for a reader that names one mark (FIX 7608 slice 8).
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn mark_id(&self) -> Result<EntityId> {
+        self.id()
+    }
+
     /// The fact's id: its whole address, each alternative a tagged
     /// MessagePack part, under the derivation's own length framing.
     fn id(&self) -> Result<EntityId> {
@@ -385,10 +393,6 @@ fn span_of(key: &RetainedRepoPlacedKey) -> RepoSecretPlacement {
 ///
 /// # Errors
 /// A store failure, or another record under a mark's id.
-#[allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the exact forward calls it in 2b-ii-B"
-)]
 pub(crate) fn readdress_forward_secret_marks_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -480,6 +484,10 @@ fn steps_value(member: &[MemberStep]) -> Value {
                     Value::Array(vec![Value::from("tar"), Value::from(entry)])
                 }
                 MemberStep::Xz => Value::Array(vec![Value::from("xz")]),
+                // FIX 11575: a 7z entry.
+                MemberStep::SevenZip { entry } => {
+                    Value::Array(vec![Value::from("seven_zip"), Value::from(entry)])
+                }
                 MemberStep::PdfStream { object, generation } => Value::Array(vec![
                     Value::from("pdf_stream"),
                     Value::from(object),

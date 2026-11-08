@@ -215,6 +215,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: None,
+            share_ref: None,
             delegation: Some(SupportDelegation {
                 purpose: request.purpose,
                 ticket_ref: request.ticket_ref,
@@ -225,6 +226,7 @@ impl Vault {
             }),
             comm: request.comm,
             trusted_contact: None,
+            seat_claim: None,
         };
         claims.validate().map_err(|_| {
             refused("the support grant's purpose, ticket or bounds are not well formed")

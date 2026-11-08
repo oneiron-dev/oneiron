@@ -122,8 +122,9 @@ pub(crate) fn mirror_document_pins(
     message: &EntityId,
     window: &WindowKey,
 ) -> Result<bool> {
-    let pins = {
+    let (pins, replaced_version) = {
         let rtxn = vault.store.env.read_txn()?;
+        let replaced_version = vault.replaced_message_version_in_txn(&rtxn, message)?;
         let mut pins = Vec::new();
         for pin in vault.message_quote_pins_in_txn(&rtxn, message)? {
             let erased = match pin.carried_ids() {
@@ -136,7 +137,7 @@ pub(crate) fn mirror_document_pins(
                 pins.push(pin);
             }
         }
-        pins
+        (pins, replaced_version)
     };
     if pins.is_empty() {
         return Ok(false);
@@ -167,7 +168,28 @@ pub(crate) fn mirror_document_pins(
         write_carrier(doc, &map, &key, pin)?;
         wrote = true;
     }
-    if replaced {
+    // The window's copies of the pins of the history a canonical restore's
+    // successor replaced here go, each beside its twin on the successor
+    // (FIX 3464).
+    let mut superseded = false;
+    if let Some(version) = &replaced_version {
+        let prefix = format!("{}/", message.to_hex());
+        for (key, bytes) in pin_rows(&map, |key, _| key.starts_with(&prefix)) {
+            let Ok(Some(old)) = carried_pin(&map, &key, &bytes) else {
+                continue;
+            };
+            if old.within(version)
+                && pins
+                    .iter()
+                    .any(|pin| !pin.within(version) && pin.twin_of(&old))
+            {
+                map_delete(&map, &key)?;
+                superseded = true;
+                wrote = true;
+            }
+        }
+    }
+    if replaced || superseded {
         // And the live twins' parts, which no pin lists now.
         for part in unreferenced_parts(&map, &listed_parts(&map)) {
             map_delete(&map, &part)?;
@@ -340,23 +362,41 @@ fn holds_document_pin_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(DOCUMENT_PINS_MAP))
 }
 
-/// Merges each carried pin into this vault's in one write. A pin whose
-/// parts have not all landed waits for them.
-fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) {
-    let mut carried = Vec::new();
-    for (map_key, bytes) in rows {
-        match carried_pin(map, &map_key, &bytes) {
-            Ok(Some(pin)) => carried.push((map_key, pin)),
-            Ok(None) => tracing::debug!(window, key = %map_key, "document pin waits for its parts"),
-            Err(_) => tracing::warn!(window, key = %map_key, "document pin malformed; left out"),
+/// Carried quote pins decoded and joined before opening their writer.
+pub(super) struct PinBatch {
+    carried: Vec<(String, CitationPin)>,
+}
+
+impl PinBatch {
+    pub(super) fn prepare(map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) -> Self {
+        let mut carried = Vec::new();
+        for (map_key, bytes) in rows {
+            match carried_pin(map, &map_key, &bytes) {
+                Ok(Some(pin)) => carried.push((map_key, pin)),
+                Ok(None) => {
+                    tracing::debug!(window, key = %map_key, "document pin waits for its parts")
+                }
+                Err(_) => {
+                    tracing::warn!(window, key = %map_key, "document pin malformed; left out")
+                }
+            }
         }
+        Self { carried }
     }
-    if carried.is_empty() {
-        return;
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.carried.is_empty()
     }
-    let outcome = vault.with_write_txn_grouped(|wtxn| {
+
+    pub(super) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        window: &str,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let Self { carried } = self;
         let mut merged = 0_usize;
-        for (map_key, pin) in &carried {
+        for (map_key, pin) in carried {
             match vault.merge_replicated_quote_pin_in_txn(wtxn, pin)? {
                 PinMerge::Written => merged += 1,
                 PinMerge::Held => {}
@@ -374,7 +414,17 @@ fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec
             }
         }
         Ok(merged)
-    });
+    }
+}
+
+/// Merges each carried pin into this vault's in one write. A pin whose
+/// parts have not all landed waits for them.
+fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) {
+    let staged = PinBatch::prepare(map, window, rows);
+    if staged.is_empty() {
+        return;
+    }
+    let outcome = vault.with_write_txn_grouped(|wtxn| staged.stage_in_txn(vault, window, wtxn));
     match outcome {
         Ok(merged) if merged > 0 => tracing::debug!(window, merged, "document pins merged"),
         Ok(_) => {}

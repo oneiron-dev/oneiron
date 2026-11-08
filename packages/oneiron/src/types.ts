@@ -12,6 +12,8 @@
  * call boundary.
  */
 
+import type { ReadFilterInput, WorldRecipientNotice } from "./facade-types.js"
+
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
@@ -290,8 +292,17 @@ export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 
+/** Caller-selected worlds, within the caller's existing read authority. */
+export type RecallWorlds =
+  | { kind: "all" }
+  | { kind: "base" }
+  | { kind: "world"; worldRef: string; includeBase: boolean }
+  | { kind: "worlds"; worldRefs: string[]; includeBase: boolean }
+
 /** Recall scoping: narrowing only; unset is the vault floor. */
 export type RecallScope = {
+  /** Explicit world selection; mutually exclusive with `worldRef`. */
+  worlds?: RecallWorlds
   worldRef?: string
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
@@ -348,6 +359,8 @@ export type RecallOptions = {
   tokenBudget?: number
   /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
   readerAgentRef?: string
+  /** The caller's retrieval filter: it only narrows the vault's floor; an unset field leaves the floor in force. */
+  filter?: ReadFilterInput
 }
 
 /** Where one recalled item came from. */
@@ -388,6 +401,8 @@ export type MemoryItem = {
   stale?: MemoryStaleStamp
   world?: string
   facet?: string
+  /** The claim's explicit project audience, not a topic or a WORLD. */
+  projectRef?: string
   salience?: number
   /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
   reactions: string[]
@@ -454,10 +469,10 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
-export type MemoryExport = { format: string; archive: string; digest: string }
-/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
-export type ExportReceipt = { format: string; bytes: number; digest: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. `notices` names each world the owner's own export carries that his recipient choice would keep from where it goes (owner ruling 1-EXPORT = B). */
+export type MemoryExport = { format: string; archive: string; digest: string; notices?: WorldRecipientNotice[] }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3, and its notices as `MemoryExport` names them. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string; notices?: WorldRecipientNotice[] }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {

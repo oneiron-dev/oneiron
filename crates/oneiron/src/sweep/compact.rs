@@ -393,6 +393,10 @@ pub(super) fn compact_window_with(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
     crate::sync::message_docs::scrub_message_docs(vault, &doc, None)?;
+    // FIX 2691: and the office proposals of an erased artifact.
+    crate::sync::office_proposals::scrub_office_proposals(vault, &doc, None)?;
+    // FIX 12470: and the typed body receipts of an erased body.
+    crate::sync::typed_body_rows::scrub_typed_body_rows(vault, &doc, None)?;
     // FIX 6870: and an erased repo's portable manifest.
     crate::sync::repo_manifests::scrub_repo_manifests(vault, &doc, None)?;
     // FIX 3877: an origin claim carrier names no erased actor.
@@ -404,6 +408,9 @@ pub(super) fn compact_window_with(
     crate::workspace_roster::scrub_audience_edits(vault, &doc, None)?;
     // A removed session's epoch floor leaves the window too.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // none naming an erased actor; the shallow cut drops the old revisions.
+    crate::sync::source_audiences::refresh_and_scrub(vault, &doc, None)?;
 
     // OF-013: a withdrawn generation's live carrier becomes its keyframe
     // envelope before the shallow export drops the history that held its
@@ -422,7 +429,13 @@ pub(super) fn compact_window_with(
         tracing::error!("sweep: shallow cut not rooted at the window's tip — deferred");
         return Ok(CompactOutcome::UnprovedDefer);
     }
-    let (shallow, vv) = (cut.bytes, cut.version.encode());
+    // Its pads rest by reference where custody here holds them (FIX 10527),
+    // as every persisted snapshot's do: a row kept raw in the rows it was
+    // rebuilt from does not outlive this cut so. A fault keeps the cut's
+    // bytes, warned.
+    let shallow =
+        crate::sync::window::persisted_window_pads(vault, key, &cut.bytes, None).into_owned();
+    let vv = cut.version.encode();
 
     let merged_keys: BTreeSet<Vec<u8>> = update_rows
         .iter()

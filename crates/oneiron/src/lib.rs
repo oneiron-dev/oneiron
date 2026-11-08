@@ -37,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
@@ -148,6 +149,7 @@ pub mod consent;
 pub mod consent_graduation;
 pub mod federation;
 pub(crate) mod gate;
+pub use gate::code_consent_settlement;
 pub use gate::policy_manifest_doors;
 pub mod policy_model;
 pub mod receipt;
@@ -247,6 +249,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
@@ -257,6 +260,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
@@ -632,9 +637,10 @@ pub use crate::memory::web_acquisition::{
     WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
 };
 pub use crate::vault::{
-    ActorBound, HydratedShortId, IdScanPage, RawEntityPut, ReaderTableShortfall, TextIndexStatus,
-    VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, IdScanPage, OpenOptions, RawEntityPut, ReaderTableShortfall,
+    TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
+    VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultStorageId, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,

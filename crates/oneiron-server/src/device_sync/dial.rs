@@ -4,7 +4,7 @@
 use crate::config::{DeviceSyncConfig, ServeConfig};
 use crate::server::SyncServer;
 
-use super::enrolment::{EnrolmentFiles, EnrolmentSource};
+use super::enrolment::{DeviceEnrolment, EnrolmentFiles, EnrolmentSource};
 
 /// What this machine dials: the home `[device_sync]` names by hand, else the
 /// one it enrolled with, and the worlds the section follows.
@@ -33,9 +33,17 @@ impl Dial {
         config: &ServeConfig,
         source: EnrolmentSource,
     ) -> anyhow::Result<Option<Self>> {
+        Self::resolve_for_vault(&server.vault, config, source)
+    }
+
+    pub(super) fn resolve_for_vault(
+        vault: &oneiron::Vault,
+        config: &ServeConfig,
+        source: EnrolmentSource,
+    ) -> anyhow::Result<Option<Self>> {
         let section = config.device_sync.as_ref();
         // No directory to look in means `device enrol` wrote nothing either.
-        let enrolment = match EnrolmentFiles::for_serve(&config.keystore, &server.vault, source) {
+        let enrolment = match EnrolmentFiles::for_serve(&config.keystore, vault, source) {
             Ok(Some(files)) => files.read()?.map(|record| (files, record)),
             Ok(None) | Err(_) => None,
         };
@@ -52,13 +60,13 @@ impl Dial {
             .transpose()?
             .flatten()
         {
-            // An enrolment's pin is its own home's only.
-            let pin = enrolment
-                .filter(|(_, record)| {
-                    crate::config::device_sync::parse_machine(&record.home_machine).ok()
-                        == Some(named.machine)
-                })
-                .and_then(|(_, record)| record.authority_checkpoint_pin);
+            // An enrolment's pins are its own home's only.
+            let enrolment = enrolment.filter(|(_, record)| {
+                crate::config::device_sync::parse_machine(&record.home_machine).ok()
+                    == Some(named.machine)
+            });
+            pin_mesh(vault, enrolment.as_ref().map(|(_, record)| record));
+            let pin = enrolment.and_then(|(_, record)| record.authority_checkpoint_pin);
             return Ok(Some(Self {
                 home: named.machine,
                 url: named.url.to_owned(),
@@ -79,6 +87,7 @@ impl Dial {
             );
             return Ok(None);
         };
+        pin_mesh(vault, Some(&record));
         Ok(Some(Self {
             home: crate::config::device_sync::parse_machine(&record.home_machine)?,
             url: record.home_url,
@@ -92,3 +101,27 @@ impl Dial {
         }))
     }
 }
+
+/// Pins the home `record` names, at the mesh address that home answered at
+/// enrolment, on this install's mesh listener (FIX 3374): the listener admits
+/// it on sync, and the dial goes over the mesh first. A record with no mesh
+/// address, or an install with no MACHINE yet, pins nothing.
+#[cfg(feature = "mesh")]
+fn pin_mesh(vault: &oneiron::Vault, record: Option<&DeviceEnrolment>) {
+    let Some(record) = record else {
+        return;
+    };
+    let (Some(address), Ok(home)) = (
+        record.home_mesh.clone(),
+        crate::config::device_sync::parse_machine(&record.home_machine),
+    ) else {
+        return;
+    };
+    if let Ok(Some(local)) = vault.local_machine() {
+        crate::handler::mesh::pin_home(local.id, home, address);
+    }
+}
+
+/// A build without the `mesh` feature runs no listener to pin a home on.
+#[cfg(not(feature = "mesh"))]
+fn pin_mesh(_vault: &oneiron::Vault, _record: Option<&DeviceEnrolment>) {}

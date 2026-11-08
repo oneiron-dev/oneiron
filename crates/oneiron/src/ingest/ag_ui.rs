@@ -1,5 +1,16 @@
 //! Opt-in AG-UI event-dump normalization, without capture or outcome inference.
 
+mod file;
+mod observations;
+pub use file::{
+    AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt,
+    AgUiFileView,
+};
+pub use observations::{
+    AgUiAppObservation, AgUiCustomMapping, AgUiObservationKind, AgUiRepairLink,
+    AgUiRepairLinkStatus,
+};
+
 use std::collections::BTreeMap;
 
 use serde_json::Value;

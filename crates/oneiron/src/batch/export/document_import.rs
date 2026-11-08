@@ -12,10 +12,10 @@ use super::archive_index::{
     ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
     QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
 };
+use super::result_import::put_run_results_in_txn;
 use super::{
     ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
-    ExportEpochFloor, ExportResultBody, ExportRun, ExportSkillBundle, WholeVaultDocument,
-    WholeVaultImportReceipt,
+    ExportResultBody, ExportSkillBundle, WholeVaultDocument, WholeVaultImportReceipt,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -23,8 +23,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
-    ENTITY_TYPE_EVENT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -66,9 +68,20 @@ impl Vault {
     /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
+    /// Missing claim-class vocabulary returns through its native setting door,
+    /// without foreign owner stamps; enforcement follows this build's compiled
+    /// equivalence. An exact normalized repeat is unchanged.
     ///
-    /// Same-ID divergent rows are refused, never overwritten. Maintenance rows,
-    /// witness messages, notes, other reserved claims and owned/provenanced edges need
+    /// Witness MESSAGE rows come back as imported evidence (FIX 7777): typed
+    /// `import.archive`, marked `metadata.import.source = "archive"`, with the
+    /// source's type and `AuthoredBy` bylines inert in that metadata and no
+    /// local author edge; the TURN and CONVERSATION they join are stamped
+    /// `import_source = "archive"`. A NOTE keeps its source author as an
+    /// imported one, which matches no local writer, and no `AuthoredBy`
+    /// edge; a stored NOTE compares as its live body, as the export reads it.
+    ///
+    /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
+    /// other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
     /// The manifest explicitly marks hub configuration and foreign skill signals
@@ -148,8 +161,9 @@ impl Vault {
                     .put(Tag::Released, body.blake3.as_bytes(), &[])?;
             }
         }
-        // The custody values a result body's sweep replaces, and the body
-        // instances it spills into, read and minted before the writer opens.
+        // FIX 6648: one body instance for each released result occurrence,
+        // minted before the writer opens. The custody values each body's
+        // sweep replaces are read in the writer (KS-3).
         let known = super::result_reserve::staged_result_sinks(self, &archive)?;
         // FIX 588: the digests this import stages are tracked for post-error
         // cleanup. Declared before the pin-all guard, so on every pre-commit
@@ -191,7 +205,9 @@ impl Vault {
         super::provenance_import::index_mapped_edges(&mut archive)?;
         super::provenance_import::index_provenance(&mut archive)?;
         super::expression_import::index_expressions(&mut archive)?;
+        super::evidence_import::index_message_containers(&mut archive)?;
         let mut pending = 0;
+        let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
@@ -228,8 +244,14 @@ impl Vault {
                 // A file-plane ASSET compares as its body, never the manifest
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
+                let existing = live_note_row(self, &wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -241,11 +263,41 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
+            }
+            if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+                let state =
+                    crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &wtxn, &id)?;
+                if state.deleted
+                    || state.stale
+                    || self.local_hard_delete_marker_exists_in_txn(&wtxn, &id)?
+                {
+                    return Err(invalid("import ID collides with a deleted entity"));
+                }
+                crate::comm::import_claim_class_descriptor_in_txn(
+                    self,
+                    &mut wtxn,
+                    &id,
+                    &row.body.to_bytes_in(&archive.files)?,
+                    TimeRange {
+                        start: row.occurred_start,
+                        end: row.occurred_end,
+                    },
+                    row.learned_at,
+                )?;
+                stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
+                archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
+                inserted_descriptors += 1;
+                continue;
             }
             self.store.validate_public_entity_type(row.entity_type)?;
             // Only the row's id and what it waits on stay pending, in the
@@ -265,11 +317,41 @@ impl Vault {
             // facet's put lands first and the masked initial put below finds
             // a stored FACET. A facet the archive does not carry blocks
             // nothing (it is never Waiting); the put then fails fail-closed.
-            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+            // FIX 8741: so does an ASSET_TEXT the archive carries with no
+            // `DerivedFrom` edge, born source-free under its archived facet.
+            if matches!(
+                row.entity_type,
+                ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN | ENTITY_TYPE_NOTE
+            ) || archived_source_free_text(&archive, &id, row.entity_type)?
+            {
                 if let Some(facet) = archived_birth_facet(&archive, &id)?
                     && !waits_on.contains(&facet)
                 {
                     waits_on.push(facet);
+                }
+            }
+            // FIX 8741 review: an ASSET_TEXT the archive carries with
+            // `DerivedFrom` sources waits on them, so its birth below finds
+            // its source ASSETs placed and takes their facet. A source the
+            // archive does not carry blocks nothing (it is never Waiting).
+            if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+                for source in super::evidence_import::archived_targets(
+                    &archive.index,
+                    &id,
+                    EdgeKind::DerivedFrom,
+                )? {
+                    if !waits_on.contains(&source) {
+                        waits_on.push(source);
+                    }
+                }
+            }
+            // FIX 7777: a MESSAGE lands after the TURN and CONVERSATION it
+            // joins, which come back stamped imported.
+            if row.entity_type == ENTITY_TYPE_MESSAGE {
+                for container in super::evidence_import::message_dependencies(&archive, &id)? {
+                    if !waits_on.contains(&container) {
+                        waits_on.push(container);
+                    }
                 }
             }
             archive
@@ -279,7 +361,7 @@ impl Vault {
             archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
             pending += 1;
         }
-        let mut inserted_entities = pending + model_imports.inserted;
+        let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -339,6 +421,17 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
+                // FIX 7777: an archived MESSAGE's or NOTE's byline rides
+                // inert in its body; an archive never makes a local author.
+                if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
+                    && super::evidence_import::is_evidence_byline(
+                        &archive,
+                        &parse_id(&edge.source)?,
+                        kind,
+                    )?
+                {
+                    continue;
+                }
                 if archive
                     .index
                     .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
@@ -389,18 +482,8 @@ impl Vault {
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
-        // OF-013: each session's floor rises to the archive's and never falls,
-        // so numbering here never goes back under an epoch a purge removed.
-        let mut floors = archive.spool.rows(ArchiveRecordKind::EpochFloor);
-        while let Some((_, floor)) = floors.next_parsed::<ExportEpochFloor>(&archive.spool)? {
-            crate::compaction::raise_session_epoch_floor_in_txn(
-                &self.store,
-                &mut wtxn,
-                &parse_id(&floor.session)?,
-                floor.epoch,
-                floor.turn_end,
-            )?;
-        }
+        // OF-013: each lineage's floor rises to the archive's and never falls.
+        super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
         // OF-370: the embedding setup declares and binds only what is absent
         // here; its vectors are recomputed after the commit, never before.
         let embedding_setup =
@@ -534,6 +617,28 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
         }
+        // FIX 7777: the witness archive owner writes the row as imported
+        // evidence, with its archived membership; it binds no actor.
+        ENTITY_TYPE_MESSAGE => super::evidence_import::restore_message(
+            vault,
+            wtxn,
+            archive,
+            &id,
+            &body,
+            occurred,
+            row.learned_at,
+        ),
+        // FIX 7777: the NOTE archive import owner writes the row with its
+        // source author kept as an imported one, born under its archived
+        // facet like an EVENT/TURN.
+        ENTITY_TYPE_NOTE => vault.restore_archived_note_in_txn(
+            wtxn,
+            &id,
+            &body,
+            occurred,
+            row.learned_at,
+            archived_birth_facet(archive, &id)?,
+        ),
         ENTITY_TYPE_SKILL => {
             let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
             if at.section != Section::Skill {
@@ -565,16 +670,75 @@ fn insert_ready_row<R: Read + Seek>(
             // minting a destination-default stamp the archived FacetOf edge
             // then breaks (FacetStampImmutable). Other rows keep today's
             // unmasked put.
-            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+            // FIX 8741: a source-free ASSET_TEXT is masked the same way, so
+            // its put births it source-free under its archived facet. One the
+            // archive carries with sources lands beside its archived
+            // `DerivedFrom` edges in that put, so it is no source-free birth
+            // and reads only beside them (facet rule C); the edge pass then
+            // restores each carried edge's archived value.
+            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN)
+                || archived_source_free_text(&archive, &id, row.entity_type)?
+            {
                 archived_birth_facet(&archive, &id)?
             } else {
                 None
             };
-            vault
-                .batch_in()
-                .mask(mask)
-                .put(&id, row.entity_type, occurred, row.learned_at, &body)
-                .apply(wtxn)
+            let sources = if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+                super::evidence_import::archived_targets(
+                    &archive.index,
+                    &id,
+                    EdgeKind::DerivedFrom,
+                )?
+            } else {
+                Vec::new()
+            };
+            // FIX 8741 review: a text the archive carries with a birth
+            // FacetOf stamp, whose archived sources are all placed ASSETs
+            // here, is restored through facet rule C's birth door, so its put
+            // is stamped with its sources' facet and the archived FacetOf
+            // edge then reads as that birth. A text the archive carries with
+            // no birth stamp was never placed and stays unplaced (round 2:
+            // placing it would widen who may read it), and a source this
+            // vault does not hold keeps today's put beside the archived edges.
+            let placed = !sources.is_empty()
+                && archived_birth_facet(&archive, &id)?.is_some()
+                && sources.iter().try_fold(true, |all, source| {
+                    Ok::<_, Error>(all && stored_asset_in_txn(vault, wtxn, source)?)
+                })?;
+            if placed {
+                let weight =
+                    EdgeKind::DerivedFrom
+                        .default_weight()
+                        .ok_or(Error::InvariantViolation(
+                            "derived_from has no weight prior",
+                        ))?;
+                let weighted: Vec<(EntityId, f32)> =
+                    sources.iter().map(|source| (*source, weight)).collect();
+                vault
+                    .batch_in()
+                    .asset_text_birth(&id, occurred, row.learned_at, &body, &weighted)
+                    .apply(wtxn)
+            } else {
+                let mut batch = vault.batch_in().mask(mask).put(
+                    &id,
+                    row.entity_type,
+                    occurred,
+                    row.learned_at,
+                    &body,
+                );
+                if !sources.is_empty() {
+                    let weight =
+                        EdgeKind::DerivedFrom
+                            .default_weight()
+                            .ok_or(Error::InvariantViolation(
+                                "derived_from has no weight prior",
+                            ))?;
+                    for source in &sources {
+                        batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
+                    }
+                }
+                batch.apply(wtxn)
+            }
         }
     };
     landed?;
@@ -653,6 +817,16 @@ fn imported_row<R: Read + Seek>(
     projects: Option<&ProjectRootMap>,
 ) -> Result<ExportEntity> {
     let mut row = archive.entity_row(at)?;
+    // Fix list row 16256: an archive row is never a source landing's, so
+    // one carrying the source-audience key is refused as the archive holds
+    // it, before any normalization or unchanged-row return reads it.
+    if matches!(row.body, ExportBody::MessagePack(_) | ExportBody::Pack(_))
+        && crate::source_audience::body_names_obligation(&row.body.to_bytes()?)
+    {
+        return Err(invalid(
+            "an archive row carries no source_audience_required; only a source landing stamps it",
+        ));
+    }
     if let Some(projects) = projects
         && at.section == Section::Ledger
         && row.entity_type == projects.kind
@@ -702,293 +876,6 @@ impl Drop for ImportBodyCleanup<'_> {
             tracing::warn!(error = %error, "import staged-body cleanup failed");
         }
     }
-}
-
-/// Writes each run's results whose bodies came back as that run's
-/// occurrences; a result the export withheld stays a manifest in the
-/// archive. Returns the counts of both. Each body is staged from the archive
-/// as its occurrence goes in, checked against its digest and length, so the
-/// manifests and line indexes are rebuilt from the bytes; the secret scan
-/// reads them again as they go in. No body is held between two occurrences
-/// (FIX 3678): a later occurrence of the same bytes stages them again. Each
-/// newly staged archive digest is pushed before the staging calls can fail;
-/// each final digest is retained immediately after staging, before occurrence
-/// validation, for the import's post-error cleanup (FIX 588).
-fn put_run_results_in_txn<R: Read + Seek>(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    archive: &mut IndexedArchive<'_, R>,
-    known: crate::store::result_manifest::StagedSinks,
-    staged: &mut Vec<[u8; 32]>,
-) -> Result<(usize, usize, usize, usize, usize, usize, usize)> {
-    let (mut imported, mut withheld) = (0, 0);
-    let (mut bindings_bound, mut bindings_unresolved, mut bindings_withheld) = (0, 0, 0);
-    let (mut records_rebuilt, mut records_skipped) = (0, 0);
-    // Manifests only: bodies are streamed above and never retained between
-    // occurrences. These outputs rebuild each run's replay record below.
-    let mut restored_outputs = BTreeMap::new();
-    // The values custody knows, read in this writer and kept no longer
-    // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
-        .map(std::sync::Arc::new);
-    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
-    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
-        let run_id = parse_id(&run.run_id)?;
-        let mut manifests = Vec::with_capacity(run.outputs.len());
-        for output in &run.outputs {
-            let Some(blake3) = &output.blake3 else {
-                withheld += 1;
-                continue;
-            };
-            let digest = parse_digest(blake3)?;
-            let Some(listed) = archive.files.file_len(blake3) else {
-                withheld += 1;
-                continue;
-            };
-            if !archive.index.contains(Tag::Released, blake3.as_bytes())? {
-                withheld += 1;
-                continue;
-            }
-            // Only a body's first occurrence is held to its manifest's length.
-            // A newly staged digest is tracked before the length check and
-            // the read/admit/stage calls below, so even a partial stage or
-            // the digest-length error is covered; later occurrences of the
-            // same bytes push nothing again.
-            let fresh = archive.index.insert(Tag::Staged, &digest, &[])?;
-            if fresh {
-                staged.push(digest);
-            }
-            if fresh && listed != output.bytes {
-                return Err(invalid("run result body does not match its digest"));
-            }
-            // The manifest path is validated with from_facts' own
-            // predicate before staging publishes the spill: from_facts
-            // rejects an empty/overlong path only after publication, when
-            // cleanup would know just the archive digest (FIX 588).
-            crate::store::result_manifest::validate_text(
-                &output.path,
-                crate::store::result_manifest::CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
-                "raw output path",
-            )?;
-            // Masked at write as a run's reply body is (FIX 5718 part 3).
-            let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
-            let body = archive.files.read_file(blake3)?;
-            let body = vault.admit_imported_result_in_txn(
-                wtxn,
-                run_id,
-                &output.path,
-                body,
-                swept.as_ref(),
-                may_spill,
-            )?;
-            let finished = vault.stage_code_run_output_from(
-                output.path.clone(),
-                vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
-                std::io::Cursor::new(body),
-            )?;
-            staged.push(finished.output.raw_blake3);
-            let occurrence = finished.at(output.path.clone(), output.complete)?;
-            vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
-            // Custody admission may have masked the bytes, so the restored
-            // manifest's own handle can differ from the archived one the
-            // bindings name. The canonical handle of the archived digest is
-            // kept beside the restored occurrence, in memory only, so the
-            // rebind below resolves through it.
-            manifests.push(RestoredRunOutput {
-                source_handle: format!(
-                    "{}{}",
-                    crate::store::result_manifest::CODE_RUN_OUTPUT_HANDLE_PREFIX,
-                    crate::entity_id::bytes_to_hex_lower(&digest)
-                ),
-                output: occurrence,
-            });
-            imported += 1;
-        }
-        if !manifests.is_empty() {
-            restored_outputs.insert(run_id, manifests);
-        }
-    }
-    // The occurrences are in before their names, exactly as they are for the
-    // receipts below. Rebuild only the approved outputs + bindings record;
-    // bridge calls, checkpoints and other full-replay inputs stay unknown.
-    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
-    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
-        let run_id = parse_id(&run.run_id)?;
-        let outputs = restored_outputs
-            .get(&run_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let (bindings, unresolved, withheld_names) = rebind_run_results(outputs, &run.bindings)?;
-        bindings_bound += bindings.len();
-        bindings_unresolved += unresolved;
-        bindings_withheld += withheld_names;
-        let determinism = run
-            .determinism
-            .as_ref()
-            .map(|determinism| {
-                parse_digest(&determinism.rng_seed).map(|seed| {
-                    crate::code_run::CodeRunDeterminism::new(determinism.frozen_unix_ms, seed)
-                })
-            })
-            .transpose()?;
-        if outputs.is_empty() {
-            continue;
-        }
-        let mut record =
-            crate::code_run::CodeRunReplayRecord::with_determinism(run_id, determinism);
-        record.outputs = outputs
-            .iter()
-            .map(|restored| restored.output.clone())
-            .collect();
-        record.bindings = bindings;
-        record.callable_rows = None;
-        let existing = {
-            let rtxn: &heed::RoTxn<'_> = wtxn;
-            vault.get_code_run_replay_record_in_txn(rtxn, &run_id)?
-        };
-        let same = existing.as_ref().is_some_and(|current| {
-            current.determinism == record.determinism
-                && current
-                    .outputs
-                    .iter()
-                    .map(|output| (&output.handle, &output.path, output.complete))
-                    .eq(record
-                        .outputs
-                        .iter()
-                        .map(|output| (&output.handle, &output.path, output.complete)))
-                && current
-                    .bindings
-                    .iter()
-                    .map(|binding| (&binding.name, &binding.handle, &binding.path))
-                    .eq(record
-                        .bindings
-                        .iter()
-                        .map(|binding| (&binding.name, &binding.handle, &binding.path)))
-        });
-        match existing {
-            None => {
-                vault.put_code_run_replay_record_in_txn(wtxn, &record)?;
-                records_rebuilt += 1;
-            }
-            Some(_) if same => records_skipped += 1,
-            Some(_) => return Err(invalid("run replay record collision")),
-        }
-    }
-    // A receipt comes back with the occurrence it describes, and only whole:
-    // a withheld one's refs stay in the archive. Every run's outputs are in
-    // first, so a ref to another run's output resolves; one that resolves to
-    // nothing (not in the archive, nor in this vault) is named unresolved.
-    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
-    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
-        let run_id = parse_id(&run.run_id)?;
-        for fold in run.receipts.iter().filter(|fold| fold.withheld.is_none()) {
-            let mut came_back = false;
-            for output in run.outputs.iter().filter(|output| output.path == fold.path) {
-                if let Some(digest) = output
-                    .blake3
-                    .as_deref()
-                    .and_then(|blake3| parse_digest(blake3).ok())
-                {
-                    came_back |= archive.index.contains(Tag::Staged, &digest)?;
-                }
-            }
-            if !came_back {
-                continue;
-            }
-            let mut receipt: crate::store::reader_fold_receipt::ReaderFoldReceipt =
-                serde_json::from_value(fold.receipt.clone())
-                    .map_err(|_| invalid("run fold receipt"))?;
-            if receipt.folded.owner != run_id || receipt.folded.path != fold.path {
-                return Err(invalid("run fold receipt names another occurrence"));
-            }
-            let rtxn: &heed::RoTxn<'_> = wtxn;
-            receipt.mark_unresolved(|named| {
-                Ok(crate::store::owned_body::owned_body_in_txn(
-                    &vault.store,
-                    rtxn,
-                    &named.owner,
-                    &named.occurrence,
-                )?
-                .is_some())
-            })?;
-            vault.put_code_run_reader_fold_in_txn(wtxn, &receipt)?;
-        }
-    }
-    Ok((
-        imported,
-        withheld,
-        bindings_bound,
-        bindings_unresolved,
-        bindings_withheld,
-        records_rebuilt,
-        records_skipped,
-    ))
-}
-
-/// One restored result occurrence with the archived handle that named it.
-/// Custody admission can mask the bytes as they go in, so the restored
-/// manifest's own handle may differ from the archived one; the rebind
-/// matches archived names through this association, never the two
-/// handle namespaces against each other.
-struct RestoredRunOutput {
-    source_handle: String,
-    output: crate::code_run::CodeRunRawOutput,
-}
-
-/// Rebinds archived names to the outputs restored in this writer. A name or
-/// handle with the wrong shape is malformed archive data; a well-formed
-/// archived occurrence no restored output matches is merely unresolved.
-fn rebind_run_results(
-    outputs: &[RestoredRunOutput],
-    bindings: &[super::ExportRunBinding],
-) -> Result<(Vec<crate::code_run::CodeRunResultBinding>, usize, usize)> {
-    let mut bound = Vec::new();
-    let (mut unresolved, mut withheld) = (0, 0);
-    for binding in bindings {
-        if !crate::code_run::CodeRunResultBinding::is_valid_name(&binding.name) {
-            return Err(invalid("run result binding name"));
-        }
-        match (&binding.handle, &binding.withheld) {
-            (None, Some(_)) => withheld += 1,
-            (Some(handle), None) => {
-                let hex = handle
-                    .strip_prefix(crate::store::result_manifest::CODE_RUN_OUTPUT_HANDLE_PREFIX)
-                    .ok_or_else(|| invalid("run result binding handle"))?;
-                let digest = parse_digest(hex)?;
-                if crate::entity_id::bytes_to_hex_lower(&digest) != hex {
-                    return Err(invalid("run result binding handle"));
-                }
-                if let Some(restored) = outputs.iter().find(|restored| {
-                    restored.source_handle == handle.as_str()
-                        && restored.output.path == binding.path
-                }) {
-                    bound.push(crate::code_run::CodeRunResultBinding::new(
-                        binding.name.clone(),
-                        restored.output.handle.clone(),
-                        restored.output.path.clone(),
-                    ));
-                } else {
-                    unresolved += 1;
-                }
-            }
-            _ => return Err(invalid("run result binding handle")),
-        }
-    }
-    Ok((bound, unresolved, withheld))
-}
-
-fn parse_digest(text: &str) -> Result<[u8; 32]> {
-    let mut digest = [0; 32];
-    if text.len() != 64 {
-        return Err(invalid("run result digest"));
-    }
-    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        *byte = std::str::from_utf8(pair)
-            .ok()
-            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-            .ok_or_else(|| invalid("run result digest"))?;
-    }
-    Ok(digest)
 }
 
 /// The owner's own archive's custody records, each restored under its own id
@@ -1108,7 +995,7 @@ fn validate_existing_source<R: Read + Seek>(
     Ok(())
 }
 
-fn invalid(reason: &str) -> Error {
+pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
 }
 
@@ -1411,6 +1298,36 @@ fn fill(read: &mut dyn Read, buf: &mut [u8]) -> Result<usize> {
     Ok(at)
 }
 
+/// FIX 7777: stored NOTE row `raw` as the export reads it, its markdown
+/// projected from its live document. A NOTE row's birth bytes are
+/// immutable while its document moves on, so a NOTE whose export the
+/// archive holds compares by its live body, never its birth. Any other row
+/// comes back as it is.
+fn live_note_row(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: Vec<u8>,
+) -> Result<Vec<u8>> {
+    if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_NOTE)
+    {
+        return Ok(raw);
+    }
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(raw);
+    };
+    let live = match crate::note::live_body_in_txn(&vault.store, txn, id, ENTITY_TYPE_NOTE, body)? {
+        std::borrow::Cow::Owned(live) => Some(live),
+        std::borrow::Cow::Borrowed(_) => None,
+    };
+    let Some(live) = live else {
+        return Ok(raw);
+    };
+    let mut row = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    row.extend_from_slice(&live);
+    Ok(row)
+}
+
 /// The stored row's type and times are the archived row's.
 fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
@@ -1423,7 +1340,8 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
-/// vault's MODEL rows through the row index.
+/// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
+/// by its owning adapter without carrying a foreign owner approval.
 fn imported_body(
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
@@ -1432,6 +1350,11 @@ fn imported_body(
     let bytes = row.body.to_bytes_in(files)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
+        ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => {
+            let descriptor =
+                crate::comm::imported_claim_class_descriptor(&parse_id(&row.id)?, &bytes)?;
+            crate::comm::encode_claim_class_descriptor(&descriptor)
+        }
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_import_claim(&bytes)?;
             match &mut body.subject {
@@ -1466,14 +1389,55 @@ fn imported_body(
             body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::store::agent_definition_codec::encode_agent_definition(&body)
         }
+        // FIX 7777: imported evidence, its archived bylines inert inside it.
+        ENTITY_TYPE_MESSAGE => {
+            let bylines = super::evidence_import::archived_targets(
+                index,
+                &parse_id(&row.id)?,
+                EdgeKind::AuthoredBy,
+            )?;
+            crate::memory::archived_message_body(&bytes, &bylines)
+        }
+        ENTITY_TYPE_NOTE => crate::note::archived_note_body(&bytes),
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+            if index.contains(Tag::MessageContainer, parse_id(&row.id)?.as_bytes())? =>
+        {
+            crate::memory::archived_container_body(row.entity_type, &bytes)
+        }
         _ => Ok(bytes),
     }
 }
 
+/// Whether `id`, archived as `entity_type`, is an ASSET_TEXT the archive
+/// carries with no `DerivedFrom` edge: one born source-free (FIX 8741).
+fn archived_source_free_text<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<bool> {
+    Ok(entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        && super::evidence_import::archived_targets(&archive.index, id, EdgeKind::DerivedFrom)?
+            .is_empty())
+}
+
+/// Whether `id` is a stored ASSET in `wtxn` (FIX 8741 review): a derived
+/// ASSET_TEXT is restored through its birth door only over placed sources.
+fn stored_asset_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, id)?.is_some_and(
+            |raw| {
+                EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_ASSET)
+            },
+        ),
+    )
+}
+
 /// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
-/// carries the stamp (blind-review P1b, REVIEW-4389). The dependency queue
-/// waits on it and the initial put is masked with it, so the row is born
-/// under its original facet; `None` keeps today's destination default.
+/// carries the stamp (blind-review P1b, REVIEW-4389), or of a source-free
+/// ASSET_TEXT (FIX 8741). The dependency queue waits on it and the initial
+/// put is masked with it, so the row is born under its original facet;
+/// `None` keeps today's destination default.
 fn archived_birth_facet<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     id: &EntityId,
@@ -1593,6 +1557,13 @@ pub(super) fn import_edge(
                 // the archived metadata is safe; anything else stays a
                 // collision.
                 EdgeKind::FacetOf => true,
+                // FIX 8741: an inserted ASSET_TEXT's put lands its archived
+                // `DerivedFrom` edges with it; their archived values are
+                // restored here.
+                EdgeKind::DerivedFrom => {
+                    crate::batch::stored_entity_type(&vault.store, wtxn, &source)?
+                        == Some(crate::registry::ENTITY_TYPE_ASSET_TEXT)
+                }
                 _ => false,
             };
         if !door_minted {

@@ -350,6 +350,29 @@ impl DisclosureContext {
         })
     }
 
+    /// The call's explicit consent replaces only an anonymous caller's
+    /// empty clearance. It never makes that caller an owner or a contact.
+    pub(crate) fn phone_line(set: InterlocutorSet, scope: Scope) -> Result<Self> {
+        if set.entries().is_empty()
+            || set.entries().iter().any(|party| {
+                party.class() != crate::interlocutor::InterlocutorClass::Unknown
+                    || party.evidence() != crate::interlocutor::PresenceEvidence::FirstClaim
+                    || party.contact_ref().is_some()
+                    || party.audience_ref().is_some()
+                    || party.claimed_owner()
+            })
+        {
+            return Err(crate::phone_line::invalid());
+        }
+        Ok(Self {
+            mode: DisclosureMode::AbsenceClamp,
+            disclosable: DisclosableSet::phone_line(
+                crate::claim::ScopedReadActorKey::read_authority(&scope),
+            ),
+            interlocutors: set,
+        })
+    }
+
     #[must_use]
     pub fn mode(&self) -> DisclosureMode {
         self.mode
@@ -427,17 +450,19 @@ impl DisclosureContext {
         if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
             return Ok(false);
         }
-        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
+        let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
         // A NOTE sits at one world it is in that the clearance holds
         // (FIX-LIST 9433).
         let held = [&self.disclosable.clearance().worlds];
-        let Some(record_scope) = note_world::blob_scope_held_at(store, rtxn, *id, &raw, &held)?
+        let Some(record_scope) =
+            note_world::blob_scope_held_at(store, rtxn, *id, &row.encode(), &held)?
         else {
             return Ok(false);
         };
-        Ok(self.disclosable.admits(&record_scope))
+        Ok(self.disclosable.admits(&record_scope)
+            && super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)?)
     }
 
     /// A withdrawn record never reaches anyone but the owner (P3): a deleted,

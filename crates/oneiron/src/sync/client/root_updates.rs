@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use crate::host_memory::{MachineMemory, MemoryLease};
-use crate::sync::transport::{TransportError, decode_root_update_part};
+use crate::sync::transport::{TAG_ROOT_PART, TransportError, decode_root_update_part};
 
 #[derive(Default)]
 pub(super) struct RootUpdateAssembly {
@@ -99,6 +99,13 @@ impl super::base::SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pending
             .is_some()
+    }
+
+    /// The logical openings `frame` completes in initial sync, once handled:
+    /// one, but none for a root part whose image is still incomplete, so a
+    /// large root counts once.
+    pub(crate) fn logical_openings(&self, frame: &[u8]) -> usize {
+        usize::from(frame.first() != Some(&TAG_ROOT_PART) || !self.root_update_pending())
     }
 
     pub(crate) fn reset_root_parts(&self) {

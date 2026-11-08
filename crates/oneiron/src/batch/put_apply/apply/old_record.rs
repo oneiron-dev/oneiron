@@ -82,6 +82,18 @@ pub(super) fn apply_old_record(
                 attempted: fixed.entity_type,
             }));
         }
+        // FIX 8740: before a grant row is rewritten, each ruling it admits
+        // keeps that admission, so a role change never drops past rulings.
+        if old_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT
+            && (body_changed
+                || old_occurred.start != fixed.occurred.start
+                || old_occurred.end != fixed.occurred.end
+                || old_learned != fixed.learned_at)
+        {
+            store
+                .record_hooks
+                .witness_grant_rulings_in_txn(store, wtxn, &fixed.id, &old_record)?;
+        }
         // ONE-1686: MESSAGE identity is an idempotency key, not an update
         // handle. Executor retries deliberately re-PUT the same deterministic
         // id before replay-record CAS; byte-identical bodies converge, while a
@@ -184,8 +196,10 @@ pub(super) fn apply_old_record(
                 "validated AGENT_DEF record missing",
             ))?;
         validate_local_agent_definition_create(store, wtxn, &fixed.id, created)?;
-        *portable_agent_source =
-            crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &fixed.id, created)?;
+        *portable_agent_source = match fixed.prepared_agent_birth {
+            Some(birth) => birth.bind_in_txn(store, wtxn)?,
+            None => crate::agent_def::bind_agent_birth_in_txn(store, wtxn, &fixed.id, created)?,
+        };
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
         let created = dispatch
             .new_skill_record

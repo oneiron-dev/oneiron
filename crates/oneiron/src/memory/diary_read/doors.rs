@@ -19,6 +19,8 @@ use crate::error::{Error, Result};
 use crate::memory::authorship::*;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::note::NoteKind;
+use crate::vault::entity_revision::revision_for_mode_in_txn;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Vault, WriteActor};
 use crate::{
     agent_inbox_lens::AgentInboxLensItem,
@@ -68,6 +70,7 @@ impl Vault {
                 occurred_at: row.asked_at,
                 receipt_ref: None,
                 payload_ref: Some(handle),
+                approval_digest: None,
                 concern: None,
                 diary_review: Some(AgentInboxDiaryReview {
                     request,
@@ -94,15 +97,34 @@ impl Memory<'_> {
         agent: EntityId,
         reason: &str,
     ) -> MemoryResult<DiaryReadOutcome> {
+        self.read_agent_diary_pinned(reader, agent, reason)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// [`Self::read_agent_diary`], with each entry it read by the live
+    /// revision of its NOTE in the same transaction (FIX 4817): an agent's
+    /// own compaction keeps it, so a later edit of the entry withdraws what
+    /// it wrote wearing the old words. Never served to a caller.
+    pub(crate) fn read_agent_diary_pinned(
+        &self,
+        reader: Option<&AuthenticatedOwner>,
+        agent: EntityId,
+        reason: &str,
+    ) -> MemoryResult<(DiaryReadOutcome, Vec<(EntityId, Option<RevisionRef>)>)> {
         self.with_verified_actor_write_txn(|txn| {
             let actor = self.diary_reader_in_txn(txn, reader)?;
             let mut gate = DiaryReadGate::new(actor, reason)?;
             gate.touch(self.vault, txn, agent)?;
             let mut entries = Vec::new();
+            let mut pins = Vec::new();
             for (id, note, learned_at) in diary_entries_in_txn(self.vault, txn, agent)? {
                 // Each entry the gate judges, read or counted as held.
                 self.produced_from([id]);
                 if gate.admit(self.vault, txn, agent, id)? == DiaryEntryAdmission::Read {
+                    pins.push((
+                        id,
+                        revision_for_mode_in_txn(&self.vault.store, txn, &id, ReadMode::Live)?,
+                    ));
                     entries.push(DiaryEntry {
                         id,
                         learned_at,
@@ -113,13 +135,14 @@ impl Memory<'_> {
             self.mask_diary_entries_in_txn(txn, &mut entries)?;
             let receipt = gate.finish_in_txn(self.vault, txn)?;
             let Some(read) = receipt.agents.into_iter().next() else {
-                return Ok(DiaryReadOutcome::Granted {
+                let outcome = DiaryReadOutcome::Granted {
                     read: None,
                     entries,
-                });
+                };
+                return Ok((outcome, pins));
             };
             let held = |hold| read.held.iter().any(|(held, _)| *held == hold);
-            Ok(match read.request {
+            let outcome = match read.request {
                 _ if read.read.is_some() || (read.whole_diary && read.held.is_empty()) => {
                     DiaryReadOutcome::Granted {
                         read: read.read,
@@ -133,7 +156,8 @@ impl Memory<'_> {
                     DiaryReadOutcome::Declined { request }
                 }
                 _ => DiaryReadOutcome::NotCovered,
-            })
+            };
+            Ok((outcome, pins))
         })
     }
 

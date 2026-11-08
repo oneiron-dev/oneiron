@@ -13,6 +13,8 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::vault::ReadMode;
 
+mod hydrate_filtered;
+
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
 pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
@@ -43,7 +45,86 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
+    }
+
+    /// Opens only a bound brief view. A view-only slip cannot enter any
+    /// general read verb; its holder need not be enrolled in this vault.
+    pub(crate) fn shared_brief_read_lane(
+        &self,
+        share: EntityId,
+        verb: &str,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let Some(proof) = self
+            .read_proof
+            .as_ref()
+            .filter(|proof| proof.claims().share_ref.is_some())
+        else {
+            return self.read_lane(ClaimReadStatus::Surfaceable);
+        };
+        let key = ScopedReadActorKey::from_share_view_slip(proof, verb)
+            .filter(|key| {
+                key.share_view_ref() == Some(share)
+                    && key.actor_ref() == self.actor.to_hex()
+                    && key.actor_class() == Some(self.actor_class.gate_actor_class())
+            })
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "credential does not open this shared brief",
+                    &[],
+                )
+            })?;
+        let key = self.in_room_turn(key.for_destination(&self.destination))?;
+        Ok(self
+            .vault
+            .scoped_read(key)
+            .with_claim_status(ClaimReadStatus::Surfaceable))
+    }
+
+    /// [`Self::read_lane`] for rows that go on to `destination` as well
+    /// (FIX 10105): the key meets it, so it only narrows, and the caller's
+    /// grants and room ceilings stay. A row a world keeps from there reads
+    /// as withheld.
+    pub(crate) fn read_lane_for_destination(
+        &self,
+        claims: ClaimReadStatus,
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self.actor_read_key()?.for_destination(destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
+    }
+
+    /// The queue-exhaust Owner's reader, retaining this handle's actual
+    /// credential, destination and room ceiling. It never changes the
+    /// ordinary read key's owner-binding rule.
+    pub(crate) fn queue_check_owner_read_lane(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let actor = owner.actor_for_read(self.vault)?;
+        if actor != self.actor || self.actor_class != crate::edge::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "queue-check Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        let key = self
+            .vault
+            .queue_check_owner_read_key(owner, self.read_proof.as_ref(), self.host_action.as_ref())?
+            .for_destination(&self.destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
@@ -71,7 +152,7 @@ impl Memory<'_> {
                         .vault
                         .credential_read_key_in_txn(&txn, proof, self.actor, owner)?;
                     match key {
-                        Some(key) => key,
+                        Some(key) => self.in_phone_lines(key)?,
                         None => return Ok(None),
                     }
                 }
@@ -79,7 +160,12 @@ impl Memory<'_> {
             }
         };
         let key = self.in_room_turn(key.for_destination(&self.destination))?;
-        Ok(Some(self.vault.scoped_read(key).with_claim_status(claims)))
+        Ok(Some(
+            self.vault
+                .scoped_read(key)
+                .with_claim_status(claims)
+                .with_read_filter(self.read_filter.as_ref()),
+        ))
     }
 
     /// The key every read verb on this handle reads under: its proof's, its
@@ -91,6 +177,42 @@ impl Memory<'_> {
     /// As [`Self::read_lane`] refuses.
     pub fn read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         self.in_room_turn(self.actor_read_key()?)
+    }
+
+    /// Share-only rendering keeps its credential for the renderer, but its
+    /// hooks receive no record-read authority, including on ask re-entry.
+    pub(crate) fn verb_hook_read_key(&self, verb: &str) -> MemoryResult<ScopedReadActorKey> {
+        let Some(proof) = self.read_proof.as_ref().filter(|proof| {
+            let claims = proof.claims();
+            claims.share_ref.is_some()
+                && matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+                && proof.allows_verb(verb)
+                && claims.holder_ref == self.actor.to_hex()
+                && claims.actor_class.as_deref() == Some(self.actor_class.gate_actor_class())
+        }) else {
+            return self.read_key();
+        };
+        if !self.vault.capability_slip_is_live(proof)? {
+            return self.read_key();
+        }
+        let key = ScopedReadActorKey::read_nothing(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| {
+            MemoryError::bad_request("bound actor cannot be used as a scoped read key")
+        })?;
+        self.in_room_turn(key.for_destination(&self.destination))
+    }
+
+    /// The current credential's read key, when this handle carries one.
+    /// Native callers without a credential keep their existing identity
+    /// reader instead of acquiring a new credential requirement.
+    pub fn proof_backed_read_key(&self) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        self.read_key().map(Some)
     }
 
     /// The bound actor's own read, without a bound room turn's ceiling: what
@@ -159,6 +281,14 @@ impl Memory<'_> {
         Ok(self)
     }
 
+    /// Rechecks a bound host action in the caller's writing snapshot.
+    pub(crate) fn recheck_host_action_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if let Some(action) = &self.host_action {
+            action.guard().holds_in(self.vault, txn)?;
+        }
+        Ok(())
+    }
+
     /// The bound actor's read key by identity alone.
     fn identity_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
@@ -174,6 +304,20 @@ impl Memory<'_> {
     /// (FIX 6992): the store keeps one reader per thread, so a read inside a
     /// projection's snapshot never opens a second one.
     fn identity_read_key_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<ScopedReadActorKey> {
+        self.in_phone_lines(self.base_identity_read_key_in_txn(txn)?)
+    }
+
+    fn in_phone_lines(&self, mut key: ScopedReadActorKey) -> MemoryResult<ScopedReadActorKey> {
+        for original in &self.phone_reads {
+            key = key.within_phone_read(original)?;
+        }
+        Ok(key)
+    }
+
+    fn base_identity_read_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<ScopedReadActorKey> {
         verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
         if let Some(action) = &self.host_action {
             // The host action's guarded owner key (FIX 2222), its action
@@ -580,6 +724,7 @@ impl Memory<'_> {
         row: ReadRow,
         mode: ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
+        let read_candidate = self.read_world_candidate(lane, txn, &row);
         let Some(body) = row.body else {
             return Ok(None);
         };
@@ -612,7 +757,7 @@ impl Memory<'_> {
         {
             super::message_parts::withhold_modified_reasoning_parts(&stored_body, value);
         }
-        Ok(Some(EntityView {
+        let view = EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
             kind: kind_string_for_type(row.entity_type),
@@ -621,7 +766,11 @@ impl Memory<'_> {
             learned_at: row.learned_at,
             made_by: self.made_by_in_lane(lane, txn, &row.id)?,
             body,
-        }))
+        };
+        if let Some(candidate) = read_candidate {
+            candidate.served();
+        }
+        Ok(Some(view))
     }
 }
 

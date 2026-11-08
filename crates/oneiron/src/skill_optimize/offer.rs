@@ -20,7 +20,7 @@
 //!   (`offer_training`); a trained model still needs its own swap choice.
 //! - Each offer's prediction is checked against later receipts on or after
 //!   its check date, which feeds the offer skill's own record.
-use super::{EvalSeat, TrainingChoice};
+use super::{EvalSeat, SwitchOwner, TrainingChoice};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::LearningEvidence;
@@ -34,6 +34,7 @@ use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod measurement;
 mod snapshot;
 
 pub use self::snapshot::{
@@ -112,7 +113,6 @@ pub fn record_training_offer(
         source_rows: draft.source_rows,
         digest: String::new(),
     };
-    offer.digest = digest(&offer)?;
     vault.with_write_txn_grouped(|txn| {
         offer.source_rows = live_source_rows_in(vault, txn, offer.source_rows.take())?;
         if let Some(previous) = &offer.previous {
@@ -124,6 +124,8 @@ pub fn record_training_offer(
             }
         }
         super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
+        measurement::keep_source_in_txn(vault, txn, &mut offer);
+        offer.digest = digest(&offer)?;
         measure_offer(vault, &offer);
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
         if let Some(previous) = &offer.previous {
@@ -194,6 +196,35 @@ pub(crate) fn erase_offer_source_in_txn(
     }
     for (key, check) in checks {
         CHECK.put(&vault.store, wtxn, &key, &check)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the owner's answers (FIX 20774): each answer it gave
+/// keeps its offer, answer, digest, intent and time, and names no one and no
+/// authentication. The offer stays answered and never reopens, and the
+/// switch or handoff the answer settled stays as it is. One-way, in the
+/// erase's own transaction, rewriting only the answers that named it. An id
+/// whose entity is no actor scans nothing.
+/// # Errors
+/// Storage errors, or an answer row that cannot be read.
+pub(crate) fn erase_offer_answer_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut answers = Vec::new();
+    for (offer, mut record) in ANSWER.scan(&vault.store, wtxn)? {
+        if record.owner.forget(*actor) {
+            record.authentication = None;
+            answers.push((offer, record));
+        }
+    }
+    for (offer, record) in answers {
+        ANSWER.put(&vault.store, wtxn, &offer, &record)?;
     }
     Ok(())
 }
@@ -340,8 +371,8 @@ pub(crate) fn settle_training_offer_in_txn(
     let record = OfferAnswerRecord {
         offer: *offer,
         answer,
-        owner: actor,
-        authentication: format!("{:?}", owner.decision_id()),
+        owner: SwitchOwner::Actor(actor),
+        authentication: Some(format!("{:?}", owner.decision_id())),
         offer_digest: row.digest,
         intent,
         at,

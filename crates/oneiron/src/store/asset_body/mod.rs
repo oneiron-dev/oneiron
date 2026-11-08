@@ -84,14 +84,16 @@ pub(crate) enum AssetFileKind {
 }
 
 impl AssetFileKind {
-    const fn code(self) -> u8 {
+    /// The kind's byte, in a manifest and in a sync body reference alike.
+    pub(crate) const fn code(self) -> u8 {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
         }
     }
 
-    const fn from_code(code: u8) -> Option<Self> {
+    /// The kind a [`Self::code`] byte names.
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
@@ -450,10 +452,12 @@ pub(crate) fn stage_asset_body_in_txn(
             Some(OwnedBody {
                 owner: *id,
                 occurrence,
+                mark_occurrence: occurrence,
                 state: BodyState::Complete {
                     body: facts.body_ref(),
                 },
                 result: None,
+                code_run_output: None,
             })
         }
         None => None,
@@ -464,16 +468,19 @@ pub(crate) fn stage_asset_body_in_txn(
     }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
         if let Some(superseded) = prior.as_ref().and_then(|prior| prior.state.held()) {
+            let superseded_occurrence = held_occurrence(id, superseded)?;
             publish_body_in_txn(
                 store,
                 txn,
                 &OwnedBody {
                     owner: *id,
-                    occurrence: held_occurrence(id, superseded)?,
+                    occurrence: superseded_occurrence,
+                    mark_occurrence: superseded_occurrence,
                     state: BodyState::Complete {
                         body: superseded.clone(),
                     },
                     result: None,
+                    code_run_output: None,
                 },
             )?;
         }

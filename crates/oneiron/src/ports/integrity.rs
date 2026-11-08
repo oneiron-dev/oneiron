@@ -550,7 +550,9 @@ fn withdraw_words_in_txn(
 /// Past the dependent walk's batch, a row that is no epoch summary takes the
 /// stale mark alone, which every read honours: its words leave a fold's
 /// ledger at the reads' fence and the run's next ledger write, as before.
-/// No count refuses the walk (rule 5).
+/// The recorded fold answers that copied them go before this returns (FIX
+/// 18924): no answer waits for a callback the walk passed by. No count
+/// refuses the walk (rule 5).
 pub(super) fn withdraw_source_chain_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
@@ -559,6 +561,7 @@ pub(super) fn withdraw_source_chain_in_txn(
 ) -> Result<()> {
     let store = write.store;
     let mut budget = super::dependent_walk::policy_in(store, txn)?.batch;
+    let mut passed_by = false;
     while let Some(next) = pending.pop() {
         let epoch = epoch_summary_in(store, txn, &next)?;
         if !epoch && outlives_withdrawal_in(store, txn, &next)? {
@@ -584,7 +587,12 @@ pub(super) fn withdraw_source_chain_in_txn(
             budget -= 1;
             crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, &next)?;
             crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, &next)?;
+        } else {
+            passed_by = true;
         }
+    }
+    if passed_by {
+        crate::code_run::retire_fold_answers_in_txn(store, txn, None)?;
     }
     Ok(())
 }
@@ -627,6 +635,9 @@ fn mark_one_stale_in_txn(
     // sieve and projector rows of them go as an erasure's do, while the
     // MESSAGE still names its turn.
     crate::dreamer_wake::erase_in_txn(write, txn, id)?;
+    // A chat breakpoint whose request holds a withdrawn summary's words goes
+    // with them (FIX 5033).
+    crate::conversation::forget_withdrawn_summary_breakpoints_in_txn(write, txn, id)?;
     // A derived claim can retain erased upstream bytes while its own entity
     // body remains. Remove every saved digest that copied it in this txn;
     // clearing the stale bit on regeneration must never revive an old copy.
@@ -664,7 +675,11 @@ pub(crate) fn source_has_dependents_in_txn(
 }
 /// Every row written from some version of `id`, by its dependency rows:
 /// those the epoch walk, a fold's words and an output occurrence record.
-fn dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+pub(super) fn dependents_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
     scan_dependents(store, txn, &[DEP, id.as_bytes()].concat())
 }
 /// An entity delete erases every source version; one document-prefix scan
@@ -680,35 +695,30 @@ pub(crate) fn invalidate_source_in_txn(
     let store = write.store;
     crate::feedback::intake::forget_report_cluster_member_in_txn(store, txn, document, door)?;
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
-    super::dependent_walk::begin_in_txn(write, txn, document, door)
+    super::dependent_walk::begin_in_txn(write, txn, document, door)?;
+    // Past the walk's first batch its mark withdraws each fold it has not
+    // reached yet: the recorded answers that copied their words go now, not
+    // at the batch that reaches each fold (FIX 18924).
+    if super::dependent_walk::any_pending_walk(store, txn)? {
+        crate::code_run::retire_fold_answers_in_txn(store, txn, None)?;
+    }
+    Ok(())
 }
-/// Withdraws one dependent of `document` for `worlds` and queues its
-/// regeneration; an EVENT that outlives its source stays.
+/// Withdraws one dependent for `worlds`; an EVENT that
+/// outlives its source stays. The withdrawn row stays withdrawn: its family
+/// re-derives it under a new id of its own (the Dreamer's owed TURN read, a
+/// scope summary's re-derive), so no regeneration is queued (FIX 12327).
 pub(super) fn withdraw_dependent_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
-    document: &EntityId,
     dependent: &EntityId,
     worlds: &CarriedWorlds,
 ) -> Result<()> {
     let store = write.store;
-    use super::JobQueue;
     if outlives_withdrawal_in(store, txn, dependent)? {
         return Ok(());
     }
-    withdraw_words_in_txn(write, txn, dependent, worlds)?;
-    let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
-    crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
-        txn,
-        crate::store::attempt_inputs::EnqueueAttempt {
-            kind: "derived.regenerate".into(),
-            payload,
-            dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
-            run_id: None,
-            now: 0,
-        },
-    )?;
-    Ok(())
+    withdraw_words_in_txn(write, txn, dependent, worlds)
 }
 /// DerivedFrom is dependent→source. This hook also serves session overlays.
 pub(crate) fn record_derived_edge_in_txn(

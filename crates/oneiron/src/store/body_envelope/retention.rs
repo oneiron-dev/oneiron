@@ -141,6 +141,48 @@ pub(crate) fn governed_body_instances_in_txn(
     Ok(instances)
 }
 
+fn captured_instance_retired(store: &Store, instance: &[u8; 16]) -> Result<bool> {
+    let Some(custody) = store.key_custody().local() else {
+        return Ok(false);
+    };
+    let id = instance_id(custody.binding(), instance)?;
+    Ok(custody.first_unretired(id.subject())? > id.generation())
+}
+
+/// Adds to `keys` the full `vault_meta` keys of the erase debts the body
+/// `digest` carries: each of its instances an erase owes a retirement, and
+/// every erase's note of that instance. A purge that keeps the body keeps
+/// them, so its last release still stages the retirement and the erase's
+/// receipt still names it.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "sync")]
+pub(crate) fn owed_erase_side_keys_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digest: &[u8; 32],
+    keys: &mut std::collections::HashSet<Vec<u8>>,
+) -> Result<()> {
+    let mut owed = BTreeSet::new();
+    for instance in digest_instances_in_txn(store, txn, digest)? {
+        if ERASE_PENDING.contains(store, txn, &instance)? {
+            keys.insert(ERASE_PENDING.key_bytes(&instance));
+            owed.insert(instance);
+        }
+    }
+    if owed.is_empty() {
+        return Ok(());
+    }
+    for noted in ERASED.scan_keys(store, txn, b"")? {
+        if owed.contains(&noted.1) {
+            keys.insert(ERASED.key_bytes(&noted));
+        }
+    }
+    Ok(())
+}
+
 /// Drops the remembered `instances` of `digest`, each retired now.
 fn forget_remembered_in_txn<D: SideTableDbs>(
     dbs: &D,
@@ -396,6 +438,108 @@ fn ready_in_txn(
 }
 
 impl Store {
+    /// Captures each digest's original governed instances before a native
+    /// owner releases its references. The result contains addresses, not
+    /// authority to erase another owner's bytes.
+    pub(crate) fn body_instance_bindings_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        digests: &[[u8; 32]],
+    ) -> Result<std::collections::BTreeMap<[u8; 32], BTreeSet<[u8; 16]>>> {
+        digests
+            .iter()
+            .map(|digest| {
+                Ok((
+                    *digest,
+                    digest_instances_in_txn(self, txn, digest)?
+                        .into_iter()
+                        .collect(),
+                ))
+            })
+            .collect()
+    }
+
+    /// Notes only independently captured instances of an accepted erase.
+    /// A restored or newly uploaded same-hash body never expands this set.
+    /// The ordinary last-holder release and custody readiness checks still
+    /// decide when each original instance can retire.
+    pub(crate) fn erase_captured_body_instances_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &EntityId,
+        digest: &[u8; 32],
+        instances: &BTreeSet<[u8; 16]>,
+    ) -> Result<()> {
+        let mut notes = ErasedNotes::default();
+        let held = crate::store::owned_body::digest_is_held_in_txn(self, txn, digest)?;
+        if !held
+            && BODY_KEYS
+                .get(self, txn, digest)?
+                .is_some_and(|row| row.is_vault() && instances.contains(&row.instance))
+        {
+            drop_inline_result_in_txn(self, txn, digest)?;
+        }
+        for instance in instances {
+            let owner = (!ERASED.contains(self, txn, &(*owner, *instance))?).then_some(owner);
+            if captured_instance_retired(self, instance)? {
+                ERASE_PENDING.delete(self, txn, instance)?;
+                if let Some(owner) = owner {
+                    notes.note(self, txn, owner, instance)?;
+                }
+                BODY_INSTANCES.delete(self, txn, &(*digest, *instance))?;
+            } else if held {
+                ERASE_PENDING.put(self, txn, instance, digest)?;
+                if let Some(owner) = owner {
+                    notes.note(self, txn, owner, instance)?;
+                }
+            } else {
+                ERASE_PENDING.delete(self, txn, instance)?;
+                stage_erase(self, txn, (owner, &mut notes), instance)?;
+                BODY_INSTANCES.delete(self, txn, &(*digest, *instance))?;
+            }
+        }
+        notes.journal(self)
+    }
+
+    /// Releases only the original inline binding of an accepted erase.
+    /// Another binding now at the same ASSET key is never changed or noted.
+    pub(crate) fn erase_captured_inline_asset_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &EntityId,
+        asset: &EntityId,
+        instance: &[u8; 16],
+        digest: &[u8; 32],
+    ) -> Result<()> {
+        let mut notes = ErasedNotes::default();
+        let owner = (!ERASED.contains(self, txn, &(*owner, *instance))?).then_some(owner);
+        if captured_instance_retired(self, instance)? {
+            ERASE_PENDING.delete(self, txn, instance)?;
+            if let Some(owner) = owner {
+                notes.note(self, txn, owner, instance)?;
+            }
+            return notes.journal(self);
+        }
+        if INLINE_ASSETS.get(self, txn, asset)?.as_ref() == Some(instance) {
+            let retained = crate::ports::EntityStoreRead::port_entity_raw(self, txn, asset)?
+                .is_some_and(|raw| {
+                    raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
+                        && raw[0] == crate::registry::ENTITY_TYPE_ASSET
+                });
+            if retained {
+                ERASE_PENDING.put(self, txn, instance, digest)?;
+                if let Some(owner) = owner {
+                    notes.note(self, txn, owner, instance)?;
+                }
+                return notes.journal(self);
+            }
+            INLINE_ASSETS.delete(self, txn, asset)?;
+        }
+        ERASE_PENDING.delete(self, txn, instance)?;
+        stage_erase(self, txn, (owner, &mut notes), instance)?;
+        notes.journal(self)
+    }
+
     /// Carries out every body instance retirement whose instance nothing
     /// names any longer (KS-2A): the custody finisher's order, marker, unlink
     /// and directory sync, then the handoff to the custody journal.

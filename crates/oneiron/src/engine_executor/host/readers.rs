@@ -1,22 +1,67 @@
-//! Reader sources, findings and summaries bound by the recording host.
+//! Reader sources, findings and summaries bound by the recording host, and
+//! the source bytes a scoped child's reads were shown (FIX 7735).
 //! Entry: `RecordingJsHost::spawn_reader`.
 //! Reader request and receipt definitions belong to `code_run`.
 
 use super::*;
+use crate::code_run::DeliveredRanges;
 
 impl RecordingJsHost<'_, '_> {
-    /// The source of a `self.spawn`: one of this run's own results, read as
-    /// every read of it is, its range the ref's or the whole body. A source
-    /// the run may not read now is refused as that read would be.
+    /// Commits to this run's job witness the ranges of its primary source
+    /// that `read`'s reply shows (`delivered`), when this run is a scoped
+    /// child and `read` is of that source (FIX 7735). Its caller commits a
+    /// reply only once the reply passed its secret, taint and final
+    /// live-cutoff checks, and before the reply leaves: a storage error fails
+    /// the read before any byte of it leaves. A read of any other result, or
+    /// by any other run, commits nothing. A job no longer live at the claimed
+    /// generation keeps its witness as it is, and the reply is unchanged.
+    pub(super) fn commit_source_delivery(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        read: &ResultRead,
+        delivered: &DeliveredRanges,
+    ) -> Result<()> {
+        let Some(child) = self
+            .gated_write
+            .reader_child()
+            .filter(|child| child.scoped.is_some())
+        else {
+            return Ok(());
+        };
+        let (source, output) = (&child.source, read.output());
+        if delivered.ranges().is_empty()
+            || read.owner() != source.owner
+            || output.path != source.path
+            || output.handle != source.handle
+        {
+            return Ok(());
+        }
+        storage.commit_source_delivery(
+            child.task,
+            child.generation,
+            read.owner(),
+            output,
+            delivered.ranges(),
+            crate::unix_millis_now(),
+        )?;
+        Ok(())
+    }
+
+    /// The source of a `self.spawn`: this run's own result or a Read child's
+    /// inherited source, checked as a read of it is. An inherited source
+    /// keeps its original owner, narrowed range, checked row witnesses and
+    /// the origins its delegating run froze; an own result's origins are this
+    /// run's ledger, frozen now (FIX 7084).
     pub(super) fn delegate_source(
         &mut self,
         source: &str,
     ) -> Result<std::result::Result<DelegatedSource, String>> {
         let target = JsResultTarget::parse(source);
-        if self.resolve_result(&target.reference).is_none() {
+        let own = self.resolve_result(&target.reference).is_some();
+        if !own && !self.is_inherited_reader_source(&target.reference) {
             return Ok(Err("unknown_handle".to_owned()));
         }
-        let read = match self.checked_read(&target)?.map(|(read, _)| read) {
+        let (read, rows) = match self.checked_read(&target)? {
             Ok(read) => read,
             Err(refused) => {
                 let code = refused
@@ -30,29 +75,67 @@ impl RecordingJsHost<'_, '_> {
             return Ok(Err("tainted".to_owned()));
         }
         let output = read.output();
+        // An own result carries this run's ledger, frozen now; a forwarded
+        // inherited source keeps the origins its delegating run froze (FIX 7084).
+        let origins = if own {
+            self.gated_write.frozen_result_origins(self.run_id)
+        } else {
+            self.inherited_reader_source(&target.reference)
+                .and_then(|source| source.origins.clone())
+        };
         Ok(Ok(DelegatedSource {
-            owner: self.run_id,
+            owner: read.owner(),
             path: output.path.clone(),
             handle: output.handle.clone(),
             range: read.range().unwrap_or((0, output.raw_len)),
-            rows: self.result_rows(),
+            rows: if own { self.result_rows() } else { rows },
+            origins,
         }))
+    }
+
+    /// The one source lent to a native Read child that `reference` names.
+    /// Scoped inputs and child findings are not sources for this path.
+    pub(super) fn inherited_reader_source(
+        &self,
+        reference: &JsResultRef,
+    ) -> Option<&DelegatedSource> {
+        let child = self.gated_write.reader_child()?;
+        if child.scoped.is_some() {
+            return None;
+        }
+        match reference {
+            JsResultRef::Name(name) => child.delegated(true, name),
+            JsResultRef::Handle(handle) => child.delegated(false, handle).or_else(|| {
+                handle
+                    .strip_prefix("occurrence:")
+                    .and_then(|wanted| child.delegated_occurrence(wanted))
+            }),
+        }
+        .map(|(_, source)| source)
+    }
+
+    /// Whether `reference` names the one source lent to a native Read child.
+    pub(super) fn is_inherited_reader_source(&self, reference: &JsResultRef) -> bool {
+        self.inherited_reader_source(reference).is_some()
     }
 
     /// `self.spawn(...)`: the source resolved in this run, then the spawn
     /// dispatched with it bound; the run's record keeps the guest's call. A
-    /// reader child's spawn goes straight to its refusal.
+    /// Read child with a seat may also delegate its inherited source.
     pub(super) fn spawn_reader(
         &mut self,
         seq: u64,
         mut spawn: SelfReaderSpawnCall,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        if self.gated_write.reader_child().is_none() {
+        if self.gated_write.reader_child().is_none()
+            || self.gated_write.reader_spawn_seat().is_some()
+        {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
                 Err(reason) => {
                     return Ok((
                         SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            hook_notice: None,
                             effect: SelfEffect::ReaderSpawn,
                             outcome: reason,
                             reason_codes: Vec::new(),
@@ -67,6 +150,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -81,7 +165,9 @@ impl RecordingJsHost<'_, '_> {
     /// with them bound; the run's record keeps the guest's call. A tainted
     /// member answers the reply its read would, so a withheld body is never
     /// summarized; any other refusal answers its own reason. A reader
-    /// child's call goes straight to its refusal.
+    /// child's call goes straight to its refusal. Each member's origins are
+    /// this run's ledger as its read left it, frozen then: a member another
+    /// run holds noted its own frozen origins there in that read (FIX 7084).
     pub(super) fn summarize(
         &mut self,
         seq: u64,
@@ -100,6 +186,7 @@ impl RecordingJsHost<'_, '_> {
                             .unwrap_or("denied");
                         return Ok((
                             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                hook_notice: None,
                                 effect: SelfEffect::Summarize,
                                 outcome: code.to_owned(),
                                 reason_codes: Vec::new(),
@@ -123,15 +210,22 @@ impl RecordingJsHost<'_, '_> {
                     handle: output.handle.clone(),
                     range: read.range().unwrap_or((0, output.raw_len)),
                     rows,
+                    origins: self.gated_write.frozen_result_origins(self.run_id),
                 });
             }
             call.bound = Some(bound);
+            let effort = call.effort.unwrap_or_default();
+            call.recipe = Some(match self.summary_prompt_package.as_deref() {
+                Some(root) => crate::code_run::SummarizeRecipe::from_prompt_package(effort, root)?,
+                None => crate::code_run::SummarizeRecipe::new(effort),
+            });
         }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -144,7 +238,8 @@ impl RecordingJsHost<'_, '_> {
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
     /// resolved among its own results only, a whole stored JSON value, then
     /// the report dispatched with it bound. Its parent's source is not its
-    /// own and is refused.
+    /// own and is refused. Its origins are the child's ledger, frozen now
+    /// (FIX 7084).
     pub(super) fn report_finding(
         &mut self,
         seq: u64,
@@ -185,6 +280,7 @@ impl RecordingJsHost<'_, '_> {
                 handle: output.handle,
                 bytes: output.raw_len,
                 rows: self.result_rows(),
+                origins: self.gated_write.frozen_result_origins(self.run_id),
             });
         }
         let site = ExecutorCallSite {
@@ -192,6 +288,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write

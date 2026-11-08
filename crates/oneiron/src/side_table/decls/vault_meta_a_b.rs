@@ -5,6 +5,11 @@ side_tables! {
     /// A pending cross-relationship access request awaiting the owner's approve/deny decision. Key:
     /// id16.
     ACCESS_REQUEST: VaultMeta b"access-request:v1:" LegacyJson;
+    /// FIX 4570: the SUMMARY one actor's compaction home wears as its self-model, by ref only;
+    /// set by the owner or the actor's own door, read through the actor's own scoped SUMMARY
+    /// read. Key: id16(actor).
+    ACTOR_SELF_MODEL_SUMMARY: VaultMeta b"actor:self_model_summary:v1:" Named Engine
+        => crate::code_run::erase_self_model_binding_actor_in_txn;
     /// Durable SessionEnd distill job for one ended sitting, queued in the same transaction that
     /// closes it and cleared once distilled. Key: id16.
     ACTOR_CLAIMS_DISTILL_PENDING_JOB: VaultMeta b"actor_claims:distill_pending:v1:" Raw;
@@ -105,7 +110,7 @@ side_tables! {
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
-        => crate::learning::erase_receipt_scope_in_txn;
+        => crate::receipt::erase_attempt_receipt_actor_in_txn;
     /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
     /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
     /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
@@ -176,12 +181,20 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// The digest of the leave-notice delegation a settled ReRoot's root signed beside it (FIX
+    /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
+    /// hash32 (the ReRoot's entry hash).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw;
+    /// One leave-notice delegation's canonical bytes (FIX 7932): a root's signed, purpose-limited
+    /// hand-on of leave-notice verification to its ReRoot's successor. Immutable authority
+    /// evidence. Key: bytes32 (its digest).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION: VaultMeta b"authority:leave-notice-delegation:v1:" Raw;
     /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
     /// and BEAM promotion receipt. Key: id16 (root attempt).
     AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named;
     /// One finalized claim-authoring tournament run: winner, landed approval, team receipt ref,
     /// terminal receipt ref and settled outcome. Key: id16 (root attempt) + id16 (run attempt).
-    AUTORESEARCH_AUTHORING_RUN: VaultMeta b"autoresearch:authoring_run:v1:" Named;
+    AUTORESEARCH_AUTHORING_RUN: VaultMeta b"autoresearch:authoring_run:v2:" Named;
     /// One autoresearch candidate's held-out basis, its one sealed confirmation (consumed before
     /// the cohort is released) and its promotion receipt. Key: id16 (root attempt) + id16
     /// (candidate attempt).
@@ -194,6 +207,9 @@ side_tables! {
     /// dispatched. Key: id16 (root attempt) + u64be (0 bootstrap, n + 1 round n).
     AUTORESEARCH_CONTINUATION: VaultMeta b"autoresearch:continuation:v1:" Named
         => crate::autoreason_campaign::research::erase_release_source_rows_in_txn;
+    /// Round-robin cursor of the research continuation sweep: the last served root id16.
+    /// Key: ().
+    AUTORESEARCH_CONTINUATION_CURSOR: VaultMeta b"autoresearch:continuation_cursor:v1" Raw;
     /// One held-out selection benchmark of an autoresearch parent-selection estimator version
     /// against the DGM formula, recorded once. Key: string (estimator version).
     AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;
@@ -210,6 +226,9 @@ side_tables! {
     AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
     /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
     AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
+    /// One deferred tournament-lineage walk's persisted position (FIX 9581).
+    /// Key: id16 (team leader attempt) + id16 (tournament run attempt).
+    AUTORESEARCH_TOURNAMENT_CURSOR: VaultMeta b"autoresearch:tournament_cursor:v1:" Named;
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes
     /// move no backup watermark. Runtime-tier: no image carries it. Key: ().
@@ -327,6 +346,9 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_accepts_masked]
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// Native host allocation selection, balances and original holds. Key: ().
+    BUDGET_HOST_ACCOUNT: VaultMeta b"budget.host.account.v1\0" Named Engine
+        => crate::llm::run_admission::allocation::erase_actor_in_txn;
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
     BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine

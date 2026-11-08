@@ -13,6 +13,7 @@ impl MediaRung {
     /// Whether this rung takes `request`, bound as the rung would send it.
     pub(in crate::models) fn takes(&self, request: &MediaRequest) -> bool {
         self.row.admit_media(request).is_ok()
+            && (request.mask.is_none() || self.backend.supports_mask())
             && self
                 .backend
                 .reference_compatibility(request)

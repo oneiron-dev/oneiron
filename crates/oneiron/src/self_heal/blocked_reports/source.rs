@@ -55,6 +55,14 @@ const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
 const STEPS: SideTable<StepSourceKey, StepReplaySource, Named> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
 
+/// Whether a masked copy of a `COACH_BLOCKED_SOURCE` row still decodes as
+/// either of its two current stored values, for the historical lift sweep
+/// (FIX 2680): a receipt row's replay source, or a step row's kept request.
+pub(crate) fn coach_blocked_source_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BlockedReplaySource, Named>(bytes)
+        || crate::side_table::decodes::<StepReplaySource, Named>(bytes)
+}
+
 /// The byte a step row's key leads with. A receipt row's key is the
 /// receipt's 16 bytes alone, so the two never share a key's length.
 const STEP_TAG: u8 = b's';
@@ -391,7 +399,7 @@ pub(crate) fn capture_durable_step(
     call: u32,
     now_ms: u64,
 ) {
-    if !vault.config.failure_signals.exports() {
+    if !vault.config.failure_signals.exports() || steps_uncaptured(vault, attempt) {
         return;
     }
     let kept = keep_durable_step(vault, attempt, step, actor, subject, request, call, now_ms);
@@ -401,6 +409,59 @@ pub(crate) fn capture_durable_step(
             "a step's request was not kept; its replay is not exact"
         );
     }
+}
+
+/// The attempts, by vault, whose durable steps keep no request capture while
+/// an [`UncapturedSteps`] guard holds them, with how many guards hold each.
+type UncapturedAttempts = std::collections::BTreeMap<([u8; 32], AttemptId), usize>;
+
+/// Every live [`UncapturedSteps`] registration in this process.
+static UNCAPTURED: std::sync::Mutex<UncapturedAttempts> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Keeps one attempt's durable-step requests, its corrective calls'
+/// included, out of the replay capture while it is alive: a step whose
+/// request quotes words the capture's owners (actor, subject, terminal claim)
+/// would not retire when those words are erased (fix list row 20501, the
+/// mail claim re-check's judge request). Each guard counts once and removes
+/// only its own registration, so an overlapping guard never lets capture
+/// back early. Every other step is captured as before.
+pub(crate) struct UncapturedSteps {
+    key: ([u8; 32], AttemptId),
+}
+
+impl UncapturedSteps {
+    /// Holds `attempt` of `vault` out of the capture until the guard drops.
+    pub(crate) fn hold(vault: &Vault, attempt: AttemptId) -> Self {
+        let key = (*vault.vault_id().as_bytes(), attempt);
+        let mut held = UNCAPTURED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held.entry(key).or_insert(0) += 1;
+        Self { key }
+    }
+}
+
+impl Drop for UncapturedSteps {
+    fn drop(&mut self) {
+        let mut held = UNCAPTURED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = held.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                held.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Whether a live [`UncapturedSteps`] guard holds `attempt` of `vault`.
+fn steps_uncaptured(vault: &Vault, attempt: AttemptId) -> bool {
+    UNCAPTURED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains_key(&(*vault.vault_id().as_bytes(), attempt))
 }
 
 #[expect(

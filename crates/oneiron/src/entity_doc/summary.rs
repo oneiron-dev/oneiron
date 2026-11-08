@@ -159,12 +159,14 @@ pub(crate) fn birth_summary_in_txn(
     )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
         field,
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        succeeds: None,
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)
 }
@@ -191,6 +193,9 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
             self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, summary)? {
+                return Err(refusal);
+            }
             let (mut head, doc) = summary_doc(self, txn, summary)?;
             if doc.frontier() != frontier {
                 return Err(Error::ConcurrentWrite(
@@ -306,6 +311,7 @@ pub(crate) fn open_summary_proposal(
             authorization,
             vault.now_recorded_at(),
             &sources,
+            None,
         )?;
         let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
         for record in &mut bundle.forks {

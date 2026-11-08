@@ -2,29 +2,48 @@
 //! bound to at a compaction breakpoint, and the one-rung ladder its fork is
 //! sent on. The fork keeps the run's own permit path: its own admission,
 //! the run's gate for the rung's offer, a one-use permit and its settlement.
-//! It never takes an owner's fallback or another model.
+//! It never takes an owner's fallback or another model. The bound rung is
+//! the one that answered the run's latest completed call (FIX 4933), never
+//! the one a walk would take now.
 use oneiron::code_run::LiveForkRung;
 
 use super::*;
 
+impl LadderRung {
+    /// This rung as a live fork names it (FIX 4933): its provider, its
+    /// place in the configured ladder, its wire model and its offer.
+    pub(super) fn live_fork_rung(&self) -> LiveForkRung {
+        LiveForkRung {
+            provider: self.provider.clone(),
+            position: self.position,
+            wire_model: self.wire_model.clone(),
+            offer: self.offer.binding.clone(),
+        }
+    }
+}
+
 impl OfferLadder {
-    /// The rung `request`'s walk would send it to now, and the request as
-    /// that rung sends it, its prompt first: the first rung the walk does
-    /// not pass over (one that rests, has its probation request out, its
-    /// order refuses, or would take the work off the device as a fallback).
-    /// `None` when no rung can take it now: no rung is guessed.
-    pub(crate) fn live_rung(&self, request: &LlmRequest) -> Option<(LiveForkRung, LlmRequest)> {
-        self.admits(request).ok()?;
+    /// Whether this ladder's walk would take `request` on `answered`, the
+    /// rung that answered the run's latest completed call, now (FIX 4933):
+    /// a rung here at its offer and wire model that the walk does not pass
+    /// over (one that rests, has its probation request out, its order
+    /// refuses, or would take the work off the device as a fallback). An
+    /// owner's fallback's rung is on no ladder here, so it takes none.
+    pub(crate) fn takes_answering_rung(
+        &self,
+        answered: &LiveForkRung,
+        request: &LlmRequest,
+    ) -> bool {
+        if self.admits(request).is_err() {
+            return false;
+        }
         let routes = self.rests.world_routes(request);
-        let index = (0..self.rungs.len()).find(|index| self.takes_now(*index, request, &routes))?;
-        let rung = &self.rungs[index];
-        let captured = LiveForkRung {
-            provider: rung.provider.clone(),
-            position: rung.position,
-            wire_model: rung.wire_model.clone(),
-            offer: rung.offer.binding.clone(),
-        };
-        Some((captured, rung.bind(request.clone())))
+        (0..self.rungs.len()).any(|index| {
+            let rung = &self.rungs[index];
+            rung.offer.binding == answered.offer
+                && rung.wire_model == answered.wire_model
+                && self.takes_now(index, request, &routes)
+        })
     }
 
     /// Whether the walk would send `request` to the rung at `index` now.

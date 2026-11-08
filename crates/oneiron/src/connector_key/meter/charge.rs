@@ -5,6 +5,16 @@
 use super::*;
 
 impl EffectorBudgetCharge {
+    /// Refreshes the admission snapshot after its same-writer reservation marks.
+    pub(crate) fn refresh_read_in_txn(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        now: u64,
+    ) -> Result<()> {
+        refresh_read_in_txn(store, txn, &mut self.read, now)
+    }
+
     /// Folds the catalog pool's own charge into this per-grant key's: the
     /// pool's read rides `read.pool`, the rest `pool`.
     fn meet_pool(&mut self, mut pool: Self) {
@@ -17,6 +27,24 @@ impl EffectorBudgetCharge {
             ladder_events: pool.ladder_events,
         });
     }
+}
+
+fn refresh_read_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    read: &mut EffectorBudgetRead,
+    now: u64,
+) -> Result<()> {
+    let record = crate::connector_key::txn::read_connector_key_in_txn(store, txn, &read.key_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let states = load_budget_row_states(store, txn, &read.key_ref, &record, None, false, now)?;
+    let pool = read.pool.take();
+    *read = budget_read_from_states(&read.key_ref, &record, &states);
+    read.pool = pool;
+    if let Some(pool) = read.pool.as_mut() {
+        refresh_read_in_txn(store, txn, pool, now)?;
+    }
+    Ok(())
 }
 
 impl EffectorBudgetChargeOutcome {
@@ -120,7 +148,8 @@ pub(crate) fn charge_effector_budgets_pooled(
 /// Read-only preflight for a set of connector keys charged in ONE Gate
 /// transaction. Callers preflight every distinct key before writing usage to
 /// any of them, so a later exhausted key cannot partially debit an earlier.
-/// A per-grant key's preflight also reads its catalog's shared pool.
+/// A per-grant key's preflight also reads its catalog's shared pool and
+/// reports the exhausted row [`pool_exhaustion_reported`] selects.
 pub(crate) fn preflight_effector_budgets(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -130,16 +159,14 @@ pub(crate) fn preflight_effector_budgets(
     send_like: bool,
     now: u64,
 ) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
-    if let Some(exhausted) =
-        preflight_key_budgets(store, txn, key_id, record, effect_channel, send_like, now)?
-    {
-        return Ok(Some(exhausted));
-    }
+    let own = key_exhaustion(store, txn, key_id, record, effect_channel, send_like, now)?;
     let Some((catalog_id, catalog, channel)) = catalog_budget_pool_in_txn(store, txn, record)?
     else {
-        return Ok(None);
+        return Ok(own.map(KeyExhaustion::reported));
     };
-    preflight_key_budgets(store, txn, &catalog_id, &catalog, &channel, send_like, now)
+    let pool = key_exhaustion(store, txn, &catalog_id, &catalog, &channel, send_like, now)?
+        .filter(|pool| pool_exhaustion_reported(own.as_ref(), pool));
+    Ok(pool.or(own).map(KeyExhaustion::reported))
 }
 
 fn preflight_key_budgets(
@@ -151,6 +178,35 @@ fn preflight_key_budgets(
     send_like: bool,
     now: u64,
 ) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
+    Ok(
+        key_exhaustion(store, txn, key_id, record, effect_channel, send_like, now)?
+            .map(KeyExhaustion::reported),
+    )
+}
+
+/// The exhausted row one key's preflight finds, and whether it bounds
+/// spend.
+struct KeyExhaustion {
+    location: EffectorBudgetLocation,
+    on_exhaust: EffectorBudgetOnExhaust,
+    spend: bool,
+}
+
+impl KeyExhaustion {
+    const fn reported(self) -> (EffectorBudgetLocation, EffectorBudgetOnExhaust) {
+        (self.location, self.on_exhaust)
+    }
+}
+
+fn key_exhaustion(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<Option<KeyExhaustion>> {
     let states = load_budget_row_states(
         store,
         txn,
@@ -160,25 +216,48 @@ fn preflight_key_budgets(
         send_like,
         now,
     )?;
-    Ok(states
+    Ok(first_exhausted(&states).map(|state| KeyExhaustion {
+        location: EffectorBudgetLocation {
+            key_ref: *key_id,
+            row: state.row,
+        },
+        on_exhaust: state.budget.exhaust_policy(),
+        spend: state.budget.dimension == EffectorBudgetDimension::Spend,
+    }))
+}
+
+/// Whether a per-grant key's admission reports its catalog pool's exhausted
+/// row rather than its own (FIX 8753): when its own rows pass, or when the
+/// pool's row bounds spend and its own only counts. Spend comes before
+/// count across both keys, the key's own row first within each, so a
+/// grant's count crossing never hides the pool's money refusal or keeps
+/// its `Suspend` from running on the catalog key.
+fn pool_exhaustion_reported(own: Option<&KeyExhaustion>, pool: &KeyExhaustion) -> bool {
+    own.is_none_or(|own| pool.spend && !own.spend)
+}
+
+/// The exhausted matched row an admission reports: the first exhausted
+/// spend row in the meter's row order, else the first exhausted count row
+/// (FIX 8753). A count crossing is never the reason a money refusal goes
+/// unsaid: it only refuses and paces, where an exhausted spend row may
+/// suspend.
+fn first_exhausted<'s, 'a>(states: &'s [BudgetRowState<'a>]) -> Option<&'s BudgetRowState<'a>> {
+    let exhausted = |state: &&BudgetRowState<'a>| {
+        if !state.matched {
+            return false;
+        }
+        let used = state.usage.used();
+        match state.budget.dimension {
+            // Spend debits 0 at admission and refuses when already exhausted.
+            EffectorBudgetDimension::Spend => used >= state.budget.limit,
+            _ => used.saturating_add(state.amount) > state.budget.limit,
+        }
+    };
+    states
         .iter()
-        .find(|state| {
-            if !state.matched {
-                return false;
-            }
-            let used = state.usage.used();
-            match state.budget.dimension {
-                EffectorBudgetDimension::Spend => used >= state.budget.limit,
-                _ => used.saturating_add(state.amount) > state.budget.limit,
-            }
-        })
-        .map(|state| {
-            let location = EffectorBudgetLocation {
-                key_ref: *key_id,
-                row: state.row,
-            };
-            (location, state.budget.on_exhaust)
-        }))
+        .filter(exhausted)
+        .find(|state| state.budget.dimension == EffectorBudgetDimension::Spend)
+        .or_else(|| states.iter().find(exhausted))
 }
 
 /// Charges one admitted external effect to a key's budget rows and, for a
@@ -187,8 +266,10 @@ fn preflight_key_budgets(
 /// side rides `charge.pool` and `charge.read.pool` under the catalog key's
 /// ref (ONE-1794).
 ///
-/// An exhausted catalog pool comes back as `Exhausted` with `Refuse`, after
-/// the catalog row's own on-exhaust has run: a `Suspend` row suspends the
+/// An exhausted catalog pool comes back as `Exhausted` with `Refuse` when
+/// [`pool_exhaustion_reported`] selects it (the key's own rows pass, or the
+/// pool's spend row beats the key's count row), after the catalog row's
+/// own on-exhaust has run: a `Suspend` row suspends the
 /// catalog key, which holds this key with it. The caller then must not
 /// suspend this key in its own name, or the catalog's resume would not
 /// lift it.
@@ -205,9 +286,13 @@ pub(crate) fn charge_effector_budgets(
     else {
         return charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now);
     };
-    if preflight_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?.is_none()
-        && let Some((location, on_exhaust)) =
-            preflight_key_budgets(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+    let own = key_exhaustion(store, wtxn, key_id, key, effect_channel, send_like, now)?;
+    if let Some(KeyExhaustion {
+        location,
+        on_exhaust,
+        ..
+    }) = key_exhaustion(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+        .filter(|pool| pool_exhaustion_reported(own.as_ref(), pool))
     {
         let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
             && catalog.status == ConnectorKeyStatus::Active;
@@ -271,6 +356,36 @@ pub(crate) fn charge_effector_budgets(
     Ok(outcome)
 }
 
+/// The single emission policy for admission and confirmed settlement.
+/// Both use the combined live usage and the same per-window fired memory.
+pub(super) fn fire_ladder_thresholds(
+    row: EffectorBudgetRowId,
+    budget: &EffectorBudget,
+    usage: &mut ConnectorKeyUsage,
+) -> Vec<EffectorBudgetLadderEvent> {
+    let mut events = Vec::new();
+    // Spend-ladder signals remain an explicit v1 non-goal (M3b).
+    if budget.dimension != EffectorBudgetDimension::Spend {
+        let percent = percent_used(usage.used(), budget.limit);
+        for threshold in [
+            BudgetThreshold::Silent50,
+            BudgetThreshold::Plan80,
+            BudgetThreshold::Land95,
+        ] {
+            let name = budget_threshold_fired_name(threshold);
+            if percent >= threshold.percent() && !usage.fired.iter().any(|fired| fired == name) {
+                usage.fired.push(name.to_owned());
+                events.push(EffectorBudgetLadderEvent {
+                    row,
+                    threshold,
+                    steering: effector_steering_signal(threshold),
+                });
+            }
+        }
+    }
+    events
+}
+
 /// Evaluates and (only when every matched row passes) debits a key's budget
 /// rows for one admitted external effect. Evaluate-all-then-apply-all across
 /// the key/compiled union: an exhausted outcome applies NO debits. The charge
@@ -314,24 +429,14 @@ fn charge_key_budgets(
     }
 
     // Evaluate ALL matched rows before applying ANY debit; report the first
-    // exceeding row in the meter's row order (key rows before compiled).
-    let exhausted = states.iter().find(|state| {
-        if !state.matched {
-            return false;
-        }
-        let used = state.usage.used();
-        match state.budget.dimension {
-            // Spend debits 0 at admission and refuses when already exhausted.
-            EffectorBudgetDimension::Spend => used >= state.budget.limit,
-            _ => used.saturating_add(state.amount) > state.budget.limit,
-        }
-    });
-    if let Some(state) = exhausted {
+    // exceeding spend row, else the first exceeding count row, in the meter's
+    // row order (key rows before compiled).
+    if let Some(state) = first_exhausted(&states) {
         let location = EffectorBudgetLocation {
             key_ref: *key_id,
             row: state.row,
         };
-        let on_exhaust = state.budget.on_exhaust;
+        let on_exhaust = state.budget.exhaust_policy();
         // Carry-read-only (M5b resolution 2026-07-10): the exhaustion path
         // fires NO new ladder events and persists nothing — the signal
         // history rides the read's `fired_thresholds`.
@@ -356,10 +461,13 @@ fn charge_key_budgets(
     let mut debits = Vec::new();
     for state in states.iter_mut().filter(|state| state.matched) {
         if state.amount > 0 {
-            state.usage.entries.push((now, state.amount));
+            let entry = UsageEntry::settled(store, wtxn, now, state.amount)?;
+            state.usage.entries.push(entry);
             debits.push(EffectorBudgetDebit {
+                entry_id: entry.id,
                 key_ref: *key_id,
                 row: state.row,
+                approval: EffectorBudgetApproval::capture(key, state.row)?,
                 amount: state.amount,
                 at: now,
             });
@@ -367,33 +475,11 @@ fn charge_key_budgets(
                 sends_debit = 1;
             }
         }
-        // Fire ladder thresholds crossed by the post-debit usage, once per
-        // window per row (persisted in `fired`). Spend rows advance only via
-        // settlement — spend-ladder signals are an explicit v1 non-goal (M3b).
-        if state.budget.dimension != EffectorBudgetDimension::Spend {
-            let percent = percent_used(state.usage.used(), state.budget.limit);
-            for threshold in [
-                BudgetThreshold::Silent50,
-                BudgetThreshold::Plan80,
-                BudgetThreshold::Land95,
-            ] {
-                let name = budget_threshold_fired_name(threshold);
-                if percent >= threshold.percent()
-                    && !state.usage.fired.iter().any(|fired| fired == name)
-                {
-                    state.usage.fired.push(name.to_owned());
-                    // Each event carries the row that fired it: a dispatch
-                    // matching several rows can cross the same threshold on
-                    // more than one, and the consumer must be able to tell
-                    // "sends at 80%" from "rate at 80%".
-                    ladder_events.push(EffectorBudgetLadderEvent {
-                        row: state.row,
-                        threshold,
-                        steering: effector_steering_signal(threshold),
-                    });
-                }
-            }
-        }
+        ladder_events.extend(fire_ladder_thresholds(
+            state.row,
+            state.budget,
+            &mut state.usage,
+        ));
         USAGE.put(store, wtxn, &(*key_id, state.row.usage_key()), &state.usage)?;
     }
 

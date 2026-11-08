@@ -25,7 +25,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
     SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewUnit,
+    SlideReviewRequest, SlideReviewSnapshot, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
@@ -87,6 +87,10 @@ pub struct ArtifactExportFile {
     pub content_hash: String,
     pub born_with: BornWith,
     pub content_base64: String,
+    /// The owner's export only: worlds carried despite the recipient
+    /// setting, with the existing owner notice wording (FIX 3184).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 /// Exactly one source: a task, ask, code-mode run or skill row, or an agent run ref.
@@ -131,6 +135,9 @@ pub struct DeckProposeRequest {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// A held proposal, or the refusal naming the step and its check.
@@ -158,6 +165,9 @@ pub struct NativeOutputRequest {
     /// must admit each row. This is not authority or a complete read log.
     #[serde(default)]
     pub read_rows: Vec<String>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -321,6 +331,9 @@ pub enum ArtifactAskUnits {
     /// lands as a Word comment quoting it.
     Paragraphs {
         blocks: Vec<String>,
+        /// Native story for these local ids, omitted for the document body.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
         /// The comments' author name.
         author: String,
         /// The display words, severity words included.
@@ -354,6 +367,10 @@ pub struct ArtifactAskOutcome {
     pub proposed: Option<PendingProposalView>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
+    /// First selected sheet row not completed; narrow the original range
+    /// from this row and use a fresh run_ref to ask the remainder. This is
+    /// an explicit partial result, not an automatic or durable queue.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `vault.artifacts.admit`'s input: one artifact ask whose provider output
@@ -463,8 +480,10 @@ impl Memory<'_> {
         )
     }
 
-    /// A person's settle is the owner's consent; an agent's rides a standing
-    /// grant on the brief it names.
+    /// A person's settle asks as the owner; an agent's rides a standing
+    /// grant on the brief it names. The settle writer verifies the person is
+    /// the vault's owner, and holds anyone else to a standing grant on the
+    /// brief (FIX 9620).
     fn artifact_consent(&self, brief_ref: Option<String>) -> MemoryResult<SettleConsent> {
         if self.actor_class() == EdgeActorClass::Human {
             return Ok(SettleConsent::OwnerConsent { brief_ref });
@@ -475,11 +494,51 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.view`: kind, name, type, head and every version with
-    /// its made_by and born-from.
+    /// its made_by and born-from. Queue-check exhaust needs the request's
+    /// authenticated Owner proof; an unbound public read withholds it.
     pub fn artifacts_view(&self, input: &ArtifactRefRequest) -> MemoryResult<Option<ArtifactView>> {
-        Ok(self
+        let artifact = entity(&input.artifact_ref)?;
+        if let Some(view) = self
             .vault()
-            .blob_artifact_view(&entity(&input.artifact_ref)?)?)
+            .blob_artifact_view_for_reader(&artifact, None, None)?
+        {
+            return Ok(Some(view));
+        }
+        match self.queue_check_request_owner() {
+            Some(owner) => self.artifacts_view_as_owner(owner, input),
+            None => Ok(None),
+        }
+    }
+
+    /// The family view with the actual Owner proof carried by this request.
+    /// The protected artifact and Owner are judged again in the read snapshot.
+    pub fn artifacts_view_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactRefRequest,
+    ) -> MemoryResult<Option<ArtifactView>> {
+        self.artifact_owner_matches(owner)?;
+        let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
+        Ok(self.vault().blob_artifact_view_for_reader(
+            &entity(&input.artifact_ref)?,
+            Some(owner),
+            Some(&lane),
+        )?)
+    }
+
+    pub(crate) fn artifact_owner_matches(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> MemoryResult<()> {
+        let actor = owner.revalidate(self.vault())?;
+        if self.actor_class() != EdgeActorClass::Human || self.actor() != actor {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "artifact Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        Ok(())
     }
 
     /// `vault.artifacts.export`: one version's export file, with the born-with
@@ -488,13 +547,39 @@ impl Memory<'_> {
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifacts_export_with_owner(input, self.queue_check_request_owner())
+    }
+
+    /// A sighted export with this request's real Owner proof. Secret sight
+    /// remains independent of the protected exhaust's Owner audience.
+    pub fn artifacts_export_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactExportRequest,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifact_owner_matches(owner)?;
+        self.artifacts_export_with_owner(input, Some(owner))
+    }
+
+    fn artifacts_export_with_owner(
+        &self,
+        input: &ArtifactExportRequest,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
         let vault = self.vault();
-        let Some(file) = self.export_blob_artifact_sighted(
-            &entity(&input.artifact_ref)?,
-            input.version,
-            input.why.as_deref(),
-        )?
-        else {
+        let artifact = entity(&input.artifact_ref)?;
+        let file = match owner {
+            Some(owner) => self.export_blob_artifact_sighted_as_owner(
+                &artifact,
+                input.version,
+                input.why.as_deref(),
+                owner,
+            )?,
+            None => {
+                self.export_blob_artifact_sighted(&artifact, input.version, input.why.as_deref())?
+            }
+        };
+        let Some(file) = file else {
             return Ok(None);
         };
         // The owner's export comes back to the owner, a download or a save to
@@ -503,12 +588,29 @@ impl Memory<'_> {
         // off an unknown machine, and prompt text only from the sources its
         // own read lane reads (FIX 6054).
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact);
-        let text = if self.secret_sight()? == SecretSight::Owner {
-            vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
+        let (born_with, notices) = if self.secret_sight()? == SecretSight::Owner {
+            // Like an agent-pack export, a local download can travel onward
+            // to an unproved recipient. This judges a notice, not admission.
+            let onward = if self.destination().is_off_device() {
+                self.destination().clone()
+            } else {
+                crate::claim::CallerLocality::OffDevice.into()
+            };
+            vault.artifact_export_text_with_notices(
+                &file.artifact_id,
+                &file.made_by,
+                &travel,
+                &onward,
+            )?
         } else {
-            self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
+            let text = self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?;
+            (travel.project(text), Vec::new())
         };
-        let born_with = travel.project(text);
+        let result_notices = notices
+            .iter()
+            .cloned()
+            .map(|notice| notice.in_artifact_export_result(vault, self.destination()))
+            .collect();
         // The hash names the copy beside it (FIX 5491): the sighted export's
         // own `content_hash` stays the stored version's, which its internal
         // readers (deck doors) bind their edits to.
@@ -519,6 +621,7 @@ impl Memory<'_> {
             content_hash.clone(),
             &self.actor(),
             &born_with,
+            notices,
         )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
@@ -529,6 +632,7 @@ impl Memory<'_> {
             content_hash,
             born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+            notices: result_notices,
         }))
     }
 
@@ -591,33 +695,24 @@ impl Memory<'_> {
         Ok(self.vault().pending_proposals_scoped(&lane, &artifact)?)
     }
 
-    /// `slides` of the artifact's head as `renderer` draws them, each with the
-    /// renderer's name, in order, beside the bytes admitted to `renderer` for
-    /// the copy the review makes of each (FIX 8244). `None` when the head
-    /// cannot be read, the render fails or comes back short, or the machine
-    /// cannot hold those copies: those units are read for their structure
-    /// only.
+    /// `slides`, numbered as `snapshot`'s shown deck numbers them, as
+    /// `renderer` draws them, each
+    /// with the renderer's name, in order, beside the bytes admitted to
+    /// `renderer` for the copy the review makes of each (FIX 8244). They are
+    /// drawn from the deck the review reads the units' text from, the live
+    /// body's where it has one, so the review judges pixels and text of one
+    /// head (FIX 9624). `None` when the render fails or comes back short, or
+    /// the machine cannot hold those copies: those units are read for their
+    /// structure only.
     fn render_head_slides(
         &self,
-        artifact: &EntityId,
+        snapshot: &SlideReviewSnapshot,
         renderer: &dyn SlideRenderer,
         slides: &[u64],
     ) -> Option<(Vec<(Vec<u8>, String)>, u64)> {
-        let rendered = self
-            .vault()
-            .blob_artifact_head(artifact)
-            .and_then(|head| {
-                let head = head.ok_or(Error::EntityNotFound)?;
-                let (deck, rows) = self
-                    .vault()
-                    .read_blob_artifact_version_listing(artifact, head.version)?
-                    .ok_or(Error::EntityNotFound)?;
-                // The head it draws is read for the review (FIX 5455).
-                self.produced_from(rows);
-                Ok(deck)
-            })
-            .and_then(|deck| renderer.render(&deck, slides));
-        match rendered {
+        // The head it draws is read for the review (FIX 5455).
+        self.produced_from(snapshot.read_rows.iter().copied());
+        match renderer.render(snapshot.shown_deck(), slides) {
             Ok(images) if images.len() == slides.len() => {
                 let copies = review_copy_bytes(&images);
                 if let Err(error) = renderer.admit(copies) {
@@ -707,14 +802,27 @@ impl Memory<'_> {
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         drop(lane);
+        // One head for the images it renders, the units' text and the
+        // judgment's version (FIX 9624).
+        let snapshot = self
+            .vault()
+            .slide_review_snapshot(&artifact)
+            .map_err(slide_review_error)?;
         let unrendered: Vec<u64> = units
             .iter()
             .filter(|(_, image, _)| image.is_none())
             .map(|(target, _, _)| target.slide)
             .collect();
+        // Each is drawn at its own slide's place in the deck its text is read
+        // from; one that deck no longer holds is drawn nowhere and abstains.
+        let shown_numbers = self
+            .vault()
+            .slide_review_shown_numbers(&snapshot, &unrendered);
+        let drawn: Vec<u64> = shown_numbers.iter().flatten().copied().collect();
+        let mut shown = shown_numbers.into_iter();
         let (renders, admitted) = match renderer {
-            Some(renderer) if !unrendered.is_empty() => {
-                self.render_head_slides(&artifact, renderer, &unrendered)
+            Some(renderer) if !drawn.is_empty() => {
+                self.render_head_slides(&snapshot, renderer, &drawn)
             }
             _ => None,
         }
@@ -730,7 +838,10 @@ impl Memory<'_> {
                 },
                 // An empty image abstains after the unit's structure is read.
                 None => {
-                    let (image, renderer) = renders.next().unwrap_or_default();
+                    let (image, renderer) = match shown.next().flatten() {
+                        Some(_) => renders.next().unwrap_or_default(),
+                        None => Default::default(),
+                    };
                     SlideReviewUnit {
                         target,
                         image: SlideReviewImage::Rendered(image),
@@ -771,15 +882,12 @@ impl Memory<'_> {
         };
         let run = self
             .vault()
-            .review_blob_artifact_slides(&artifact, &request);
+            .review_blob_artifact_slides_pinned(&artifact, snapshot, &request);
         // The review's copies are gone with it: their room goes back (FIX 8244).
         if let Some(renderer) = renderer {
             renderer.materialized(admitted, 0);
         }
-        let run = run.map_err(|error| match error {
-            SlideReviewError::Vault(error) => MemoryError::from(error),
-            other => MemoryError::from(Error::InvalidConfig(other.to_string())),
-        })?;
+        let run = run.map_err(slide_review_error)?;
         // The head version the review read (FIX 5455).
         self.produced_from(run.read_rows.iter().copied());
         // What the review read beside its base, its evidence and each stored
@@ -805,6 +913,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -933,6 +1042,7 @@ impl Memory<'_> {
             )?,
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => vault.ask_blob_artifact_paragraphs(
@@ -940,6 +1050,7 @@ impl Memory<'_> {
                 &ParagraphAsk {
                     ask,
                     blocks,
+                    scope: scope.as_ref(),
                     author,
                     labels,
                 },
@@ -975,6 +1086,7 @@ impl Memory<'_> {
                         abstained: Vec::new(),
                         refused: Vec::new(),
                         read_rows: Vec::new(),
+                        next_sheet_row: None,
                     }
                 } else {
                     vault.ask_folder_items_into_sheet(
@@ -1011,6 +1123,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1018,6 +1131,7 @@ impl Memory<'_> {
             proposed,
             abstained: run.abstained,
             refused: run.refused,
+            next_sheet_row: run.next_sheet_row,
         };
         Ok((outcome, run.read_rows))
     }
@@ -1069,15 +1183,19 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its
-    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    /// run ref (`proposal_ref`), under the consent a Discard needs, judged
+    /// in the writer that drops it (FIX 9621).
     pub fn artifacts_release_wait(
         &self,
         input: &ProposalSettleRequest,
     ) -> MemoryResult<ReleasedWait> {
-        self.artifact_consent(input.brief_ref.clone())?;
-        let released = self
-            .vault()
-            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        let consent = self.artifact_consent(input.brief_ref.clone())?;
+        let released = self.vault().release_organ_wait_as(
+            &entity(&input.artifact_ref)?,
+            &input.proposal_ref,
+            &consent,
+            self.artifact_actor(),
+        )?;
         Ok(ReleasedWait { released })
     }
 
@@ -1103,6 +1221,7 @@ impl Memory<'_> {
                     self.made_by_reader(input.made_by.as_ref())?,
                     (self.artifact_actor(), self.vault().now_recorded_at()),
                     &read_rows,
+                    input.delta_receipt.as_deref(),
                 )?),
                 rejected: None,
             }),
@@ -1140,6 +1259,7 @@ impl Memory<'_> {
             self.made_by_reader(output.made_by.as_ref())?,
             (self.artifact_actor(), self.vault().now_recorded_at()),
             &read_rows,
+            input.delta_receipt.as_deref(),
         )?)
     }
 
@@ -1217,5 +1337,14 @@ impl Memory<'_> {
             version: ArtifactVersionView::from(&outcome.version),
             reattached: outcome.reanchor.remapped.len(),
         })
+    }
+}
+
+/// A slide review's refusal as the verb reports it: the vault's own error,
+/// else its reason as an invalid configuration.
+fn slide_review_error(error: SlideReviewError) -> MemoryError {
+    match error {
+        SlideReviewError::Vault(error) => MemoryError::from(error),
+        other => MemoryError::from(Error::InvalidConfig(other.to_string())),
     }
 }
