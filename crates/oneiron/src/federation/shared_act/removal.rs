@@ -38,12 +38,13 @@ impl Vault {
     }
 
     /// The copies of `kept` the removed Owner proving the mint's own key
-    /// takes, each read from its archive's file in `txn` (FIX 3679).
+    /// takes, each spooled from its archive's file in `txn` (FIX 3679,
+    /// 21529).
     pub(crate) fn removal_export_copies_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kept: Vec<removal_archive::StoredRemovalExport>,
-    ) -> Result<Vec<RemovalExportCopy>> {
+    ) -> Result<Vec<RemovalExportFile>> {
         let mut copies = Vec::with_capacity(kept.len());
         for stored in kept {
             if let Some(copy) = self.removal_export_copy_in_txn(txn, stored, None)? {
@@ -132,6 +133,7 @@ impl Vault {
             },
             grants: Vec::new(),
             revoked_slips: Vec::new(),
+            detach: None,
             notify: BTreeSet::new(),
         };
         let receipt = self.record_shared_change_in_txn(

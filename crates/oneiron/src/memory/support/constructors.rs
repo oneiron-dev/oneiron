@@ -22,6 +22,7 @@ impl Vault {
             session_key: None,
             machine_signer: None,
             read_proof: None,
+            phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
             host_origin: None,
@@ -53,6 +54,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 
@@ -79,6 +81,7 @@ impl Vault {
             session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
             host_origin: None,
@@ -110,6 +113,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 }
@@ -142,6 +146,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
@@ -177,6 +182,8 @@ impl<'v> Memory<'v> {
                 // A call's import transport never crosses into a turn.
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                // The caller's own filter narrows the turn's reads too.
+                read_filter: self.read_filter.clone(),
             },
         })
     }

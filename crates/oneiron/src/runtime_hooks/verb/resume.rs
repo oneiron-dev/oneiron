@@ -185,10 +185,11 @@ impl Vault {
         }
         let mut receipt = None;
         // A credential call's door may list the rows its answer was derived
-        // from: they are saved with it (FIX 1435).
-        let (ran, producers) = match resume {
-            VerbResume::Row(plain) => (
-                plain_resume::run(
+        // from: they are saved with it (FIX 1435), beside the chain's notice
+        // metadata (FIX 12517).
+        let (ran, producers, hook_notice) = match resume {
+            VerbResume::Row(plain) => {
+                let (ran, hook_notice) = plain_resume::run(
                     self,
                     invocation,
                     &verb,
@@ -196,9 +197,9 @@ impl Vault {
                     filter::edge_class(class),
                     args,
                     plain,
-                )?,
-                None,
-            ),
+                )?;
+                (ran, None, hook_notice)
+            }
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
                 receipt = Some(RefusalReceipt::new(
@@ -211,7 +212,10 @@ impl Vault {
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
             // Save the full returned value for the caller's retry.
-            Ok(value) => (ask::SavedOutcome::result(&value, producers)?, false),
+            Ok(value) => (
+                ask::SavedOutcome::result(&value, producers, hook_notice)?,
+                false,
+            ),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.
@@ -227,7 +231,7 @@ impl Vault {
                 hook => {
                     let transient = run_failed_transient(&error);
                     (
-                        ask::SavedOutcome::error(error.code, &error.message),
+                        ask::SavedOutcome::error(error.code, &error.message, hook_notice),
                         transient,
                     )
                 }

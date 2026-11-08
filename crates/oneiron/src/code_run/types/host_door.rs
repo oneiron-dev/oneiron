@@ -31,6 +31,9 @@ pub trait SelfDispatcher {
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
+    /// Caller notice from this call's verb hooks, already released by the door.
+    /// It stays beside the output and shares the answer's row provenance.
+    pub hook_notice: Option<serde_json::Value>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
     /// Native handoff only. The write receipt keeps this in its output manifests.
@@ -45,6 +48,7 @@ impl AgentVerbAnswer {
         Self {
             output,
             rows,
+            hook_notice: None,
             observations: Vec::new(),
             hooks: Vec::new(),
             stored_output: None,
@@ -115,6 +119,8 @@ pub struct RunObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentVerbRefusal {
     pub code: String,
+    /// A supplied host-side hook notice; the guest still sees only the code.
+    pub hook_notice: Option<serde_json::Value>,
 }
 
 /// A verb-table row's refusal as its own route worded it (OF-181): the code,
@@ -179,6 +185,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: REVEAL_REPLAY_UNSERVED.to_owned(),
         }))
     }
@@ -236,6 +243,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _verb: crate::task_verb::sdk::AgentVerb,
     ) -> std::result::Result<crate::claim::ScopedReadActorKey, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         })
     }
@@ -253,6 +261,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _verb: crate::task_verb::sdk::AgentVerb,
     ) -> std::result::Result<SessionWriteAdmission, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         })
     }
@@ -327,6 +336,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
         }))
     }

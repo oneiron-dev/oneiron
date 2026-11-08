@@ -639,6 +639,8 @@ pub enum EditStep {
     CommentCreate {
         /// Paragraph hosting the anchored text.
         block_id: NodeId,
+        /// The exact native story; `None` keeps the main-body address space.
+        story: Option<verbs::story_cells::StoryCellAddress>,
         /// Substring that must appear in the paragraph; the comment range wraps
         /// exactly this span. Matched in a single contiguous Normal segment.
         expect: String,
@@ -833,6 +835,8 @@ pub enum EditStep {
         semantic_hash: Option<String>,
         /// The complete new content for the paragraph.
         content: ParagraphContent,
+        /// Exact six-mark sets on newly inserted replacement runs only.
+        exact_marks: bool,
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
@@ -850,6 +854,8 @@ pub enum EditStep {
         semantic_hash: Option<String>,
         /// The complete new content for the paragraph.
         content: ParagraphContent,
+        /// Exact six-mark sets on newly inserted replacement runs only.
+        exact_marks: bool,
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
@@ -1363,6 +1369,92 @@ pub enum EditStep {
         /// The value to set.
         value: String,
         /// Optional precondition on an inline control's current `content_hash`.
+        semantic_hash: Option<String>,
+        /// Optional audit metadata from the schema envelope.
+        rationale: Option<String>,
+    },
+    /// Edit one paragraph WITHIN a footnote/endnote story as marked runs
+    /// (§17.11): a whole-paragraph tracked redline over the story-local
+    /// `block_id`, addressed by the actual `note_id` + `note_kind`. The
+    /// paragraph-scoped sibling of `EditNote` (which keeps its plaintext
+    /// single-paragraph contract byte-unchanged): this step edits the chosen
+    /// top-level paragraph only — including later paragraphs of a
+    /// multi-paragraph note — preserving every other note block, the
+    /// auto-number decoration, and the opaque/comment structural markers.
+    /// `expect` is the current-text precondition (header/footer substring
+    /// law); `content` is the complete new paragraph content; empty content
+    /// empties the paragraph. New `Inserted` runs carry the exact six marks.
+    EditNoteRuns {
+        /// The note id (`w:id`) whose story holds the paragraph.
+        note_id: String,
+        /// Footnote vs endnote (selects the collection to address).
+        note_kind: verbs::footnotes::NoteKind,
+        /// Story-local paragraph block id (never a body id).
+        block_id: NodeId,
+        /// Substring that must appear in the paragraph's current visible text.
+        expect: String,
+        /// Optional full-block semantic-hash precondition.
+        semantic_hash: Option<String>,
+        /// The complete new content for the paragraph.
+        content: ParagraphContent,
+        /// Optional audit metadata from the schema envelope.
+        rationale: Option<String>,
+    },
+    /// Edit one paragraph WITHIN a comment story as marked runs (§17.13.4): a
+    /// Normal annotation rewrite over the story-local `block_id`, addressed by
+    /// the actual `comment_id` (`w:id`). The paragraph-scoped comment-body edit:
+    /// this step edits the chosen top-level paragraph only — including later
+    /// paragraphs of a multi-paragraph comment — preserving every other comment
+    /// block, the comment author/date/tracking status, the paragraph `para_id`,
+    /// the `commentsExtended` threading/resolve sidecar, and all body comment
+    /// anchor ranges. `expect` is the current-text precondition (header/footer
+    /// substring law); `content` is the complete new paragraph content; empty
+    /// content empties the paragraph. New runs carry the exact six marks and
+    /// land as Normal text in both outer modes, never as `w:ins`/`w:del` in
+    /// comments.xml.
+    EditCommentRuns {
+        /// The comment id (`w:id`) whose story holds the paragraph.
+        comment_id: String,
+        /// Story-local paragraph block id (never a body id).
+        block_id: NodeId,
+        /// Substring that must appear in the paragraph's current visible text.
+        expect: String,
+        /// Optional full-block semantic-hash precondition.
+        semantic_hash: Option<String>,
+        /// The complete new content for the paragraph.
+        content: ParagraphContent,
+        /// Optional audit metadata from the schema envelope.
+        rationale: Option<String>,
+    },
+    /// Edit ONE table cell's FIRST-paragraph text within a header/footer,
+    /// footnote/endnote, or comment story (§17.4, §17.10, §17.11, §17.13.4).
+    /// Story-scoped sibling of the body `TableStructureOp::SetCellText`: the
+    /// target is the story-local table `block_id` (never a body id — story
+    /// `tbl_n` ids collide with body `tbl_n` and cross-story), addressed by
+    /// the actual story (H/F part name plus exact band, note kind plus `w:id`,
+    /// comment `w:id`). The cell at logical grid `{row_index, col_index}`
+    /// (the same gridSpan/gridBefore/gridAfter law as the body) has its selected
+    /// paragraph rewritten through the SAME shared in-place core the body cell
+    /// path uses; absent a selector it edits the FIRST paragraph. Other cell
+    /// blocks are untouched. H/F and note
+    /// cells land tracked (Direct honors the outer mode, as the body does);
+    /// comment cells land as Normal annotation text in BOTH outer modes via a
+    /// text-only settle of the target paragraph only, never a whole-table
+    /// accept.
+    EditStoryCell {
+        /// The story holding the table (actual part/kind/id, never the body).
+        story: verbs::story_cells::StoryCellAddress,
+        /// Story-local table block id (never a body id).
+        block_id: NodeId,
+        /// Logical grid row and column (the address the read view mints).
+        row_index: usize,
+        col_index: usize,
+        /// Exact paragraph within this cell; absent means its first paragraph.
+        paragraph: Option<NodeId>,
+        /// The replacement paragraph text (plain, single run).
+        text: String,
+        /// Optional full-block semantic-hash precondition (the story table
+        /// view guard).
         semantic_hash: Option<String>,
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
@@ -2693,6 +2785,12 @@ pub enum EditError {
     /// body. A comment with no text is meaningless; refused rather than
     /// defaulted.
     CommentEmptyBody { step_index: usize },
+
+    /// ISO/IEC 29500-1 §17.13.4 forbids range markers in comment content.
+    CommentAnchorInCommentStory {
+        comment_id: String,
+        step_index: usize,
+    },
 
     /// `CommentDelete` could not locate all three anchor markers
     /// (`commentRangeStart` / `commentRangeEnd` / `commentReference`) for the
@@ -4035,6 +4133,13 @@ impl std::fmt::Display for EditError {
                  tracked ('{status}') — comment on a paragraph without a pending block-level \
                  change, or resolve the change first (commenting a paragraph that only carries \
                  tracked segments IS allowed)"
+            ),
+            EditError::CommentAnchorInCommentStory {
+                comment_id,
+                step_index,
+            } => write!(
+                f,
+                "step {step_index}: comment content story '{comment_id}' cannot contain a comment range"
             ),
             EditError::CommentEmptyBody { step_index } => write!(
                 f,
@@ -8427,6 +8532,116 @@ fn set_mark_surface(marks: &mut Vec<Mark>, style_props: &mut StyleProps, target:
     }
 }
 
+/// Keep each structural marker once between the old and replacement readings.
+/// The caller supplies an all-Normal paragraph to the segment builder and
+/// applies exact replacement marks before this pass can split its text runs.
+fn reposition_segment_replacement_markers(
+    para: &mut ParagraphNode,
+    marker_source: &[TrackedSegment],
+) {
+    let Some(pos) = para
+        .segments
+        .iter()
+        .position(|segment| matches!(segment.status, TrackingStatus::Inserted(_)))
+    else {
+        return;
+    };
+    let mut replacement = vec![para.segments.remove(pos)];
+    crate::tracked_model::inject_structural_markers_at_offsets(
+        &mut replacement,
+        marker_source,
+        None,
+    );
+    let replacement = replacement.pop().expect("one replacement segment");
+    let replacement_status = replacement.status;
+    let mut replacement_inlines = replacement.inlines.into_iter();
+    let mut rebuilt = Vec::new();
+    for segment in std::mem::take(&mut para.segments) {
+        if segment.status != TrackingStatus::Normal {
+            rebuilt.push(segment);
+            continue;
+        }
+        for marker in segment.inlines {
+            let inlines: Vec<_> = replacement_inlines
+                .by_ref()
+                .take_while(|inline| !is_structural_marker(inline))
+                .collect();
+            if !inlines.is_empty() {
+                rebuilt.push(TrackedSegment {
+                    status: replacement_status.clone(),
+                    inlines,
+                });
+            }
+            rebuilt.push(TrackedSegment {
+                status: TrackingStatus::Normal,
+                inlines: vec![marker],
+            });
+        }
+    }
+    let inlines: Vec<_> = replacement_inlines.collect();
+    if !inlines.is_empty() {
+        rebuilt.push(TrackedSegment {
+            status: replacement_status,
+            inlines,
+        });
+    }
+    para.segments = rebuilt;
+}
+
+/// The shared segment builder emits one inline per fragment in its single
+/// Inserted segment. Set only those new text nodes; Deleted source runs and
+/// preserved opaque/break nodes keep their original formatting and history.
+fn set_exact_replacement_marks(para: &mut ParagraphNode, content: &ParagraphContent) {
+    for segment in &mut para.segments {
+        if !matches!(segment.status, TrackingStatus::Inserted(_)) {
+            continue;
+        }
+        for (inline, fragment) in segment.inlines.iter_mut().zip(&content.fragments) {
+            let InlineNode::Text(node) = inline else {
+                continue;
+            };
+            let target = match fragment {
+                ContentFragment::Text(_) => InlineMarkSet::default(),
+                ContentFragment::StyledText { marks, .. } => *marks,
+                _ => continue,
+            };
+            set_mark_surface(&mut node.marks, &mut node.style_props, target);
+            if target.underline
+                && node.style_props.underline_style == Some(crate::domain::UnderlineStyle::None)
+            {
+                node.style_props.underline_style = None;
+            }
+            // Absence is explicit OFF, not inheritance from the paragraph or
+            // character style. All unrelated run properties stay as built.
+            node.rpr_authored.bold = true;
+            node.rpr_authored.bold_off = !target.bold;
+            node.rpr_authored.italic = true;
+            node.rpr_authored.italic_off = !target.italic;
+            node.rpr_authored.bold_cs = true;
+            node.rpr_authored.italic_cs = true;
+            node.style_props.bold_cs = if target.bold {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+            node.style_props.italic_cs = if target.italic {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+            node.rpr_authored.underline = true;
+            node.rpr_authored.underline_off = !target.underline;
+            node.rpr_authored.vert_align = true;
+            node.rpr_authored.strike = true;
+            node.style_props.strike = if target.strike {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+        }
+    }
+}
+
 fn next_revision(base: &RevisionInfo, counter: &mut u32) -> RevisionInfo {
     let rev = RevisionInfo {
         revision_id: *counter,
@@ -11935,6 +12150,7 @@ pub(crate) fn apply_transaction_with_notes(
             }
             EditStep::CommentCreate {
                 block_id,
+                story,
                 expect,
                 occurrence,
                 semantic_hash,
@@ -11945,6 +12161,7 @@ pub(crate) fn apply_transaction_with_notes(
                 notes.extend(verbs::comments::apply_create(
                     &mut doc,
                     block_id,
+                    story.as_ref(),
                     expect,
                     *occurrence,
                     semantic_hash.as_deref(),
@@ -12035,6 +12252,99 @@ pub(crate) fn apply_transaction_with_notes(
                     step_index,
                 )?;
             }
+            EditStep::EditNoteRuns {
+                note_id,
+                note_kind,
+                block_id,
+                expect,
+                semantic_hash,
+                content,
+                rationale: _,
+            } => {
+                verbs::footnotes::apply_edit_runs(
+                    &mut doc,
+                    note_id,
+                    *note_kind,
+                    block_id,
+                    expect,
+                    semantic_hash.as_deref(),
+                    content,
+                    &transaction.revision,
+                    transaction.materialization_mode,
+                    &mut rev_counter,
+                    step_index,
+                )?;
+            }
+            EditStep::EditCommentRuns {
+                comment_id,
+                block_id,
+                expect,
+                semantic_hash,
+                content,
+                rationale: _,
+            } => {
+                verbs::comments::apply_edit_runs(
+                    &mut doc,
+                    comment_id,
+                    block_id,
+                    expect,
+                    semantic_hash.as_deref(),
+                    content,
+                    &transaction.revision,
+                    transaction.materialization_mode,
+                    &mut rev_counter,
+                    step_index,
+                )?;
+            }
+            EditStep::EditStoryCell {
+                story,
+                block_id,
+                row_index,
+                col_index,
+                paragraph,
+                text,
+                semantic_hash,
+                rationale: _,
+            } => {
+                // Same base-guard law as the body `TableStructureOp` arm: story
+                // tables that existed at transaction start validate against the
+                // immutable base, so same-transaction sibling steps on one story
+                // table do not invalidate each other. A story table with no base
+                // entry keeps the ordinary live guard.
+                let guard_for_current = if let Some(expected) = semantic_hash.as_deref()
+                    && let Some(base_block) = verbs::story_cells::find_base_table_block(
+                        &transaction_base,
+                        story,
+                        block_id,
+                    ) {
+                    if let Err(actual) = check_block_guard(base_block, expected) {
+                        return Err(EditError::BlockSemanticHashMismatch {
+                            block_id: block_id.clone(),
+                            expected: expected.to_string(),
+                            actual,
+                            step_index,
+                        });
+                    }
+                    None
+                } else {
+                    semantic_hash.as_deref()
+                };
+                verbs::story_cells::apply(
+                    &mut doc,
+                    story,
+                    block_id,
+                    *row_index,
+                    *col_index,
+                    paragraph.as_ref(),
+                    text,
+                    guard_for_current,
+                    &transaction.revision,
+                    &mut rev_counter,
+                    transaction_floor,
+                    transaction.materialization_mode,
+                    step_index,
+                )?;
+            }
             EditStep::SetPageSetup {
                 target,
                 patch,
@@ -12084,6 +12394,7 @@ pub(crate) fn apply_transaction_with_notes(
                 expect,
                 semantic_hash,
                 content,
+                exact_marks,
                 rationale: _,
             }
             | EditStep::EditFooter {
@@ -12092,6 +12403,7 @@ pub(crate) fn apply_transaction_with_notes(
                 expect,
                 semantic_hash,
                 content,
+                exact_marks,
                 rationale: _,
             } => {
                 verbs::headers_footers::apply_edit(
@@ -12101,6 +12413,7 @@ pub(crate) fn apply_transaction_with_notes(
                     expect,
                     semantic_hash.as_deref(),
                     content,
+                    *exact_marks,
                     &transaction.revision,
                     &mut rev_counter,
                     transaction.materialization_mode,
@@ -13094,6 +13407,12 @@ fn merge_table_formatting_from_base(
 ///   the merge anchor (a higher row), so editing the continuation is ambiguous
 ///   — target the anchor cell instead;
 /// - a cell carrying a tracked structural insert/delete → `TableCellNotEditable`.
+///
+/// The body entry [`apply_set_cell_text_in_place`] keeps its signature and
+/// body resolution and forwards here; story cells resolve their own table
+/// block and call this directly. `comment_annotation` selects the comment
+/// landing (Normal text in both outer modes via a text-only settle of the
+/// target paragraph only); `false` is the body law.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_set_cell_text_in_place(
     doc: &mut CanonDoc,
@@ -13108,9 +13427,48 @@ pub(crate) fn apply_set_cell_text_in_place(
     materialization_mode: MaterializationMode,
     step_index: usize,
 ) -> Result<(), EditError> {
-    let table = match &mut doc.blocks[idx].block {
+    // Body resolution: the table lives in the body blocks at the
+    // caller-located index; the shared core operates on the resolved block.
+    apply_set_cell_text_on_table_block(
+        &mut doc.blocks[idx].block,
+        block_id,
+        row_index,
+        col_index,
+        None,
+        text,
+        revision,
+        rev_counter,
+        transaction_floor,
+        materialization_mode,
+        step_index,
+        false,
+        false,
+    )
+}
+
+/// Shared in-place cell-text core: the body law above, operating on a resolved
+/// table block instead of a body index. Story cells call this with their own
+/// resolved story table block. `comment_annotation` selects the comment landing
+/// only; every other line is the body law verbatim.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_set_cell_text_on_table_block(
+    block: &mut BlockNode,
+    block_id: &NodeId,
+    row_index: usize,
+    col_index: usize,
+    paragraph: Option<&NodeId>,
+    text: &str,
+    revision: &RevisionInfo,
+    rev_counter: &mut u32,
+    transaction_floor: u32,
+    materialization_mode: MaterializationMode,
+    step_index: usize,
+    comment_annotation: bool,
+    enclosing_insert: bool,
+) -> Result<(), EditError> {
+    let table = match block {
         BlockNode::Table(t) => t,
-        _ => unreachable!("caller verified the block at idx is a table"),
+        _ => unreachable!("caller verified the block is a table"),
     };
 
     if row_index >= table.rows.len() {
@@ -13188,12 +13546,12 @@ pub(crate) fn apply_set_cell_text_in_place(
     // `InsertedThenDeleted` status, or an `Inserted` status predating this
     // transaction, is always foreign.
     let effective_status = cell.tracking_status.clone().or(row_status);
-    let own_pending_insert = matches!(
+    let cell_pending_insert = matches!(
         &effective_status,
         Some(TrackingStatus::Inserted(rev)) if rev.revision_id >= transaction_floor
     );
     if let Some(status) = &effective_status
-        && !own_pending_insert
+        && !cell_pending_insert
     {
         let revision_ids = match status {
             TrackingStatus::Normal => Vec::new(),
@@ -13229,18 +13587,30 @@ pub(crate) fn apply_set_cell_text_in_place(
         });
     }
 
-    // Locate the cell's editable paragraph. A cell normally holds exactly one
-    // paragraph; if it holds several, we edit the FIRST (the read view's
-    // `cell_text` joins them, but a one-run set targets the first paragraph,
-    // matching the previous SetCellText shape). A cell with no paragraph at all
-    // is degenerate (canonicalization rejects it upstream) — refuse loudly.
+    // A fresh enclosing insertion owns the nested text too, but never exempts
+    // the target cell from its own foreign-revision check above.
+    let own_pending_insert = enclosing_insert || cell_pending_insert;
+
+    // Resolve only inside this cell. An absent selector retains the body's
+    // first-paragraph intent; a supplied id never falls back to that paragraph
+    // or searches a sibling cell, nested table, story or the document body.
     let para_pos = cell
         .blocks
         .iter()
-        .position(|b| matches!(b, BlockNode::Paragraph(_)))
+        .position(|block| match block {
+            BlockNode::Paragraph(p) => paragraph.is_none_or(|id| &p.id == id),
+            _ => false,
+        })
         .ok_or_else(|| EditError::TableCellNotEditable {
             block_id: block_id.clone(),
-            reason: format!("cell at row {row_index}, col {col_index} has no paragraph to edit"),
+            reason: match paragraph {
+                Some(id) => {
+                    format!("cell at row {row_index}, col {col_index} has no paragraph '{id}'")
+                }
+                None => {
+                    format!("cell at row {row_index}, col {col_index} has no paragraph to edit")
+                }
+            },
             step_index,
         })?;
     // DIRECT mode only: flatten pre-existing tracked ins/del in the cell paragraph
@@ -13249,13 +13619,32 @@ pub(crate) fn apply_set_cell_text_in_place(
     // would silently ACCEPT the cell's prior pending changes; the materializer
     // instead diffs against the accept-all view and carries prior tombstones
     // through, so a second tracked edit preserves both changes (not "oldNEW").
-    if materialization_mode == MaterializationMode::Direct {
+    if materialization_mode == MaterializationMode::Direct && !comment_annotation {
         project_block_for_text_edit_prep(&mut cell.blocks[para_pos]);
     }
     let para = match &mut cell.blocks[para_pos] {
         BlockNode::Paragraph(p) => p,
         _ => unreachable!("para_pos points at a paragraph"),
     };
+
+    if comment_annotation {
+        // Comment annotation law: the target cell paragraph must be all-Normal
+        // before the rewrite, so the text-only settle below flips exactly the
+        // fresh pair (the gate plus `enclosing=None` guarantee, the same shape
+        // as the comment paragraph verb). A comment cell paragraph carrying
+        // imported redlines refuses here — never stacks, never settles foreign
+        // history, never flattens the table.
+        if para
+            .segments
+            .iter()
+            .any(|segment| segment.status != TrackingStatus::Normal)
+        {
+            return Err(EditError::ParagraphContainsTrackedSegments {
+                block_id: block_id.clone(),
+                step_index,
+            });
+        }
+    }
 
     // Build a WHOLE-paragraph replacement content: the cell's opaque inlines
     // (hyperlinks, fields, …) are carried by-ref so they survive; the visible
@@ -13272,10 +13661,10 @@ pub(crate) fn apply_set_cell_text_in_place(
     let anchors = collect_anchor_inventory(para);
     validate_preserved_inlines(para, block_id, &new_content, &anchors, step_index)?;
 
-    // Setting the cell to the text it already holds changes nothing; fail loud
-    // rather than reporting a no-op as a successful edit (CLAUDE.md "no silent
-    // fallbacks").
-    if is_identity_replacement(para, &new_content) {
+    // A joined redline can equal the requested text while the pending edit
+    // state differs (Deleted("x") + Inserted("y") reads "xy", but keeps "y").
+    // Do not mistake that genuine edit for an identity replacement.
+    if is_identity_replacement(para, &new_content) && paragraph_visible_pending_text(para) == text {
         return Err(EditError::NoOpEdit {
             block_id: block_id.clone(),
             step_index,
@@ -13300,10 +13689,40 @@ pub(crate) fn apply_set_cell_text_in_place(
         apply_replace_paragraph_text(para, &new_content, revision, None, rev_counter);
     }
 
-    if materialization_mode == MaterializationMode::Direct {
-        // Direct mode: immediately resolve the just-created tracked changes so
-        // the cell returns to all-Normal (matching the paragraph-text path).
-        project_block_for_accept_reject(&mut doc.blocks[idx].block, true);
+    if comment_annotation {
+        // Text-only settle on the TARGET paragraph only, in BOTH outer modes:
+        // flip the fresh Inserted segment to Normal, drop the Deleted
+        // tombstone. The gate guaranteed all-Normal input and the diff ran
+        // with `enclosing=None`, so every non-Normal segment here is fresh —
+        // this settles exactly our pair, preserving paragraph attrs/meta and
+        // every other cell, row, and paragraph. Never a whole-table project
+        // (that would accept unrelated history) and never a Direct flatten
+        // (the gate made it a no-op; skipping it cannot accept anything).
+        let mut settled: Vec<TrackedSegment> = Vec::with_capacity(para.segments.len());
+        for mut segment in para.segments.drain(..) {
+            match segment.status {
+                TrackingStatus::Inserted(_) => {
+                    segment.status = TrackingStatus::Normal;
+                    settled.push(segment);
+                }
+                TrackingStatus::Deleted(_) => {
+                    // Structural markers are not deleted with the old text.
+                    segment.inlines.retain(is_structural_marker);
+                    if !segment.inlines.is_empty() {
+                        segment.status = TrackingStatus::Normal;
+                        settled.push(segment);
+                    }
+                }
+                _ => settled.push(segment),
+            }
+        }
+        para.segments = settled;
+        para.block_text_hash = None;
+        para.rendered_text = None;
+    } else if materialization_mode == MaterializationMode::Direct {
+        // Settle only the edited paragraph. Accepting the table would also
+        // accept unrelated pending changes in other paragraphs and cells.
+        project_block_for_accept_reject(&mut cell.blocks[para_pos], true);
     }
 
     Ok(())

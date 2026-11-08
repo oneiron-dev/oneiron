@@ -419,6 +419,46 @@ pub(crate) fn advance_authority_clock_in_txn(
     Ok(observed)
 }
 
+struct PreparedStrictAuthorityClockAdvance {
+    observed: u64,
+    floor_put: Option<u64>,
+}
+
+impl PreparedStrictAuthorityClockAdvance {
+    fn apply(
+        self,
+        store: &crate::store::Store,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> crate::error::Result<u64> {
+        if let Some(floor) = self.floor_put {
+            put_authority_clock_floor_in_txn(store, wtxn, floor)?;
+        }
+        Ok(self.observed)
+    }
+}
+
+fn prepare_strict_authority_clock_advance_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    candidate_wall_secs: u64,
+) -> crate::error::Result<PreparedStrictAuthorityClockAdvance> {
+    let floor = match read_authority_clock_floor_in_txn(store, txn) {
+        Ok(floor) => floor.unwrap_or(0),
+        Err(error) if is_authority_clock_corrupt(&error) && in_restriction_only_act() => {
+            return Ok(PreparedStrictAuthorityClockAdvance {
+                observed: authority_clock_lower_bound_in_txn(store, txn)?.unwrap_or(0),
+                floor_put: None,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let observed = authority_observation_secs(store, floor, candidate_wall_secs);
+    Ok(PreparedStrictAuthorityClockAdvance {
+        observed,
+        floor_put: (observed != floor).then_some(observed),
+    })
+}
+
 /// The batch authority put's floor write (`batch::types`), strict as it was:
 /// a damaged floor is [`RecordError::AuthorityClockCorrupt`], but inside a
 /// restriction-only act, where the observation is the best proven lower
@@ -428,18 +468,8 @@ pub(crate) fn advance_authority_clock_strict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     candidate_wall_secs: u64,
 ) -> crate::error::Result<u64> {
-    let floor = match read_authority_clock_floor_in_txn(store, wtxn) {
-        Ok(floor) => floor.unwrap_or(0),
-        Err(error) if is_authority_clock_corrupt(&error) && in_restriction_only_act() => {
-            return Ok(authority_clock_lower_bound_in_txn(store, wtxn)?.unwrap_or(0));
-        }
-        Err(error) => return Err(error),
-    };
-    let observed = authority_observation_secs(store, floor, candidate_wall_secs);
-    if observed != floor {
-        put_authority_clock_floor_in_txn(store, wtxn, observed)?;
-    }
-    Ok(observed)
+    prepare_strict_authority_clock_advance_in_txn(store, wtxn, candidate_wall_secs)?
+        .apply(store, wtxn)
 }
 
 /// Whether `error` is the damaged-floor verdict

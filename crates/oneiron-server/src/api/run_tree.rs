@@ -146,6 +146,15 @@ pub(crate) struct CoreRunTreeResponse {
     roots: Vec<u64>,
     /// Repairs applied while rendering the tree from queue rows.
     repairs: Vec<CoreRunTreeRepair>,
+    /// Explicit deletion history for this exact run.
+    deletions: Vec<CoreRunTreeDeletion>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreRunTreeDeletion {
+    attempt_id: String,
+    deleted_by: Option<String>,
+    deleted_at: u64,
 }
 
 /// One runtime attempt in the rendered tree's table.

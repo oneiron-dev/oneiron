@@ -1,9 +1,8 @@
-//! The owner preflight every host door's verb meets before its door runs.
-//! `door_admits` is its call surface.
-//! Each door's own facade module defines the proof it admits on; this match only routes to it.
-//! The generated `HostDoorRow` names every host door that checks first, so the match has no
-//! catch-all arm and a new host door fails to compile until it names its check (FIX 1763).
-//! Checked verbs that project no host row keep main's owner-proof check in the fallback below.
+//! The owner preflight every host door's verb meets before its door runs. `door_admits` is its call
+//! surface. Each door's own facade module defines the proof it admits on; this match only routes to
+//! it. The generated `HostDoorRow` names every host door that checks first, so the match has no
+//! catch-all arm and a new host door fails to compile until it names its check (FIX 1763). Checked
+//! verbs that project no host row keep main's owner-proof check in the fallback below.
 
 use oneiron::memory::MemoryResult;
 
@@ -99,6 +98,8 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Row::VaultSecretsCodeRunLifts
+        | Row::VaultSettingsModelsResponsesStoreRead
+        | Row::VaultSettingsModelsResponsesStoreSet
         | Row::VaultSecretsCodeRunRoomLifts
         | Row::VaultIngestAgUiImport
         | Row::VaultModelsManifestRead
@@ -185,6 +186,10 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultIdentityProposalsResolve
         | Row::VaultIdentityProposalsForPair
         | Row::VaultPacksPreview
+        | Row::VaultMailPackInstall
+        | Row::VaultMailSourcesSync
+        | Row::VaultMailSourcesSearch
+        | Row::VaultMailReplyApprove
         | Row::VaultPacksConnectorPrepare
         | Row::VaultPacksConnectorGet
         | Row::VaultPacksConnectorQualify
@@ -269,7 +274,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet
+        | Row::VaultHooksRegenHistory
+        | Row::VaultHooksRegenRun
         | Row::VaultHooksRegenAdopt
+        | Row::VaultHooksRegenRevert
+        | Row::VaultHooksRegenCancel
         | Row::VaultLensesActivate
         | Row::VaultLensesDeactivate
         | Row::VaultAuthorityHandoffAlarms
@@ -291,10 +300,13 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultLegalHoldsWithdrawErase
         | Row::VaultAgentsGrantsMint
         | Row::VaultAgentsGrantsRevoke
+        | Row::VaultAgentsVerbClassesGet
+        | Row::VaultAgentsVerbClassesConfigure
         | Row::VaultRepoGitPushMint
         | Row::VaultRepoGitPushRevoke
         | Row::VaultRepoAnchorBind
         | Row::VaultAgentsBase
+        | Row::VaultOauthAuthorizationAnswer
         | Row::VaultResidenceMode
         | Row::VaultResidenceOpen
         | Row::VaultResidenceIndex
@@ -502,6 +514,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
+        | Row::VaultFederationStatus
         | Row::VaultFederationConnectIdentity
         | Row::VaultFederationConnectGrantsMint
         | Row::VaultFederationConnectOffer
@@ -612,8 +625,10 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResultsRead
         | Row::VaultResultsSlice
         | Row::VaultCodeModelHealCount
+        | Row::VaultCodeSessionModelHealCount
         | Row::VaultCodeTypeDiagnostics
         | Row::VaultCodeCorrections
+        | Row::VaultCodeStepEvidence
         | Row::VaultCodeExport
         | Row::VaultCodeImport
         | Row::VaultCodeReposGet
@@ -675,6 +690,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSharedPolicyGet
         | Row::VaultSharedPolicyChange
         | Row::VaultSharedPolicyChanges
+        | Row::VaultSharedOwnerChangeWaitGet
         | Row::VaultRootsRequestsCreate
         | Row::VaultRootsRequestsList
         | Row::VaultOwnerWorkGet
@@ -707,13 +723,16 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
         | Row::VaultStepUpPasskeysReset
-        | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultOutboundCallsRequestErase
+        | Row::VaultOutboundUncertainSendAnswer => owner_proof(auth, server, verb).map(drop),
         Row::VaultClaimsReview | Row::VaultClaimsSettle => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
+        | Row::VaultSharedProposeAddOwner
+        | Row::VaultSharedOwnerChangeWaitSet
         | Row::VaultSharedExecute
         | Row::VaultSharedReceipt
         | Row::VaultSharedOutcomes
@@ -868,8 +887,7 @@ pub(in crate::api::facade) fn door_admits(
             owner_grade(auth, MEDIA_OWNERS)
         }
         Row::AiVideoPoll | Row::AiVideoCancel => owner_grade(auth, VIDEO_JOB_OWNERS),
-        // The rows that left the owner-only list for a caller's own act
-        // (`owner_binding::caller_bound_admits`).
+        // Rows that left the owner-only list for a caller's own act (`caller_bound_admits`).
         Row::VaultTrustedContactsName
         | Row::VaultTrustedContactsDialSet
         | Row::VaultTrustedContactsConcernAsks

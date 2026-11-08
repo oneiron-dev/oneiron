@@ -6,8 +6,8 @@ use napi_derive::napi;
 use super::boundary::{boundary_error, facade_error};
 use super::convert::{
     commit_receipt_from_engine, memory_pack_from_engine, query_affect_to_engine,
-    recall_media_to_engine, recall_scope_to_engine, witness_receipt_from_engine,
-    witness_turn_to_engine,
+    read_filter_to_engine, recall_media_to_engine, recall_scope_to_engine,
+    witness_receipt_from_engine, witness_turn_to_engine,
 };
 use super::dtos::{
     NapiClaimInput, NapiCommitReceipt, NapiMemoryPack, NapiQueryAffect, NapiRecallMedia,
@@ -271,6 +271,12 @@ impl NativeClient {
     #[napi]
     pub fn last_receipt_ref(&self) -> Option<String> {
         self.inner.last_receipt_ref()
+    }
+
+    /// The content-free hook notice beside the last facade reply.
+    #[napi]
+    pub fn last_hook_notice(&self) -> Option<String> {
+        self.inner.last_hook_notice()
     }
 
     /// The engine `[limits]` rows this client's own vault crossed, as the
