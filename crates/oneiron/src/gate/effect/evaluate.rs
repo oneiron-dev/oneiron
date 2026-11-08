@@ -4,6 +4,22 @@ use super::*;
 
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
+///
+/// Fix list row 17645: one mail message to several recipients
+/// (`provenance.mail_recipients`) is one effect, judged for every recipient
+/// in this same writer before its one approval is spent: each recipient's
+/// contact, STOP, scope and standing-grant judgment is its own, with the
+/// recipient as the counterparty. Every recipient is judged against the
+/// same operation, the message's: when any recipient's send takes mail's
+/// one-send operation (a cold or member-mailbox send), every recipient's
+/// does, so the owner's one press on the message is one authorization,
+/// found the same whichever recipient is first. The message's governance
+/// is its first recipient's, the one its budget is charged on; its decision
+/// is the most restrictive any recipient met, so one recipient's hold or
+/// denial holds or denies the whole message, and no recipient's grant
+/// releases another. Its press, envelope slot and standing grants are every
+/// recipient's (`ExternalEffectGovernance::fold_recipient`): the press is
+/// spent and kept once, only when every recipient allows.
 pub(crate) fn evaluate_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -12,6 +28,141 @@ pub(crate) fn evaluate_external_effect_policy(
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
     approval_context: ApprovalContext,
+) -> Result<ExternalEffectGovernance> {
+    let addressed = effect
+        .provenance
+        .mail_recipients
+        .iter()
+        .filter(|recipient| effect.counterparty.as_deref() != Some(recipient.address.as_str()))
+        .map(|recipient| {
+            let mut addressed = effect.clone();
+            addressed.counterparty = Some(recipient.address.clone());
+            addressed
+        })
+        .collect::<Vec<_>>();
+    // A send to one is judged as before, on its own operation.
+    let mut message_once = false;
+    if !addressed.is_empty() {
+        for judged in std::iter::once(effect).chain(&addressed) {
+            if mail_once_in_txn(store, &*wtxn, judged, policy)? {
+                message_once = true;
+                break;
+            }
+        }
+    }
+    let mut governance = evaluate_counterparty_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        required_grant_id,
+        prepared,
+        approval_context,
+        message_once,
+    )?;
+    for recipient in &addressed {
+        let judged = evaluate_counterparty_policy(
+            store,
+            wtxn,
+            recipient,
+            policy,
+            required_grant_id,
+            prepared,
+            approval_context,
+            message_once,
+        )?;
+        governance.fold_recipient(judged)?;
+    }
+    Ok(governance)
+}
+
+/// Whether `effect`'s send, judged with its own counterparty, takes mail's
+/// one-send operation: a native-mail cold send or a member-mailbox send.
+/// Read with the counterparty's contact facts, as the evaluation reads them.
+fn mail_once_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<bool> {
+    let (hydrated, _, _) = hydrate_external_effect_contact(store, txn, effect, policy)?;
+    Ok(
+        crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
+            store, txn, &hydrated, policy,
+        )? || crate::channel_identity_provider::member_mail::member_mail_send_in_txn(
+            store, txn, &hydrated,
+        )?,
+    )
+}
+
+impl ExternalEffectGovernance {
+    /// Folds `judged`, the same message judged with another of its
+    /// recipients as the counterparty, into this, its first recipient's
+    /// (fix list row 17645). The decision is the more restrictive. Every
+    /// recipient was judged against the one message operation, so a press
+    /// either is found for all of them or for none; one found apart is no
+    /// press on this message. A recipient's envelope slot, or its place in a
+    /// full window's line, is the message's, and the standing grant that
+    /// released a recipient is touched as used with the message's Allow.
+    fn fold_recipient(&mut self, judged: Self) -> Result<()> {
+        if self.approve_once != judged.approve_once {
+            return Err(crate::error::Error::InvariantViolation(
+                "one message's recipients found different presses",
+            ));
+        }
+        if outcome_restriction(judged.decision.outcome())
+            > outcome_restriction(self.decision.outcome())
+        {
+            self.decision = judged.decision;
+        }
+        if self.envelope_reservation.is_none() {
+            self.envelope_reservation = judged.envelope_reservation;
+        }
+        if self.envelope_wait.is_none() {
+            self.envelope_wait = judged.envelope_wait;
+        }
+        if let Some((grant_id, grant)) = judged.matched_grant
+            && self
+                .matched_grant
+                .as_ref()
+                .is_none_or(|(matched, _)| *matched != grant_id)
+            && !self
+                .recipient_grants
+                .iter()
+                .any(|(touched, _)| *touched == grant_id)
+        {
+            self.recipient_grants.push((grant_id, grant));
+        }
+        Ok(())
+    }
+}
+
+/// How far `outcome` restricts an effect: a denial most, then a hold.
+const fn outcome_restriction(outcome: GateOutcome) -> u8 {
+    match outcome {
+        GateOutcome::Allow => 0,
+        GateOutcome::Pending => 1,
+        GateOutcome::Deny => 2,
+    }
+}
+
+/// [`evaluate_external_effect_policy`] for `effect`'s one counterparty.
+/// `message_once`: the message it is one recipient of takes mail's one-send
+/// operation, so this recipient is judged against it too (fix list row
+/// 17645); `false` for a send to one, judged on its own.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one recipient's judgment under its message's operation and approval context"
+)]
+fn evaluate_counterparty_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
+    message_once: bool,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
@@ -106,7 +257,9 @@ pub(crate) fn evaluate_external_effect_policy(
         &*wtxn,
         &hydrated_effect,
     )?;
-    let mail_once = mail_cold || member_mail;
+    // Fix list row 17645: a recipient of a message whose send takes it
+    // (another recipient's cold send) is judged against that one operation.
+    let mail_once = mail_cold || member_mail || message_once;
     // Fix list rows 17872, 17643: a drafted mail-pack reply sent as its
     // mailbox's own account names no sender identity; the owner's one press
     // for exactly that send releases it, as a member-mail press does.
@@ -626,6 +779,7 @@ pub(crate) fn evaluate_external_effect_policy(
         approval_context,
         ask_consent,
         matched_grant,
+        recipient_grants: Vec::new(),
         envelope_reservation,
         envelope_wait,
         budget_target,
