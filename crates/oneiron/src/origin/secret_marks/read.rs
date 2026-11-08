@@ -331,6 +331,28 @@ impl RepoMarkFacts {
         sorted_ids(&kept)
     }
 
+    /// These facts with only the marks whose ids `keep` names (FIX 7608
+    /// slice 10): an owner-selected purge masks those marks' blobs alone.
+    /// `None` when `keep` names a mark these facts do not hold.
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn retained(
+        self,
+        keep: &std::collections::BTreeSet<EntityId>,
+    ) -> Result<Option<Self>> {
+        let mut marks = Vec::new();
+        let mut found = std::collections::BTreeSet::new();
+        for mark in self.marks {
+            let id = mark.id()?;
+            if keep.contains(&id) {
+                found.insert(id);
+                marks.push(mark);
+            }
+        }
+        Ok((found.len() == keep.len()).then_some(Self { marks }))
+    }
+
     /// The marks of `address`'s blob in its store.
     pub(crate) fn for_blob(&self, address: &RepoBlobAddress) -> RepoBlobMarks {
         self.select(|mark| mark.store_id == address.store && mark.blob_oid == address.blob)
