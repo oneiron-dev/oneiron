@@ -184,6 +184,10 @@ pub enum SweepWork {
         /// Metadata-document clients whose document went stale, used by no
         /// sign-in.
         clients: u64,
+        /// Owner agent grants taken back with a sign-in that lapsed before
+        /// its client held a token: an allowed request no page collected, or
+        /// a code no exchange redeemed (FIX 22142).
+        grants: u64,
     },
 }
 
@@ -249,7 +253,15 @@ impl SweepWork {
                 tokens,
                 families,
                 clients,
-            } => requests == 0 && codes == 0 && tokens == 0 && families == 0 && clients == 0,
+                grants,
+            } => {
+                requests == 0
+                    && codes == 0
+                    && tokens == 0
+                    && families == 0
+                    && clients == 0
+                    && grants == 0
+            }
         }
     }
 }

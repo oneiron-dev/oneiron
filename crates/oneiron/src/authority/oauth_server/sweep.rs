@@ -4,8 +4,12 @@
 //!
 //! - an authorization request past its lifetime, answered or not, as `/oauth/authorize` drops
 //!   every lapsed one before it counts the waiting ones. Its owner ask then offers no tap, as for
-//!   one a read dropped: the ask's taps read the request (`oauth_authorization_tap_in`);
-//! - an authorization code past its lifetime, redeemed or not, as the token endpoint drops one;
+//!   one a read dropped: the ask's taps read the request (`oauth_authorization_tap_in`). An
+//!   allowed one no page collected takes back the owner agent grant its allow minted (FIX
+//!   22142, `withdraw_lapsed_oauth_grant_in_txn`);
+//! - an authorization code past its lifetime, redeemed or not, as the token endpoint drops one.
+//!   One no exchange redeemed takes its grant back too; a redeemed one's grant stays, since its
+//!   family's tokens stand on it;
 //! - an access or refresh token past its lifetime, and with an access token's row the slip it
 //!   held, as a refresh or a revocation drops one. A standing family's live access token stays,
 //!   so the refresh that retires it still revokes its slip (`take_live_access_in_txn`);
@@ -18,12 +22,15 @@
 //! Each page reads the lapsed rows in a snapshot and removes them in one short writer, which
 //! judges each row again. Every lifetime is read at the earlier of the pass's clock and the wall
 //! clock the server stamps the rows with, so the sweep never drops a row a read would still take.
+//! The host issuer that signs a grant's withdrawal is loaded from this install's keystore once a
+//! snapshot finds a grant to take back; with none, the grant goes unsigned.
 
 use std::collections::BTreeSet;
 
 use super::OAUTH_CLIENTS_MAX;
 use super::rows::{CLIENTS, CODES, FAMILIES, REQUESTS, TOKENS};
 use crate::Vault;
+use crate::authority::HostSlipIssuer;
 use crate::error::Result;
 use crate::side_table::HexId;
 
@@ -32,7 +39,8 @@ use crate::side_table::HexId;
 /// reads in its writer. Not an engine call of its own.
 const SWEEP_PAGE_ROWS: usize = OAUTH_CLIENTS_MAX;
 
-/// What the sweep of the OAuth server's lapsed rows removed, by table.
+/// What the sweep of the OAuth server's lapsed rows removed, by table, and the grants it took
+/// back with them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct OAuthRowsSwept {
     /// Authorization requests, answered or not.
@@ -45,12 +53,15 @@ pub(crate) struct OAuthRowsSwept {
     pub(crate) families: u64,
     /// Metadata-document clients whose document went stale, used by no sign-in.
     pub(crate) clients: u64,
+    /// Owner agent grants taken back with an allowed request no page collected or a code no
+    /// exchange redeemed.
+    pub(crate) grants: u64,
 }
 
 impl OAuthRowsSwept {
     /// Every row counted.
     fn total(&self) -> u64 {
-        self.requests + self.codes + self.tokens + self.families + self.clients
+        self.requests + self.codes + self.tokens + self.families + self.clients + self.grants
     }
 
     /// Adds `page`'s counts to these.
@@ -60,6 +71,7 @@ impl OAuthRowsSwept {
         self.tokens += page.tokens;
         self.families += page.families;
         self.clients += page.clients;
+        self.grants += page.grants;
     }
 }
 
@@ -72,6 +84,8 @@ struct LapsedRows {
     tokens: Vec<String>,
     families: Vec<HexId>,
     clients: Vec<String>,
+    /// A request or code of the page held a grant to take back when the snapshot read it.
+    grants: bool,
     /// The snapshot found more lapsed rows than one page removes.
     more: bool,
 }
@@ -97,7 +111,8 @@ impl Vault {
     /// changed under it), and answers what went and whether none is left.
     ///
     /// # Errors
-    /// A store failure reading or removing a page.
+    /// A store failure reading or removing a page, or a fold failure signing a grant's
+    /// withdrawal.
     pub(crate) fn sweep_lapsed_oauth_rows(
         &self,
         now: u64,
@@ -105,10 +120,29 @@ impl Vault {
     ) -> Result<(OAuthRowsSwept, bool)> {
         let now = now.min(crate::unix_seconds_now());
         let mut swept = OAuthRowsSwept::default();
+        // Loaded once, outside every writer, for the first page with a grant to take back.
+        let mut issuer: Option<Option<HostSlipIssuer>> = None;
         loop {
             let lapsed = self.lapsed_oauth_rows(now)?;
+            if lapsed.grants && issuer.is_none() {
+                issuer = Some(
+                    self.load_host_slip_issuer()
+                        .inspect_err(|error| {
+                            tracing::warn!(
+                                %error,
+                                "no host issuer signs the withdrawal of lapsed OAuth sign-ins' \
+                                 agent grants; they go unsigned"
+                            );
+                        })
+                        .ok(),
+                );
+            }
             let more = lapsed.more;
-            let page = self.remove_lapsed_oauth_rows(&lapsed, now)?;
+            let page = self.remove_lapsed_oauth_rows(
+                &lapsed,
+                issuer.as_ref().and_then(Option::as_ref),
+                now,
+            )?;
             swept.add(&page);
             if !more {
                 return Ok((swept, true));
@@ -135,6 +169,7 @@ impl Vault {
         let mut lapsed = LapsedRows::default();
         for (key, request) in REQUESTS.scan(&self.store, &txn)? {
             if now >= request.expires_at && lapsed.reserve_slot() {
+                lapsed.grants |= request.uncollected_grant().is_some();
                 lapsed.requests.push(key);
             }
         }
@@ -144,6 +179,7 @@ impl Vault {
                 if !lapsed.reserve_slot() {
                     break;
                 }
+                lapsed.grants |= code.unredeemed_grant().is_some();
                 lapsed.codes.push(key);
             }
         }
@@ -176,27 +212,48 @@ impl Vault {
     }
 
     /// Removes, in one writer, each row `lapsed` names that is still lapsed at `now`, and answers
-    /// how many of each went. A family takes its live access token's row with it. A client goes
-    /// only while no standing family or waiting request uses it, judged in this writer as the
-    /// clients table's eviction judges it.
-    fn remove_lapsed_oauth_rows(&self, lapsed: &LapsedRows, now: u64) -> Result<OAuthRowsSwept> {
+    /// how many of each went. An allowed request no page collected, or a code no exchange
+    /// redeemed, takes its grant with it, the host's withdrawal signed by `issuer` when it is the
+    /// vault's live host. A family takes its live access token's row with it. A client goes only
+    /// while no standing family or waiting request uses it, judged in this writer as the clients
+    /// table's eviction judges it.
+    fn remove_lapsed_oauth_rows(
+        &self,
+        lapsed: &LapsedRows,
+        issuer: Option<&HostSlipIssuer>,
+        now: u64,
+    ) -> Result<OAuthRowsSwept> {
         self.with_write_txn_grouped(|txn| {
             let mut swept = OAuthRowsSwept::default();
             for key in &lapsed.requests {
-                if REQUESTS
+                let Some(request) = REQUESTS
                     .get(&self.store, txn, key)?
-                    .is_some_and(|request| now >= request.expires_at)
-                    && REQUESTS.delete(&self.store, txn, key)?
+                    .filter(|request| now >= request.expires_at)
+                else {
+                    continue;
+                };
+                if let Some(grant) = request.uncollected_grant()
+                    && self.withdraw_lapsed_oauth_grant_in_txn(txn, issuer, &grant)?
                 {
+                    swept.grants += 1;
+                }
+                if REQUESTS.delete(&self.store, txn, key)? {
                     swept.requests += 1;
                 }
             }
             for key in &lapsed.codes {
-                if CODES
+                let Some(code) = CODES
                     .get(&self.store, txn, key)?
-                    .is_some_and(|code| now >= code.expires_at)
-                    && CODES.delete(&self.store, txn, key)?
+                    .filter(|code| now >= code.expires_at)
+                else {
+                    continue;
+                };
+                if let Some(grant) = code.unredeemed_grant()
+                    && self.withdraw_lapsed_oauth_grant_in_txn(txn, issuer, &grant)?
                 {
+                    swept.grants += 1;
+                }
+                if CODES.delete(&self.store, txn, key)? {
                     swept.codes += 1;
                 }
             }

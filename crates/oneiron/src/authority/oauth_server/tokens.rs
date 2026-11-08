@@ -286,7 +286,8 @@ impl Vault {
     /// Redeems an authorization code once: its client, its redirect URI and the PKCE S256 of
     /// the verifier must match, a resource the client sends must be the code's, and its grant
     /// must still stand. Answers a new token family's first pair once its access token's slip
-    /// has landed. A code redeemed before revokes the family it minted.
+    /// has landed. A code redeemed before revokes the family it minted; a lapsed code no
+    /// exchange redeemed takes its grant back.
     ///
     /// # Errors
     /// A store failure, or a failure minting the access token's slip, which revokes the new
@@ -308,6 +309,9 @@ impl Vault {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             };
             if now >= code.expires_at {
+                if let Some(grant) = code.unredeemed_grant() {
+                    self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &grant)?;
+                }
                 CODES.delete(&self.store, txn, &key)?;
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
