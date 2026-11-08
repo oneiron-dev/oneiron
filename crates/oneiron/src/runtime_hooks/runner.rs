@@ -18,6 +18,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::receipt::hex_lower;
 use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
