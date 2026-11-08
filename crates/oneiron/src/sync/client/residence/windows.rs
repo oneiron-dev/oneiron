@@ -120,11 +120,10 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name
-        // (FIX 922 item 11): the thin cache stays read-only, as with no home.
+        // (FIX 922 item 11): the promotion is refused and the thin cache stays
+        // read-only (FIX 22217).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
@@ -409,11 +408,10 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
-        // the selector (FIX 3872): the window stays promoted here.
+        // the selector (FIX 3872): the demotion is refused and the window
+        // stays promoted here (FIX 22217).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: WindowVvReply = serde_json::from_value(
             rpc.request(

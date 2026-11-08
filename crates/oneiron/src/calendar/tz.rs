@@ -164,6 +164,38 @@ impl ResolvedTimeZone {
         let seconds = local.checked_sub(i64::try_from(at).ok()?)?;
         i16::try_from(seconds / 60).ok()
     }
+
+    /// The UTC instant a civil time falls on in this zone, the civil time
+    /// given by its fields read on the UTC carrier (`carrier`), as an
+    /// all-day EVENT keys its days (fix list row 17868). A fold takes its
+    /// earlier instant, as [`wall_to_utc`] does. A gap takes the transition
+    /// that skips it: a day whose midnight the zone skips starts when the
+    /// zone reaches that day. Only an all-day day's bounds read a gap so;
+    /// [`wall_to_utc`] still refuses one. `None` outside CAL-01's range.
+    pub(crate) fn carrier_to_utc(&self, carrier: u64) -> Option<u64> {
+        use chrono::{Datelike as _, Timelike as _};
+        let at = DateTime::from_timestamp(i64::try_from(carrier).ok()?, 0)?.naive_utc();
+        let found = tz::DateTime::find(
+            at.year(),
+            u8::try_from(at.month()).ok()?,
+            u8::try_from(at.day()).ok()?,
+            u8::try_from(at.hour()).ok()?,
+            u8::try_from(at.minute()).ok()?,
+            u8::try_from(at.second()).ok()?,
+            0,
+            self.0.as_ref(),
+        )
+        .ok()?;
+        let instant = match found.into_inner().into_iter().next()? {
+            FoundDateTimeKind::Normal(instant) => instant.unix_time(),
+            FoundDateTimeKind::Skipped {
+                after_transition, ..
+            } => after_transition.unix_time(),
+        };
+        u64::try_from(instant)
+            .ok()
+            .filter(|utc| *utc <= MAX_SUPPORTED_UTC)
+    }
 }
 
 /// Wall-clock minute under the selected whole-minute UTC offset.
