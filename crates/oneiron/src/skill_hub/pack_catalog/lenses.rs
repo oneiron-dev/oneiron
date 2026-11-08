@@ -551,7 +551,7 @@ impl Memory<'_> {
     ) -> MemoryResult<LensProposalReceipt> {
         let entry = self.vault().pack_lens(&input.pack_name, &input.lens)?;
         let PackLens {
-            tree: Some(compiled),
+            tree: Some(tree),
             intent: Some(intent_prompt),
             ..
         } = entry.lens
@@ -560,6 +560,8 @@ impl Memory<'_> {
                 "the pack lens carries no compiled tree; its host renders it",
             ));
         };
+        let compiled: GeneratedLens = serde_json::from_value(tree)
+            .map_err(|_| invalid("pack lens tree is not a frozen lens tree"))?;
         self.lenses_propose(LensProposeRequest {
             slot: LensSlot {
                 pack_name: entry.pack_name,
