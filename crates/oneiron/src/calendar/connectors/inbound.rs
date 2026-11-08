@@ -120,7 +120,7 @@ fn apply_remote_change(
             let source = pull_source_record_id(provider, seat, &primary.uid);
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.
-            let source_blob_ref = super::resource::archive_remote_source(
+            let archived = super::resource::archive_remote_source(
                 vault,
                 system,
                 &seat.config.calendar_ref,
@@ -128,6 +128,7 @@ fn apply_remote_change(
                 &object.ics,
                 now,
             )?;
+            let source_blob_ref = archived.blob_ref();
             crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
@@ -154,6 +155,7 @@ fn apply_remote_change(
                             crate::calendar::ingest::ConnectorAdmissionSource {
                                 record: source.as_str(),
                                 source_version: Some(source_blob_ref.as_str()),
+                                source: Some(archived),
                             },
                             parsed,
                             now,
@@ -398,7 +400,8 @@ pub(super) fn reconcile_remote_object(
             &object.ics,
             now,
         )
-        .ok();
+        .ok()
+        .map(|source| source.blob_ref());
         let _ = write_remote_object(
             vault,
             operation,

@@ -14,6 +14,7 @@ pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
+pub use oneiron_store::settings::model_pack;
 pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
@@ -32,7 +33,7 @@ pub(crate) use device_local::{
 };
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
-    minted_worlds_in,
+    device_only_withholds_run, minted_worlds_in,
 };
 
 pub use board_layout::{

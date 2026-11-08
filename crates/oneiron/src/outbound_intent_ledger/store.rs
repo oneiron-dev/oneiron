@@ -597,6 +597,38 @@ pub(crate) fn record_definite_non_delivery(
     )
 }
 
+/// A provider lookup answered that no earlier call of this outcome-free
+/// Pending row reached it (FIX 4747): the explicit reconciliation that
+/// resolves its possible-delivery mark. The row becomes a definite
+/// non-delivery with the mark cleared, so its resend retries as one, and a
+/// definite refusal of that resend reads as one.
+pub(crate) fn record_looked_up_non_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("looked-up non-delivery target is missing"),
+    )?;
+    if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "looked-up non-delivery requires outcome-free Pending",
+        ));
+    }
+    record.recorded_outcome = Some(RecordedOutboundOutcome::DefiniteNonDelivery);
+    record.delivery_uncertain = false;
+    record.updated_ms = now_ms.max(record.created_ms);
+    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)?;
+    // Open only after the state write is durable (FIX 10959), as in
+    // `record_possible_delivery`.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
+    Ok(record)
+}
+
 /// A provider's rate or quota refusal (FIX 8818): the send certainly did not
 /// go, as [`record_definite_non_delivery`] records, and the provider's wait
 /// is kept with it in the same writer, so no attempt goes before its edge.
@@ -718,18 +750,27 @@ fn transition_record_with_outcome_and(
         match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
             transition::Transitioned::Moved(record) => record,
             transition::Transitioned::Replayed(mut record) => {
-                open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
+                // No state write to keep: the replay only re-reads, so the
+                // open runs on a snapshot past the dropped writer (FIX 12497),
+                // as in `record_possible_delivery`'s no-op arm.
+                let rtxn = vault.store.custody_snapshot()?;
+                open_payload_in_txn(vault, &rtxn, &mut record)?;
                 return Ok(record);
             }
         };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    // `also` runs on the unopened record: the bridge reads header fields
+    // only, and the open below must not fail the commit (FIX 12497).
     also(&mut wtxn, &record);
-
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 12497), as in
+    // `record_possible_delivery`: a sealed row whose key will not open must
+    // not lose the transition.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }
@@ -737,7 +778,7 @@ fn transition_record_with_outcome_and(
 /// Writes `record`, which a read door may have opened, back over its row in the stored form the
 /// row already keeps: a row's payload is written once, at admission, and only an erase
 /// rewrites it.
-fn put_ledger_record(
+pub(super) fn put_ledger_record(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,

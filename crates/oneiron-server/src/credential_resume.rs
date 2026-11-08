@@ -29,7 +29,7 @@ use oneiron::runtime_hooks::verb::{
     VerbAskResumed, VerbAskSavedCall,
 };
 
-use crate::api::{FacadeApiError, FacadeCall, McpCallContext, facade_call_verb};
+use crate::api::{FacadeCall, McpCallContext, facade_call_verb};
 use crate::auth::CoreAuth;
 // The kept-instrument check is shared with the code consent host, which runs
 // whatever the hook sandbox feature (DOOR-079 1a).
@@ -55,9 +55,9 @@ impl ServerVerbAskCredentialCheck {
     }
 
     /// Runs `call` again through its door, under its credential as it
-    /// stands now; the refusal when it does not. An MCP door and a native
-    /// read's door list the rows its answer was derived from beside it (FIX
-    /// 1435, FIX 21054).
+    /// stands now; the refusal when it does not. An MCP door, a native
+    /// read's door and a facade row that lists its rows list the rows its
+    /// answer was derived from beside it (FIX 1435, FIX 21054).
     fn resumed(
         &self,
         call: VerbAskSavedCall,
@@ -90,10 +90,19 @@ impl ServerVerbAskCredentialCheck {
                     &call.verb,
                     Ok(call.args),
                 ));
-                Ok(VerbAskResumed::Ran(
-                    ran.map(|output| output.value)
-                        .map_err(FacadeApiError::into_memory_error),
-                ))
+                // The rows the row listed are saved with its answer, so the
+                // caller's retry is released by them (FIX 21054). A row
+                // that lists none saves its answer with its rows unknown.
+                Ok(match ran {
+                    Ok(output) => match output.rows {
+                        Some(producers) => VerbAskResumed::RanWithProducers {
+                            result: Ok(output.value),
+                            producers,
+                        },
+                        None => VerbAskResumed::Ran(Ok(output.value)),
+                    },
+                    Err(refused) => VerbAskResumed::Ran(Err(refused.into_memory_error())),
+                })
             }
             VerbAskDoor::Mcp {
                 connection,

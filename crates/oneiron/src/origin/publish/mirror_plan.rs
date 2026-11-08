@@ -227,6 +227,7 @@ fn cut_batches(
                 refs: chunk.to_vec(),
                 outcomes: vec![MirrorRefOutcome::Pending; chunk.len()],
                 detail: None,
+                broker_isolation: None,
             });
         }
     }
