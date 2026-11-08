@@ -110,6 +110,7 @@ impl McpCallEffect {
             | Effect::RepoSnapshotsGet
             | Effect::RepoSnapshotsRead
             | Effect::RepoSymbolsDefinitions
+            | Effect::RepoSymbolsNeighbors
             | Effect::RepoViewsGet
             | Effect::RepoViewsRead
             | Effect::RepoMergeQueueObserve
