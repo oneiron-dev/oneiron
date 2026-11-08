@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1326 facade rows, 4786 declarations.
+Census: 1326 facade rows, 4787 declarations.
 Inputs: 1255 of 1326 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1155 of 1326 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
@@ -6381,6 +6381,11 @@ class ConnectorPackDelta(TypedDict):
 class ConnectorPackGrantsGetRequest(TypedDict):
     basis: ConnectorPackBasis
     actor: NotRequired[str | None]
+class ConnectorIssuerHaltView(TypedDict):
+    old_issuer: str
+    new_issuer: str
+    detected_at: int
+    dependent_rows: list[str]
 DataClass = Literal["public", "personal", "secret", "unclassified"]
 class ConnectorConsentRowView(TypedDict):
     tool: str
@@ -6394,6 +6399,7 @@ class ConnectorConsentView(TypedDict):
     connector: str
     actor: str
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     protocol_revision: NotRequired[str | None]
     ready: bool
     rows: list[ConnectorConsentRowView]
@@ -6598,6 +6604,7 @@ class ConnectorPendingManifestView(TypedDict):
 class ConnectorKeyView(TypedDict):
     id: str
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     secret_ref: NotRequired[str | None]
     protocol_revision: NotRequired[str | None]
     accepted_slate_revision: NotRequired[int | None]
@@ -6731,6 +6738,7 @@ ConnectorRevisionSnoozeView = ConnectorRevisionSnoozeViewSurfacing | ConnectorRe
 class ConnectorSlateRevisionAcceptRequest(TypedDict):
     slate_ref: str
     expected_revision: int
+    overrides: NotRequired[dict[str, SlateDisposition]]
 class ConnectorRevisionGrantView(TypedDict):
     tool: str
     grant_id: str
@@ -8836,7 +8844,6 @@ class BudgetLease(TypedDict):
     exploration_units: int
 class DecideRulesDominance(TypedDict):
     kind: Literal["dominance"]
-    min_primary_gain: float
 class DecideRulesOf366(TypedDict):
     kind: Literal["of366"]
     verdict_epsilon: float
@@ -8984,6 +8991,7 @@ SelectionRanking = SelectionRankingDgm | SelectionRankingInformationGain
 class SelectionReceipt(TypedDict):
     root: AttemptId
     round: int
+    incumbent: AttemptId
     step: ResearchStep
     branches: list[BranchSnapshot]
     best_quality: float
@@ -9074,6 +9082,8 @@ class CampaignPromotionReceipt(TypedDict):
     sealed_digest: str
     referee_pin: str
     skill_proposal: NotRequired[EntityId | None]
+    skill: NotRequired[EntityId | None]
+    proposal_digest: NotRequired[str | None]
     disposition: PromotionDisposition
     budget: ResearchBudgetRead
     at: int
@@ -9336,7 +9346,9 @@ class EvalCutAuthorSkill(TypedDict):
 class EvalCutAuthorOwner(TypedDict):
     kind: Literal["owner"]
     person: EntityId
-EvalCutAuthor = EvalCutAuthorSkill | EvalCutAuthorOwner
+class EvalCutAuthorProbeImport(TypedDict):
+    kind: Literal["probe_import"]
+EvalCutAuthor = EvalCutAuthorSkill | EvalCutAuthorOwner | EvalCutAuthorProbeImport
 class AuditCase(TypedDict):
     case: EntityId
     family: EntityId
@@ -19106,6 +19118,7 @@ class ConnectorView(TypedDict):
     key_ref: str
     entry: ConnectorEntry
     status: str
+    issuer_halt: NotRequired[ConnectorIssuerHaltView | None]
     secret_ref: NotRequired[str | None]
     key_generation: int
     registered_at: int
