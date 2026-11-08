@@ -3,8 +3,9 @@
 //!
 //! A grant is a Delegate/Delegate FEDERATION_GRANT the owner mints from no
 //! parent grant, marked `owner_agent` in its body. Its member is a live agent
-//! principal of this vault (a live agent definition, or a base agent such as
-//! the Coach's MACHINE principal), never a person or a physical machine; its
+//! principal of this vault (a live agent definition, a base agent such as
+//! the Coach's MACHINE principal, or a named agent's PERSON, FIX 4902),
+//! never another person or a physical machine; its
 //! authority is the six-axis scope the owner gave, stored exactly (a nonempty
 //! explicit verb list, no default cap, no allowlist); it names the owner as
 //! its delegator; and it stands until he revokes it, or until the expiry he
@@ -72,7 +73,7 @@ const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verb
                             nonempty explicit set, or empty beside a nonempty verb_classes";
 const BAD_VERB_CLASS: &str =
     "an agent grant's verb_classes are nonempty, unpadded class names, never git_push";
-const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition or a base agent";
+const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition, a base agent or a named agent";
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
@@ -375,15 +376,56 @@ impl Vault {
                     acknowledged_topology,
                 },
             )?;
-            // The withdrawal stays known here and reaches its peers, in this
-            // writer (FIX-LIST 5107, 10772).
-            crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
-            self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
+            self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
             Ok(AgentGrantRevokeOutcome {
                 agent: Some(grant.member_ref),
                 act: Some(act),
             })
         })
+    }
+
+    /// The row half of the owner's revoke, with no act of his: deletes
+    /// `grant_ref`, a live agent grant naming `agent`, in the caller's
+    /// writer `txn`, for a caller that takes back a grant no work ever stood
+    /// on and records its own reason beside it (an OAuth sign-in that lapsed
+    /// before its client held a token, FIX 22142). `false`, with nothing
+    /// written, for an id that names no live agent grant of `agent`: one the
+    /// owner revoked already among them.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn withdraw_agent_grant_without_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+        agent: EntityId,
+    ) -> Result<bool> {
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Ok(false);
+        };
+        if !decode_federation_grant_body(&body)
+            .is_ok_and(|grant| grant.owner_agent && grant.member_ref == agent)
+        {
+            return Ok(false);
+        }
+        self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
+        Ok(true)
+    }
+
+    /// Deletes the agent grant row `grant_ref` in the caller's writer. The
+    /// withdrawal stays known here and reaches its peers, in this writer
+    /// (FIX-LIST 5107, 10772).
+    fn delete_agent_grant_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+    ) -> Result<()> {
+        crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
+        self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })
     }
 
     /// The agent grants the owner revoked: the grant each GrantRevoke act
@@ -622,8 +664,11 @@ impl Vault {
     }
 
     /// Whether `agent` is a live agent principal of this vault: a live agent
-    /// definition, or one of the two seeded base-agent MACHINE principals
-    /// (the Dreamer's and the Coach's). Any other machine is a device.
+    /// definition, one of the two seeded base-agent MACHINE principals (the
+    /// Dreamer's and the Coach's), or a named agent's PERSON, the one
+    /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
+    /// client's sign-in, FIX 4902). Any other machine is a device and any
+    /// other person a person.
     fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
@@ -634,6 +679,10 @@ impl Vault {
                 entity_type: ENTITY_TYPE_MACHINE,
                 ..
             } => crate::dreamer_runner::authority::is_base_agent_actor(&agent)?,
+            LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                body,
+            } => crate::vault::is_named_agent_principal_body(&agent, &body),
             _ => false,
         })
     }
