@@ -20,9 +20,11 @@ pub(crate) fn is_window_admission_read_fault(error: &Error) -> bool {
 }
 
 /// Whether `error` is this vault's own fault, never the far end's bytes
-/// (FIX 5926): its store, disk or map, its config, a store that does not
-/// open as this build expects, a window it cannot find or holds busy, or a
-/// window admission's read of its own state.
+/// (FIX 5926, FIX 22153): its store, disk or map, a local writer that moved
+/// under it, its own index, its config, a store that does not open as this
+/// build expects, a window it cannot find or holds busy, a live document
+/// slot it waited for past the deadline, or a window admission's read of
+/// its own state.
 pub(crate) fn is_own_vault_fault(error: &Error) -> bool {
     is_window_admission_read_fault(error)
         || matches!(
@@ -30,6 +32,8 @@ pub(crate) fn is_own_vault_fault(error: &Error) -> bool {
             Error::Storage(_)
                 | Error::Io(_)
                 | Error::MapFull
+                | Error::ConcurrentWrite(_)
+                | Error::CorruptedIndex(_)
                 | Error::InvalidConfig(_)
                 | Error::Store(StoreError::EmbeddingModelChanged { .. })
                 | Error::Store(StoreError::HnswConfigChanged { .. })
@@ -39,6 +43,7 @@ pub(crate) fn is_own_vault_fault(error: &Error) -> bool {
                 | Error::Store(StoreError::VaultRootPreflight { .. })
                 | Error::Sync(SyncError::WindowNotFound { .. })
                 | Error::Sync(SyncError::WindowBusy { .. })
+                | Error::Sync(SyncError::LiveDocumentWaitedOut)
         )
 }
 
