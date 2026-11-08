@@ -15,6 +15,7 @@ use crate::mcp::McpResolvedActor;
 use crate::mcp::McpVerbToolArgs;
 use crate::server::SyncServer;
 use oneiron::ErrorKind;
+use oneiron::runtime_hooks::verb::VerbAskDrainPermit;
 use serde_json::Value;
 use serde_json::json;
 use std::ops::ControlFlow;
@@ -754,7 +755,9 @@ impl McpRowSurface {
     /// born at this position, under this invocation and host origin, in the
     /// off-record session `mcp_credential_memory` binds for its principal
     /// (a slip naming none binds none, as its call receipt keeps none), its
-    /// reads listed in `producers`.
+    /// reads listed in `producers`. The door its call is rebuilt by is
+    /// bound on it, so a call its budget window paces holds in its caller's
+    /// line (FIX 19034).
     fn memory<'a>(
         &self,
         server: &'a SyncServer,
@@ -770,7 +773,8 @@ impl McpRowSurface {
         .at(actor.locality())
         .with_birth_position(self.position)
         .listing_producers(producers)
-        .with_invocation(self.invocation);
+        .with_invocation(self.invocation)
+        .with_credential_door(verb_hooks::mcp_verb_ask_door(actor, Some(self.invocation)));
         let memory = match &actor.signing_request_transport {
             Some(transport) => memory.with_signing_request_transport(transport.clone()),
             None => memory,
@@ -790,6 +794,55 @@ impl McpRowSurface {
             None => memory,
         }
     }
+}
+
+/// The drain's permit when `actor` is the drain's run of its own invocation:
+/// a held call's turn, or a resumed ask (FIX 19034).
+fn mcp_drain_permit(actor: &McpCallContext) -> Option<&VerbAskDrainPermit> {
+    actor
+        .drain
+        .as_ref()
+        .filter(|drain| Some(drain.invocation()) == actor.invocation)
+}
+
+/// `call` with the drain's permit entered in each of its polls, when it is
+/// the drain's run of its own invocation (FIX 19034): a paced turn's row
+/// then runs as that turn, and its retry lookup lets it through. No scope
+/// is held across an await, so a task the runtime moves to another thread
+/// never carries it there. Any other call runs as it is.
+pub(super) async fn mcp_drain_polls<F: std::future::Future>(
+    actor: &McpCallContext,
+    call: F,
+) -> F::Output {
+    let Some(permit) = mcp_drain_permit(actor) else {
+        return call.await;
+    };
+    let mut call = std::pin::pin!(call);
+    std::future::poll_fn(|cx| {
+        let _drain = permit.enter();
+        call.as_mut().poll(cx)
+    })
+    .await
+}
+
+/// The caller's surface a retry of `invocation` is looked up on before an
+/// admission intent starts again (FIX 19034): its credential at its
+/// locality, under that invocation, with the door a paced call of it holds
+/// by, as the row's own surface binds them.
+pub(super) fn mcp_paced_lookup_memory<'a>(
+    server: &'a SyncServer,
+    actor: &McpCallContext,
+    invocation: oneiron::runtime_hooks::InvocationId,
+) -> oneiron::Memory<'a> {
+    crate::api::mcp_credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .with_invocation(invocation)
+    .with_credential_door(verb_hooks::mcp_verb_ask_door(actor, Some(invocation)))
 }
 
 /// Runs task row `tool` by `row` on a blocking thread, on the caller's
@@ -814,6 +867,9 @@ async fn mcp_task_row<T: Send + 'static>(
         .as_ref()
         .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
+        // The drain's run of this invocation runs as its turn on this
+        // thread too (FIX 19034).
+        let _drain = mcp_drain_permit(&actor).map(VerbAskDrainPermit::enter);
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
             server
@@ -863,6 +919,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
         .as_ref()
         .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
+        // The drain's run of this invocation runs as its turn on this
+        // thread too (FIX 19034).
+        let _drain = mcp_drain_permit(&actor).map(VerbAskDrainPermit::enter);
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
             let memory = surface.memory(&server, &actor, &producers);

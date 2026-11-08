@@ -55,6 +55,12 @@ pub(crate) const PACED_VERBS: [&str; 6] = [
     AgentVerb::VaultChannelIdentitiesRelease.as_str(),
     AgentVerb::VaultChannelIdentitiesRouteInbound.as_str(),
 ];
+/// Whether a budget window's pace holds `verb` in the line: a transport
+/// looks a retry up in the line only for these (FIX 19034).
+#[must_use]
+pub fn is_paced_verb(verb: &str) -> bool {
+    PACED_VERBS.contains(&verb)
+}
 /// How long a paced call waits for its turn when the host sets no wait.
 pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long an ended call's row stays for its caller's retry.
@@ -327,6 +333,17 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
 }
 
 impl Memory<'_> {
+    /// What a retry of this handle's call of `verb` meets when a budget
+    /// window paced an earlier try of its invocation: still held, or what
+    /// the drain's turn came to (FIX 19034). A door that runs its row
+    /// without the verb boundary's own lookup answers it before its hooks
+    /// and its row run again. `None` when nothing of it is held, and on the
+    /// drain's own run of it.
+    #[must_use]
+    pub fn paced_verb_reply(&self, verb: &str) -> Option<MemoryResult<Value>> {
+        paced_verb_reply(self, verb)
+    }
+
     /// What a retry of this handle's call of `verb` meets once a budget
     /// window held an earlier try of its invocation and the drain ran it to
     /// its end: the saved result, or the saved refusal (FIX 8753). A
