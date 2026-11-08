@@ -662,6 +662,7 @@ both bindings and their export-census tests in one change.
 - `self.secrets.teardown`
 - `self.secrets.use`
 - `vault.shares.create`
+- `vault.shares.issue_view_link`
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `host.compact`
@@ -782,6 +783,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.cache.get`
 - `vault.code.cache.reuse`
 - `vault.code.snapshots.ingest`
+- `vault.code.snapshots.capture`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
@@ -811,6 +813,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.grants.revoke`
 - `vault.agents.verb_classes.get`
 - `vault.agents.verb_classes.configure`
+- `vault.oauth.authorization.answer`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`

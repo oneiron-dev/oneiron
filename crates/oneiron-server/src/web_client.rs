@@ -115,6 +115,9 @@ pub(crate) fn cors_layer_for_origins(origins: Vec<HeaderValue>) -> CorsLayer {
             axum::http::header::LOCATION,
             axum::http::header::RETRY_AFTER,
             axum::http::header::CONTENT_DISPOSITION,
+            axum::http::HeaderName::from_static(
+                oneiron::task_verb::revoke_lands::CALLER_NOTICE_HEADER,
+            ),
         ]))
 }
 
