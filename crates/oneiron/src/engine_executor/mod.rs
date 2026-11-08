@@ -25,6 +25,7 @@ mod self_brief;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
+mod step_evidence;
 mod store;
 mod turn_hooks;
 mod type_feedback;
@@ -53,6 +54,8 @@ pub use self::self_brief::{
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+// FIX 4414: the owner's per-run step evidence.
+pub(crate) use self::step_evidence::step_evidence_page;
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
     holds_reply_content, is_result_output_path, mask_known_text, observation_output_path,
