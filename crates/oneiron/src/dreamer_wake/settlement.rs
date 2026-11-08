@@ -364,14 +364,13 @@ impl DreamerWakeDriver<'_> {
         meter: &WakeAttemptMeter,
         now: u64,
     ) -> Result<&'static str> {
-        let charged = meter.charged_units();
+        let (charged, receipts) = meter.settlement();
         let settlement = SettleDreamerBudget {
             budget_id: line.to_owned(),
             child_attempt: attempt_id,
             actual_units: charged,
             now,
         };
-        let receipts = meter.step_receipts();
         let error = match self
             .store
             .settle_budget_with_step_receipts(settlement.clone(), &receipts)
