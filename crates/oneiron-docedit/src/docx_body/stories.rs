@@ -75,12 +75,18 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
         let document = Document::parse(bytes)?;
         let canonical = &document.snapshot().canonical;
         let mut stories = Vec::new();
-        let mut push = |scope, blocks: &[stemma::domain::TrackedBlock]| {
+        let mut push = |scope: DocxStoryScope, blocks: &[stemma::domain::TrackedBlock]| {
             let view = stemma::view::build_story_blocks_view(blocks);
+            let comment = matches!(&scope, DocxStoryScope::Comment { .. });
             stories.push(DocxStory {
                 scope,
-                blocks: view.blocks.iter().map(block).collect(),
+                blocks: view
+                    .blocks
+                    .iter()
+                    .map(|view| block(view, blocks, comment))
+                    .collect::<Result<_, _>>()?,
             });
+            Ok::<_, DoceditError>(())
         };
         for story in &canonical.headers {
             if !story.synthesized {
@@ -90,7 +96,7 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
                         band: (&story.kind).into(),
                     },
                     &story.blocks,
-                );
+                )?;
             }
         }
         for story in &canonical.footers {
@@ -101,7 +107,7 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
                         band: (&story.kind).into(),
                     },
                     &story.blocks,
-                );
+                )?;
             }
         }
         for story in &canonical.footnotes {
@@ -110,7 +116,7 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
                     id: story.id.clone(),
                 },
                 &story.blocks,
-            );
+            )?;
         }
         for story in &canonical.endnotes {
             push(
@@ -118,7 +124,7 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
                     id: story.id.clone(),
                 },
                 &story.blocks,
-            );
+            )?;
         }
         for story in &canonical.comments {
             push(
@@ -126,10 +132,15 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
                     id: story.id.clone(),
                 },
                 &story.blocks,
-            );
+            )?;
         }
         Ok(DocxRead {
-            blocks: document.read().blocks.iter().map(block).collect(),
+            blocks: document
+                .read()
+                .blocks
+                .iter()
+                .map(|view| block(view, &canonical.blocks, false))
+                .collect::<Result<_, _>>()?,
             stories,
         })
     })
