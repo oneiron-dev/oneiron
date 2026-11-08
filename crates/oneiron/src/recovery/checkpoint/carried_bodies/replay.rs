@@ -295,11 +295,12 @@ fn live_part<'r>(
 /// start from its live rest, its pieces republished among the rows held
 /// inline and its manifest under the same occurrence (FIX 4192), or, its
 /// rest retired, left as a retired body leaves one. Either way each live
-/// ask goes back in its call, and each retired one's call answers
-/// `TargetErased`, the one precedence `crate::code_run::recompose_replay_row`
-/// defines. The bodies the starts rested under without their bytes are
-/// settled last: FIX 4192 review fix, each content piece of a start whose
-/// rest retired goes unless a live start lands it again.
+/// ask goes back in its call, unless a retired reply's skeleton erased its
+/// request (FIX 6534), and each retired one's call answers `TargetErased`,
+/// the one precedence `crate::code_run::recompose_replay_row` defines. The
+/// bodies the starts rested under without their bytes are settled last:
+/// FIX 4192 review fix, each content piece of a start whose rest retired
+/// goes unless a live start lands it again.
 ///
 /// # Errors
 ///
