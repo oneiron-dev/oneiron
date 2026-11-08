@@ -189,7 +189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/anchor_text/xlsx.rs` | src | s | 2 crate-vis | — | XLSX annotation text and exact range offers |
 | `src/anchored_annotation/body_anchor.rs` | src | m | 1 crate-vis | — | The body-frontier anchor (FIX 2460; ARCH-0075 section 4, the body) |
 | `src/anchored_annotation/body_anchor/sheet_edits.rs` | src | s | 1 crate-vis | — | A workbook body's edits as the version sweep's operations (FIX 2460) |
-| `src/anchored_annotation/code_units.rs` | src | m | 15 crate-vis | — | Code artifacts (FIX 7905, OF-511; ARCH-0078 "a tree at a commit") |
+| `src/anchored_annotation/code_units.rs` | src | m | 29 crate-vis | — | Code artifacts (FIX 7905, OF-511; ARCH-0078 "a tree at a commit") |
 | `src/anchored_annotation/codec.rs` | src | m | 15 crate-vis | — | MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine |
 | `src/anchored_annotation/comment_parts.rs` | src | s | 1 crate-vis | — | Comment text past one stored comment's codec bound lands whole, as linked parts on its thread: part 1 is the… |
 | `src/anchored_annotation/conversation.rs` | src | s | 1 struct · 1 enum · 3 fn | AnnotationCollaborationState, AnnotationConversationNode | Composition with existing conversation DAG TURN nodes |
@@ -203,7 +203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/pptx_tests.rs` | test | m | — | — | PPTX thread identity/drift and consume-once settlement using actual package bytes |
 | `src/anchored_annotation/reanchor.rs` | src | L | 2 fn · 5 crate-vis | — | Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn) |
 | `src/anchored_annotation/recovery.rs` | src | L | 2 struct · 4 fn · 12 crate-vis | ReattachOffer, UnattachedThread | Lost-anchor recovery (OF-368, owner ruling 2026-10-17) |
-| `src/anchored_annotation/recovery/code.rs` | src | s | 3 crate-vis | — | Reattach offers and one-click reattach on a code artifact (FIX 7905) |
+| `src/anchored_annotation/recovery/code.rs` | src | m | 4 crate-vis | — | Reattach offers and one-click reattach on a code artifact (FIX 7905) |
 | `src/anchored_annotation/recovery/scoped.rs` | src | m | 4 fn | — | The Unattached list and its reattach offers for a narrowed reader (FIX 8063): every thread, snapshot, held… |
 | `src/anchored_annotation/recovery/stories.rs` | src | s | 3 crate-vis | — | Version re-anchoring inside the exact native story a locator names |
 | `src/anchored_annotation/tests.rs` | test | L | — | — | — |
@@ -1058,15 +1058,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/prep/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | CAL-06 prep pack: the render-time context pack a meeting earns at T-45 |
 | `src/calendar/prep/pack.rs` | src | m | 4 struct · 1 enum · 1 fn · 1 const · 2 crate-vis | PrepBuildRequest, PrepItem, PrepPack, PrepSection, PrepSectionKind | Ranked prep-pack assembly under the word ceiling |
 | `src/calendar/prep/wake.rs` | src | s | 3 struct · 4 fn · 4 const · 1 crate-vis | PrepEvent, PrepPolicy, PrepWake | Prep eligibility checks and exact-wake planning |
-| `src/calendar/query/facts.rs` | src | L | 1 struct · 1 enum · 1 fn · 20 crate-vis | CalendarQueryReceipt, CalendarRead | Lane admission and fail-closed fact reduction |
-| `src/calendar/query/mod.rs` | src | s | 1 mod · 5 re-export · 5 crate-vis | — | Calendar EVENT query + projection core (CAL-09) |
-| `src/calendar/query/occurrences.rs` | src | s | 3 crate-vis | — | Windowed occurrences from lane-admitted calendar facts |
+| `src/calendar/query/civil.rs` | src | s | 1 struct · 1 crate-vis | CalendarCivilSpan | The civil time of an all-day or floating occurrence (FIX 17869), carried on the calendar views beside UTC… |
+| `src/calendar/query/facts.rs` | src | L | 1 struct · 1 enum · 1 fn · 22 crate-vis | CalendarQueryReceipt, CalendarRead | Lane admission and fail-closed fact reduction |
+| `src/calendar/query/mod.rs` | src | s | 1 mod · 6 re-export · 5 crate-vis | — | Calendar EVENT query + projection core (CAL-09) |
+| `src/calendar/query/occurrences.rs` | src | s | 5 crate-vis | — | Windowed occurrences from lane-admitted calendar facts |
 | `src/calendar/query/pages.rs` | src | m | 6 struct · 3 fn · 5 crate-vis | CalendarFreebusyPage, CalendarFreebusyPageRequest, CalendarOccurrencesPage, CalendarOccurrencesPageRequest, CalendarSearchPage, CalendarSearchPageRequest | Deadline-bound, resumable pages of the public calendar queries (FIX 11998, FIX 12164)… |
 | `src/calendar/query/passport.rs` | src | s | 2 struct · 2 fn | CalendarPassportReadRequest, CalendarPassportRevision | Typed passport heads and recorded revisions through the caller's own read lane |
 | `src/calendar/query/requests.rs` | src | s | 5 struct · 2 fn · 1 const | CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel | Dependency-free serde request/response DTOs |
 | `src/calendar/query/service.rs` | src | m | 4 fn · 4 crate-vis | — | Read/search entry points plus pure projection helpers |
 | `src/calendar/query/tests.rs` | test | s | — | — | A claim awaiting its owner's critical confirm in the calendar's operational reads: free/busy, and the rows… |
-| `src/calendar/query/window.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | CalendarOccurrenceView, CalendarOccurrencesRequest | Bounded, scoped series occurrences with stable original-instance identities |
+| `src/calendar/query/window.rs` | src | m | 2 struct · 2 fn · 2 crate-vis | CalendarOccurrenceView, CalendarOccurrencesRequest | Bounded, scoped series occurrences with stable original-instance identities |
 | `src/calendar/series/expansion.rs` | src | m | 2 struct · 4 fn · 3 crate-vis | ExpansionCursor, ExpansionPage | Windowed recurrence expansion over the tz border |
 | `src/calendar/series/keys.rs` | src | s | 2 struct · 3 fn | SeriesDtStart, SeriesExceptionKey | Borrowed series/exception identity keys and occurrence masking |
 | `src/calendar/series/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Recurrence series machinery (CAL-03) |
@@ -1633,8 +1634,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records/bodies/reader.rs` | src | s | 3 crate-vis | — | A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
 | `src/code_run/storage/replay_capsule.rs` | src | m | 1 fn · 30 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
-| `src/code_run/storage/replay_capsule/admit.rs` | src | L | 10 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
+| `src/code_run/storage/replay_capsule/admit.rs` | src | L | 11 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
 | `src/code_run/storage/replay_capsule/admit/refresh.rs` | src | s | 1 crate-vis | — | A staged executor capsule's actual post-route request, in its own writer |
+| `src/code_run/storage/replay_capsule/admit/start_publication.rs` | src | s | 3 crate-vis | — | A step start's publication in its capsule's writer (FIX 4192): the estimate its body instances are minted… |
 | `src/code_run/storage/replay_capsule/context.rs` | src | s | 4 crate-vis | — | A captured step's replay context (FIX 6351), attached to its capsule in its checkpoint's one transaction… |
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 7 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/replay_capsule/execution.rs` | src | s | 2 crate-vis | — | What came of a contribution fork's program, kept (FIX 3607): its execution, or the shadow runner's reason it… |
@@ -1646,7 +1648,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/replay_capsule/route_prompt.rs` | src | s | 3 crate-vis | — | A capsule's route prompt (FIX 6255): the prompt its answering rung put first, kept as a body the run owns… |
 | `src/code_run/storage/replay_capsule/source_erase.rs` | src | s | 1 crate-vis | — | A hard erase of a source row over the kept step starts it owns (FIX 20329) |
 | `src/code_run/storage/replay_capsule/spawn_erase.rs` | src | s | 3 crate-vis | — | An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2) |
-| `src/code_run/storage/replay_capsule/start_landing.rs` | src | m | 3 crate-vis | — | FIX 11415: the length each row a restore's republish of a step start writes lands at, counted before any… |
+| `src/code_run/storage/replay_capsule/start_landing.rs` | src | m | 4 crate-vis | — | FIX 11415: the length each row a restore's republish of a step start writes lands at, counted before any… |
 | `src/code_run/storage/replay_capsule/start_parts.rs` | src | m | 20 crate-vis | — | The step starts a checkpoint carries as parts (FIX 9180, coord-b slice d): each read by its capsule's typed… |
 | `src/code_run/storage/replay_capsule/start_pieces.rs` | src | m | 18 crate-vis | — | A capsule's step start as shared pieces (FIX 4192) |
 | `src/code_run/storage/response_erase.rs` | src | m | 9 crate-vis | — | An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay… |
@@ -4074,9 +4076,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mail_pack/google_calendar.rs` | src | m | 1 struct · 1 fn · 1 const | HttpGoogleCalendarWire | The Google Calendar wire of the pack's calendar sources (FIX 12559 row 5; MAIL-PROVIDERS = A, Google… |
 | `src/mail_pack/header_retire.rs` | src | s | 1 crate-vis | — | A mail's header-only revisions go once its body lands (FIX 15413) |
 | `src/mail_pack/ics_calendar.rs` | src | s | 1 struct · 1 fn · 1 const | HttpIcsCalendarWire | The ICS wire of the pack's calendar sources (FIX 12559 row 5; MAIL-PROVIDERS = A): a calendar subscription… |
-| `src/mail_pack/imap.rs` | src | XL | 1 struct · 1 fn · 1 const · 2 crate-vis | ImapMailWire | The IMAP mail wire (FIX 12559 row 4, fix list row 15425): one IMAP4rev1 mailbox over TLS, through the… |
-| `src/mail_pack/imap_client.rs` | src | L | 30 crate-vis | — | A native IMAP4rev1 client (RFC 3501) for the mail pack's IMAP wire (FIX 15425): TLS through rustls with the… |
-| `src/mail_pack/importer.rs` | src | m | 2 struct · 4 fn · 2 crate-vis | MailSyncBudget, MailSyncReport | The mail importer (FIX 12559 row 1; MAIL-GOOGLE = A, 2026-10-19): one bounded step of one source at a time… |
+| `src/mail_pack/imap.rs` | src | XL | 1 struct · 1 fn · 1 const · 8 crate-vis | ImapMailWire | The IMAP mail wire (FIX 12559 row 4, fix list row 15425): one IMAP4rev1 mailbox over TLS, through the… |
+| `src/mail_pack/imap_client.rs` | src | L | 29 crate-vis | — | A native IMAP4rev1 client (RFC 3501) for the mail pack's IMAP wire (FIX 15425): TLS through rustls with the… |
+| `src/mail_pack/importer.rs` | src | L | 2 struct · 4 fn · 2 crate-vis | MailSyncBudget, MailSyncReport | The mail importer (FIX 12559 row 1; MAIL-GOOGLE = A, 2026-10-19): one bounded step of one source at a time… |
 | `src/mail_pack/inbox.rs` | src | s | 5 struct · 2 fn · 1 crate-vis | MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView | The pack's read projections (MAIL-VIEW = A: the inbox, thread and calendar screens are lenses shipped with… |
 | `src/mail_pack/landing.rs` | src | m | 8 crate-vis | — | Landing one provider message as evidence (FIX 12559 row 1): one CONVERSATION per provider thread, one TURN… |
 | `src/mail_pack/local_sync.rs` | src | s | 1 struct · 4 fn | MailSourceSyncRequest | One import step of a mail or calendar source through this host's wire for its provider: Gmail for Google… |
@@ -5058,7 +5060,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/decay_tests.rs` | test | m | — | — | ONE-1402 · read-side memory decay at the pipeline seam |
 | `src/pipeline/execution/channels/admit.rs` | src | s | 4 crate-vis | — | The admit step every channel shares: signal components, the optional trace record, and the ranked-list push |
 | `src/pipeline/execution/channels/categories.rs` | src | s | 1 crate-vis | — | Independent memory, skill and agent budgets on one retrieval snapshot |
-| `src/pipeline/execution/channels/entity_rank.rs` | src | s | 1 crate-vis | — | Named entities below the content a query matched |
+| `src/pipeline/execution/channels/entity_rank.rs` | src | s | 2 crate-vis | — | Rows the query did not match, below the content it did match |
 | `src/pipeline/execution/channels/mod.rs` | src | L | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
 | `src/pipeline/execution/channels/post_blend.rs` | src | s | 3 crate-vis | — | Post-blend filters: scope and authority, the rerank shadow ladder, contiguity, facet, world, corpus, and… |
 | `src/pipeline/execution/channels/ppr_expand.rs` | src | s | 4 crate-vis | — | The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying… |
