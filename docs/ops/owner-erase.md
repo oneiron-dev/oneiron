@@ -31,10 +31,21 @@ proof that the leaves have been destroyed. Retirement runs after commit and
 retries through housekeeping; legal holds and custody faults can defer it.
 The existing final receipt waits for the bound retirements and any sweep.
 
-An execute retry with its own act's receipt reports `owner_erase`. A retry that
-finds only a hard-delete marker retains the ordinary hard-delete result; a
-presence-only marker is not proof that the owner erase ran or retired its
-checkpoint leaves.
+An execute retry with its own act's receipt reports `owner_erase`. An unclaimed
+act must complete on the store clock before a hard-delete marker can return an
+applied result. If the target has both a marker and no active deletion scope,
+the acting writer re-proves the actual erase act, starter, vault, live owner and
+current holds, then retires the retained local checkpoint payloads. It claims
+the act with that retirement's signed receipt and request in the same writer.
+A marker whose active residue still remains keeps its ordinary hard-delete
+result. Neither a marker nor an empty scope grants owner-erase authority.
+
+This already-deleted-target fulfillment is local: it does not republish or
+replace the earlier ordinary hard deletion's marker, request or wire reason.
+It proves no peer checkpoint retirement or global replay closure. The receipt
+binds the local retirement and its historical sweep; it does not prove key
+destruction. Retries use the act's bound request and receipt without repeating
+the operation.
 
 The tombstone reason byte for `owner_erase` is **6**. The tombstone value stays
 25 bytes. Reserved and unknown reasons keep their existing hard-delete effect
