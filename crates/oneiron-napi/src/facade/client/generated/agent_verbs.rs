@@ -5779,12 +5779,48 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_hooks_regen_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.history", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_regen_revert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.revert", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_regen_run(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.run", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_regen_adopt(
         &self,
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.regen.adopt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_regen_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.cancel", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -11424,6 +11460,24 @@ impl NativeClient {
     pub fn self_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.history", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_hooks_regen_adopt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.hooks.regen.adopt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_hooks_regen_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.hooks.regen.get", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
