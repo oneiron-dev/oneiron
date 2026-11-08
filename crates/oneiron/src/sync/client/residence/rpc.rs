@@ -105,8 +105,9 @@ pub(super) enum RpcFault {
     /// timed out, its refusal, or a reply that breaks the RPC contract.
     Remote(TransportError),
     /// This machine's own: its actor session or selector, the endpoint it
-    /// chose, its upgrade's signing or header, its bind's or request's
-    /// encode or size, or its request ids running out.
+    /// chose, its upgrade's signing or header, a carrier it cannot set up for
+    /// the endpoint's URL (FIX 22217), its bind's or request's encode or
+    /// size, or its request ids running out.
     Local(TransportError),
 }
 
@@ -160,8 +161,9 @@ impl ResidenceRpc {
     }
 
     /// [`Self::connect`], its fault told by the side it is on (FIX 22179): a
-    /// missing actor session or selector, the endpoint, the upgrade and the
-    /// bind's encode are this machine's own; the home's answer is the home's.
+    /// missing actor session or selector, the endpoint, the upgrade, the
+    /// carrier's setup (FIX 22217) and the bind's encode are this machine's
+    /// own; the home's answer is the home's.
     pub(super) async fn connect_by_side(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -245,7 +247,9 @@ impl ResidenceRpc {
     /// socket, the machine the home proved on its upgrade, and the dialed
     /// endpoint's route address, or `None` on a transport outage. The
     /// endpoint, its URL and the upgrade's credential are this machine's own
-    /// (FIX 22179); a refused upgrade and the hello's send are the home's.
+    /// (FIX 22179), and so is a carrier it cannot set up for that URL
+    /// ([`crate::sync::carrier::own_setup_fault`], FIX 22217); a refused
+    /// upgrade and the hello's send are the home's.
     async fn dial(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -285,6 +289,9 @@ impl ResidenceRpc {
             Ok(Ok(connected)) => connected,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => {
                 return Err(RpcFault::remote());
+            }
+            Ok(Err(error)) if crate::sync::carrier::own_setup_fault(&error) => {
+                return Err(RpcFault::local());
             }
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
