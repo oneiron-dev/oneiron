@@ -1,6 +1,11 @@
 //! Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors).
 //! A position is never a timestamp or the notify counter: an imported claim
-//! can carry an old time, and the notify counter is process-local.
+//! can carry an old time, and the notify counter is process-local. The two
+//! watcher sources (FIX 4749) live in the `schedule` and `surface_inbound`
+//! submodules.
+
+mod schedule;
+mod surface_inbound;
 
 use std::ops::Bound;
 
@@ -12,6 +17,11 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
+
+pub(crate) use schedule::index_task_due_in_txn;
+pub(super) use schedule::{TickDetails, release_due_ticks};
+pub(super) use surface_inbound::SurfaceInboundRow;
+pub(crate) use surface_inbound::record_surface_inbound_in_txn;
 
 // The claim changelog, read through `ChangeLogStoreRead`: the mutation-audit
 // rows, keyed by their record id.
@@ -53,16 +63,27 @@ pub enum FactSource {
     ClaimChangelog,
     /// Settled proposals, in settlement order.
     Settlement,
+    /// Due TASK ticks, in release order (FIX 4749).
+    Schedule,
+    /// Inbound connector surface events, in admission order (FIX 4749).
+    SurfaceInbound,
 }
 
 impl FactSource {
-    pub const ALL: [Self; 2] = [Self::ClaimChangelog, Self::Settlement];
+    pub const ALL: [Self; 4] = [
+        Self::ClaimChangelog,
+        Self::Settlement,
+        Self::Schedule,
+        Self::SurfaceInbound,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ClaimChangelog => "claim_changelog",
             Self::Settlement => "settlement",
+            Self::Schedule => "schedule",
+            Self::SurfaceInbound => "surface_inbound",
         }
     }
 
@@ -70,6 +91,8 @@ impl FactSource {
         match self {
             Self::ClaimChangelog => 0,
             Self::Settlement => 1,
+            Self::Schedule => 2,
+            Self::SurfaceInbound => 3,
         }
     }
 }
@@ -82,11 +105,21 @@ pub struct ClaimChangelogPosition(pub [u8; 16]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SettlementPosition(pub u64);
 
+/// A tick feed position: the sequence its release committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SchedulePosition(pub u64);
+
+/// An inbound feed position: the sequence its admission committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SurfaceInboundPosition(pub u64);
+
 /// A position in one source. Two positions compare only within one source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FactPosition {
     ClaimChangelog(ClaimChangelogPosition),
     Settlement(SettlementPosition),
+    Schedule(SchedulePosition),
+    SurfaceInbound(SurfaceInboundPosition),
 }
 
 impl FactPosition {
@@ -95,6 +128,8 @@ impl FactPosition {
         match self {
             Self::ClaimChangelog(_) => FactSource::ClaimChangelog,
             Self::Settlement(_) => FactSource::Settlement,
+            Self::Schedule(_) => FactSource::Schedule,
+            Self::SurfaceInbound(_) => FactSource::SurfaceInbound,
         }
     }
 
@@ -104,6 +139,8 @@ impl FactPosition {
         match self {
             Self::ClaimChangelog(position) => position.0.to_vec(),
             Self::Settlement(position) => position.0.to_be_bytes().to_vec(),
+            Self::Schedule(position) => position.0.to_be_bytes().to_vec(),
+            Self::SurfaceInbound(position) => position.0.to_be_bytes().to_vec(),
         }
     }
 
@@ -120,7 +157,8 @@ impl FactPosition {
     }
 }
 
-/// A position as text: `claim_changelog:<hex32>` or `settlement:<hex16>`.
+/// A position as text: `claim_changelog:<hex32>`, or `settlement:<hex16>`,
+/// `schedule:<hex16>` or `surface_inbound:<hex16>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct FactPositionHex(pub String);
@@ -139,12 +177,19 @@ impl FactPositionHex {
             "settlement" => Ok(FactPosition::Settlement(SettlementPosition(
                 u64::from_be_bytes(decode_hex(hex)?),
             ))),
+            "schedule" => Ok(FactPosition::Schedule(SchedulePosition(
+                u64::from_be_bytes(decode_hex(hex)?),
+            ))),
+            "surface_inbound" => Ok(FactPosition::SurfaceInbound(SurfaceInboundPosition(
+                u64::from_be_bytes(decode_hex(hex)?),
+            ))),
             _ => Err(invalid("unknown fact source")),
         }
     }
 }
 
-/// The kinds of fact slice 1 follows.
+/// The kinds of fact the runner follows: slice 1's, and the two watcher
+/// sources (FIX 4749).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum FactKind {
     #[serde(rename = "claim.landed")]
@@ -153,16 +198,45 @@ pub enum FactKind {
     ClaimSuperseded,
     #[serde(rename = "proposal.settled")]
     ProposalSettled,
+    /// A TASK's due time passed (ARCH-0080 §4 Watchers).
+    #[serde(rename = "schedule.tick")]
+    ScheduleTick,
+    /// A connector SurfaceEvent was admitted (OF-247).
+    #[serde(rename = "surface.inbound")]
+    SurfaceInbound,
 }
 
 impl FactKind {
+    pub const ALL: [Self; 5] = [
+        Self::ClaimLanded,
+        Self::ClaimSuperseded,
+        Self::ProposalSettled,
+        Self::ScheduleTick,
+        Self::SurfaceInbound,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ClaimLanded => "claim.landed",
             Self::ClaimSuperseded => "claim.superseded",
             Self::ProposalSettled => "proposal.settled",
+            Self::ScheduleTick => "schedule.tick",
+            Self::SurfaceInbound => "surface.inbound",
         }
+    }
+
+    /// The kind `token` names, as a selector entry spells it.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == token)
+    }
+
+    /// Whether the kind is a watcher source: no write made it, so it
+    /// carries no claim and no verb hook sees it (FIX 4749).
+    #[must_use]
+    pub const fn is_watcher_source(self) -> bool {
+        matches!(self, Self::ScheduleTick | Self::SurfaceInbound)
     }
 }
 
@@ -173,6 +247,10 @@ pub(super) enum FactOp {
     Update,
     Supersede,
     Settle,
+    /// A due TASK's tick.
+    Tick,
+    /// An inbound surface event's admission.
+    Inbound,
 }
 
 impl FactOp {
@@ -182,6 +260,8 @@ impl FactOp {
             Self::Update => "update",
             Self::Supersede => "supersede",
             Self::Settle => "settle",
+            Self::Tick => "tick",
+            Self::Inbound => "inbound",
         }
     }
 }
@@ -213,6 +293,29 @@ pub(super) struct FactEntry {
     /// The claim's predicate, for block expiry only. Filters read the claim
     /// under the hook's grant instead.
     pub(super) predicate: Option<String>,
+    /// The due time, only for a tick.
+    pub(super) tick: Option<TickDetails>,
+    /// The event's ids and tokens, only for an inbound surface event.
+    pub(super) surface: Option<SurfaceInboundRow>,
+}
+
+impl FactEntry {
+    /// What a selector's glob reads on a fact that is no claim: a tick's
+    /// TASK id as 32 hex, an inbound event's connector key.
+    pub(super) fn selector_key(&self) -> Option<String> {
+        match (&self.tick, &self.surface) {
+            (Some(_), _) => Some(self.entity.to_hex()),
+            (None, Some(surface)) => Some(surface.connector.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Whether the hook's input carries the entity's body. A tick's and an
+    /// inbound event's carry only ids and tokens, so a live replay of one
+    /// needs no pinned body.
+    pub(super) const fn input_carries_body(&self) -> bool {
+        self.tick.is_none() && self.surface.is_none()
+    }
 }
 
 /// One bounded read from a source.
@@ -259,6 +362,17 @@ pub(crate) fn record_settlement_in_txn(
     txn: &mut heed::RwTxn<'_>,
     fact: SettledFact,
 ) -> Result<SettlementPosition> {
+    let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
+    SETTLED.put(&vault.store, txn, &position.0, &row)?;
+    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)?;
+    Ok(position)
+}
+
+pub(super) fn prepare_settlement_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fact: SettledFact,
+) -> Result<(SettlementPosition, SettledRow)> {
     let last = SETTLED_NEXT.get(&vault.store, txn, &())?.unwrap_or(0);
     let sequence = last
         .checked_add(1)
@@ -275,9 +389,7 @@ pub(crate) fn record_settlement_in_txn(
         body_hash,
         recorded_at: vault.store.clock.now_recorded_at(),
     };
-    SETTLED.put(&vault.store, txn, &sequence, &row)?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &sequence)?;
-    Ok(SettlementPosition(sequence))
+    Ok((SettlementPosition(sequence), row))
 }
 
 /// The actor a critical-confirm timeout demotion settles as (FIX 1093): no
@@ -323,6 +435,41 @@ pub(super) fn read_after(
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
             settlements_after(vault, Some(position), max_entries)
         }
+        (FactSource::Schedule, None) => schedule::ticks_after(vault, None, max_entries),
+        (FactSource::Schedule, Some(FactPosition::Schedule(position))) => {
+            schedule::ticks_after(vault, Some(position), max_entries)
+        }
+        (FactSource::SurfaceInbound, None) => {
+            surface_inbound::events_after(vault, None, max_entries)
+        }
+        (FactSource::SurfaceInbound, Some(FactPosition::SurfaceInbound(position))) => {
+            surface_inbound::events_after(vault, Some(position), max_entries)
+        }
+        _ => Err(Error::InvariantViolation(
+            "hook cursor names another source",
+        )),
+    }
+}
+
+/// [`read_after`] in the caller's snapshot.
+pub(super) fn read_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    after: Option<FactPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
+    match (source, after) {
+        (FactSource::ClaimChangelog, None) => {
+            claim_changes_after_in_txn(vault, txn, None, max_entries)
+        }
+        (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
+            claim_changes_after_in_txn(vault, txn, Some(position), max_entries)
+        }
+        (FactSource::Settlement, None) => settlements_after_in_txn(vault, txn, None, max_entries),
+        (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
+            settlements_after_in_txn(vault, txn, Some(position), max_entries)
+        }
         _ => Err(Error::InvariantViolation(
             "hook cursor names another source",
         )),
@@ -337,11 +484,20 @@ fn claim_changes_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    claim_changes_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+fn claim_changes_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<ClaimChangelogPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let budget = max_entries.saturating_mul(SCAN_PER_ENTRY).max(1);
     let mut batch = SourceBatch::default();
     for (scanned, row) in vault
         .store
-        .port_changelog_after(&rtxn, after.map(|position| position.0))?
+        .port_changelog_after(txn, after.map(|position| position.0))?
         .enumerate()
     {
         if scanned >= budget || batch.entries.len() >= max_entries {
@@ -354,53 +510,66 @@ fn claim_changes_after(
         }
         let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(id));
         batch.through = Some(position);
-        let (kind, op) = match change.op {
-            ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
-            ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
-            ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
-            _ => continue,
-        };
-        let Some(record) = vault.store.port_entity_record(&rtxn, &change.entity)? else {
-            continue;
-        };
-        if record.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
+        if let Some(entry) = claim_fact_in_txn(vault, txn, &change)? {
+            batch.entries.push(entry);
         }
-        let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
-            vault,
-            &rtxn,
-            &change.entity,
-            &change.input_hash,
-        )?;
-        let historical = match revision {
-            Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
-                vault,
-                &rtxn,
-                &change.entity,
-                crate::vault::ReadMode::Pinned(revision),
-            )?,
-            None => None,
-        };
-        let predicate = historical
-            .as_deref()
-            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-            .map(|body| body.predicate);
-        batch.entries.push(FactEntry {
-            position,
-            kind,
-            entity: change.entity,
-            op,
-            actor: change.actor_principal,
-            recorded_at: change.recorded_at,
-            input_hash: change.input_hash,
-            body_hash: Some(change.input_hash),
-            revision,
-            settlement: None,
-            predicate,
-        });
     }
     Ok(batch)
+}
+
+pub(super) fn claim_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &crate::ports::ChangeLogRecord,
+) -> Result<Option<FactEntry>> {
+    let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(change.id));
+    let (kind, op) = match change.op {
+        ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
+        ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
+        ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
+        _ => return Ok(None),
+    };
+    let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
+        return Ok(None);
+    };
+    if record.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
+        vault,
+        txn,
+        &change.entity,
+        &change.input_hash,
+    )?;
+    let historical = match revision {
+        Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
+            vault,
+            txn,
+            &change.entity,
+            crate::vault::ReadMode::Pinned(revision),
+        )?,
+        None => None,
+    };
+    let predicate = historical
+        .as_deref()
+        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .map(|body| body.predicate);
+    Ok(Some(FactEntry {
+        position,
+        kind,
+        entity: change.entity,
+        op,
+        actor: change.actor_principal,
+        recorded_at: change.recorded_at,
+        input_hash: change.input_hash,
+        body_hash: Some(change.input_hash),
+        revision,
+        settlement: None,
+        predicate,
+        tick: None,
+        surface: None,
+    }))
 }
 
 /// Settlements after `after`.
@@ -410,11 +579,20 @@ fn settlements_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    settlements_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+fn settlements_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<SettlementPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let start = after
         .as_ref()
         .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let mut batch = SourceBatch::default();
-    for row in SETTLED.iter_range(&vault.store, &rtxn, start, Bound::Unbounded)? {
+    for row in SETTLED.iter_range(&vault.store, txn, start, Bound::Unbounded)? {
         if batch.entries.len() >= max_entries {
             batch.more = true;
             break;
@@ -422,43 +600,55 @@ fn settlements_after(
         let (sequence, settled) = row?;
         let position = FactPosition::Settlement(SettlementPosition(sequence));
         batch.through = Some(position);
-        let revision = match settled.body_hash.as_ref() {
-            Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                vault,
-                &rtxn,
-                &settled.proposal,
-                body_hash,
-            )?,
-            None => None,
-        };
-        batch.entries.push(FactEntry {
-            position,
-            kind: FactKind::ProposalSettled,
-            entity: settled.proposal,
-            op: FactOp::Settle,
-            actor: settled.settled_by,
-            recorded_at: settled.recorded_at,
-            input_hash: settled.input_hash(),
-            body_hash: settled.body_hash,
-            revision,
-            settlement: Some(SettlementDetails {
-                kind: settled.kind,
-                outcome: settled.outcome,
-            }),
-            predicate: None,
-        });
+        batch.entries.push(settlement_fact_in_txn(
+            vault,
+            txn,
+            SettlementPosition(sequence),
+            &settled,
+        )?);
     }
     Ok(batch)
 }
 
-/// The newest position in `source`, or `None` while it is empty.
-pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosition>> {
-    let rtxn = vault.store.env.read_txn()?;
-    head_in_txn(vault, &rtxn, source)
+pub(super) fn settlement_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    position: SettlementPosition,
+    settled: &SettledRow,
+) -> Result<FactEntry> {
+    let position = FactPosition::Settlement(position);
+    let revision = match settled.body_hash.as_ref() {
+        Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+            vault,
+            txn,
+            &settled.proposal,
+            body_hash,
+        )?,
+        None => None,
+    };
+    Ok(FactEntry {
+        position,
+        kind: FactKind::ProposalSettled,
+        entity: settled.proposal,
+        op: FactOp::Settle,
+        actor: settled.settled_by,
+        recorded_at: settled.recorded_at,
+        input_hash: settled.input_hash(),
+        body_hash: settled.body_hash,
+        revision,
+        settlement: Some(SettlementDetails {
+            kind: settled.kind,
+            outcome: settled.outcome,
+        }),
+        predicate: None,
+        tick: None,
+        surface: None,
+    })
 }
 
-/// [`head`] in the caller's snapshot, including a binding lifecycle write's
-/// own settlement head.
+/// The newest position in `source`, or `None` while it is empty, in the
+/// caller's snapshot, including a binding lifecycle write's own settlement
+/// head.
 pub(super) fn head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -474,21 +664,15 @@ pub(super) fn head_in_txn(
             .next()
             .transpose()?
             .map(|(sequence, _)| FactPosition::Settlement(SettlementPosition(sequence))),
+        FactSource::Schedule => schedule::head_in_txn(vault, txn)?,
+        FactSource::SurfaceInbound => surface_inbound::head_in_txn(vault, txn)?,
     };
     Ok(head)
 }
 
-/// The changelog position of a binding claim's latest write: where a new or
-/// re-enabled binding starts following the claim changelog.
-pub(super) fn binding_written_at(
-    vault: &Vault,
-    binding: &EntityId,
-) -> Result<Option<FactPosition>> {
-    let rtxn = vault.store.env.read_txn()?;
-    binding_written_at_in_txn(vault, &rtxn, binding)
-}
-
-/// [`binding_written_at`] in the caller's snapshot.
+/// The changelog position of a binding claim's latest write, in the
+/// caller's snapshot: where a new or re-enabled binding starts following the
+/// claim changelog.
 pub(super) fn binding_written_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -506,18 +690,26 @@ pub(super) fn binding_written_at_in_txn(
 
 /// Where an enabled binding starts in each source at its real lifecycle
 /// write: its own claim write where one exists, otherwise the source head.
+/// The settlement, tick and inbound feeds hold no binding's write, so a
+/// binding starts at their heads, but for one `fresh` to the tick feed,
+/// never bound before: it starts before the earliest tick of a TASK still
+/// open (FIX 4749), so a watcher bound after its TASK ticked sees that tick.
 pub(super) fn enable_start_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     binding: &EntityId,
     source: FactSource,
+    fresh: bool,
 ) -> Result<Option<FactPosition>> {
     match source {
         FactSource::ClaimChangelog => match binding_written_at_in_txn(vault, txn, binding)? {
             Some(position) => Ok(Some(position)),
             None => head_in_txn(vault, txn, source),
         },
-        FactSource::Settlement => head_in_txn(vault, txn, source),
+        FactSource::Schedule if fresh => schedule::open_tick_start_in_txn(vault, txn),
+        FactSource::Settlement | FactSource::Schedule | FactSource::SurfaceInbound => {
+            head_in_txn(vault, txn, source)
+        }
     }
 }
 

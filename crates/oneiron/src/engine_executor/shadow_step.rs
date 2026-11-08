@@ -29,9 +29,9 @@ use super::cancel::StepCancellation;
 use super::code_check::{CheckedDoor, ProgramAdmission, ProgramCheck, TypeFeedback};
 use super::host::executor_boundary_contract;
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, console_output_path, executed_output_path, is_result_output_path,
-    observation_output_path, recoverable_output_path, script_output_path, source_map_output_path,
-    validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, console_output_path, executed_output_path,
+    is_result_output_path, observation_output_path, recoverable_output_path, script_output_path,
+    source_map_output_path, validate_runtime_outputs,
 };
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
@@ -291,9 +291,7 @@ fn start_arm_check(
 fn seed_store(prepared: &PreparedShadowStep, store: &ShadowBodyStore) -> Result<()> {
     let foreign = prepared.foreign.iter().map(|held| &held.body);
     for frozen in prepared.frozen.iter().chain(foreign) {
-        if let Some(bytes) = &frozen.bytes {
-            store.import(frozen.output.output_ref(), bytes)?;
-        }
+        frozen.seed(store)?;
     }
     Ok(())
 }

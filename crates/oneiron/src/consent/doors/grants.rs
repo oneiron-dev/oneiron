@@ -89,6 +89,38 @@ impl Vault {
         ))
     }
 
+    /// [`Self::approve_once_in_txn`] on a person's own proof, owner of this
+    /// vault or not, for one operation that is that person's own: the
+    /// caller proves, in this same writer, that the operation acts only on
+    /// what is theirs (a drafted reply from their own mailbox, fix list row
+    /// 17644 follow-up). The press names exactly one digest, as an owner's
+    /// does, and the receipt stamps the person who pressed. The proof lends
+    /// no owner authority.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds for a live person, and
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the digest was already approved.
+    pub(crate) fn approve_once_as_person_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        person: &AuthenticatedOwner,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
+        person.revalidate_person_in_txn(self, &*wtxn)?;
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        self.claim_approve_once_in_txn(wtxn, &effect_digest, decision_id)?;
+        let receipt = ConsentReceipt::Approved {
+            decision_id,
+            grant: ConsentGrant::ApproveOnce(effect_digest),
+        };
+        self.append_consent_gate_decision_in_txn(wtxn, &person.stamp(), &receipt, None)?;
+        crate::batch::queue_consent_answer(self, wtxn);
+        Ok(receipt)
+    }
+
     /// The ONLY persistence door for a standing consent grant.
     ///
     /// Requires an [`AuthenticatedOwner`], rejects catastrophe-class bounds
@@ -145,6 +177,9 @@ impl Vault {
             wtxn,
             &grant_ref,
         )?;
+        // Nor may an open widening filed over the predecessor revoke it
+        // (FIX 9740).
+        super::super::widen::forget_widen_predecessor_in_txn(self, wtxn, &grant_ref)?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.

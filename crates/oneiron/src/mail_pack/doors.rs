@@ -20,10 +20,11 @@ use serde::{Deserialize, Serialize};
 use super::credential::{CredentialHolder, credential_refusal_in};
 use super::pack::require_pack_active_in;
 use super::source::{
-    CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
-    MailSourceKind, MailSourceRow, MailSourceStatus, MailSourceView, SOURCE_INDEX, SOURCES,
-    source_identity_key, valid_field,
+    CalendarDetailSetting, MAX_OWN_ADDRESSES, MailCopySetting, MailProvider,
+    MailProviderDeleteSetting, MailSourceKind, MailSourceRow, MailSourceStatus, MailSourceView,
+    SOURCE_INDEX, SOURCES, own_address_set, source_identity_key, valid_field,
 };
+use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON};
 use crate::source_audience::{self, SourceAudienceEventView};
@@ -102,6 +103,13 @@ pub struct MailSourceSettingsRequest {
     pub calendar_details: Option<CalendarDetailSetting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<MailSourceStatus>,
+    /// An IMAP mailbox only: every other address its owner confirms the
+    /// mailbox owns, at most 100, each a bare address (fix list row 20400).
+    /// It replaces the list kept; an empty list clears it. A reply never
+    /// goes to any of them. A Gmail or Microsoft 365 mailbox's own
+    /// addresses come from its provider at each sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_addresses: Option<Vec<String>>,
 }
 
 /// `vault.mail.sources.members.set`'s input: a group address's readers.
@@ -156,6 +164,38 @@ fn valid_copy(copy: Option<MailCopySetting>) -> MemoryResult<()> {
     if matches!(copy, Some(MailCopySetting::RecentMonths { months: 0 })) {
         return Err(MemoryError::bad_request(
             "recent months keeps at least one month",
+        ));
+    }
+    Ok(())
+}
+
+/// The canonical addresses an owner confirms a mailbox owns: each one
+/// bare, a malformed one refused, never dropped.
+fn confirmed_own_addresses(addresses: &[String]) -> MemoryResult<BTreeSet<String>> {
+    if addresses.len() > MAX_OWN_ADDRESSES {
+        return Err(MemoryError::bad_request(format!(
+            "own_addresses names at most {MAX_OWN_ADDRESSES} addresses"
+        )));
+    }
+    addresses
+        .iter()
+        .map(|address| {
+            canonical_recipient(address).map_err(|_| {
+                MemoryError::bad_request("own_addresses names an address no mail can go to")
+            })
+        })
+        .collect()
+}
+
+/// Refuses an owner's own-address list for a source whose own addresses
+/// its provider proves, or that is no mailbox.
+fn valid_own_addresses(provider: MailProvider, own: Option<&BTreeSet<String>>) -> MemoryResult<()> {
+    if own.is_some() && provider != MailProvider::Imap {
+        return Err(MemoryError::bad_request_with(
+            "own_addresses applies to an IMAP mailbox",
+            &[
+                "A Gmail or Microsoft 365 mailbox's own addresses come from its provider at each sync.",
+            ],
         ));
     }
     Ok(())
@@ -264,6 +304,11 @@ impl Memory<'_> {
             provider: row.provider,
             kind: row.kind,
             address: shows_address.then(|| row.address.clone()),
+            own_addresses: if shows_address {
+                row.own_addresses.clone()
+            } else {
+                Vec::new()
+            },
             owner_ref: row.owner.map(|owner| owner.to_hex()),
             reads,
             members,
@@ -293,6 +338,7 @@ impl Memory<'_> {
             provider: row.provider,
             kind: row.kind,
             address: None,
+            own_addresses: Vec::new(),
             owner_ref: row.owner.map(|owner| owner.to_hex()),
             reads: false,
             members: Vec::new(),
@@ -476,6 +522,7 @@ impl Memory<'_> {
                 provider: input.provider,
                 kind: input.kind,
                 address: input.address.clone(),
+                own_addresses: Vec::new(),
                 provider_account: input.provider_account.clone(),
                 custody_ref: input.custody_ref.clone(),
                 channel_identity,
@@ -519,13 +566,19 @@ impl Memory<'_> {
     /// personal mailbox or a calendar, an Owner or an Admin for a group
     /// address. A calendar shared in detail reads to the vault from this
     /// commit on, its earlier events included; set back to busy and free,
-    /// its details read to its owner alone again.
+    /// its details read to its owner alone again. An IMAP mailbox's own
+    /// addresses are the list its owner confirms (fix list row 20400).
     pub fn mail_sources_settings_set(
         &self,
         input: &MailSourceSettingsRequest,
     ) -> MemoryResult<MailSourceView> {
         let id = EntityId::from_hex(&input.source_ref)?;
         valid_copy(input.copy)?;
+        let own_addresses = input
+            .own_addresses
+            .as_deref()
+            .map(confirmed_own_addresses)
+            .transpose()?;
         let actor = self.actor();
         self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
@@ -537,6 +590,7 @@ impl Memory<'_> {
                 return Err(unknown_source());
             }
             valid_calendar_details(row.kind, input.calendar_details)?;
+            valid_own_addresses(row.provider, own_addresses.as_ref())?;
             let at = crate::unix_seconds_now();
             if let Some(copy) = input.copy {
                 row.copy = copy;
@@ -546,6 +600,9 @@ impl Memory<'_> {
             }
             if let Some(status) = input.status {
                 row.status = status;
+            }
+            if let Some(own) = &own_addresses {
+                row.own_addresses = own_address_set(&row.address, own);
             }
             if let Some(details) = input.calendar_details {
                 row.calendar_details = details;

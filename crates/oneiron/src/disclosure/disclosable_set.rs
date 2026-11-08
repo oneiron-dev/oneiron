@@ -77,6 +77,12 @@ impl DisclosableSet {
         Ok(Self(disclosable_set(&terms)?))
     }
 
+    /// Explicit consent of an anonymous phone call's current line. Only the
+    /// native phone reader supplies this; it is not a contact clearance.
+    pub(super) fn phone_line(scope: Scope) -> Self {
+        Self(scope)
+    }
+
     /// The met clearance of every non-owner present.
     #[must_use]
     pub fn clearance(&self) -> &Scope {

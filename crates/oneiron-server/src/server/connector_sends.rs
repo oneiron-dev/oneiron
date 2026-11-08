@@ -10,12 +10,18 @@
 //! the transports this engine drives; a channel it has none for fails the
 //! attempt as not started. Everything the drain does is sync, so every pass
 //! runs on a blocking thread.
+//!
+//! Beside the drain sit the send executor lease's two host calls (FIX 4747
+//! slice 4): the release as serve stops, and the reaper pass the
+//! housekeeping tick runs, which takes a send whose machine closed or
+//! vanished when this machine holds what its channel needs.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use oneiron::Vault;
+use oneiron::outbound::ConnectorSendLeaseReap;
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::core::SyncServer;
@@ -100,6 +106,64 @@ impl SyncServer {
                 _ = wake.recv() => false,
                 () = tokio::time::sleep(wait) => true,
             };
+        }
+    }
+
+    /// Releases the send executor leases this machine holds (FIX 4747 slice
+    /// 4), as serve stops gracefully and before its device-sync link stops,
+    /// so another machine's reaper may take them at once
+    /// ([`oneiron::Vault::release_send_executor_leases`]). A release that
+    /// fails leaves each lease to expire, logged with its kind.
+    pub(crate) async fn release_send_executor_leases(&self) {
+        let vault = Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.release_send_executor_leases()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(released)) => {
+                tracing::info!(
+                    released,
+                    "send executor leases released for another machine"
+                );
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "send executor lease release failed");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "send executor lease release task failed"
+                );
+            }
+        }
+    }
+}
+
+/// One send lease reaper pass (FIX 4747 slice 4), on the housekeeping tick:
+/// a connector send whose lease expired is taken here, in the ruled order,
+/// when this machine holds what its channel needs, the check the worker's
+/// sink makes before it sends ([`CalendarChannelSink::holds_channel`]).
+pub(super) fn reap_connector_send_leases(vault: &Vault) {
+    let holds_channel = |task: &oneiron::outbound::ConnectorSendTask| {
+        CalendarChannelSink::holds_channel(vault, &task.intent)
+    };
+    match vault.reap_connector_send_leases(&holds_channel) {
+        Ok(ConnectorSendLeaseReap {
+            taken: 0,
+            renewed: 0,
+            waiting,
+        }) => {
+            if waiting > 0 {
+                tracing::debug!(waiting, "send lease reaper left expired leases waiting");
+            }
+        }
+        Ok(ConnectorSendLeaseReap {
+            taken,
+            waiting,
+            renewed,
+        }) => {
+            tracing::info!(taken, renewed, waiting, "send lease reaper ran");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "send lease reaper failed");
         }
     }
 }

@@ -36,6 +36,7 @@ use super::DeviceSyncHost;
 use super::ReapFreeze;
 use super::dial::Dial;
 use crate::commands::credential_file::PairedCredentialFile;
+#[cfg(not(feature = "mesh"))]
 use crate::handler::mesh::MeshHost;
 use crate::server::HousekeepingAdmission;
 
@@ -73,7 +74,7 @@ impl Receiver {
     #[cfg(feature = "mesh")]
     pub(super) fn start(
         dial: &Dial,
-        mesh: Option<&MeshHost>,
+        transport: Option<Arc<dyn oneiron_mesh_transport::MeshTransport>>,
         vault: &Arc<oneiron::Vault>,
         freeze: ReapFreeze,
     ) -> Option<Self> {
@@ -98,9 +99,9 @@ impl Receiver {
             ));
             return Some(Self { stop, task });
         }
-        let mesh = mesh?;
+        let transport = transport?;
         let dialer: Arc<dyn oneiron::sync::SyncDialer> =
-            Arc::new(MeshSyncDialer::new(mesh.transport(), dial.home));
+            Arc::new(MeshSyncDialer::new(transport, dial.home));
         let host = mesh_host(&dial.url);
         let task = tokio::spawn(receive_mesh(
             dialer,
