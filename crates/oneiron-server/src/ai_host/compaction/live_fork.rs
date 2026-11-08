@@ -1,9 +1,9 @@
 //! The agent's own compaction from its live context (FIX 4465 C). At the
-//! breakpoint that seals a flight, the run's live request is read as the
-//! host's admitted rung sends it, and each call of the flight forks it on
-//! that rung: the prefix unchanged with its end marked as a cache boundary,
-//! then the house compaction's instruction, the agent's home and the span's
-//! input after it. A call is admitted on the live role as exactly that
+//! breakpoint that seals a flight, the run's latest completed call is read
+//! as the rung that answered it sent it (FIX 4933), and each call of the
+//! flight forks it on that rung: the prefix unchanged with its end marked
+//! as a cache boundary, then the house compaction's instruction, the
+//! agent's home and the span's input after it. A call is admitted on the live role as exactly that
 //! rung's model, sent on that rung alone with a permit of its own on the
 //! run's compaction meter, and files, lands and is checked as any other
 //! self-written pass. Under a row on `auto` (FIX 6029) the fork is bound
@@ -11,7 +11,8 @@
 //! first call goes out only while it still is; otherwise the cheap writer
 //! writes as the agent.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Instant;
 
 use oneiron::EntityId;
@@ -31,7 +32,7 @@ use super::self_writer::SELF_WRITER_FRAME;
 use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
 use super::{CompactionMeter, LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
-use crate::models::RoleCall;
+use crate::models::{AnsweringRung, ModelCallBinding, RoleCall};
 
 /// How a breakpoint binds the live fork: forced, under a row that selects
 /// it, each failure typed; or, under a row on `auto` (FIX 6029), only while
@@ -44,16 +45,20 @@ pub(super) enum LiveBind {
 }
 
 /// `bind_live_compaction_fork`: the run's `live` request at a breakpoint,
-/// admitted on the live role exactly as its host admits it, bound to the
-/// rung its walk would send it to now, for `writer` under `row`, as `how`
-/// says. A forced fork that a route refuses, or a ladder with no rung to
-/// take it now, binds none and says why: no rung is guessed and nothing
-/// falls through to the cheap route. A prefix that leaves the live model no
-/// room for the window is refused, never cut, and so is one read from rows
-/// its host did not witness whole (`prefix_sources` `None`, FIX 9463): its
-/// summary could not derive from each. Under `auto` every such failure, and
-/// a cold prefix, binds none and says nothing: `None`, so the cheap writer
-/// writes the flight as the agent.
+/// admitted on the live role exactly as its host admits it, for `writer`
+/// under `row`, as `how` says. The fork binds the rung that answered the
+/// run's latest completed call, and that call as the rung sent it is its
+/// prefix (FIX 4933): never the rung the walk would take now, and never a
+/// wait for a call not sent yet. The room and, under `auto`, the warmth are
+/// read for that rung and that prefix now, before the flight is sealed. A
+/// forced fork that a route refuses, a run with no completed call, or a
+/// rung its live route no longer takes now binds none and says why: no rung
+/// is guessed and nothing falls through to the cheap route. A prefix that
+/// leaves the live model no room for the window is refused, never cut, and
+/// so is one read from rows its host did not witness whole
+/// (`prefix_sources` `None`, FIX 9463): its summary could not derive from
+/// each. Under `auto` every such failure, and a cold prefix, binds none and
+/// says nothing: `None`, so the cheap writer writes the flight as the agent.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bind_live_compaction_fork(
     route: &ServedCompactionBackend,
@@ -73,7 +78,10 @@ pub(super) fn bind_live_compaction_fork(
     let Ok(call) = admission.admit_live(live.clone()) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
-    let Some((rung, request)) = call.ladder.live_rung(&call.request) else {
+    let Some(AnsweringRung { rung, request }) = admission.answering_rung(live).filter(|answered| {
+        call.ladder
+            .takes_answering_rung(&answered.rung, &call.request)
+    }) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
     // The row bounds where the fork may be served: an egress limit, never a
@@ -96,7 +104,7 @@ pub(super) fn bind_live_compaction_fork(
         return unbound(SelfCompactionUnavailable::LivePrefixTooLong);
     }
     Some(Ok(LiveCompactionFork::capture(
-        request,
+        Arc::unwrap_or_clone(request),
         rung,
         writer,
         room,
@@ -239,5 +247,62 @@ impl ServedCompactionBackend {
                 Ok((home.refs, Some(home_rows)))
             },
         )
+    }
+}
+
+/// The slot one run's answering rungs fill (FIX 4933): the run's latest
+/// call that answered, as its rung sent it. The run's own compaction writer
+/// holds it, so it lives as long as the run's seat. A call that fails, or a
+/// stream that drops, leaves what it holds.
+#[derive(Default)]
+pub(in crate::ai_host) struct AnsweringRungSlot(Mutex<Option<AnsweringRung>>);
+
+/// A host's answering rung slots, by run (FIX 4933): each beside the
+/// compaction writer that holds it, and gone with it. Only a run whose
+/// writer holds a slot keeps its calls' rungs.
+#[derive(Default)]
+pub(in crate::ai_host) struct AnsweringRungSlots {
+    runs: Mutex<HashMap<EntityId, Weak<AnsweringRungSlot>>>,
+}
+
+impl AnsweringRungSlots {
+    /// `run`'s slot, for its writer to hold: the one held already, else a
+    /// fresh one.
+    pub(in crate::ai_host) fn hold(&self, run: EntityId) -> Arc<AnsweringRungSlot> {
+        let mut runs = self.held();
+        if let Some(slot) = runs.get(&run).and_then(Weak::upgrade) {
+            return slot;
+        }
+        let slot = Arc::new(AnsweringRungSlot::default());
+        runs.insert(run, Arc::downgrade(&slot));
+        slot
+    }
+
+    /// `run`'s latest call that answered, as its rung sent it.
+    pub(in crate::ai_host) fn latest(&self, run: EntityId) -> Option<AnsweringRung> {
+        let slot = self.held().get(&run).and_then(Weak::upgrade)?;
+        slot.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// One of `run`'s calls answered, on `binding`'s rung: a held slot keeps
+    /// it in place of the call before it. Only a call that answered comes
+    /// here, so a failed rung never replaces one that answered.
+    pub(in crate::ai_host) fn answered(&self, run: EntityId, binding: &ModelCallBinding) {
+        let Some(slot) = self.held().get(&run).and_then(Weak::upgrade) else {
+            return;
+        };
+        if let Some(answering) = &binding.answering {
+            *slot.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(answering.clone());
+        }
+    }
+
+    /// The slots whose writers still hold them: each let go goes here.
+    fn held(&self) -> MutexGuard<'_, HashMap<EntityId, Weak<AnsweringRungSlot>>> {
+        let mut runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+        runs.retain(|_, slot| slot.strong_count() > 0);
+        runs
     }
 }
