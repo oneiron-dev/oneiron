@@ -606,6 +606,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 Ok(read_as) => read_as,
                 Err(refusal) => {
                     return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        hook_notice: None,
                         effect,
                         outcome: refusal.code,
                         reason_codes: Vec::new(),
