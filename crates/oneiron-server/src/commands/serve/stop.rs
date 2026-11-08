@@ -13,10 +13,12 @@ use crate::server::SyncServer;
 /// finished gives back its place, then `upgrades`, the drain
 /// [`crate::embedded::upgrade_lifetime`] gave, is awaited with no deadline:
 /// each socket upgraded on the API listener or the mesh has seen the stop
-/// and ends once every call it admitted has. Then the device-sync
-/// connection and the mesh stop, and every public live voice session ends
-/// through its own teardown, its journal finished, with none started after,
-/// as managed serve ends them. What never started is passed as `None`.
+/// and ends once every call it admitted has. This machine's send executor
+/// leases are released while the device-sync link can still carry the
+/// release (FIX 4747 slice 4). Then the device-sync connection and the mesh
+/// stop, and every public live voice session ends through its own teardown,
+/// its journal finished, with none started after, as managed serve ends
+/// them. What never started is passed as `None`.
 pub(super) async fn stop_serving(
     server: &SyncServer,
     mesh: Option<MeshHost>,
@@ -27,6 +29,8 @@ pub(super) async fn stop_serving(
         mesh.end_streams().await;
     }
     upgrades.await;
+    server.release_send_executor_leases().await;
+    server.release_agent_run_leases().await;
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }
