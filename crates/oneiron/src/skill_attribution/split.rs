@@ -84,6 +84,46 @@ pub(super) fn outcome_scope_in_txn(
     Ok((attribution.and_then(|fields| fields.project), type_ref))
 }
 
+/// The world the attempt behind terminal pack receipt `receipt` ran in, as
+/// its frozen agent dispatch records it (FIX 22064): the dispatch scope's
+/// world, else base reality for a definition bound to base alone. `None`
+/// where the attempt records no single world: no such attempt, no agent
+/// dispatch, or a scope spanning worlds.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn outcome_world_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+) -> Result<Option<EntityId>> {
+    let Some(attempt) = super::trace::receipt_attempt(receipt) else {
+        return Ok(None);
+    };
+    let Some(record) = crate::attempt_queue::AttemptQueue::new(vault).get_in_txn(txn, attempt)?
+    else {
+        return Ok(None);
+    };
+    let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload) else {
+        return Ok(None);
+    };
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
+        return Ok(None);
+    }
+    let Ok(input) = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input) else {
+        return Ok(None);
+    };
+    if let Some(world) = input.scope.as_ref().and_then(|scope| scope.world) {
+        return Ok(Some(world));
+    }
+    Ok(matches!(
+        input.definition.scope,
+        crate::store::agent_scope::AgentScope::Base
+    )
+    .then(crate::claim::base_world_id))
+}
+
 /// Asks about `request` and turns the answers into a split, beside the exact
 /// revision that gave them, or `None` when the outcome abstains. With no host
 /// decisions the rule tier answers; a host's decisions replace it. Beside it
