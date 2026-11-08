@@ -3654,6 +3654,9 @@ class Oneiron:
         def create_auto_weave_grant(self, spec):
             """The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."""
             return json.loads(_translate(lambda: self._client.vault_consent_create_auto_weave_grant(json.dumps(spec))))
+        def create_nightly_link_grant(self, spec):
+            """The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default."""
+            return json.loads(_translate(lambda: self._client.vault_consent_create_nightly_link_grant(json.dumps(spec))))
         def registry(self, spec):
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
             return json.loads(_translate(lambda: self._client.vault_consent_registry(json.dumps(spec))))
