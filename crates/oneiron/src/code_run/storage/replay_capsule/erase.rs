@@ -18,10 +18,10 @@
 //! and a fork answer's publication read it in their own writer and keep
 //! nothing for an actor that is gone.
 //!
-//! A capsule's request pieces are held once per run and actor (FIX 4192),
-//! so every capsule that names them is the actor's: the erase releases each
-//! piece its runs hold for the actor, found by the run's own descriptors,
-//! after every capsule body.
+//! A capsule's request and start pieces are held once per run and actor
+//! (FIX 4192), so every capsule that names them is the actor's: the erase
+//! releases each piece its runs hold for the actor, found by the run's own
+//! descriptors, after every capsule body.
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
@@ -44,8 +44,8 @@ type CapsuleKey = (EntityId, u64, u64);
 /// and stays as it is. An id whose entity is no actor scans nothing. The
 /// reply content of the actor's runs, these capsules' runs among them, is
 /// erased beside them first (FIX 5718), release only as here. FIX 4192:
-/// the request pieces each run holds for the actor are read before anything
-/// is released, and released last.
+/// the request and start pieces each run holds for the actor are read
+/// before anything is released, and released last.
 ///
 /// # Errors
 ///
@@ -81,8 +81,8 @@ pub(crate) fn erase_capsule_actor_in_txn(
 /// kept request, each start, each replay context, each kept route prompt
 /// (FIX 6255), each fork answer and each fork's executed body, read before the erase releases them, so the
 /// provenance door's hard erase retires their instances (FIX 6278). A
-/// capsule erased before names none. Each request piece its runs hold for
-/// the actor is one of them (FIX 4192).
+/// capsule erased before names none. Each request and start piece its runs
+/// hold for the actor is one of them (FIX 4192).
 ///
 /// # Errors
 ///
