@@ -116,6 +116,12 @@
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
   - `src/parser/mod.rs` + `src/parser/cmap_parser.rs` (FIX 12777 CMap metadata): shared `name_byte` factored from `name`; new `name_skip` validates the same `/`-name grammar via `many0_count` without building the discarded `Vec<u8>`; `cmap_name` uses `name_skip`. Removes only the discarded CMapName allocation on the ToUnicode path. `CIDSystemInfo` dictionaries, sections, maps and admission plumbing unchanged. No new cap/refusal/format/policy.
+  - CMap reverse-map/fallback allocation (FIX 12777, narrow slice): `src/encodings/cmap.rs`
+    builds the reverse map over borrowed Unicode slices with a per-iteration stack
+    singleton, cloning only new keys and multi-unit incremented ranges, and
+    `get_or_replacement_char` allocates its fallback vector lazily. Key content,
+    push order, missing-code behavior and the forward maps are unchanged; no new API,
+    and no admission/heap/lifecycle claim.
   - Cooperative hosted container reads (FIX 7943/11549, partial): default no-op
     `DecodeAdmission::checkpoint` reports native xref/object/stream positions;
     controlled reads opt into sequential loading even when Rayon is compiled.

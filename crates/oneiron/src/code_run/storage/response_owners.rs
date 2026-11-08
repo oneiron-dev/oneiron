@@ -273,7 +273,10 @@ impl ExecutorStorage<'_> {
     /// Whether an erase of run `owner`'s actor took its replies (FIX 5718),
     /// as the run's storage reads it. A session's run reads its owner row
     /// through its room's composed view: an on-record stretch stamps one in
-    /// base (FIX 7429), and an off-record row stamps none (FIX 7464).
+    /// base (FIX 7429), an off-record one in the overlay (FIX 6586). The
+    /// vault's erase does not reach an overlay row in its own transaction,
+    /// so a session's run also reads as erased once the actor its row names
+    /// is gone in the vault (FIX 7366).
     ///
     /// # Errors
     ///
@@ -288,9 +291,14 @@ impl ExecutorStorage<'_> {
             }
             Self::Session(binding) => binding.answered(|| {
                 binding.session.routed_side_read(|rtxn, dbs| {
-                    Ok(response_owner_in_txn(&dbs, rtxn, &owner)?
-                        .as_ref()
-                        .is_some_and(ResponseOwner::erased))
+                    let Some(owner) = response_owner_in_txn(&dbs, rtxn, &owner)? else {
+                        return Ok(false);
+                    };
+                    let base = super::wait_delivery::canonical_store(&dbs);
+                    Ok(owner.erased()
+                        || owner.actor().is_some_and(|actor| {
+                            super::replay_capsule::actor_gone_in_store(base, rtxn, &actor)
+                        }))
                 })
             }),
         }
@@ -302,8 +310,8 @@ impl ExecutorStorage<'_> {
     /// a first save after the actor is gone cannot publish fresh replies.
     /// This is how a run's start and a write's reservation name whose replies
     /// the record will hold. A session's run
-    /// stamps it only on an on-record stretch, where its rows land in base
-    /// (FIX 7429); an off-record row stamps none.
+    /// stamps it along its route: in base on an on-record stretch (FIX
+    /// 7429), in the room's overlay off record (FIX 6586).
     ///
     /// # Errors
     ///
