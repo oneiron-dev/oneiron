@@ -271,11 +271,8 @@ impl ModelRuntime {
         role: ModelRole,
         seat: &Seat,
     ) -> Result<Option<RoleRoute>, RoleRefusal> {
-        let Some(router) = self.router.as_ref() else {
-            return Ok(None);
-        };
         let Some(choice) = vault
-            .model_pack_role_choice(role, &router.access_snapshot())
+            .model_pack_role_choice(role, &self.offer_access())
             .map_err(RoleRefusal::refused)?
         else {
             return Ok(None);
@@ -330,8 +327,7 @@ impl ModelRuntime {
             ModelLocality::ThirdParty
         };
         let widest = model_pack_ceiling(&choice.variant.access);
-        self.router
-            .as_ref()?
+        self.raw_router
             .served_at(choice.model(), route)
             .filter(|(served, _)| *served <= widest)
     }
