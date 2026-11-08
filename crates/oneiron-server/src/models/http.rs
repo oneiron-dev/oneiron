@@ -20,7 +20,9 @@ mod client;
 mod never_sent;
 mod reply_line;
 
-pub(super) use reply_line::{ReplyBytes, charge_read, holding_chat_replies, holding_replies};
+pub(super) use reply_line::{
+    ReplyBytes, charge_read, holding_chat_replies, holding_replies, read_broker_booked,
+};
 use reply_line::{read_booked, read_whole};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).

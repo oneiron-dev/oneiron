@@ -60,3 +60,16 @@ pub enum DurableStepError {
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
 }
+
+impl DurableStepError {
+    /// Actual provider usage retained by a failed step, separate from earlier completed steps.
+    pub(crate) fn spent_usage(&self) -> Option<&LlmUsage> {
+        match self {
+            Self::SpentLlm { usage, .. }
+            | Self::SpentSchemaValidation { usage, .. }
+            | Self::SpentFinalizeRefused { usage }
+            | Self::SpentFallback { usage, .. } => Some(usage.as_ref()),
+            _ => None,
+        }
+    }
+}

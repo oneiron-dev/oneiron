@@ -10,8 +10,8 @@
 //! `never allow` stops the request: its ledger row is abandoned, keeping
 //! what it knew of its delivery, so no later sweep sends it. `always ask`
 //! sends only on the owner's press on exactly this call: the press the
-//! current pass's own admission spent, carried in memory (its kept copy is
-//! best-effort); else the copy kept beside this row; else a still-available
+//! current pass's own admission spent, committed in its Pending row; else
+//! the original proof on this row; else a still-available
 //! marker for the row's own recomposed target, spent here once and kept for
 //! its retry. A spent marker is no fresh authority. With none of them the
 //! row stays Pending and names its approve-once digest. Nothing here
@@ -41,7 +41,6 @@ use crate::outbound_intent_ledger::{
 pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
 
 /// What the writer found for an `always ask` call.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Release {
     /// A press already proved for this row, or the setting moved off ask.
     Send,
@@ -49,12 +48,15 @@ enum Release {
     Spent,
     /// No press: the call waits for the owner.
     Ask,
+    /// The row already left Pending before this writer.
+    Current(IntentLedgerRecord),
 }
 
 struct Candidate {
     gate: ExternalEffectGateInput,
     digest: EffectDigest,
     actor: Option<EntityId>,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     family: PinnedApprovalFamily,
 }
 
@@ -69,6 +71,7 @@ fn candidate_in_txn(
                 gate: candidate.gate,
                 digest: candidate.digest,
                 actor: Some(candidate.actor),
+                remember_context: candidate.prepared.remember_context(),
                 family: PinnedApprovalFamily::ScopedMcp,
             }),
         );
@@ -78,6 +81,7 @@ fn candidate_in_txn(
             gate: candidate.gate,
             digest: candidate.digest,
             actor: candidate.actor,
+            remember_context: None,
             family: candidate.family,
         }),
     )
@@ -158,13 +162,22 @@ fn always_ask(
     };
     let digest = candidate.digest;
     let release = vault.try_with_write_txn(|wtxn| -> Result<Release, IntentLedgerError> {
-        let current = read_intent_record_in_txn(vault, wtxn, &record.id)?;
-        let Some(current) = current
-            .filter(|row| row.state == IntentState::Pending && row.payload() == record.payload())
-        else {
-            return Ok(Release::Ask);
+        let Some(current) = read_intent_record_in_txn(vault, wtxn, &record.id)? else {
+            return Err(Error::EntityNotFound.into());
         };
-        match setting_in_txn(vault, wtxn, record)? {
+        if current.state != IntentState::Pending {
+            return Ok(Release::Current(current));
+        }
+        if current.payload() != record.payload() {
+            return Ok(Release::Ask);
+        }
+        match setting_in_txn(
+            vault,
+            wtxn,
+            record,
+            candidate.gate.scoped_mcp_call.as_ref(),
+            candidate.remember_context,
+        )? {
             SlateDisposition::AlwaysAsk => {}
             // A later pass stops it.
             SlateDisposition::NeverAllow => return Ok(Release::Ask),
@@ -201,6 +214,7 @@ fn always_ask(
         }
     })?;
     match release {
+        Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
         Release::Send => Ok(None),
         Release::Spent => {
             let subject = bytes_to_hex_lower(&record.id);
@@ -225,6 +239,8 @@ pub(super) fn setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &IntentLedgerRecord,
+    call: Option<&crate::consent::tool_scope::ScopedMcpCallContext>,
+    context: Option<crate::connector_key::ConnectorToolRememberContext>,
 ) -> Result<SlateDisposition, IntentLedgerError> {
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(SlateDisposition::Auto);
@@ -232,13 +248,27 @@ pub(super) fn setting_in_txn(
     let Some(key) = crate::connector_key::read_key_for_pack_in_txn(vault, txn, key_ref)? else {
         return Ok(SlateDisposition::AlwaysAsk);
     };
-    Ok(crate::connector_key::connector_tool_setting_in_txn(
+    let setting = crate::connector_key::connector_tool_setting_in_txn(
         &vault.store,
         txn,
         key_ref,
         &key,
         &record.tool,
-    )?)
+    )?;
+    if setting == SlateDisposition::AlwaysAsk
+        && let Some(call) = call
+        && crate::connector_key::connector_tool_remembered_in_txn(
+            &vault.store,
+            txn,
+            key_ref,
+            &key,
+            call,
+            context,
+        )?
+    {
+        return Ok(SlateDisposition::Auto);
+    }
+    Ok(setting)
 }
 
 /// `record` kept Pending for the owner's press, naming the digest and actor

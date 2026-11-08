@@ -222,7 +222,7 @@ pub(super) fn reconcile_connector_task(
 ) -> Result<bool, Error> {
     use super::connector_task::connector_send_task_outcome_in_txn;
     use crate::outbound_intent_ledger::{
-        ConnectorIntentBinding, IntentResolution, UnconfirmedDelivery,
+        ConnectorIntentBinding, IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
         reconcile_connector_intent_in_txn,
     };
     let logical_ref = super::executor::connector_logical_send_intent_ref(task);
@@ -245,6 +245,28 @@ pub(super) fn reconcile_connector_task(
         else {
             return Ok(false);
         };
+        let queue = AttemptQueue::new(vault);
+        // FIX 4747: the local send this machine stopped as it stood down
+        // certainly never went, and it is no outcome of the TASK, which stays
+        // its send executor's: the queue row completes and the TASK is not
+        // touched.
+        if resolution
+            == (IntentResolution::Stopped {
+                delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+                reason: IntentEscalationReason::SendExecutorStoodDown,
+            })
+        {
+            queue.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: attempt.id,
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    attempt_count: attempt.attempt_count,
+                    now,
+                },
+            )?;
+            return Ok(true);
+        }
         // A remote task's send is not known delivered, and it is never
         // repeated (FIX 7960): its receipt says deferred, and its TASK
         // completes rather than fails.
@@ -271,7 +293,6 @@ pub(super) fn reconcile_connector_task(
                 ..
             } => (SendReceiptOutcome::Failed, ConnectorSendTaskOutcome::Failed),
         };
-        let queue = AttemptQueue::new(vault);
         let synced_outcome = connector_send_task_outcome_in_txn(vault, wtxn, task.task_ref)?;
         // A repeated queue row has no new terminal evidence to receipt. The
         // existing synced outcome is already the audit surface.
@@ -410,6 +431,100 @@ pub(super) fn reconcile_connector_task(
             .map_err(|_| Error::InvariantViolation("outbound terminal resolution sync failed"))?;
     }
     Ok(terminal)
+}
+
+/// Settles, in `wtxn`, a TASK whose interrupt's ambient alternative stopped
+/// with its delivery unknown, or stands live beside the interrupt's own
+/// unresolved send (FIX 11029): the interrupt may not go after a send that
+/// may have gone, so the TASK is ambiguous (delivered, should a delivered
+/// receipt stand already), its receipt names the alternative, and its queue
+/// row completes.
+pub(super) fn settle_ambiguous_alternative_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &super::connector_task::ConnectorSendTask,
+    mut receipt: crate::receipt::ReceiptRecord,
+    now: u64,
+) -> Result<(), Error> {
+    let queue = AttemptQueue::new(vault);
+    let complete = CompleteAttempt {
+        id: attempt.id,
+        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        now,
+    };
+    // A TASK a peer delivered is stronger than an uncertain local stop.
+    if super::connector_task::connector_send_task_outcome_in_txn(vault, wtxn, task.task_ref)?
+        == Some(ConnectorSendTaskOutcome::Delivered)
+    {
+        queue.complete_in_txn(wtxn, complete)?;
+        return Ok(());
+    }
+    super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
+    receipt.outcome = "ambiguous".to_owned();
+    let wrote = persist_admitted_send_receipt_in_txn(
+        vault,
+        wtxn,
+        task.task_ref,
+        receipt,
+        SendReceiptOutcome::Ambiguous,
+        true,
+        None,
+    )?;
+    project_connector_send_task_outcome_in_txn(
+        vault,
+        wtxn,
+        task.task_ref,
+        if wrote {
+            ConnectorSendTaskOutcome::Ambiguous
+        } else {
+            ConnectorSendTaskOutcome::Delivered
+        },
+        now,
+    )?;
+    queue.complete_in_txn(wtxn, complete)?;
+    Ok(())
+}
+
+/// [`complete_degraded_connector_task`] in `wtxn`: the TASK whose ambient
+/// alternative's own ledger row, read in the same writer, says it went on
+/// an earlier attempt (FIX 11029).
+pub(super) fn complete_degraded_connector_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &super::connector_task::ConnectorSendTask,
+    mut receipt: crate::receipt::ReceiptRecord,
+    now: u64,
+) -> Result<(), Error> {
+    super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
+    persist_admitted_send_receipt_in_txn(
+        vault,
+        wtxn,
+        task.task_ref,
+        receipt,
+        SendReceiptOutcome::Delivered,
+        false,
+        None,
+    )?;
+    project_connector_send_task_outcome_in_txn(
+        vault,
+        wtxn,
+        task.task_ref,
+        ConnectorSendTaskOutcome::Delivered,
+        now,
+    )?;
+    AttemptQueue::new(vault).complete_in_txn(
+        wtxn,
+        CompleteAttempt {
+            id: attempt.id,
+            lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+            attempt_count: attempt.attempt_count,
+            now,
+        },
+    )?;
+    Ok(())
 }
 
 /// Completes a TASK whose interrupt the delivery window degraded and whose

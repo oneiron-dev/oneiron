@@ -5,6 +5,7 @@
 //! use the same durable step layer as consolidation.
 
 mod audit;
+mod typing_batch;
 
 use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
@@ -175,6 +176,14 @@ impl ConsolidationExecutor<'_> {
                         if !*memoized {
                             charges.record_usage(usage);
                         }
+                    }
+                    if let Some(usage) = read
+                        .outcome
+                        .as_ref()
+                        .err()
+                        .and_then(DurableStepError::spent_usage)
+                    {
+                        charges.record_usage(usage);
                     }
                     return super::residency::spent_or_deferred(error, ctx, &charges);
                 }

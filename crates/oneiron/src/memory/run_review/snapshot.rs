@@ -117,8 +117,9 @@ pub(super) fn binding(
         }
         RunReviewChange::Topology { event_ref } => {
             let id = EntityId::from_hex(event_ref)?;
+            // The decision read whole (FIX 10188).
             let event = vault
-                .identity_topology_event_in_txn(txn, &id)?
+                .identity_topology_decision_in_txn(txn, &id)?
                 .ok_or_else(|| MemoryError::not_found("topology event is absent"))?;
             use crate::identity_topology::StoredIdentityOpAction;
             if !matches!(
@@ -126,6 +127,7 @@ pub(super) fn binding(
                 StoredIdentityOpAction::Merge { .. }
                     | StoredIdentityOpAction::Split { .. }
                     | StoredIdentityOpAction::Facet { .. }
+                    | StoredIdentityOpAction::ParkedFacet { .. }
             ) {
                 return Err(MemoryError::bad_request(
                     "only merge, split and facet events join run review",

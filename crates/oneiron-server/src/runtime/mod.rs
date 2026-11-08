@@ -2,6 +2,8 @@
 //! Re-exports the runtime's existing value types and host entry points.
 //! Private children keep each runtime concern in its owning module.
 
+mod artifact_backend;
+pub(crate) use artifact_backend::ArtifactBackendHost;
 mod clock;
 pub(crate) use self::clock::wall_clock_ms;
 mod config;
@@ -17,10 +19,21 @@ mod mode;
 mod routes;
 mod usage;
 pub use usage::VaultUsage;
+mod seat_helpers;
 mod seat_host;
 pub mod seat_login;
+mod seat_models;
 mod secret_destinations;
 pub mod staged_input;
+pub use self::seat_helpers::{
+    CREDENTIAL_HELPER_SUBCOMMAND, HELPER_DESTINATION_PREFIX, HelperDestination,
+    HelperReplyDelivery, HelperRunEnd, SEAT_BINDING_KEY_ENV, SEAT_SLIP_ENV, SEAT_URL_ENV,
+    SeatHelperEnv, SeatHelperRun, SeatHelperRuns, SeatModelDoor, is_helper_destination_name,
+};
+pub use self::seat_models::{
+    SEAT_MODEL_PATH, SEAT_MODEL_REFERENCE_PREFIX, SeatModelBinding, SeatModelEnv,
+    SeatModelProtocol, SeatModelReference, SeatModelSlot, is_seat_model_slot_name, mint_reference,
+};
 pub use self::secret_destinations::{
     OwnSecretDelivery, RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination,
     SecretDestinations, ServedSecretDelivery,

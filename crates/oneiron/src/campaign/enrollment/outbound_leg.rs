@@ -260,6 +260,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         suppression_receipt: None,
         admission_ceiling: None,
         co_actor: None,
+        exclusive_route: None,
     };
     let result = execute_outbound_effect(
         vault,
@@ -402,6 +403,14 @@ impl<S: OutboundResultSender + ?Sized> OutboundTransport for SenderTransport<'_,
 
     fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
         self.0.reported_cost()
+    }
+
+    /// The leg reads a paced result as [`EnrollmentLegDrive::Paced`] and the
+    /// host re-arms the attempt at its `retry_at` (FIX 12176), so a send
+    /// that meets only full count windows waits for them instead of being
+    /// denied (FIX 8753, ARCH-0044 C5: a hold is a queue, never a drop).
+    fn waits_for_paced_window(&self) -> bool {
+        true
     }
 }
 

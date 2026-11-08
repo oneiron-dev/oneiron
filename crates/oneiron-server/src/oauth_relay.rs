@@ -49,6 +49,9 @@ struct CachedJwks {
 // Holding this short-lived lock across a bounded fetch coalesces concurrent
 // refreshes. The transport timeout ensures a request worker cannot wait
 // indefinitely, and importantly a failed refresh never evicts good material.
+// The HTTPS fetch runs on its own thread (FIX 9529), so it never panics
+// inside an async runtime while this lock is held; a lock some other panic
+// poisoned still serves, since it holds only validated key sets.
 static JWKS_CACHE: OnceLock<Mutex<HashMap<String, CachedJwks>>> = OnceLock::new();
 fn cache() -> &'static Mutex<HashMap<String, CachedJwks>> {
     JWKS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -72,8 +75,6 @@ fn bounded_file(path: &str) -> Result<String, ApiError> {
 }
 
 fn transport_fetch(uri: &str) -> Result<String, ApiError> {
-    use std::io::Read;
-
     #[cfg(test)]
     if let Some(transport) = test_transports()
         .lock()
@@ -96,6 +97,24 @@ fn transport_fetch(uri: &str) -> Result<String, ApiError> {
     if !uri.starts_with("https://") {
         return Err(ApiError::unauthorized());
     }
+    // reqwest's blocking client runs a runtime of its own, which panics when
+    // it is built or dropped inside an async runtime (FIX 9529). A thread of
+    // its own keeps it outside whatever runtime the caller is on; a panic
+    // there is an unauthorized answer, never a poisoned cache.
+    std::thread::scope(|scope| {
+        crate::engine_thread("oauth-key-fetch".into())
+            .spawn_scoped(scope, || https_fetch(uri))
+            .expect("failed to spawn thread")
+            .join()
+    })
+    .unwrap_or_else(|_| Err(ApiError::unauthorized()))
+}
+
+/// One bounded HTTPS GET of `uri`'s key set, on the calling thread, which
+/// must be outside any async runtime.
+fn https_fetch(uri: &str) -> Result<String, ApiError> {
+    use std::io::Read;
+
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(FETCH_TIMEOUT)
@@ -142,7 +161,9 @@ fn test_transports() -> &'static Mutex<HashMap<String, TestTransport>> {
 }
 
 fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
-    let mut guard = cache().lock().map_err(|_| ApiError::unauthorized())?;
+    let mut guard = cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let now = std::time::Instant::now();
     let mut last_kid_miss_refresh = None;
     if let Some(entry) = guard.get_mut(uri) {

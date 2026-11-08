@@ -3,10 +3,11 @@
 //! (`carrier_parts::split_parts`), and each run rides as a row of its own,
 //! keyed `export_output:`, the request's entry hash, a dot and the run's
 //! index in eight hex digits. Each row's head names the request, the second
-//! the copy was sealed at, the run's index and the part count, and carries
-//! the request's signed result as the copy's witness (FIX 12312), so a
-//! window files and admits each row alone, by the rules a copy in one row
-//! meets. The runs cut the copy's frame with no witness.
+//! the copy was sealed at, the run's index and the part count, carries the
+//! request's signed result as the copy's witness (FIX 12312) and the
+//! holder's signature of the part (FIX 12373), so a window files, admits
+//! and proves each row alone, by the rules a copy in one row meets. The runs
+//! cut the copy's frame with no witness and no signatures.
 //!
 //! - Bounded: a part count is at least two and at most
 //!   [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` count's codec bound, an index is
@@ -14,21 +15,36 @@
 //!   a full one, so the row bounds the part, never the copy (FIX 5445,
 //!   12295). The join is memory-gated and waits past the host's room. It
 //!   reads at most the count's rows and stops at the first one missing.
+//! - Proven part by part (FIX 12373): a part proves itself alone, without
+//!   part zero or any sibling ([`part_proven`]): the signed result its
+//!   witness carries stands as this vault judges it (the witness matching
+//!   the result it folds once it folds one), the copy that result names is
+//!   cut into the part's count (FIX 12294, 12312), and the part's signature
+//!   verifies, by that result's own signer, over the vault, the request,
+//!   that result's entry, the copy's digest and length, the sealing second,
+//!   the count, the part's index and its run
+//!   (`holder_export`'s `part_signature`). Each part is judged in three
+//!   states (FIX 12352, [`part_proof`]). A disproven part, an unsigned one
+//!   written before parts were signed, one whose signature, count or run
+//!   does not verify under the result its witness names, or one whose
+//!   witness this vault disproves, is admitted, never joined, and leaves at
+//!   the next prune by itself; refusing it would refuse the whole update of
+//!   a peer that has not folded the result yet. An unproven part, sound by
+//!   its own signature under the result its witness names while this vault
+//!   holds no standing yet of the holder's key, waits in its window, never
+//!   joined, until it proves itself. The proven parts of a set still short
+//!   of some keep waiting for the rest.
 //! - Agreed: every part must name the request, the sealing second, the
-//!   count and the witness the first part names, at its own place. Any
-//!   disagreement drops the whole set, logged by its key alone. A part whose
-//!   head no signed result names (the part count the copy its witness names
-//!   is cut into, the witness matching the result this vault folds once it
-//!   folds one; or the second the copy this install keeps was sealed at) is
-//!   admitted, never kept, and its set leaves at the next prune (FIX 12294,
-//!   12312): refusing it would refuse the whole update of a peer that has
-//!   not folded the result yet.
+//!   count and the witness the first part names, at its own place. Proven
+//!   parts that disagree drop the whole set's proven parts, logged by its
+//!   key alone; an unproven part condemns none.
 //! - Joined once: the runs are joined by `carrier_parts::join_parts`, which
 //!   checks the cut and the host's memory before it copies a byte, and the
 //!   joined copy is kept only once it stands, as a copy in one row is.
 //! - No orphans: part rows leave the window when their request's rows do,
-//!   or when the copy they join is due to leave; a set that never completes
-//!   leaves with its request or its base window.
+//!   when the copy they join is due to leave, or one by one when they are
+//!   disproven; a set that never completes or never proves itself leaves
+//!   with its request or its base window.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,7 +57,8 @@ use crate::authority::{AuthorityFold, SealedWorkOutput};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::holder_export::{
-    KeptExportOutput, kept_export_output_sealed_at_in_txn, witnessed_output,
+    KeptExportOutput, OutputPartBinding, ProofState, WitnessedResult, assess_witness,
+    kept_export_output_sealed_at_in_txn, witnessed_result,
 };
 use crate::sync::carrier_parts::{
     PART_BYTES, Parts, assembly_fits, join_parts, part_key, split_parts,
@@ -49,8 +66,13 @@ use crate::sync::carrier_parts::{
 use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
 
-/// The label every part of a relayed copy starts with.
-const PART_LABEL: &[u8] = b"oneiron/export-secret-output-part/v1\0";
+/// The label every part of a relayed copy starts with: its head carries its
+/// holder's signature (FIX 12373).
+const PART_LABEL: &[u8] = b"oneiron/export-secret-output-part/v2\0";
+
+/// The label of a part written before parts were signed: it decodes with no
+/// signature, never proves, and leaves at the next prune (FIX 12373).
+const UNSIGNED_PART_LABEL: &[u8] = b"oneiron/export-secret-output-part/v1\0";
 
 /// The most parts one copy rides in: the `u32` part count's codec bound. The
 /// row bounds the part, never the copy (FIX 5445, 12295): no seal bounds a
@@ -61,30 +83,51 @@ const MAX_EXPORT_OUTPUT_PARTS: u32 = u32::MAX;
 const SCRATCH_MAP: &str = "export_output_parts";
 
 /// One part of a relayed copy: run `index` of `count`, beside the request,
-/// the second the copy was sealed at and the copy's witness.
+/// the second the copy was sealed at, the copy's witness and the holder's
+/// signature of the part.
 struct OutputPart {
     sealed_at: u64,
     request: [u8; 32],
     index: u32,
     count: u32,
+    /// The holder's signature of this part, by the key that signed the
+    /// witness (FIX 12373); `None` on a part written before parts were
+    /// signed.
+    signature: Option<[u8; 64]>,
     /// The request's signed result, canonical (FIX 12312).
     witness: Vec<u8>,
     run: Vec<u8>,
 }
 
+/// Whether `bytes` start as a part does, signed or not.
+fn part_labelled(bytes: &[u8]) -> bool {
+    bytes.starts_with(PART_LABEL) || bytes.starts_with(UNSIGNED_PART_LABEL)
+}
+
 impl OutputPart {
-    /// Decodes a part strictly; `None` without its label, for a short head,
-    /// a zero request, a count outside two to [`MAX_EXPORT_OUTPUT_PARTS`],
-    /// the `u32` codec bound, an index not below it, or a run that is empty,
-    /// past one carrier part, or short of one before the last part. A
-    /// witness past its bound decodes and is judged unnamed ([`head_named`]),
-    /// never a refused update (L03 06:5x).
+    /// Decodes a part strictly; `None` without either label, for a short
+    /// head, a zero request, a count outside two to
+    /// [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` codec bound, an index not below
+    /// it, or a run that is empty, past one carrier part, or short of one
+    /// before the last part. A part under [`UNSIGNED_PART_LABEL`] decodes
+    /// with no signature. A witness past its bound, or a signature that does
+    /// not verify, decodes and is judged unproven ([`part_proven`]), never a
+    /// refused update (L03 06:5x).
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let rest = bytes.strip_prefix(PART_LABEL)?;
+        let (signed, rest) = match bytes.strip_prefix(PART_LABEL) {
+            Some(rest) => (true, rest),
+            None => (false, bytes.strip_prefix(UNSIGNED_PART_LABEL)?),
+        };
         let (sealed_at, rest) = rest.split_first_chunk::<8>()?;
         let (request, rest) = rest.split_first_chunk::<32>()?;
         let (index, rest) = rest.split_first_chunk::<4>()?;
         let (count, rest) = rest.split_first_chunk::<4>()?;
+        let (signature, rest) = if signed {
+            let (signature, rest) = rest.split_first_chunk::<64>()?;
+            (Some(*signature), rest)
+        } else {
+            (None, rest)
+        };
         let (witness_len, rest) = rest.split_first_chunk::<4>()?;
         let witness_len = usize::try_from(u32::from_be_bytes(*witness_len)).ok()?;
         let (witness, run) = rest.split_at_checked(witness_len)?;
@@ -105,6 +148,7 @@ impl OutputPart {
             request: *request,
             index,
             count,
+            signature,
             witness: witness.to_vec(),
             run: run.to_vec(),
         })
@@ -124,26 +168,67 @@ fn part_count_of(output: &SealedWorkOutput) -> Option<u64> {
     })
 }
 
-/// Whether `part`'s head agrees with the signed result its witness carries,
-/// as `fold` judges it ([`witnessed_output`], which a result `fold` folds
-/// must match): its count is the part count the copy that result names is
-/// cut into (FIX 12294, 12312).
-fn head_named(fold: &AuthorityFold, part: &OutputPart) -> bool {
-    witnessed_output(fold, &part.request, &part.witness).and_then(|output| part_count_of(&output))
-        == Some(u64::from(part.count))
+/// Whether `part` proves itself under `result`, the result its witness
+/// names, proven on this vault's fold ([`witnessed_result`]) or not yet
+/// ([`part_proof`]): the copy that result names is cut into the part's
+/// count (FIX 12294, 12312), and its signature verifies, by that result's
+/// own signer, over the vault, the request, that result's entry, the copy's
+/// digest and length, the sealing second, the count, its index and its run
+/// (FIX 12373). An unsigned part never proves.
+fn proven_by(result: &WitnessedResult, part: &OutputPart) -> bool {
+    let Some(signature) = &part.signature else {
+        return false;
+    };
+    part_count_of(&result.output) == Some(u64::from(part.count))
+        && OutputPartBinding {
+            vault_id: result.vault_id,
+            request: part.request,
+            result: result.entry,
+            output: result.output,
+            sealed_at: part.sealed_at,
+        }
+        .verifies(&result.signer, part.count, part.index, &part.run, signature)
+}
+
+/// What `fold` makes of `part`, alone, without part zero or any sibling
+/// (FIX 12352, 12373): disproven when `fold` disproves the signed result its
+/// witness carries ([`assess_witness`], which a result `fold` folds must
+/// match), or the part does not prove itself under the result that witness
+/// names ([`proven_by`]: no signature, a bad one, another count or another
+/// run); otherwise the state of its witness. The one per-part judgment
+/// admission, the prune and the join share.
+fn part_proof(fold: &AuthorityFold, part: &OutputPart) -> ProofState {
+    match assess_witness(fold, &part.request, &part.witness).candidate() {
+        Some((result, state)) if proven_by(&result, part) => state,
+        _ => ProofState::Disproven,
+    }
+}
+
+/// Whether `part` proves itself on `fold` ([`part_proof`]): the only state
+/// a join takes.
+fn part_proven(fold: &AuthorityFold, part: &OutputPart) -> bool {
+    part_proof(fold, part) == ProofState::Proven
 }
 
 /// The label, the sealing second, the request, the index, the part count,
-/// the witness's length (a big-endian `u32`) and the witness, then the run.
-fn encode_part(output: &KeptExportOutput, index: u32, count: u32, run: &[u8]) -> Vec<u8> {
+/// the holder's signature of the part, the witness's length (a big-endian
+/// `u32`) and the witness, then the run.
+fn encode_part(
+    output: &KeptExportOutput,
+    index: u32,
+    count: u32,
+    signature: &[u8; 64],
+    run: &[u8],
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        PART_LABEL.len() + 8 + 32 + 4 + 4 + 4 + output.witness.len() + run.len(),
+        PART_LABEL.len() + 8 + 32 + 4 + 4 + 64 + 4 + output.witness.len() + run.len(),
     );
     out.extend_from_slice(PART_LABEL);
     out.extend_from_slice(&output.sealed_at.to_be_bytes());
     out.extend_from_slice(&output.request);
     out.extend_from_slice(&index.to_be_bytes());
     out.extend_from_slice(&count.to_be_bytes());
+    out.extend_from_slice(signature);
     // A witness is within its bound, far inside a `u32`.
     out.extend_from_slice(&(output.witness.len() as u32).to_be_bytes());
     out.extend_from_slice(&output.witness);
@@ -186,14 +271,16 @@ pub(crate) fn part_row_collection_admitted(bytes: &[u8]) -> bool {
 
 /// Admits one part under `row_key`, the map key after its prefix: one that
 /// decodes, filed under its own request and place, in its sealing month's
-/// base window. When no signed result names its head ([`head_named`]: the
-/// part count the copy its witness names is cut into, none for a result
-/// that names no copy, the witness matching the result `vault` folds once
-/// it folds one) or the second the copy this install keeps was sealed at
-/// is another, the part is admitted and logged, never kept, and its set
-/// leaves at the next prune ([`done_part_rows`], FIX 12294, 12312). Whether
-/// the parts join to the copy the result names is judged where the copy is
-/// kept.
+/// base window. When it does not prove itself ([`part_proof`]: by the
+/// signed result its witness carries, the witness matching the result
+/// `vault` folds once it folds one, the part count the copy that result
+/// names is cut into, and its holder's signature of its run; an unsigned
+/// part never proves) or the second the copy this install keeps was sealed
+/// at is another, the part is admitted and logged, never joined: a
+/// disproven part leaves at the next prune by itself, an unproven one waits
+/// in its window until it proves itself ([`done_part_rows`], FIX 12294,
+/// 12312, 12352, 12373). Whether the parts join to the copy the result
+/// names is judged where the copy is kept.
 /// `None` for bytes that are no part.
 pub(super) fn admit_part(
     vault: &Vault,
@@ -201,9 +288,7 @@ pub(super) fn admit_part(
     row_key: &str,
     bytes: &[u8],
 ) -> Option<Result<()>> {
-    bytes
-        .starts_with(PART_LABEL)
-        .then(|| admit_part_head(vault, key, row_key, bytes))
+    part_labelled(bytes).then(|| admit_part_head(vault, key, row_key, bytes))
 }
 
 /// [`admit_part`] for bytes that start with the part label.
@@ -233,25 +318,46 @@ fn admit_part_head(
         .map_err(admission_read_fault)?;
     let kept_at = kept_export_output_sealed_at_in_txn(vault, &rtxn, &part.request)
         .map_err(admission_read_fault)?;
-    if !head_named(&fold, &part) || kept_at.is_some_and(|sealed_at| sealed_at != part.sealed_at) {
-        // Admitted, never kept, as a one-part copy the result does not name
-        // is: the join judges the copy against the result, and the prune
-        // drops the set (`done_part_rows`). The row's key alone: never a
-        // byte of the run.
-        tracing::debug!(
-            request = row_key,
-            "an export secret supplement part its request's signed result does not name; it leaves at the next prune"
-        );
+    // Admitted and never joined, as a one-part copy the result does not name
+    // is admitted and never kept: the join waits past it, and the prune
+    // drops it alone once it is disproven (`done_part_rows`). The row's key
+    // alone: never a byte of the run.
+    match part_proof(&fold, &part) {
+        ProofState::Disproven => {
+            tracing::debug!(
+                request = row_key,
+                "an export secret supplement part that does not prove itself by its request's signed result; it leaves at the next prune"
+            );
+        }
+        ProofState::Unproven => {
+            tracing::debug!(
+                request = row_key,
+                "an export secret supplement part this install does not hold its holder's standing for yet; it waits in its window"
+            );
+        }
+        ProofState::Proven if kept_at.is_some_and(|sealed_at| sealed_at != part.sealed_at) => {
+            tracing::debug!(
+                request = row_key,
+                "an export secret supplement part of another copy than the one this install keeps; never kept here"
+            );
+        }
+        ProofState::Proven => {}
     }
     Ok(())
 }
 
 /// Writes `frame`, the kept copy `output`'s frame with no witness
 /// (`KeptExportOutput::copy_frame`), into `doc`'s custody map as its parts,
-/// each carrying `output`'s witness, each row that differs committed on its
-/// own.
-/// Only a copy past [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` codec bound,
-/// stays with its keepers. Returns whether it wrote any.
+/// each carrying `output`'s witness and its holder's signature as `output`
+/// keeps it, never signed here (FIX 12373), each row that differs committed
+/// on its own. Its one caller passes only a copy that stands
+/// (`KeptExportOutput::stands`), whose part signatures
+/// `KeptExportOutput::proof` verified over this frame by the signer of the
+/// witness each part carries, so no part rides with a signature nobody
+/// verified.
+/// A copy past [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` codec bound, and one
+/// kept without a signature for each of its parts, stay with their keepers:
+/// no part rides that cannot prove itself. Returns whether it wrote any.
 ///
 /// # Errors
 /// Storage errors writing a row.
@@ -267,11 +373,18 @@ pub(super) fn mirror_parts(doc: &LoroDoc, output: &KeptExportOutput, frame: &[u8
         );
         return Ok(false);
     };
+    if output.part_signatures.len() != parts.parts.len() {
+        tracing::debug!(
+            key = %part_row(&output.request, 0),
+            "an export secret supplement kept without its holder's part signatures stays with its keepers"
+        );
+        return Ok(false);
+    }
     let map = doc.get_map(CUSTODY_MAP);
     let mut wrote = false;
-    for (index, (_, run)) in (0..count).zip(pieces) {
+    for ((index, (_, run)), signature) in (0..count).zip(pieces).zip(&output.part_signatures) {
         let row = part_row(&output.request, index);
-        let bytes = encode_part(output, index, count, run);
+        let bytes = encode_part(output, index, count, signature, run);
         if map_get_bytes(&map, &row).as_deref() != Some(bytes.as_slice()) {
             // Each row commits on its own: no one update outgrows a frame.
             map_insert_bytes(&map, &row, &bytes)?;
@@ -284,22 +397,30 @@ pub(super) fn mirror_parts(doc: &LoroDoc, output: &KeptExportOutput, frame: &[u8
 
 /// What a copy's parts join to.
 enum Joined {
-    /// Every part is there and agrees: the copy.
+    /// Every part is there, proves itself and agrees: the copy.
     Copy(KeptExportOutput),
-    /// A part is not there yet, or the host has no memory to join them.
+    /// A part is not there yet, or does not prove itself here (a disproven
+    /// one leaves at the next prune alone, FIX 12373; an unproven one waits
+    /// for its proof, FIX 12352), or the host has no memory to join them.
     Waiting,
-    /// A part disagrees with the first, or the runs join to no copy for
-    /// the request: the whole set is dropped.
+    /// A proven part disagrees with the first, or the runs join to no copy
+    /// for the request: the whole set is dropped.
     Disagrees,
 }
 
-/// The copy for `request` joined from the parts `map` holds: each read in
-/// order, each naming the request, the sealing second, the count and the
-/// witness the first names, at its own place; the runs joined by
-/// `carrier_parts::join_parts`; the joined bytes a copy for that request,
-/// sealed at that second, with no witness of its own; the copy then carries
-/// the parts' witness.
-fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
+/// The copy for `request` joined from the parts `map` holds, each proven on
+/// `fold` (FIX 12373): each read in order, each naming the request, the
+/// sealing second, the count and the witness the first names, at its own
+/// place, and proving itself under the result that witness carries
+/// ([`proven_by`]); the runs joined by `carrier_parts::join_parts`; the
+/// joined bytes a copy for that request, sealed at that second, with no
+/// witness and no part signatures of its own; the copy then carries the
+/// parts' witness and signatures, so its keeper relays it onward as it
+/// came. A part that does not prove itself is waited past as a missing one
+/// is, never trusted: the prune drops it alone once it is disproven, an
+/// unproven one waits for its proof (FIX 12352), and a proven part in its
+/// place joins. Only a proven part that disagrees drops the set.
+fn join(map: &LoroMap, fold: &AuthorityFold, request: &[u8; 32]) -> Joined {
     let Some(first) = map_get_bytes(map, &part_row(request, 0)) else {
         return Joined::Waiting;
     };
@@ -307,6 +428,11 @@ fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
         OutputPart::decode(&first).filter(|first| first.request == *request && first.index == 0)
     else {
         return Joined::Disagrees;
+    };
+    let Some(result) =
+        witnessed_result(fold, request, &first.witness).filter(|result| proven_by(result, &first))
+    else {
+        return Joined::Waiting;
     };
     // The frame holds at most one carrier part per count, so this upper
     // bound only ever waits, never over-admits (FIX 12295). Budget the peak
@@ -326,35 +452,46 @@ fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
     let scratch = LoroDoc::new();
     let runs = scratch.get_map(SCRATCH_MAP);
     let mut digests = Vec::new();
+    let mut signatures = Vec::new();
     let mut len = 0_u64;
     for index in 0..first.count {
         let fetched;
-        let run = if index == 0 {
-            first.run.as_slice()
+        let part = if index == 0 {
+            &first
         } else {
             let Some(bytes) = map_get_bytes(map, &part_row(request, index)) else {
                 return Joined::Waiting;
             };
-            fetched = match OutputPart::decode(&bytes) {
-                Some(part)
-                    if part.request == *request
-                        && part.index == index
-                        && part.count == first.count
-                        && part.sealed_at == first.sealed_at
-                        && part.witness == first.witness =>
-                {
-                    part
-                }
-                _ => return Joined::Disagrees,
+            let Some(part) = OutputPart::decode(&bytes)
+                .filter(|part| part.request == *request && part.index == index)
+            else {
+                return Joined::Disagrees;
             };
-            fetched.run.as_slice()
+            let agrees = part.count == first.count
+                && part.sealed_at == first.sealed_at
+                && part.witness == first.witness;
+            if !(agrees && proven_by(&result, &part)) {
+                // Only a part that proves itself can disagree; any other is
+                // waited past and leaves at the prune alone (FIX 12373).
+                return if !agrees && part_proven(fold, &part) {
+                    Joined::Disagrees
+                } else {
+                    Joined::Waiting
+                };
+            }
+            fetched = part;
+            &fetched
         };
-        let digest = *blake3::hash(run).as_bytes();
-        if map_insert_bytes(&runs, &part_key(&digest), run).is_err() {
+        let Some(signature) = part.signature else {
+            return Joined::Waiting;
+        };
+        let digest = *blake3::hash(&part.run).as_bytes();
+        if map_insert_bytes(&runs, &part_key(&digest), &part.run).is_err() {
             return Joined::Waiting;
         }
         digests.push(digest);
-        len += run.len() as u64;
+        signatures.push(signature);
+        len += part.run.len() as u64;
     }
     let Some(frame) = join_parts(
         &runs,
@@ -369,9 +506,11 @@ fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
         Some(mut kept)
             if kept.request == *request
                 && kept.sealed_at == first.sealed_at
-                && kept.witness.is_empty() =>
+                && kept.witness.is_empty()
+                && kept.part_signatures.is_empty() =>
         {
             kept.witness = first.witness;
+            kept.part_signatures = signatures;
             Joined::Copy(kept)
         }
         _ => Joined::Disagrees,
@@ -396,26 +535,14 @@ fn part_sets(map: &LoroMap) -> BTreeMap<[u8; 32], Vec<String>> {
     sets
 }
 
-/// Whether a set's part rows, `rows` in `map`, carry a count no signed
-/// result cuts its copy into (FIX 12294, 12312): the first part's head is
-/// not named ([`head_named`]), or another part's count or witness differs
-/// from it. That set never joins to a copy that is kept, so it leaves its
-/// window, whether or not this vault folds the result yet.
-fn count_unnamed(map: &LoroMap, fold: &AuthorityFold, rows: &[String]) -> bool {
-    let mut parts = rows
-        .iter()
-        .filter_map(|row| map_get_bytes(map, row).and_then(|bytes| OutputPart::decode(&bytes)));
-    let Some(first) = parts.next() else {
-        return false;
-    };
-    !head_named(fold, &first)
-        || parts.any(|part| part.count != first.count || part.witness != first.witness)
-}
-
 /// The key of each part row of `map` due to leave its window, with
 /// `fenced` this vault's erase fences on `fold`: every row of a request
-/// whose rows are done, of a set that disagrees, or of a copy that joins
-/// and is due to leave. A set still waiting on a part stays.
+/// whose rows are done; each disproven row, alone, without part zero or a
+/// full set ([`part_proof`], FIX 12352, 12373); and every proven row of a
+/// set whose proven parts disagree on the count or the witness (FIX 12294,
+/// 12312), or that joins to no copy, or to one due to leave. The proven
+/// parts of a set still waiting on a part stay, and so does every unproven
+/// part, which never condemns a sibling.
 pub(super) fn done_part_rows(
     map: &LoroMap,
     fold: &AuthorityFold,
@@ -423,31 +550,76 @@ pub(super) fn done_part_rows(
 ) -> Vec<String> {
     let mut done = Vec::new();
     for (request, rows) in part_sets(map) {
-        let gone = KeptExportOutput::request_rows_done(fold, &request, fenced)
+        if KeptExportOutput::request_rows_done(fold, &request, fenced)
             || fold.export_supplement_imported(&request)
-            || count_unnamed(map, fold, &rows)
-            || match join(map, &request) {
-                Joined::Copy(output) => output.row_done(fold, fenced),
-                Joined::Waiting => false,
-                Joined::Disagrees => {
+        {
+            done.extend(rows);
+            continue;
+        }
+        let mut proven = Vec::new();
+        let mut head: Option<(u32, Vec<u8>)> = None;
+        let mut disagree = false;
+        for row in rows {
+            let part = map_get_bytes(map, &row)
+                .and_then(|bytes| OutputPart::decode(&bytes))
+                .map(|part| (part_proof(fold, &part), part));
+            let part = match part {
+                Some((ProofState::Proven, part)) => part,
+                // It waits for its proof in its window, never joined.
+                Some((ProofState::Unproven, _)) => continue,
+                Some((ProofState::Disproven, _)) | None => {
+                    // The row's key alone: never a byte of the run.
                     tracing::debug!(
-                        key = %part_row(&request, 0),
-                        "export secret supplement parts disagree; the set leaves its window"
+                        key = %row,
+                        "an export secret supplement part that does not prove itself leaves its window"
                     );
-                    true
+                    done.push(row);
+                    continue;
                 }
             };
+            disagree |= head
+                .as_ref()
+                .is_some_and(|(count, witness)| part.count != *count || part.witness != *witness);
+            if head.is_none() {
+                head = Some((part.count, part.witness));
+            }
+            proven.push(row);
+        }
+        if proven.is_empty() {
+            continue;
+        }
+        let joined = if disagree {
+            Joined::Disagrees
+        } else {
+            join(map, fold, &request)
+        };
+        let gone = match joined {
+            Joined::Copy(output) => output.row_done(fold, fenced),
+            Joined::Waiting => false,
+            Joined::Disagrees => {
+                tracing::debug!(
+                    key = %part_row(&request, 0),
+                    "export secret supplement parts disagree; the set leaves its window"
+                );
+                true
+            }
+        };
         if gone {
-            done.extend(rows);
+            done.extend(proven);
         }
     }
     done
 }
 
 /// Each copy one of `rows`, a window's rows, is a part of, filed under its
-/// own key, joined from `doc` once every part is there. A set that
-/// disagrees is logged by its key and none of it is kept.
-pub(super) fn joined_copies(doc: &LoroDoc, rows: &[(String, Vec<u8>)]) -> Vec<KeptExportOutput> {
+/// own key, joined from `doc` once every part is there and proves itself on
+/// `fold` (FIX 12373). A set that disagrees is logged by its key and none
+/// of it is kept.
+pub(super) fn joined_copies(
+    doc: &LoroDoc,
+    fold: &AuthorityFold,
+    rows: &[(String, Vec<u8>)],
+) -> Vec<KeptExportOutput> {
     let requests: BTreeSet<[u8; 32]> = rows
         .iter()
         .filter_map(|(map_key, bytes)| {
@@ -462,7 +634,7 @@ pub(super) fn joined_copies(doc: &LoroDoc, rows: &[(String, Vec<u8>)]) -> Vec<Ke
     let map = doc.get_map(CUSTODY_MAP);
     requests
         .into_iter()
-        .filter_map(|request| match join(&map, &request) {
+        .filter_map(|request| match join(&map, fold, &request) {
             Joined::Copy(output) => Some(output),
             Joined::Waiting => None,
             Joined::Disagrees => {

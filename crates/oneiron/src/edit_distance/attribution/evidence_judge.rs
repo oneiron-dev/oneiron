@@ -13,13 +13,13 @@ use super::taxonomy::{
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef, amendment_delta};
 use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, JudgeTrace,
-    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    UnclearAttribution, UnclearContext, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
     ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
     withdraw_edit_proposal_in_txn,
 };
@@ -485,11 +485,28 @@ fn persist_amendment_split(
         share: preference_share,
         at: judgment.at,
     });
+    // The notes freeze the context they were written in (FIX 7824): the
+    // judgment's own routing facts, and the two documents whose hunks the
+    // judge read.
     let unclear_row = (!split.unclear.is_empty()).then(|| UnclearAttribution {
         lane: AttributionLane::Amendment,
         reference: receipt_id.to_owned(),
         evidence_receipts: judgment.evidence_receipts.clone(),
         notes: split.unclear.clone(),
+        context: UnclearContext {
+            actor: judgment.actor,
+            skill: judgment.skill,
+            scope: Some(judgment.scope.clone()),
+            project: judgment.project,
+            type_ref: judgment.type_ref.clone(),
+            attempt_receipt: judgment.attempt_receipt.clone(),
+            judge_revision: judgment.judge.clone(),
+            judge_model: judgment.judge_model.clone(),
+            sources: [&delta.proposed_ref, &delta.final_ref]
+                .into_iter()
+                .filter_map(EndpointRef::entity)
+                .collect(),
+        },
         at: judgment.at,
     });
 

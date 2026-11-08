@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ports::EntityStoreRead;
+
 impl Vault {
     /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
     /// the ONE primitive every sync replay surface routes through (Observer
@@ -45,15 +47,23 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
+            let is_claim = EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
             let (outcome, _changed, cancelled) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+            let claims_changed = is_claim && outcome.changed_local_state();
             wtxn.commit()?;
-            Ok((outcome, cancelled))
+            Ok((outcome, cancelled, claims_changed))
         });
         self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
-        let (outcome, cancelled) = applied?;
+        let (outcome, cancelled, claims_changed) = applied?;
+        if claims_changed {
+            self.verb_hook_bindings_changed();
+        }
         crate::attempt_queue::AttemptQueue::new(self)
             .erased_payload_cancellations_committed(&cancelled);
         while self.collect_lfs_garbage(32)? != 0 {}
@@ -294,6 +304,14 @@ impl Vault {
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
                 HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
+            // No canonical row here names it, but a residence copy may: its
+            // own, or a cached NOTE's that cites it. Both go now its marker
+            // stands, and each NOTE whose copy went is a changed document
+            // (FIX 18400).
+            #[cfg(feature = "sync")]
+            let residence_changed = crate::note::erase_residence_copies_of_in_txn(self, wtxn, id)?;
+            #[cfg(not(feature = "sync"))]
+            let residence_changed: Vec<EntityId> = Vec::new();
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
@@ -345,7 +363,7 @@ impl Vault {
                     receipt_id: None,
                     sweep_key: None,
                 },
-                Vec::new(),
+                residence_changed,
                 cancelled,
             ));
         }

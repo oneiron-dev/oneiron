@@ -15,13 +15,15 @@ mod approval;
 pub(crate) mod checkpoint;
 pub(super) mod payload_erase;
 pub(super) mod pending;
+mod pinned_approval;
 mod remote_task;
 mod transition;
 mod validate;
 
-pub(crate) use self::remote_task::defer_record;
+pub(crate) use self::pinned_approval::keep_pinned_approval_in_txn;
+pub(crate) use self::remote_task::{abandon_unconfirmed_remote_task, defer_record};
 pub(crate) use self::validate::hash_frozen_payload;
-pub(super) use self::validate::validate_record;
+pub(super) use self::validate::{validate_accounting, validate_record};
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
@@ -398,6 +400,16 @@ fn insert_intent_in_txn(
             "outbound attempt already has an admitted binding",
         ));
     }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of was
+    // admitted before the restore and its compartment did not open. It is
+    // never asked or paid for again; this writer, and its budget debit, ends.
+    if checkpoint::call_accounting_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?
+        .is_some()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "a call a restore kept only the accounting of is not admitted again",
+        ));
+    }
     if LEDGER.contains(&vault.store, wtxn, &pending.id)? {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent insert target already exists",
@@ -546,7 +558,11 @@ pub(crate) fn reconcile_connector_intent_in_txn(
     now_ms: u64,
 ) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
     let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
-        return Ok(None);
+        // KS7-5 (FIX 12117): a send a restore kept only the accounting of
+        // settles as the owner's erase left it.
+        return checkpoint::call_accounting_in_txn(vault, &*wtxn, attempt_id, 0)?
+            .map(|accounting| super::resolution::IntentResolution::from_accounting(&accounting))
+            .transpose();
     };
     binding.verify(&record)?;
     if let Some(reason) = stop
@@ -702,18 +718,27 @@ fn transition_record_with_outcome_and(
         match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
             transition::Transitioned::Moved(record) => record,
             transition::Transitioned::Replayed(mut record) => {
-                open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
+                // No state write to keep: the replay only re-reads, so the
+                // open runs on a snapshot past the dropped writer (FIX 12497),
+                // as in `record_possible_delivery`'s no-op arm.
+                let rtxn = vault.store.custody_snapshot()?;
+                open_payload_in_txn(vault, &rtxn, &mut record)?;
                 return Ok(record);
             }
         };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    // `also` runs on the unopened record: the bridge reads header fields
+    // only, and the open below must not fail the commit (FIX 12497).
     also(&mut wtxn, &record);
-
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 12497), as in
+    // `record_possible_delivery`: a sealed row whose key will not open must
+    // not lose the transition.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }
@@ -731,6 +756,7 @@ fn put_ledger_record(
     )?;
     let mut kept = record.clone();
     kept.payload = stored.payload;
+    kept.pinned_approval = stored.pinned_approval;
     LEDGER.put(&vault.store, wtxn, &record.id, &kept)?;
     Ok(())
 }
@@ -751,7 +777,7 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
-    super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
+    super::late_recipient::forget_intent_party_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

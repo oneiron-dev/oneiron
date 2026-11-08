@@ -31,6 +31,7 @@ pub enum RunVerb {
     SelfCodeSymbolsRenew,
     SelfCodeSymbolsRelease,
     SelfCodeProposalSubmit,
+    SelfCodeProposalResolve,
     SelfCodeMergeQueueEnqueue,
     SelfCodeCheckoutBind,
     SelfCodeExport,
@@ -40,6 +41,7 @@ pub enum RunVerb {
     SelfSkillsCall,
     SelfTeamStart,
     SelfTeamRecord,
+    SelfTeamVote,
     SelfTeamSubmit,
     SelfSpawn,
     TasksWait,
@@ -74,6 +76,7 @@ impl RunVerb {
         Self::SelfCodeSymbolsRenew,
         Self::SelfCodeSymbolsRelease,
         Self::SelfCodeProposalSubmit,
+        Self::SelfCodeProposalResolve,
         Self::SelfCodeMergeQueueEnqueue,
         Self::SelfCodeCheckoutBind,
         Self::SelfCodeExport,
@@ -83,6 +86,7 @@ impl RunVerb {
         Self::SelfSkillsCall,
         Self::SelfTeamStart,
         Self::SelfTeamRecord,
+        Self::SelfTeamVote,
         Self::SelfTeamSubmit,
         Self::SelfSpawn,
         Self::TasksWait,
@@ -120,6 +124,7 @@ impl RunVerb {
             Self::SelfCodeSymbolsRenew => "self.code.symbols.renew",
             Self::SelfCodeSymbolsRelease => "self.code.symbols.release",
             Self::SelfCodeProposalSubmit => "self.code.proposal_submit",
+            Self::SelfCodeProposalResolve => "self.code.proposal_resolve",
             Self::SelfCodeMergeQueueEnqueue => "self.code.merge_queue.enqueue",
             Self::SelfCodeCheckoutBind => "self.code.checkout.bind",
             Self::SelfCodeExport => "self.code.export",
@@ -129,6 +134,7 @@ impl RunVerb {
             Self::SelfSkillsCall => "self.skills.call",
             Self::SelfTeamStart => "self.team.start",
             Self::SelfTeamRecord => "self.team.record",
+            Self::SelfTeamVote => "self.team.vote",
             Self::SelfTeamSubmit => "self.team.submit",
             Self::SelfSpawn => "self.spawn",
             Self::TasksWait => "tasks.wait",
@@ -157,6 +163,7 @@ impl RunVerb {
                 | Self::SelfCodeSymbolsRenew
                 | Self::SelfCodeSymbolsRelease
                 | Self::SelfCodeProposalSubmit
+                | Self::SelfCodeProposalResolve
                 | Self::SelfCodeMergeQueueEnqueue
                 | Self::SelfCodeCheckoutBind
                 | Self::SelfCodeExport
@@ -164,6 +171,7 @@ impl RunVerb {
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
                 | Self::SelfTeamRecord
+                | Self::SelfTeamVote
                 | Self::SelfTeamSubmit
                 | Self::SelfSpawn
                 | Self::Summarize
@@ -198,6 +206,7 @@ impl RunVerb {
             Self::SelfCodeSymbolsRenew => crate::code_run::SelfEffect::RepoSymbolsRenew,
             Self::SelfCodeSymbolsRelease => crate::code_run::SelfEffect::RepoSymbolsRelease,
             Self::SelfCodeProposalSubmit => crate::code_run::SelfEffect::RepoProposalSubmit,
+            Self::SelfCodeProposalResolve => crate::code_run::SelfEffect::RepoProposalResolve,
             Self::SelfCodeMergeQueueEnqueue => crate::code_run::SelfEffect::RepoMergeQueueEnqueue,
             Self::SelfCodeCheckoutBind => crate::code_run::SelfEffect::RepoCheckoutBind,
             Self::SelfCodeExport => crate::code_run::SelfEffect::RepoExport,
@@ -207,6 +216,7 @@ impl RunVerb {
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
             Self::SelfTeamStart => crate::code_run::SelfEffect::Team,
             Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,
+            Self::SelfTeamVote => crate::code_run::SelfEffect::Team,
             Self::SelfTeamSubmit => crate::code_run::SelfEffect::Team,
             Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
             Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,
