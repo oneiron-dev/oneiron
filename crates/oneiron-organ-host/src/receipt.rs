@@ -83,7 +83,8 @@ pub struct AskReceipt {
     pub data_len: u64,
     pub fetch: Option<FetchTarget>,
     pub handler_us: u64,
-    /// Set when the organ got no answer because its call ended first.
+    /// The serving host's non-delivery reason, or this asking node's
+    /// unconfirmed mesh delivery observation.
     #[serde(default)]
     pub unanswered: Option<Unanswered>,
     /// What the handler's key was asked to sign, in the host's own words:
@@ -111,8 +112,12 @@ pub struct SignedReceipt {
     pub signature_sha256: Option<[u8; 32]>,
 }
 
-/// Why an ask got no answer: its call ended (cancelled, revoked, replied,
-/// past its caps or its organ gone) before one was sent.
+/// What this host knows of an ask's delivery to its organ. `NotRun` and
+/// `NotSent` are the serving host's word for its own call, which ended
+/// (cancelled, revoked, replied, past its caps or its organ gone) before
+/// the ask was run or sent. `Unknown` is the asking node's word for its own
+/// mesh answer, whose send neither succeeded nor failed with an organ
+/// receipt: only the serving host's final lines confirm it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Unanswered {
@@ -121,6 +126,10 @@ pub enum Unanswered {
     /// Its answer or refusal was decided but not sent; a handler that
     /// panicked leaves this too.
     NotSent,
+    /// Sending its answer or refusal was attempted, but no serving-host
+    /// final receipt confirms whether the organ received it. Mesh asking
+    /// node only: neither the send's success nor its error says so.
+    Unknown,
 }
 
 /// Where a `net.fetch` went. The full URL is kept only as a digest.
