@@ -8,7 +8,8 @@
 //! writes the base table through the same body.
 
 pub(crate) mod classified;
-mod codec;
+#[doc(hidden)]
+pub mod codec;
 mod decls;
 mod erased;
 use oneiron_store::side_table::key;
@@ -320,7 +321,7 @@ fn prefix_end(prefix: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A typed view of one declared table.
-pub(crate) struct SideTable<K, V, C> {
+pub struct SideTable<K, V, C> {
     decl: &'static SideTableDecl,
     _types: TableTypes<K, V, C>,
 }
@@ -549,7 +550,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
 
     /// The rows under `key_prefix` in key order, decoded as the caller pulls them, so a scan
     /// that stops early reads no further.
-    pub(crate) fn iter_from<'txn>(
+    pub fn iter_from<'txn>(
         &self,
         dbs: &impl SideTableDbs,
         txn: &'txn RoTxn<'_>,

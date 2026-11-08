@@ -19,7 +19,7 @@ pub(crate) trait SideCodec<V> {
 }
 
 /// `rmp_serde::to_vec_named` on write, a strict whole-row decode on read (ARCH-0037:42).
-pub(crate) enum Named {}
+pub enum Named {}
 
 impl<V: Serialize + DeserializeOwned> SideCodec<V> for Named {
     const NAME: CodecName = CodecName::Named;

@@ -52,16 +52,19 @@ mod header_retire;
 mod ics_calendar;
 mod imap;
 mod imap_client;
-mod importer;
+#[doc(hidden)]
+pub mod importer;
 mod inbox;
 mod landing;
-mod local_sync;
+#[doc(hidden)]
+pub mod local_sync;
 mod mbox;
 mod mbox_import;
 mod microsoft365;
 mod microsoft365_calendar;
 mod mime;
-mod pack;
+#[doc(hidden)]
+pub mod pack;
 mod provider_delete;
 mod reply;
 mod reply_ask;
@@ -72,7 +75,8 @@ mod rest;
 mod search;
 mod share;
 mod smtp_client;
-mod source;
+#[doc(hidden)]
+pub mod source;
 mod state;
 mod tls_stream;
 mod wire;

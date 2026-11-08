@@ -56,27 +56,6 @@ impl MailSourceSyncRequest {
 }
 
 impl Vault {
-    /// The pack's Active sources a host steps, mailboxes and calendars,
-    /// while the pack is installed.
-    ///
-    /// # Errors
-    ///
-    /// Storage failures.
-    pub fn mail_sources_due(&self) -> Result<Vec<EntityId>> {
-        let txn = self.store.env.read_txn()?;
-        if require_pack_active_in(self, &txn).is_err() {
-            return Ok(Vec::new());
-        }
-        let mut due = Vec::new();
-        for row in SOURCES.iter_from(&self.store, &txn, &[])? {
-            let (source, row) = row?;
-            if row.status == MailSourceStatus::Active {
-                due.push(source);
-            }
-        }
-        Ok(due)
-    }
-
     /// One bounded import step of the source `source` through this host's
     /// wire for its provider (FIX 12559 rows 1b, 3 and 5), under the vault
     /// owner's write authority. A mailbox: new changes since the source's

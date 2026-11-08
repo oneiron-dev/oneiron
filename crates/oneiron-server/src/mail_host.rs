@@ -15,6 +15,7 @@ use oneiron::Vault;
 use oneiron::mail_pack::MailSyncBudget;
 
 use crate::server::{HousekeepingAdmission, SyncServer};
+use oneiron_mail_pack::ext::MailPackLocalSyncVaultExt as _;
 
 /// How often the worker steps every source.
 const MAIL_SYNC_TICK: Duration = Duration::from_secs(300);
