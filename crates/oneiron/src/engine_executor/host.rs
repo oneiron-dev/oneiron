@@ -3,6 +3,7 @@
 //! Child modules implement behavior; sandbox and call types belong to code_sandbox and code_run.
 
 mod boundary;
+mod deadline_replay;
 mod dispatch;
 mod live_cutoff;
 mod prompt;
@@ -52,6 +53,7 @@ use crate::{Error, Result};
 use serde_json::json;
 
 pub(super) use self::boundary::executor_boundary_contract;
+pub(super) use self::deadline_replay::DeadlineReplay;
 pub(super) use self::prompt::{executor_system_prompt, executor_turn_instruction};
 use self::results::recorded_output;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
@@ -144,6 +146,14 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The type checks of the callable skills this host's calls run (FIX
     /// 10389): none attached until the run lends its service.
     callable_checks: CallableChecks<'s>,
+    /// Whether the step's runtime stopped it at its deadline (FIX 7703).
+    step_deadline: bool,
+    /// A resumed pending step's recorded calls (FIX 7703), answered before
+    /// any of its program's calls runs live.
+    deadline_replay: Option<DeadlineReplay>,
+    /// The bridge positions this step's own program called, in order, a
+    /// callable's calls left out (FIX 7703).
+    guest_calls: Vec<u64>,
 }
 
 /// Whether the gate an act takes over the run's results (a store, a fold, a
@@ -221,6 +231,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             callable_checks: CallableChecks::default(),
+            step_deadline: false,
+            deadline_replay: None,
+            guest_calls: Vec::new(),
         }
     }
 
@@ -356,6 +369,10 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
 
     fn caller_entity(&self) -> Option<EntityId> {
         Some(self.gated_write.actor().entity_ref())
+    }
+
+    fn stopped_at_step_deadline(&mut self) {
+        self.step_deadline = true;
     }
 
     /// The run's custody and PERSON values, as its output sweep reads them.

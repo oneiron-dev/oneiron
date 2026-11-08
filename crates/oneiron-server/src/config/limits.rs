@@ -17,8 +17,10 @@ use oneiron::origin::smart_http::ScanBounds;
 
 use crate::http_listener::ConnectionLimits;
 
+mod machine_floors;
 mod override_keys;
 
+use machine_floors::{memory_floor, request_body_floor};
 pub(super) use override_keys::LimitsConfigOverride;
 
 /// `limits.task_work`'s default: past ten times the fleet's 200 agents, as
@@ -253,23 +255,6 @@ impl Default for LimitsConfig {
     }
 }
 
-/// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// and as much for app-tier state kept between frames and for media replies,
-/// each at least 256 MiB; 2 GiB when the platform does not say.
-/// `limits.request_body_bytes`'s default: a 1024th of the machine's memory
-/// (the least of its RAM and its container limit), the share the input-caps
-/// plan gives one body read into a typed request, never under 64 MiB, the
-/// facade's own body bound; 64 MiB when memory cannot be read.
-fn request_body_floor() -> u64 {
-    const FLOOR: u64 = 64 * 1024 * 1024;
-    crate::machine::memory_bytes().map_or(FLOOR, |memory| (memory / 1024).max(FLOOR))
-}
-
-fn memory_floor() -> u64 {
-    const MIB: u64 = 1024 * 1024;
-    crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
-}
-
 impl LimitsConfig {
     /// The listener's share of these limits.
     pub(crate) fn connections(&self) -> ConnectionLimits {
@@ -482,6 +467,7 @@ impl LimitsConfig {
             codebase_manifest_files,
             recall_query_bytes,
             requested_result_rows,
+            tournament_lineage_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
@@ -794,6 +780,7 @@ impl LimitsConfig {
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
                 EngineLimit::SharedMergeEvidenceRows,

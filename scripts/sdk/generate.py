@@ -220,7 +220,10 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
     # FIX 9609: `mcp_off_runtime` marks a plain memory row whose MCP arm runs
     # its engine call on a blocking thread, on a surface rebuilt there
-    # (`mcp_off_runtime_row`), because the call may wait out a host deadline.
+    # (`mcp_off_runtime_row`), because the call may wait out a host deadline
+    # or read a provider over blocking HTTP, whose client a debug build
+    # refuses on an async runtime worker (a Gmail reply draft's raw read, fix
+    # list row 20520).
     # Only a plain memory row reaches that helper: no ladder, no turn, no
     # other door shape, no owner-grade admission.
     if row.get('mcp_off_runtime') and (row.get('task_decisions') or row.get('task_work') or row.get('host_door')
@@ -865,6 +868,8 @@ def mcp_input_dispatch(row):
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
+                 '// An export a code run calls follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591): the run\'s dispatch says so, never the request.\n'
+                 'let input = oneiron::memory::ExportOptions { in_code_run: crate::api::facade::host_doors::support::in_code_run(), ..input };\n'
                  '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
                  'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'

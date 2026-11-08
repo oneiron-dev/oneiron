@@ -111,7 +111,18 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
-            facade_replay(server.vault(), &auth, verb, outcome)
+            // The owner's own whole-vault export is released again as its
+            // owner's, once the waiter's fresh proof admits him as that
+            // owner now (owner ruling 1-EXPORT = B).
+            let owner_whole_vault_export =
+                super::export_transfer::owner_whole_vault_export_admitted(&server, &auth, verb);
+            facade_replay(
+                server.vault(),
+                &auth,
+                verb,
+                outcome,
+                owner_whole_vault_export,
+            )
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -496,7 +507,7 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    match replayed_reply(vault, auth, verb, outcome) {
+    match replayed_reply(vault, auth, verb, outcome, false) {
         Ok((status, body, hook_notice)) => {
             super::release::with_hook_notice((status, Json(body)).into_response(), hook_notice)
         }
@@ -508,17 +519,20 @@ pub(crate) fn door_replay_for(
 /// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
 /// field the first one carried under a request id of its own, so this
 /// call's receipt records its code, while it still names the first call's
-/// receipt, the original.
+/// receipt, the original. `owner_whole_vault_export` as
+/// [`replayed_value`] takes it.
 fn facade_replay(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> Response {
-    let (status, body, hook_notice) = match replayed_reply(vault, auth, verb, outcome) {
-        Ok(reply) => reply,
-        Err(error) => return error.into_response(),
-    };
+    let (status, body, hook_notice) =
+        match replayed_reply(vault, auth, verb, outcome, owner_whole_vault_export) {
+            Ok(reply) => reply,
+            Err(error) => return error.into_response(),
+        };
     let response = match FacadeApiError::replayed(status, &body) {
         Some(refusal) => refusal.into_response(),
         None => (status, Json(body)).into_response(),
@@ -532,10 +546,18 @@ fn replayed_reply(
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> Result<(StatusCode, serde_json::Value, bool), FacadeApiError> {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let (body, hook_notice) = match outcome.release {
-        Some(release) => replayed_claim_value(vault, auth, verb, release).map_err(|_| {
+        Some(release) => replayed_claim_value(
+            vault,
+            auth,
+            verb,
+            release,
+            owner_whole_vault_export,
+        )
+        .map_err(|_| {
             FacadeApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 MEMORY_CODE_INTERNAL,

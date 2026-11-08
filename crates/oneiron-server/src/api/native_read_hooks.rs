@@ -10,7 +10,7 @@
 //! `released_completed` releases the result it saved for the retry.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::response::{IntoResponse, Response};
 use oneiron::EntityId;
@@ -127,29 +127,61 @@ impl NativeReadAnswer {
 /// the read.
 pub(crate) struct NativeReadBody {
     args: Value,
-    controls: Map<String, Value>,
+    controls: RouteControls,
 }
 
 impl NativeReadBody {
-    /// `body` split at `controls`, the names of the route's own members.
-    pub(crate) fn split(body: Value, controls: &[&str]) -> Self {
+    /// `body` split at `names`, the names of the route's own members.
+    pub(crate) fn split(body: Value, names: &'static [&'static str]) -> Self {
         let mut args = match body {
             Value::Object(args) => args,
             body => {
                 return Self {
                     args: body,
-                    controls: Map::new(),
+                    controls: RouteControls {
+                        names,
+                        given: Map::new(),
+                    },
                 };
             }
         };
-        let controls = controls
+        let given = names
             .iter()
             .filter_map(|name| args.shift_remove_entry(*name))
             .collect();
         Self {
             args: Value::Object(args),
-            controls,
+            controls: RouteControls { names, given },
         }
+    }
+}
+
+/// A direct native HTTP read's route controls (FIX 1435): every name the
+/// route keeps as its own, and the ones the caller's request gave. A
+/// control the caller left out stays left out.
+#[derive(Clone)]
+struct RouteControls {
+    names: &'static [&'static str],
+    given: Map<String, Value>,
+}
+
+impl RouteControls {
+    /// The route body a rewrite is admitted and read from: the rewritten
+    /// native `args` beside the caller's own controls, so a control the
+    /// caller left out stays out. A rewrite that names one of the route's
+    /// controls, or is not a JSON object, is refused, as the route refuses
+    /// a body it does not decode: hook data never sets a control, so no
+    /// request a hook's ask saves carries one either.
+    fn joined(&self, args: &Value) -> Result<Value, ApiError> {
+        let Value::Object(args) = args else {
+            return Err(body_refusal());
+        };
+        if self.names.iter().any(|name| args.contains_key(*name)) {
+            return Err(body_refusal());
+        }
+        let mut body = args.clone();
+        body.extend(self.given.clone());
+        Ok(Value::Object(body))
     }
 }
 
@@ -163,10 +195,14 @@ impl NativeReadBody {
 /// media is embedded, image picked, pack assembled or row read. A rewrite
 /// meets `VaultReadRequest::validate_body`, then `admit`: the route's own
 /// decoder and request checks, on the rewrite beside the caller's own
-/// controls, under the caller's own credential. The read runs on the request
-/// the chain left. The post chain runs over the JSON the route answers,
-/// after its projection and observations, and its view is what the caller
-/// reads.
+/// controls, under the caller's own credential, on the chain's blocking
+/// thread. The read runs on the request the chain left, as `admit` admitted
+/// it there (FIX 1435): the last rewrite it accepted is kept for the read,
+/// so a route whose checks read the vault runs them once per rewrite and
+/// never on the async runtime. A final request other than the kept rewrite
+/// meets `admit` again, on a blocking thread. The post chain runs over the
+/// JSON the route answers, after its projection and observations, and its
+/// view is what the caller reads.
 ///
 /// A read that fails after the pre chain keeps a session-only call's pre
 /// hook records and runs no post chain (FIX 5527). A hook's stop is the
@@ -186,20 +222,27 @@ pub(crate) async fn native_read_hooked<T, A, F, Fut>(
     read: F,
 ) -> Result<NativeReadAnswer, NativeReadError>
 where
+    T: Send + 'static,
     A: Fn(&Value) -> Result<T, ApiError> + Send + Sync + 'static,
     F: FnOnce(T) -> Fut,
     Fut: Future<Output = Result<NativeReadAnswer, NativeReadError>>,
 {
     let NativeReadBody { args, controls } = body;
-    let durable = controls.is_empty();
+    let durable = controls.given.is_empty();
     let admit = Arc::new(admit);
+    // The last rewrite `admit` accepted, beside the request it admitted.
+    let accepted: Arc<Mutex<Option<(Value, T)>>> = Arc::new(Mutex::new(None));
     let check: RewriteAdmit = {
-        let (admit, controls) = (Arc::clone(&admit), controls.clone());
-        Arc::new(move |_: &str, rewritten: &Value| {
-            joined(rewritten, &controls)
+        let (admit, controls, accepted) =
+            (Arc::clone(&admit), controls.clone(), Arc::clone(&accepted));
+        Arc::new(move |_: &str, rewritten: &Value| -> Result<(), String> {
+            let request = controls
+                .joined(rewritten)
                 .and_then(|body| admit(&body))
-                .map(drop)
-                .map_err(|refused| refused.message().to_owned())
+                .map_err(|refused| refused.message().to_owned())?;
+            *accepted.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some((rewritten.clone(), request));
+            Ok(())
         })
     };
     let sent = args.clone();
@@ -211,10 +254,17 @@ where
                     released_completed(server, call.auth(), method, rows, saved)
                 })
             })?;
+    let accepted = accepted
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
     let request = if hooks.args == sent {
         Ok(admitted)
     } else {
-        joined(&hooks.args, &controls).and_then(|body| admit(&body))
+        match accepted {
+            Some((rewritten, request)) if rewritten == hooks.args => Ok(request),
+            _ => readmitted(admit, &hooks.args, controls).await,
+        }
     };
     let ran = match request {
         Ok(request) => read(request).await,
@@ -253,20 +303,34 @@ fn released_completed(
     if rows.is_none() {
         return details_on_device();
     }
-    released_saved_result(&server.vault, auth, method.tool_name(), rows, result)
+    let owner_whole_vault_export =
+        crate::api::facade::owner_whole_vault_export_admitted(server, auth, method.tool_name());
+    released_saved_result(
+        &server.vault,
+        auth,
+        method.tool_name(),
+        rows,
+        result,
+        owner_whole_vault_export,
+    )
 }
 
-/// The route body a rewrite is admitted and read from: the rewritten native
-/// `args` beside the caller's own `controls`. A control that a rewrite
-/// names gives way to the caller's own. A rewrite that is not a JSON object
-/// is refused, as the route refuses a body it does not decode.
-fn joined(args: &Value, controls: &Map<String, Value>) -> Result<Value, ApiError> {
-    let Value::Object(args) = args else {
-        return Err(body_refusal());
-    };
-    let mut body = args.clone();
-    body.extend(controls.clone());
-    Ok(Value::Object(body))
+/// The rewrite `args` the pre chain left, admitted by the route's own
+/// `admit` beside the caller's own `controls`, on a blocking thread, as the
+/// chain's own checks run (FIX 1435).
+async fn readmitted<T, A>(
+    admit: Arc<A>,
+    args: &Value,
+    controls: RouteControls,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    A: Fn(&Value) -> Result<T, ApiError> + Send + Sync + 'static,
+{
+    let args = args.clone();
+    tokio::task::spawn_blocking(move || controls.joined(&args).and_then(|body| admit(&body)))
+        .await
+        .map_err(|_| ApiError::internal_server_error("native read admission did not finish"))?
 }
 
 /// `body` decoded as a route's own request type, refused as the route

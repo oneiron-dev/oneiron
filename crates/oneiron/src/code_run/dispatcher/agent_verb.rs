@@ -13,12 +13,13 @@ use crate::EntityId;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+    self_call_request_value,
 };
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect,
 };
 use crate::error::{Error, Result};
@@ -299,7 +300,7 @@ impl HostSelfDispatcher<'_> {
                 "agent verb write is in flight or needs reconciliation",
             ));
         };
-        if let Some(Err(refusal)) = door.map(|door| door.admit_run_call(RunCall::RecordedOutput)) {
+        if let Err(refusal) = super::admit_recorded_answer(door) {
             let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
@@ -314,7 +315,17 @@ impl HostSelfDispatcher<'_> {
             }
             return Ok(answered(Err(refusal)));
         }
-        if row_identity(row) != Some(call_identity(call.verb.as_str(), &call.input)) {
+        // A receipt an erase took the request words of meets the write by
+        // that request's identity alone, and answers with what it kept
+        // (FIX 6534): `response_erased` for an erased answer.
+        let recorded = if row.request_erased() {
+            row.request_identity_is(&self_call_request_value(&SelfCall::AgentVerb(
+                call.clone(),
+            ))?)?
+        } else {
+            row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+        };
+        if !recorded {
             return Err(Error::InvariantViolation(
                 "a resumed step changed a write it already made",
             ));
