@@ -1312,7 +1312,7 @@ class Oneiron:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
             return json.loads(_translate(lambda: self._client.vault_budgets_lease(json.dumps(spec))))
         def open(self, spec):
-            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."""
+            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."""
             return json.loads(_translate(lambda: self._client.vault_budgets_lease_open(json.dumps(spec))))
         def top_up(self, spec):
             """The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."""
@@ -4356,9 +4356,15 @@ class Oneiron:
         def model_heal_count(self, spec):
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
+        def session_model_heal_count(self, spec):
+            """Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused."""
+            return json.loads(_translate(lambda: self._client.vault_code_session_model_heal_count(json.dumps(spec))))
         def corrections(self, spec):
             """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
             return json.loads(_translate(lambda: self._client.vault_code_corrections(json.dumps(spec))))
+        def step_evidence(self, spec):
+            """Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records."""
+            return json.loads(_translate(lambda: self._client.vault_code_step_evidence(json.dumps(spec))))
         def type_diagnostics(self, spec):
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))
@@ -4755,6 +4761,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._VaultAgentsGrantsVerbs":
             return Oneiron._VaultAgentsGrantsVerbs(self._client)
+        @property
+        def verb_classes(self) -> "Oneiron._VaultAgentsVerbClassesVerbs":
+            return Oneiron._VaultAgentsVerbClassesVerbs(self._client)
         def base(self, spec=None):
             """The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."""
             return json.loads(_translate(lambda: self._client.vault_agents_base(json.dumps({} if spec is None else spec))))
@@ -4777,11 +4786,20 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def mint(self, spec):
-            """The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."""
+            """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_mint(json.dumps(spec))))
         def revoke(self, spec):
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_revoke(json.dumps(spec))))
+    class _VaultAgentsVerbClassesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash."""
+            return json.loads(_translate(lambda: self._client.vault_agents_verb_classes_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."""
+            return json.loads(_translate(lambda: self._client.vault_agents_verb_classes_configure(json.dumps(spec))))
     class _VaultAgentsSpawnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
