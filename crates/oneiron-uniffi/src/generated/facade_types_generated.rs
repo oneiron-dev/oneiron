@@ -60726,7 +60726,7 @@ pub enum ConnectorCallStatus {
         #[serde(rename = "uncertain", default, skip_serializing_if = "Option::is_none")]
         uncertain: Option<bool>,
         #[serde(rename = "reply")]
-        reply: ConnectorCallReply,
+        reply: ActAnswerConnectorCallReply,
     },
 }
 
