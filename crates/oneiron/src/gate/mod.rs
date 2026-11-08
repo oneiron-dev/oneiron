@@ -197,6 +197,12 @@ use self::dreamer_precommit::{
     DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
     validate_dreamer_precommit,
 };
+#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
+pub(crate) use self::effect::ExternalEffectJudgment;
+#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
+pub(crate) use self::effect::hydrate_external_effect_contact_at;
+#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
+pub(crate) use self::effect::judge_external_effect_in_txn;
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
