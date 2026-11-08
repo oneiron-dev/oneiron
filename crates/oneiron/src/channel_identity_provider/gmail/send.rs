@@ -43,9 +43,9 @@ use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
+    EngineSendId, OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink,
+    OutboundExecutionSink, SentLookup, SentLookupTarget,
 };
 use crate::secret_lease::DoorInjectionReceipt;
 use crate::write_envelope::thread_claim::{
@@ -500,7 +500,13 @@ pub enum GmailSendWireError {
     Uncertain(String),
 }
 
-/// The Gmail send protocol seam: exactly one method, sending.
+/// The mailbox's sent search did not answer (FIX 4747): the grant cannot
+/// search, the request failed or timed out, or its answer did not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GmailSentSearchUnanswered;
+
+/// The Gmail send protocol seam: sending, and the sent search a send that
+/// may have gone out is looked up by.
 ///
 /// Implementations MUST resolve the token through
 /// `authority.with_token_at_door` and make the provider request inside its
@@ -519,6 +525,22 @@ pub trait GmailSendWire {
         raw: &[u8],
         gmail_thread_id: Option<&str>,
     ) -> std::result::Result<GmailSentMessage, GmailSendWireError>;
+
+    /// Searches the mailbox's SENT for the message carrying
+    /// `rfc_message_id` with the send grant's access (FIX 4747): its Gmail
+    /// message id, or `None` when the search answered and found none. One
+    /// bounded request, metadata only. By default a wire cannot search.
+    ///
+    /// # Errors
+    ///
+    /// [`GmailSentSearchUnanswered`] when the search itself did not answer.
+    fn find_sent_message(
+        &self,
+        _authority: &GmailSendAuthority<'_>,
+        _rfc_message_id: &str,
+    ) -> std::result::Result<Option<String>, GmailSentSearchUnanswered> {
+        Err(GmailSentSearchUnanswered)
+    }
 }
 
 /// A mailbox- and identity-bound SEND handle supplied to the host wire.
@@ -740,6 +762,63 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .with_receipt_fields(fields)
                     .with_possible_delivery()
             }
+        }
+    }
+
+    /// FIX 4747: the mailbox's SENT searched for the Message-ID the send's
+    /// frozen plan carries. Gmail keeps the plan's own Message-ID, a pure
+    /// function of the plan (its logical ref, From, To, Subject and body),
+    /// which the TASK binds by content ref; the engine send id is not on
+    /// this wire. No plan here, or a search that did not answer, cannot
+    /// tell; an empty answer from a search that answered is not sent.
+    fn lookup_sent(
+        &mut self,
+        _engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        if target.intent.channel != EMAIL_CHANNEL
+            || target.verb_contract.kind != "send"
+            || target
+                .channel_identity_ref
+                .is_some_and(|identity| identity != self.identity_id)
+        {
+            return SentLookup::CannotTell;
+        }
+        let Some(content_ref) = target.intent.content_ref.as_deref() else {
+            return SentLookup::CannotTell;
+        };
+        if !self.plans.contains_key(content_ref)
+            && let Ok(Some(plan)) = GmailSendPlan::kept(self.vault, content_ref)
+        {
+            self.add_plan(plan);
+        }
+        let Some(plan) = self.plans.get(content_ref) else {
+            return SentLookup::CannotTell;
+        };
+        let authority = GmailSendAuthority {
+            adapter: self.adapter,
+            vault: self.vault,
+            identity_id: self.identity_id,
+            used: Cell::new(false),
+        };
+        match self
+            .wire
+            .find_sent_message(&authority, plan.message_id.as_str())
+        {
+            Ok(Some(gmail_message_id))
+                if validate_gmail_id(
+                    &gmail_message_id,
+                    super::MAX_GMAIL_MESSAGE_ID_BYTES,
+                    "gmail message id",
+                )
+                .is_ok() =>
+            {
+                SentLookup::Sent {
+                    provider_ref: format!("gmail:{gmail_message_id}"),
+                }
+            }
+            Ok(None) => SentLookup::NotSent,
+            Ok(Some(_)) | Err(GmailSentSearchUnanswered) => SentLookup::CannotTell,
         }
     }
 }
