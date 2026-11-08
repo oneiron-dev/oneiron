@@ -136,6 +136,12 @@ pub(super) fn stage_put_projections(
     crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
     crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
+    // A carrier whose body lives in a file keeps what the compaction scrub
+    // reads in it, which its window will not hold (FIX 22091).
+    #[cfg(feature = "sync")]
+    if let (Some(body), Some(file)) = (fixed.file_body, fixed.options.storage.asset_file) {
+        crate::sweep::stage_carrier_scrub_facts_in_txn(store, wtxn, &fixed.id, &file.blake3, body)?;
+    }
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &fixed.id, plan)?;
