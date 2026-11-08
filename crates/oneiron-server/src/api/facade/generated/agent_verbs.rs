@@ -1241,6 +1241,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.esign.signing.pdf", post(facade_route))
         .route("/vault.esign.signing.image", post(facade_route))
         .route("/vault.esign.signing.signature", post(facade_route))
+        .route("/vault.esign.signing.preview", post(facade_route))
         .route("/vault.esign.seal.get", post(facade_route))
         .route("/vault.conversations.create", post(facade_route))
         .route("/vault.conversations.turns.create", post(facade_route))

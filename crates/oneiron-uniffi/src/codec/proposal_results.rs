@@ -102,6 +102,7 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
             proposed,
             abstained,
             refused,
+            next_sheet_row,
         } = value;
         // Consume the nested proposal (and its deep summary tree) first.
         let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
@@ -117,6 +118,7 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
             proposed,
             abstained,
             refused,
+            next_sheet_row,
         })
     }
 }

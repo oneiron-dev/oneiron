@@ -3223,6 +3223,8 @@ export class Oneiron {
         image: (input: Facade.EsignSigningImageRequest): Facade.EsignSigningImageView => this.#call(() => this.#client.vaultEsignSigningImage(input) as Facade.EsignSigningImageView),
         /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
         signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
+        /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
+        preview: (input: Facade.EsignSigningPreviewRequest): Facade.EsignSigningPreviewView => this.#call(() => this.#client.vaultEsignSigningPreview(input) as Facade.EsignSigningPreviewView),
       },
       seal: {
         /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */

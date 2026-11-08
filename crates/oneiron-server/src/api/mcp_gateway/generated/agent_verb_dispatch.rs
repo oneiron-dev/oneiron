@@ -1406,6 +1406,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.esign.signing.pdf" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.signing.image" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.signing.signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.seal.get" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
@@ -5126,6 +5127,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.esign.signing.signature" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.esign.signing.preview" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.esign.seal.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7986,6 +7990,7 @@ async fn execute_agent_verb_row_on(
         "vault.esign.signing.signature" => {
             boxed_mcp_verb_row_vault_esign_signing_signature(row).await
         }
+        "vault.esign.signing.preview" => boxed_mcp_verb_row_vault_esign_signing_preview(row).await,
         "vault.esign.seal.get" => boxed_mcp_verb_row_vault_esign_seal_get(row).await,
         "vault.conversations.create" => boxed_mcp_verb_row_vault_conversations_create(row).await,
         "vault.conversations.turns.create" => {
@@ -65148,6 +65153,47 @@ async fn mcp_verb_row_vault_esign_signing_signature(row: McpVerbRow<'_>) -> McpV
     let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::vault_esign_signing_signature(&memory, input)
+        .map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_esign_signing_preview<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_esign_signing_preview(row))
+}
+async fn mcp_verb_row_vault_esign_signing_preview(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::blob_artifact::esign::EsignSigningPreviewRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output = oneiron::task_verb::sdk::vault_esign_signing_preview(&memory, input)
         .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)

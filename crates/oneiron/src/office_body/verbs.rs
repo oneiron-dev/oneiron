@@ -994,10 +994,13 @@ impl Memory<'_> {
                 zone: &zone,
             },
         )?;
-        Ok(OfficeBodyExportView {
-            frontier: export.frontier,
-            record: export.record,
-        })
+        self.lifted_body_view(
+            &artifact,
+            OfficeBodyExportView {
+                frontier: export.frontier,
+                record: export.record,
+            },
+        )
     }
 
     /// `vault.artifacts.body.preview`: the workbook an export would land now,

@@ -18,6 +18,7 @@ use oneiron_xlsx_formula::cell_display_text;
 
 use super::model::{ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
+use crate::file_secret_marks::FILLER;
 
 pub(super) mod stories;
 mod text;
@@ -510,6 +511,150 @@ fn html_text(node: NodeRef<'_>) -> String {
         }
         let children = node.children_it(false).collect::<Vec<_>>();
         pending.extend(children.into_iter().rev());
+    }
+    out
+}
+
+/// Raw and caller-sighted plain text when both decode and the sighted copy
+/// preserves the raw character layout. Raw coordinates always name the
+/// immutable version; only the quote is projected to the caller's sight.
+fn text_layout_for_sight<'a>(
+    raw_bytes: &'a [u8],
+    sighted_bytes: &'a [u8],
+) -> Option<(&'a str, &'a str)> {
+    let raw = text::decoded(raw_bytes)?;
+    let sighted = text::decoded(sighted_bytes)?;
+    if raw_bytes != sighted_bytes
+        && (sighted.len() != raw.len()
+            || sighted
+                .bytes()
+                .zip(raw.bytes())
+                .any(|(masked, raw)| masked != raw && masked != FILLER))
+    {
+        // A rebuilt container has no raw coordinate map. Do not serve nearby
+        // text as though it were the requested immutable span.
+        return None;
+    }
+    Some((raw, sighted))
+}
+
+/// The exact byte range of a non-empty character span in decoded text.
+fn text_span_byte_range(
+    raw: &str,
+    char_start: u64,
+    char_end: u64,
+) -> Option<std::ops::Range<usize>> {
+    let (start, end) = (
+        usize::try_from(char_start).ok()?,
+        usize::try_from(char_end).ok()?,
+    );
+    if start >= end {
+        return None;
+    }
+    let len = raw.chars().count();
+    if end > len {
+        return None;
+    }
+    let byte_start = raw.char_indices().nth(start).map(|(at, _)| at)?;
+    let byte_end = if end == len {
+        raw.len()
+    } else {
+        raw.char_indices().nth(end).map(|(at, _)| at)?
+    };
+    Some(byte_start..byte_end)
+}
+
+/// The raw byte range of a text locator, including any BOM excluded from the
+/// locator's character coordinates. Secret marks use these stored byte offsets.
+pub(super) fn text_raw_span_byte_range(
+    raw_bytes: &[u8],
+    char_start: u64,
+    char_end: u64,
+) -> Option<std::ops::Range<usize>> {
+    let raw = text::decoded(raw_bytes)?;
+    let bom_len = if raw_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
+    let span = text_span_byte_range(raw, char_start, char_end)?;
+    Some(span.start + bom_len..span.end + bom_len)
+}
+
+/// The quote at a raw text-locator span as the caller's sighted copy renders
+/// it. The owner and granted sights pass the stored bytes back; a masked
+/// reader gets only the exact sighted span, never raw secret bytes.
+pub(super) fn text_quote_for_sight(
+    raw_bytes: &[u8],
+    sighted_bytes: &[u8],
+    char_start: u64,
+    char_end: u64,
+) -> Option<String> {
+    let (raw, sighted) = text_layout_for_sight(raw_bytes, sighted_bytes)?;
+    let span = text_span_byte_range(raw, char_start, char_end)?;
+    Some(sighted[span].to_owned())
+}
+
+/// Main's one-unit-per-line text projection, with every quote read through
+/// the caller's sight while every locator keeps its raw coordinates.
+pub(super) fn text_units_for_sight(
+    raw_bytes: &[u8],
+    sighted_bytes: &[u8],
+) -> Option<Vec<(Locator, Option<String>)>> {
+    Some(
+        text::text_units(raw_bytes)?
+            .into_iter()
+            .map(|(locator, _)| {
+                let quote = match &locator {
+                    Locator::Text {
+                        char_start,
+                        char_end,
+                    } => text_quote_for_sight(raw_bytes, sighted_bytes, *char_start, *char_end),
+                    _ => None,
+                };
+                (locator, quote)
+            })
+            .collect(),
+    )
+}
+
+/// Exact matches in the projected head, named in raw text coordinates. Both
+/// the detached snapshot and head are read as this caller sees them; a masked
+/// match that is not on raw character boundaries is skipped.
+pub(super) fn text_find_text_for_sight(
+    raw_bytes: &[u8],
+    sighted_bytes: &[u8],
+    words: &str,
+) -> Vec<Locator> {
+    if words.trim().is_empty() {
+        return Vec::new();
+    }
+    let Some((raw, sighted)) = text_layout_for_sight(raw_bytes, sighted_bytes) else {
+        return Vec::new();
+    };
+    if raw_bytes == sighted_bytes {
+        return text::find_in_text(raw_bytes, words)
+            .into_iter()
+            .take(MAX_OFFERS)
+            .collect();
+    }
+    let mut out = Vec::new();
+    for (byte_start, matched) in sighted.match_indices(words) {
+        let byte_end = byte_start + matched.len();
+        if !raw.is_char_boundary(byte_start) || !raw.is_char_boundary(byte_end) {
+            continue;
+        }
+        let start = raw[..byte_start].chars().count() as u64;
+        let end = raw[..byte_end].chars().count() as u64;
+        if start >= end {
+            continue;
+        }
+        if let Ok(locator) = Locator::text(start, end) {
+            out.push(locator);
+            if out.len() >= MAX_OFFERS {
+                break;
+            }
+        }
     }
     out
 }
