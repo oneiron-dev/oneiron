@@ -1509,8 +1509,8 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
     source
         .with_write_txn(|txn| {
             for prefix in [
-                b"gate_pending:run_index:v1:".as_slice(),
-                b"gate_pending:group_index:v1:",
+                b"gate_pending:run_index:v2:".as_slice(),
+                b"gate_pending:group_index:v2:",
                 b"gate_pending:hash_index:v1:",
                 b"gate_pending:sequence_index:v1:",
                 b"gate_pending:critical_confirm_by_id:v1:",
