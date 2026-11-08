@@ -7,7 +7,7 @@
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use super::{DocAuthorization, EntityDoc, PurgeReceipt};
+use super::{DocAuthorization, PurgeReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::PendingAuthorityAct;
@@ -125,7 +125,7 @@ impl Vault {
         let through = match through {
             Some(bytes) => Some(bytes.to_vec()),
             None if note => None,
-            None => Some(self.read_entity_doc(entity, EntityDoc::frontier)?),
+            None => Some(super::pins::live_frontier_by_owner_kind(self, entity)?),
         };
         let payload = serde_json::to_vec(&HistoryErase {
             v: 1,

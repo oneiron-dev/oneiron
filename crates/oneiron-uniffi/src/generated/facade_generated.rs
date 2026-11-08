@@ -3642,6 +3642,16 @@ export_facade! {
     let output = client.vault_code_type_diagnostics(&input)?;
     crate::codec::lift_record("vault.code.type_diagnostics", &output)
 };
+"vault.code.waits.rebind_prepare" => fn vault_code_waits_rebind_prepare(&self, input: CodeWaitRebindPrepareRequest) -> CodeWaitRebindPrepared = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitRebindPrepareRequest = crate::codec::lower_record("vault.code.waits.rebind_prepare", input)?;
+    let output = client.vault_code_waits_rebind_prepare(&input)?;
+    crate::codec::lift_record("vault.code.waits.rebind_prepare", &output)
+};
+"vault.code.waits.rebind" => fn vault_code_waits_rebind(&self, input: CodeWaitRebindRequest) -> CodeWaitRebindReceipt = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitRebindRequest = crate::codec::lower_record("vault.code.waits.rebind", input)?;
+    let output = client.vault_code_waits_rebind(&input)?;
+    crate::codec::lift_record("vault.code.waits.rebind", &output)
+};
 "vault.code.waits.resolve" => fn vault_code_waits_resolve(&self, input: CodeWaitResolveRequest) -> CodeWaitReceiptView = |client| {
     let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest = crate::codec::lower_record("vault.code.waits.resolve", input)?;
     let output = client.vault_code_waits_resolve(&input)?;
@@ -4441,6 +4451,11 @@ export_facade! {
     let input: oneiron::task_verb::TaskAskHandle = crate::codec::lower_record("tasks.outcomes", input)?;
     let output = client.tasks_outcomes(&input)?;
     crate::codec::lift_record("tasks.outcomes", &output)
+};
+"tasks.outcomes.route_calibration" => fn tasks_outcomes_route_calibration(&self, input: TaskAskHandle) -> RouteCalibrationReport = |client| {
+    let input: oneiron::task_verb::TaskAskHandle = crate::codec::lower_record("tasks.outcomes.route_calibration", input)?;
+    let output = client.tasks_outcomes_route_calibration(&input)?;
+    crate::codec::lift_record("tasks.outcomes.route_calibration", &output)
 };
 "vault.rooms.list" => fn vault_rooms_list(&self) -> Vec<RoomEntry> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.rooms.list")?;
@@ -5646,6 +5661,11 @@ export_facade! {
     let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest = crate::codec::lower_record("vault.esign.signing.signature", input)?;
     let output = client.vault_esign_signing_signature(&input)?;
     crate::codec::lift_record("vault.esign.signing.signature", &output)
+};
+"vault.esign.signing.preview" => fn vault_esign_signing_preview(&self, input: EsignSigningPreviewRequest) -> EsignSigningPreviewView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningPreviewRequest = crate::codec::lower_record("vault.esign.signing.preview", input)?;
+    let output = client.vault_esign_signing_preview(&input)?;
+    crate::codec::lift_record("vault.esign.signing.preview", &output)
 };
 "vault.esign.seal.get" => fn vault_esign_seal_get(&self, input: EsignSealGetRequest) -> EsignSealView = |client| {
     let input: oneiron::blob_artifact::esign::EsignSealGetRequest = crate::codec::lower_record("vault.esign.seal.get", input)?;

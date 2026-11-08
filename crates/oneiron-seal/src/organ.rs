@@ -1074,11 +1074,14 @@ impl SealFetcher for AskedFetcher {
         }
         let body = match reply.data {
             // A region's bytes came reserved before the runtime copied them
-            // (FIX 8454): that copy is adopted whole with what holds it, and
-            // nothing copies it again. Inline bytes take a lease of their own.
+            // (FIX 8454), and inline bytes came in a frame this call's host funded,
+            // decoded value included, before it sent it (`reserve_read`, held to the
+            // call's end): either is adopted whole with what holds it, and only the
+            // shared header takes a lease of its own, which fails where the call has
+            // no floor (FIX 22070). Unreserved bytes take a lease of their own.
             Some(data) => {
                 let (bytes, memory) = data.into_parts();
-                let held = matches!(memory, AnswerMemory::Reserved { .. })
+                let held = matches!(memory, AnswerMemory::Reserved { .. } | AnswerMemory::Inline)
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }

@@ -332,6 +332,8 @@ pub enum ConnectorToolSchema {
 pub struct ConnectorCallState {
     /// The calling actor, hex.
     pub principal_ref: String,
+    /// The exact grant the last send ran under, hex; absent after acknowledgement.
+    pub grant_id: Option<String>,
     pub name: String,
     pub tool: String,
     /// When it was first held; `None` once a settler acknowledged it.

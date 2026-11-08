@@ -142,9 +142,9 @@ impl Vault {
         Ok(view_of(&row, ledger, false))
     }
 
-    /// The instrument a wait's original caller was admitted on, for the
-    /// host's own check before it drives the effect: the same slip, live now,
-    /// whose current scope meets the scope it was admitted under. `None` for
+    /// The original caller's active instrument: the admitted request's pair,
+    /// or its explicitly confirmed successor, for the host's strict check
+    /// before it drives the same effect. `None` for
     /// a caller no credential was bound for: its grant alone limits it.
     ///
     /// # Errors
@@ -157,7 +157,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        Ok(row.binding.original.credential)
+        Ok(row.active_credential().cloned())
     }
 
     /// The view of one wait, with its receipts' links as the consent Gate
@@ -422,7 +422,7 @@ fn answer_in_txn(
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     if input.choice == CodeConsentChoice::Deny {
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_DENIED])?;
-    } else if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    } else if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -496,7 +496,7 @@ pub(crate) fn prove_code_consent_holder_act_in_txn(
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
         return Ok(None);
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -575,6 +575,16 @@ pub(crate) fn original_authority_holds_in_txn(
         })
 }
 
+/// Whether the original caller's active credential still stands at this
+/// snapshot: the original pair or its explicit, confirmed successor.
+pub(crate) fn active_authority_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CodeConsentWaitRow,
+) -> bool {
+    original_authority_holds_in_txn(vault, txn, &row.active_binding())
+}
+
 /// The code-bound approval wait `wait_id` admits its effect under, proved
 /// from its row in the admission writer: its binding digest, once the first
 /// answer approved and nothing settled it, with the frozen bytes the ones
@@ -601,7 +611,7 @@ pub(crate) fn code_consent_admission_in_txn(
     if row.binding.frozen_input_digest != *frozen_digest {
         return Err(Error::ConcurrentWrite("code consent target changed"));
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the original caller credential of this code consent wait no longer stands",
         )));
@@ -846,6 +856,7 @@ fn view_of(
         wait_id: row.binding.wait_id,
         run_id: row.binding.run_id,
         state: row.state(),
+        revision: row.revision,
         verb: row.binding.verb_row.clone(),
         connector: call.map(|call| call.name.clone()).unwrap_or_default(),
         tool: call.map(|call| call.tool.clone()).unwrap_or_default(),
@@ -909,5 +920,7 @@ fn view_of(
             .as_ref()
             .and_then(|answer| answer.remembered.clone()),
         already_answered,
+        rebind_proposal: row.rebind_proposal.clone(),
+        rebinds: row.rebinds.clone(),
     }
 }
