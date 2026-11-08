@@ -423,7 +423,10 @@ fn comment_runs_op(
 /// The v4 inline list for a story text change, through the same builder the
 /// body replace uses: an empty paragraph authors no inlines.
 fn story_text_content(text: &str) -> Vec<Value> {
-    match paragraph(None, text).get("content").and_then(Value::as_array) {
+    match paragraph(None, text)
+        .get("content")
+        .and_then(Value::as_array)
+    {
         Some(content) => content.clone(),
         None => Vec::new(),
     }
