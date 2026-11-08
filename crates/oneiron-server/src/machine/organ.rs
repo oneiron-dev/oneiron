@@ -45,6 +45,12 @@ pub(crate) struct OrganFloor(pub(crate) MachineMemory);
 
 #[cfg(unix)]
 impl oneiron_organ_host::MachineFloor for OrganFloor {
+    fn track_allocated(&self, bytes: u64) -> Box<dyn oneiron_organ_host::FloorLease> {
+        let mut lease = self.0.empty_lease();
+        lease.materialized(0, bytes);
+        Box::new(OrganLease(lease))
+    }
+
     fn lease(
         &self,
         bytes: u64,

@@ -47,6 +47,9 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
+            let rekeys = decode_tombstone_value(raw_value)
+                .is_hard()
+                .then(|| crate::channel_identity::AssignmentRekeys::begin(&self.store));
             let is_claim = EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .as_deref()
                 .and_then(EntityMetadataHeader::parse)
@@ -54,6 +57,9 @@ impl Vault {
             let (outcome, _changed, cancelled) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
             let claims_changed = is_claim && outcome.changed_local_state();
+            if let Some(rekeys) = rekeys {
+                rekeys.finish(&self.store, &mut wtxn)?;
+            }
             wtxn.commit()?;
             Ok((outcome, cancelled, claims_changed))
         });
