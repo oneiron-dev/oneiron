@@ -2,14 +2,19 @@
 //! FIX 12264): the frontier a version projects, and the anchorable units at
 //! a frontier. Entry: `Vault::office_body_units_in_txn`.
 
+use std::collections::BTreeMap;
+
 use super::*;
 use oneiron_docedit::live::{LiveDeck, NodeId};
 use oneiron_docedit::xlsx_body::XlsxAxisEdit;
 
+/// A kept export's native and creation ids by model node (FIX 12346).
+pub(crate) type HeldDeckIds = BTreeMap<u64, (Option<u32>, Option<String>)>;
+
 /// One live body's anchorable units at a frontier.
 pub(crate) enum OfficeBodyUnits {
     /// The blocks in order: the body's block id and its text.
-    Docx(Vec<(String, String)>),
+    Docx(DocxUnits),
     /// The worksheets in order, by key and name, and the row and column
     /// edits since import, in order, by sheet key.
     Xlsx {
@@ -18,6 +23,33 @@ pub(crate) enum OfficeBodyUnits {
     },
     /// The deck's slides and shapes by node id.
     Pptx(DeckUnits),
+}
+
+/// A document's body units and separately scoped story paragraphs, including
+/// direct story-table cell paragraphs.
+pub(crate) struct DocxUnits {
+    pub(crate) blocks: Vec<(String, String)>,
+    pub(crate) stories: Vec<DocxStoryUnits>,
+}
+
+/// One actual native story, with paragraph ids local to this scope.
+pub(crate) struct DocxStoryUnits {
+    pub(crate) scope: oneiron_docedit::docx_body::DocxStoryScope,
+    pub(crate) paragraphs: Vec<(String, String)>,
+}
+
+impl DocxUnits {
+    pub(crate) fn story(
+        &self,
+        scope: &oneiron_docedit::docx_body::DocxStoryScope,
+    ) -> Option<&[(String, String)]> {
+        let mut matches = self.stories.iter().filter(|story| &story.scope == scope);
+        let story = matches.next()?;
+        matches
+            .next()
+            .is_none()
+            .then_some(story.paragraphs.as_slice())
+    }
 }
 
 /// A live deck's slides and shapes at a frontier, each slide followed by
@@ -120,6 +152,24 @@ impl Vault {
             .map(export_frontier))
     }
 
+    /// The ids a kept deck export held when its Keep did not bind the deck
+    /// (FIX 12346). `None` for every other export and for old records.
+    pub(crate) fn office_body_held_ids_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+        version: u64,
+    ) -> Result<Option<HeldDeckIds>> {
+        Ok(EXPORTS
+            .get(&self.store, txn, &version_key(artifact, version))?
+            .and_then(|record| record.held_ids)
+            .map(|ids| {
+                ids.into_iter()
+                    .map(|id| (id.node, (id.native_id, id.creation_id)))
+                    .collect()
+            }))
+    }
+
     /// The head frontier of the artifact's live body; `None` for no body.
     pub(crate) fn office_body_frontier_in_txn(
         &self,
@@ -146,13 +196,34 @@ impl Vault {
         let (_, doc) = self.loro_body(txn, artifact, source.kind, Some(at))?;
         Ok(Some(match source.kind {
             OfficeBodyKind::Docx => {
-                let blocks = docx::read(&doc)?.blocks;
-                OfficeBodyUnits::Docx(
-                    blocks
+                let body = docx::read(&doc)?;
+                OfficeBodyUnits::Docx(DocxUnits {
+                    blocks: body
+                        .blocks
                         .into_iter()
                         .map(|block| (block.id, block.text))
                         .collect(),
-                )
+                    stories: body
+                        .stories
+                        .into_iter()
+                        .map(|story| DocxStoryUnits {
+                            scope: story.scope,
+                            paragraphs: story
+                                .paragraphs
+                                .into_iter()
+                                .map(|paragraph| (paragraph.id, paragraph.text))
+                                .chain(
+                                    story
+                                        .tables
+                                        .into_iter()
+                                        .flat_map(|table| table.cells)
+                                        .flat_map(|cell| cell.paragraphs)
+                                        .map(|paragraph| (paragraph.id, paragraph.text)),
+                                )
+                                .collect(),
+                        })
+                        .collect(),
+                })
             }
             OfficeBodyKind::Xlsx => {
                 let body = xlsx::read(&doc)?;

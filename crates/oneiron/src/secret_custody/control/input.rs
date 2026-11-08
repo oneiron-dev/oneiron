@@ -69,7 +69,7 @@ use oneiron_crypto::{
 use zeroize::Zeroizing;
 
 use crate::Vault;
-use crate::authority::{AuthorityEntryHash, CustodyChange, CustodyRecipientPermit, WrapRecipient};
+use crate::authority::{AuthorityEntryHash, CustodyChange, CustodyPermitSet, WrapRecipient};
 #[cfg(feature = "sync")]
 use crate::authority::{
     AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityOp, OwnerWorkBody, OwnerWorkRequest,
@@ -144,7 +144,7 @@ pub(crate) struct InputBinding<'a> {
     pub(crate) generation: u32,
     pub(crate) seen: [u8; 32],
     pub(crate) holder: EntityId,
-    pub(crate) permits: &'a [CustodyRecipientPermit],
+    pub(crate) permits: &'a CustodyPermitSet,
 }
 
 impl InputBinding<'_> {

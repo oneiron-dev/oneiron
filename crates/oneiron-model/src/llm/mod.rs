@@ -59,6 +59,8 @@ pub use label_read::{
 pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;
 mod protocol;
+mod provider_usage;
+pub use provider_usage::ProviderTokenMeasurement;
 mod reply_assertions;
 mod safeguard;
 mod scheduling;
@@ -102,7 +104,7 @@ pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_w
 
 pub use self::backend::{
     BrokerIsolation, BudgetLease, DispatchRelease, LlmBackend, LlmGenerateFuture, LlmResult,
-    LlmStream, LlmStreamResult, SingleRouteBackend, SingleSend,
+    LlmStream, LlmStreamResult, OwnedDispatchRelease, SingleRouteBackend, SingleSend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,

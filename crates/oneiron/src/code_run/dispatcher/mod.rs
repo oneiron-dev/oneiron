@@ -21,6 +21,7 @@ mod program_step;
 mod read_worlds;
 mod reader_spawn;
 mod record_refs;
+mod refusal_output;
 mod repo;
 mod repo_sources;
 mod routed_entry;
@@ -55,8 +56,10 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
-use self::admission::gate_rejection;
+use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+pub(crate) use self::agent_verb::write_receipt_may_have_run;
+pub(crate) use self::coordination::agent_attempt_run_ref;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
@@ -122,6 +125,8 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// This call's released reason, taken once by its executor recorder.
+    pub(super) task_refusal_output: RefCell<Option<Vec<u8>>>,
     /// Where the last call's native producer witnessed the skill bodies its
     /// answer carries (FIX 3608): the executor's host takes them with the
     /// call's answer. Host-internal: no guest call reaches it.
@@ -130,14 +135,10 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
     /// with the invocation each ask waits under and the ask's handle, which
-    /// the same call names as the pause it resumes (FIX 5526).
-    pub(super) parked_hooks: RefCell<
-        Vec<(
-            verb_hooks::ParkedCall,
-            crate::runtime_hooks::InvocationId,
-            Option<EntityId>,
-        )>,
-    >,
+    /// the same call names as the pause it resumes (FIX 5526). Each keeps
+    /// the row that parked it, so a call whose row an erase took the words
+    /// of is still known (FIX 6534).
+    pub(super) parked_hooks: RefCell<Vec<verb_hooks::ParkedHook>>,
     /// The seat the host lent the run to spawn reader children under, if
     /// any (ARCH-0079 #reader-forks).
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,

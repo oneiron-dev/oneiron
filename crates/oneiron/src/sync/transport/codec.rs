@@ -7,6 +7,7 @@
 //! they are. Each link counts raw and sent bytes per inner tag; [`process_link_bytes`] sums
 //! every link in this process.
 
+use std::collections::VecDeque;
 use std::io::Read;
 use std::pin::Pin;
 use std::sync::LazyLock;
@@ -281,12 +282,26 @@ pub fn process_link_bytes() -> Vec<TagBytesRow> {
 /// A tungstenite WebSocket that speaks the codec frame: a binary send is wrapped when the
 /// peer decodes it, a binary read is unwrapped under the cap, and both are counted. Control
 /// and text frames pass untouched.
+///
+/// A socket to our own server keeps reading while a send waits on the socket (FIX 20959).
+/// Both ends of a sync socket send their answers before they read again, so two large sends
+/// that fill the socket's buffers each way would wait on each other's read for ever. Here a
+/// send that cannot go out yet reads what the server sends meanwhile and holds it, in order,
+/// for the next read: the server's send completes, its loop reads again, and ours goes out.
+/// Nothing is dropped, refused or reordered. The server keeps its own loop as it is: it never
+/// reads during a guarded send.
 #[derive(Debug)]
 pub struct WireSocket<S> {
     socket: S,
     peer: WireCodecs,
     max_inner: usize,
     bytes: LinkBytes,
+    /// Whether a waiting send reads meanwhile: a socket to our own server only.
+    read_while_sending: bool,
+    /// What a waiting send read, oldest first, for the next read to return.
+    held: VecDeque<Result<Message, WsError>>,
+    /// The read side ended or failed while a send waited: once `held` is read, the stream ends.
+    read_ended: bool,
 }
 
 impl<S> WireSocket<S> {
@@ -297,13 +312,20 @@ impl<S> WireSocket<S> {
             peer,
             max_inner,
             bytes: LinkBytes::default(),
+            read_while_sending: false,
+            held: VecDeque::new(),
+            read_ended: false,
         }
     }
 
     /// A socket to our own server. Its hello gate reads the codec list every hello of ours
-    /// carries, so it always decodes, and no reply needs to confirm it.
+    /// carries, so it always decodes, and no reply needs to confirm it. A send that waits on
+    /// it reads what the server sends meanwhile (FIX 20959).
     pub fn to_our_server(socket: S, max_inner: usize) -> Self {
-        Self::new(socket, WireCodecs::OURS, max_inner)
+        Self {
+            read_while_sending: true,
+            ..Self::new(socket, WireCodecs::OURS, max_inner)
+        }
     }
 
     /// This link's counts.
@@ -344,6 +366,40 @@ impl<S> WireSocket<S> {
         Ok(inner.into())
     }
 
+    /// A frame as the stream returns it: a binary frame unwrapped under the cap, anything else
+    /// as it came.
+    fn read_item(&self, item: Result<Message, WsError>) -> Result<Message, WsError> {
+        match item {
+            Ok(Message::Binary(frame)) => self.unwrap_read(frame).map(Message::Binary),
+            other => other,
+        }
+    }
+
+    /// While a send waits on the socket, reads every frame the peer has sent meanwhile and
+    /// holds it, in order, for the next read (FIX 20959). It stops when nothing more has come
+    /// (the read's waker is then registered, so a new frame wakes the waiting send), and for
+    /// good once the read side ends or fails.
+    fn read_while_blocked(&mut self, cx: &mut Context<'_>)
+    where
+        S: Stream<Item = Result<Message, WsError>> + Unpin,
+    {
+        if !self.read_while_sending {
+            return;
+        }
+        while !self.read_ended {
+            match Pin::new(&mut self.socket).poll_next(cx) {
+                Poll::Pending => return,
+                Poll::Ready(Some(item)) => {
+                    let failed = item.is_err();
+                    let item = self.read_item(item);
+                    self.held.push_back(item);
+                    self.read_ended = failed;
+                }
+                Poll::Ready(None) => self.read_ended = true,
+            }
+        }
+    }
+
     fn wrap_send(&self, frame: Bytes) -> Bytes {
         let Some(&tag) = frame.first() else {
             return frame;
@@ -367,23 +423,35 @@ where
 {
     type Item = Result<Message, WsError>;
 
+    /// What a waiting send read comes first, in order (FIX 20959); then the socket.
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        Poll::Ready(match ready!(Pin::new(&mut this.socket).poll_next(cx)) {
-            Some(Ok(Message::Binary(frame))) => Some(this.unwrap_read(frame).map(Message::Binary)),
-            other => other,
-        })
+        if let Some(item) = this.held.pop_front() {
+            return Poll::Ready(Some(item));
+        }
+        if this.read_ended {
+            return Poll::Ready(None);
+        }
+        Poll::Ready(
+            ready!(Pin::new(&mut this.socket).poll_next(cx)).map(|item| this.read_item(item)),
+        )
     }
 }
 
 impl<S> Sink<Message> for WireSocket<S>
 where
-    S: Sink<Message, Error = WsError> + Unpin,
+    S: Sink<Message, Error = WsError> + Stream<Item = Result<Message, WsError>> + Unpin,
 {
     type Error = WsError;
 
+    /// A send that cannot start yet reads meanwhile (FIX 20959).
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), WsError>> {
-        Pin::new(&mut self.get_mut().socket).poll_ready(cx)
+        let this = self.get_mut();
+        let ready = Pin::new(&mut this.socket).poll_ready(cx);
+        if ready.is_pending() {
+            this.read_while_blocked(cx);
+        }
+        ready
     }
 
     fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), WsError> {
@@ -395,8 +463,14 @@ where
         Pin::new(&mut this.socket).start_send(item)
     }
 
+    /// A send that cannot go out yet reads meanwhile (FIX 20959).
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), WsError>> {
-        Pin::new(&mut self.get_mut().socket).poll_flush(cx)
+        let this = self.get_mut();
+        let flushed = Pin::new(&mut this.socket).poll_flush(cx);
+        if flushed.is_pending() {
+            this.read_while_blocked(cx);
+        }
+        flushed
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), WsError>> {
