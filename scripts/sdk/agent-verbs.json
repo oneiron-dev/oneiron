@@ -11138,11 +11138,41 @@
       "openapi": true
     },
     {
+      "name": "vault.code.session_model_heal_count",
+      "description": "Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused.",
+      "input": "crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest",
+      "output": "crate::memory::code_run_doors::CodeRunSessionModelHealCountView",
+      "call": "memory.code_run_session_model_heal_count_as(&memory.embedded_owner(\"vault.code.session_model_heal_count\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.corrections",
       "description": "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only.",
       "input": "crate::memory::code_run_doors::CodeRunCorrectionsRequest",
       "output": "crate::memory::code_run_doors::CodeRunCorrectionsView",
       "call": "memory.code_run_corrections_as(&memory.embedded_owner(\"vault.code.corrections\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.step_evidence",
+      "description": "Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records.",
+      "input": "crate::memory::code_run_doors::CodeRunStepEvidenceRequest",
+      "output": "Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>",
+      "call": "memory.code_run_step_evidence_as(&memory.embedded_owner(\"vault.code.step_evidence\")?, input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

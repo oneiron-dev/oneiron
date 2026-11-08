@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1376 code-mode rows (1333 host rows, 43 run rows), 4825 declarations.
-// Replies: 1184 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1367 code-mode rows (1325 host rows, 42 run rows), 4806 declarations.
+// Replies: 1175 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -162,8 +162,7 @@ declare namespace Sdk {
   type RunTreeEvent = { sequence: number; at: number; actor: string; kind: RunTreeEventKind; note?: string | null };
   type RunTreeWireNode = { job_id: string; run_id?: string | null; parent_id?: string | null; worker_kind: string; worker?: string | null; agent_id?: string | null; status: RunTreeStatus; result_ref?: string | null; timestamps: RunTreeTimestamps; failure?: RunTreeFailure | null; events: RunTreeEvent[]; children: number[] };
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
-  type RunTreeDeletion = { attempt_id: string; deleted_by?: string | null; deleted_at: number };
-  type RunTreeWire = { nodes: RunTreeWireNode[]; roots: number[]; repairs: RunTreeRepair[]; deletions: RunTreeDeletion[] };
+  type RunTreeWire = { nodes: RunTreeWireNode[]; roots: number[]; repairs: RunTreeRepair[] };
   type RunTree = RunTreeWire;
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
   type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
@@ -316,7 +315,7 @@ declare namespace Sdk {
   type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed";
   type TaskKind = "standard" | "consult" | "reconciliation";
   type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
-  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous" | "owner_declined_resend";
+  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous";
   type LadderTerminalDisposition = "approved" | "overridden" | "rejected" | "failed" | "escalated" | "countered" | "abandoned";
   type CancelRejectionPathology = { attempt_id: string; rejections: number; threshold: number; last_status?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
@@ -579,8 +578,7 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
-  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null; filter?: ReadFilterInput | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type VerdictBasis = "calibrated_model" | "deterministic_fallback";
@@ -799,7 +797,7 @@ declare namespace Sdk {
   type ServedAssetForm = "image" | "audio" | "thumbnail" | "asset_text" | "ask";
   type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_type?: string | null; bytes_b64?: string | null; text?: string | null; asset_text_ref?: string | null; handle?: string | null; receipt_refs: string[] };
   type VectorSearchLane = "ordinary" | "voice_hot";
-  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane; filter?: ReadFilterInput | null };
+  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane };
   type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] };
   type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean };
   type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null };
@@ -1428,7 +1426,6 @@ declare namespace Sdk {
   type PendingAuthorityAct = { id: string; vault_id: string; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null };
   type SharedTransferRequest = { vault_id: string; to: string; from_keeps?: FederationGrantRole | null };
   type SharedRemoveOwnerRequest = { vault_id: string; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
-  type SharedAddOwnerRequest = { vault_id: string; owner: string };
   type SharedActRequest = { act_id: string };
   type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { owner_added: { owner: string } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
@@ -1496,7 +1493,6 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
-  type SharedOwnerChangeWaitSetRequest = { vault_id: string; days?: number | null };
   type CoreferenceStatus = "proposed" | "confirmed";
   type CoreferenceLinkRequest = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus };
   type CoreferenceLinkReceipt = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus; status_claim: EntityId };
@@ -1533,10 +1529,6 @@ declare namespace Sdk {
   type FederationBurstReviewBundle = { bundle_ref: string; request_refs: string[]; updates: FederationIsolatedUpdate[]; quarantined: boolean; replay_automatic: boolean };
   type FederationBurstReviewRequest = { bundle_ref: string };
   type FederationBurstReviewReceipt = { bundle_ref: string; batches: FederationBurstReceipt[] };
-  type FederationPactStatus = "Active" | "Suspended" | "Promoted" | "Disconnected" | "Dissolved";
-  type FederationPactInactiveReason = "scope_commitment_mismatch";
-  type FederationPactStatusRow = { pact: string; status: FederationPactStatus; epoch: number; inactive_reason?: FederationPactInactiveReason | null };
-  type FederationStatus = { pacts: FederationPactStatusRow[] };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -1546,6 +1538,7 @@ declare namespace Sdk {
   type AcceptConnect = { offer: Offer; grant: string };
   type ConnectAccepted = { pact: string; status: string; peer_key: string; counter: Offer };
   type NarrowConnect = { pact: string; epoch: number; outbound: FederationDirectionScope };
+  type FederationPactStatus = "Active" | "Suspended" | "Promoted" | "Disconnected" | "Dissolved";
   type ConnectPactReceipt = { pact: string; status: FederationPactStatus; epoch: number; scope: FederationPactScope; effective_scope: FederationDirectionScope };
   type RescopeConnect = { pact: string; epoch: number; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
   type RescopeOffer = { pact: string; epoch: number; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string; key: string };
@@ -1682,7 +1675,7 @@ declare namespace Sdk {
   type OffRecordSessionRequest = { session_ref: string };
   type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; summary?: string | null };
   type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
-  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number; filter?: ReadFilterInput | null };
+  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
   type CreateNoteRequest = { kind: string; markdown: string };
   type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest; evidence_turn_refs?: string[] };
   type OffRecordArtifactSaveRequest = { session_ref: string; artifact_ref: string };
@@ -1753,9 +1746,6 @@ declare namespace Sdk {
   type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
   type OutboundCallRequestEraseRequest = { attempt: EntityId; call_seq: number };
   type OutboundCallRequestErased = { erased: boolean };
-  type UncertainSendAnswer = { task_ref: EntityId; resend: boolean };
-  type UncertainSendAnswerOutcome = "resend_released" | "declined" | "already_settled";
-  type UncertainSendAnswered = { task_ref: EntityId; resend: boolean; outcome: UncertainSendAnswerOutcome };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -2085,11 +2075,6 @@ declare namespace Sdk {
   type ArchiveDeleteConfirmOutcome = (ArchiveDeleteReceiptView & { outcome: "deleted" }) | { outcome: "refused"; error: ArchiveDeleteError };
   type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
   type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
-  type AttemptArchiveDeletePreviewRequest = { attempt: string };
-  type AttemptArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
-  type AttemptArchiveDeletePreviewView = { attempt: string; record_bytes: number; expected: AttemptArchiveDeleteExpectation };
-  type AttemptArchiveDeleteConfirmRequest = { attempt: string; expected: AttemptArchiveDeleteExpectation };
-  type AttemptArchiveDeleteReceiptView = { attempt: string; deleted_by: string; deleted_at: number; run_id?: string | null; receipt_ref: string; role: string; grant_ref?: string | null };
   type UsageRepairListRequest = Record<string, never>;
   type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
@@ -2659,6 +2644,8 @@ declare namespace Sdk {
   type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
+  type CodeRunSessionModelHealCountRequest = { session_ref: string; model_id: string };
+  type CodeRunSessionModelHealCountView = { session_ref: string; model_id: string; canonical_healed_turns: number; session_healed_turns: number; healed_turns: number };
   type CodeRunCorrectionsRequest = { run_ref: string; after_step?: number | null; limit?: number | null };
   type CodeRunCorrectionPolicy = { normalization_passes: number; model_repair_retries: number };
   type ExecutorWireRepairs = { trimmed_transport_whitespace: boolean; stripped_code_fence: boolean; stripped_exec_wrapper: boolean; discarded_console_blocks: number };
@@ -2666,6 +2653,10 @@ declare namespace Sdk {
   type CodeRunCorrectionCheckpoint = { step: number; state_hash: string };
   type CodeRunCorrection = { schema: number; run_id: EntityId; step: number; attempt: number; recorded_at_ms: number; model_id: string; repairs: ExecutorWireRepairs; outcome: CodeRunCorrectionOutcome; policy: CodeRunCorrectionPolicy; model_repair_retries_used: number; exhausted: boolean; checkpoint?: CodeRunCorrectionCheckpoint | null };
   type CodeRunCorrectionsView = { run_ref: string; policy: CodeRunCorrectionPolicy; records: CodeRunCorrection[]; next_after_step?: number | null };
+  type CodeRunStepEvidenceRequest = { run_ref: string; after_step?: number | null; limit?: number | null };
+  type CodeRunStepBody = { handle: string; bytes: number; complete: boolean; withheld: boolean; text: string };
+  type CodeRunStepEvidence = { step: number; state_hash?: string | null; source?: CodeRunStepBody | null; executed_js?: CodeRunStepBody | null; observation?: CodeRunStepBody | null; console?: CodeRunStepBody | null; corrections: CodeRunCorrection[] };
+  type CodeRunStepEvidenceView = { run_ref: string; completed_steps: number; policy: CodeRunCorrectionPolicy; steps: CodeRunStepEvidence[]; next_after_step?: number | null };
   type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
@@ -2877,12 +2868,6 @@ declare namespace Sdk {
   type CodeSnapshotDefinitionsRequest = { repo: EntityId; snapshot: string; name: string };
   type CodeSnapshotDefinition = { symbol: EntityId; path: string; name: string; kind: string; fingerprint: string; start_line: number; end_line: number };
   type CodeSnapshotDefinitionsView = { repo: EntityId; snapshot: string; definitions: CodeSnapshotDefinition[] };
-  type CodeRelationKind = "calls" | "imports" | "refs";
-  type CodeRelationDirection = "in" | "out" | "both";
-  type CodeSnapshotNeighborsRequest = { repo: EntityId; snapshot: string; symbol: EntityId; path: string; kinds?: CodeRelationKind[] | null; direction?: CodeRelationDirection | null };
-  type CodeSnapshotSymbolCitation = { definition: CodeSnapshotDefinition; content_hash_blake3: string };
-  type CodeSnapshotNeighbor = { kind: CodeRelationKind; source: CodeSnapshotSymbolCitation; target: CodeSnapshotSymbolCitation };
-  type CodeSnapshotNeighborsView = { repo: EntityId; snapshot: string; seed: CodeSnapshotSymbolCitation; neighbors: CodeSnapshotNeighbor[] };
   type MergeQueueEnqueueRequest = { repo: EntityId; proposals: EntityId[]; base_green: string };
   type BatchState = "Queued" | "Staged" | "Ready" | "Landing" | "HeadAdvanced" | "GreenAdvanced" | "Quarantined" | "RollingBack" | "RolledBack" | "Cancelled";
   type MergeQueuePathView = { mask: number; commit: string; tree: string; verdict_ref?: string | null };
@@ -2963,8 +2948,6 @@ declare namespace Sdk {
   type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
   type RepoSymbolsDefinitionsInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
-  type RepoSymbolsNeighborsInput = { repo: EntityId; ref: string; snapshot: string; symbol: EntityId; path: string; kinds?: CodeRelationKind[] | null; direction?: CodeRelationDirection | null };
-  type RepoSymbolsNeighborsOutput = { repo: EntityId; ref: string; snapshot: string; seed: CodeSnapshotSymbolCitation; neighbors: CodeSnapshotNeighbor[] };
   type RepoViewsGetInput = { work: EntityId };
   type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null };
   type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
@@ -3256,7 +3239,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoSymbolsNeighbors" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoProposalResolve" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoProposalResolve" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -3680,8 +3663,6 @@ declare namespace Sdk {
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] };
-  type GraphSkillRunRequest = { skill: string; reference: string; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria<string> | null };
-  type GraphSkillRunOutcome = { state: "done"; stages: (AnswerRecord | null)[][] } | { state: "failed"; failed_stage?: number | null; failed_input?: number | null; code: string; message: string; stages: (AnswerRecord | null)[][] };
   type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
   type QuestionActivation = "one_off" | "standing";
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
@@ -3922,10 +3903,10 @@ declare namespace Sdk {
   type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarOccurrencesPage = { occurrences: CalendarOccurrenceView[]; complete: boolean; resume_from?: number | null };
   type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
-  type CalendarReadRequest = { event_ref: string; filter?: ReadFilterInput | null };
+  type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null; filter?: ReadFilterInput | null };
+  type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarSearchPage = { events: CalendarEventView[]; complete: boolean; resume_from?: number | null };
   type CalendarFreebusyPageRequest = { calendars: CalendarSel[]; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -3946,13 +3927,13 @@ declare namespace Sdk {
   type CalendarOutcomePolicy = { grace_secs: number };
   type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number; event_ref?: string | null };
   type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "hook_pending"; session_ref: EntityId; ask: EntityId } | { outcome: "queued"; attempt_ref: string } | { outcome: "note_fallback"; note_ref: EntityId };
-  type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
+  type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
   type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionInput };
   type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string };
+  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
   type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
-  type ClaimHistoryRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
   type CriticalWriteConfirmPendingRequest = { pending_operation: string };
@@ -3965,11 +3946,11 @@ declare namespace Sdk {
   type CriticalWriteConfirmReceiptRequest = { confirm_id: string };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
-  type HydrateRequest = { refs: string[]; filter?: ReadFilterInput | null };
-  type EntityRequest = { entity_ref: string; filter?: ReadFilterInput | null };
-  type ResolveRecordRefRequest = { reference: string; filter?: ReadFilterInput | null };
+  type HydrateRequest = { refs: string[] };
+  type EntityRequest = { entity_ref: string };
+  type ResolveRecordRefRequest = { reference: string };
   type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null };
-  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null; filter?: ReadFilterInput | null };
+  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
   type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt };
   type LinkedText = { message_id?: string | null; spans: ProseSpan[] };
   type RecordLinks = { texts: LinkedText[]; narrowing?: ScopedReadReceipt | null; next_after?: string | null };
@@ -3979,19 +3960,19 @@ declare namespace Sdk {
   type HybridPprQuery = { seeds: string[]; depth: number };
   type HybridTemporalQuery = { start: number; end: number };
   type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights };
-  type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number; filter?: ReadFilterInput | null };
+  type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number };
   type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
   type TemporalAnchorMode = "occurred" | "learned" | "both" | "auto";
   type TemporalSearchRange = { start: number; end: number };
-  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number; filter?: ReadFilterInput | null };
+  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number };
   type TemporalSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; occurred_start: number; occurred_end: number; learned_at: number };
   type TemporalSearchReport = { sigma_secs: number; rounds: number };
   type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
-  type QueryBm25Request = { query: string; limit: number; filter?: ReadFilterInput | null };
+  type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
   type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
-  type NeighborsRequest = { entity_ref: string; opts: NeighborOpts; filter?: ReadFilterInput | null };
+  type NeighborsRequest = { entity_ref: string; opts: NeighborOpts };
   type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null };
   type EdgeProvenanceRequest = { source_ref: string; edge_kind: string; target_ref: string; filter?: ReadFilterInput | null };
   type EdgeProvenanceActorClass = "human" | "agent" | "system";
@@ -4762,7 +4743,7 @@ declare namespace Sdk {
   type WorldSealedInput = "off" | "my_machines" | "cloud_and_my_machines";
   type WorldPrivacySetInput = { world: string; read: WorldReadInput; sealed: WorldSealedInput; models?: string[] | null; seen?: string | null };
   type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle; grant_omitted?: string | null } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle; grant_omitted?: string | null };
-  type MemorySearchInput = { query: string; limit?: number | null; filter?: ReadFilterInput | null };
+  type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type SessionHookPhase = "pre" | "post";
   type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
@@ -5145,7 +5126,6 @@ declare namespace self {
     symbols: {
       declare(input: Sdk.RepoSymbolsDeclareInput): Promise<Sdk.RepoSymbolsDeclareOutput | StoredResult>;
       definitions(input: Sdk.RepoSymbolsDefinitionsInput): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
-      neighbors(input: Sdk.RepoSymbolsNeighborsInput): Promise<Sdk.RepoSymbolsNeighborsOutput | StoredResult>;
       release(input: Sdk.RepoSymbolsReleaseInput): Promise<Sdk.RepoSymbolsReleaseOutput | StoredResult>;
       renew(input: Sdk.RepoSymbolsRenewInput): Promise<Sdk.RepoSymbolsRenewOutput | StoredResult>;
     };
@@ -5353,8 +5333,6 @@ declare namespace self {
     callables(input: Sdk.EmptyRequest): Promise<Sdk.CallableCardView[] | StoredResult>;
     /** An agent forks a stored skill under its own identity, keeping its import ancestry. */
     fork(input: Sdk.SkillForkRequest): Promise<Sdk.SkillAuthoringReceipt | StoredResult>;
-    /** Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible. */
-    graph(input: Sdk.GraphSkillRunRequest): Promise<Sdk.GraphSkillRunOutcome | StoredResult>;
     /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
     save(input: Sdk.SkillSaveRequest): Promise<Sdk.SkillAuthoringReceipt | StoredResult>;
   };
@@ -5476,14 +5454,6 @@ declare const vault: Sdk.VaultHost & {
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
   archive: {
-    attempt: {
-      delete: {
-        /** Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt. */
-        confirm(input: Sdk.AttemptArchiveDeleteConfirmRequest): Promise<Sdk.AttemptArchiveDeleteReceiptView | StoredResult>;
-        /** Previews one cleanup-archived completed attempt under the caller's delete authority. */
-        preview(input: Sdk.AttemptArchiveDeletePreviewRequest): Promise<Sdk.AttemptArchiveDeletePreviewView | StoredResult>;
-      };
-    };
     delete: {
       /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
       confirm(input: Sdk.ArchiveDeleteConfirmRequest): Promise<Sdk.ArchiveDeleteBatchResult | StoredResult>;
@@ -5841,7 +5811,7 @@ declare const vault: Sdk.VaultHost & {
     /** Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it. */
     demote(input: Sdk.ClaimDemoteRequest): Promise<Sdk.ClaimDemoteView | StoredResult>;
     /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-    history(input: Sdk.ClaimHistoryRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
+    history(input: Sdk.ClaimRefRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
     /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
     list(input: Sdk.ClaimListFilter): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
     /** Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
@@ -6103,6 +6073,8 @@ declare const vault: Sdk.VaultHost & {
         request(input: Sdk.RepoSecretPurgeRequest): Promise<Sdk.RepoSecretPurgePlan | StoredResult>;
       };
     };
+    /** Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused. */
+    session_model_heal_count(input: Sdk.CodeRunSessionModelHealCountRequest): Promise<Sdk.CodeRunSessionModelHealCountView | StoredResult>;
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
       get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
@@ -6111,13 +6083,13 @@ declare const vault: Sdk.VaultHost & {
       /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
       read(input: Sdk.CodeSnapshotReadRequest): Promise<Sdk.CodeSnapshotPinnedFile | null | StoredResult>;
     };
+    /** Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records. */
+    step_evidence(input: Sdk.CodeRunStepEvidenceRequest): Promise<Sdk.CodeRunStepEvidenceView | null | StoredResult>;
     symbols: {
       /** Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing. */
       declare(input: Sdk.CodeSymbolsDeclareRequest): Promise<Sdk.CodeSymbolsDeclared | StoredResult>;
       /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
       definitions(input: Sdk.CodeSnapshotDefinitionsRequest): Promise<Sdk.CodeSnapshotDefinitionsView | StoredResult>;
-      /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
-      neighbors(input: Sdk.CodeSnapshotNeighborsRequest): Promise<Sdk.CodeSnapshotNeighborsView | StoredResult>;
       /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
       release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
@@ -6660,8 +6632,6 @@ declare const vault: Sdk.VaultHost & {
       /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
       unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
     };
-    /** The owner reads this install's pact activation, consent epoch and local inactivity reason. */
-    status(input: Sdk.EmptyRequest): Promise<Sdk.FederationStatus | StoredResult>;
   };
   files: {
     sources: {
@@ -6976,7 +6946,7 @@ declare const vault: Sdk.VaultHost & {
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
   model_pack: {
-    /** Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing. */
+    /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
     revert(input: Sdk.ModelPackRevertRequest): Promise<Sdk.ModelPackRevert | StoredResult>;
   };
   models: {
@@ -7150,12 +7120,6 @@ declare const vault: Sdk.VaultHost & {
     configure(input: Sdk.OrgAdminConfigureRequest): Promise<Sdk.OrgAdminConfigured | StoredResult>;
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
-  };
-  outbound: {
-    uncertain_send: {
-      /** The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent. */
-      answer(input: Sdk.UncertainSendAnswer): Promise<Sdk.UncertainSendAnswered | StoredResult>;
-    };
   };
   outbound_calls: {
     request: {
@@ -7411,8 +7375,6 @@ declare const vault: Sdk.VaultHost & {
       declare(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsDeclareInput>): Promise<Sdk.RepoSymbolsDeclareOutput | StoredResult>;
       /** Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads. */
       definitions(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsDefinitionsInput>): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
-      /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
-      neighbors(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsNeighborsInput>): Promise<Sdk.RepoSymbolsNeighborsOutput | StoredResult>;
       /** Removes the attached run's own symbol declaration. */
       release(input: Sdk.LiveRunRequest<Sdk.RepoSymbolsReleaseInput>): Promise<Sdk.RepoSymbolsReleaseOutput | StoredResult>;
       /** Extends the attached run's own symbol declaration by its declared lifetime. */
@@ -7824,12 +7786,6 @@ declare const vault: Sdk.VaultHost & {
     object(input: Sdk.SharedActRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** The reader's own outcome notices for a shared vault. */
     outcomes(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActOutcome[] | StoredResult>;
-    owner_change_wait: {
-      /** The shared vault's common owner-change wait in seconds, if one is set. */
-      get(input: Sdk.EmptyRequest): Promise<number | null | StoredResult>;
-      /** One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds. */
-      set(input: Sdk.SharedOwnerChangeWaitSetRequest): Promise<number | null | StoredResult>;
-    };
     policy: {
       /** A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row. */
       answer(input: Sdk.SharedActPolicyAnswerRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
@@ -7842,8 +7798,6 @@ declare const vault: Sdk.VaultHost & {
       /** A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it. */
       propose(input: Sdk.SharedActPolicyProposeRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
     };
-    /** Starts a shared vault's add_owner act: a live Owner adds another person as Owner. */
-    propose_add_owner(input: Sdk.SharedAddOwnerRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's delete_vault act, returned as a typed pending act. */
     propose_delete(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's remove_owner act, with its export-first answer. */
