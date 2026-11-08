@@ -748,8 +748,9 @@ impl Vault {
     /// vault's, or when a family entangled with content (a grant, policy
     /// manifest, custody, machine identity, room role or membership, e-sign
     /// ceremony) moved since the checkpoint, rather than roll it back
-    /// (ARCH-0038, RD-20); refuses and removes `destination` when the result
-    /// would make someone an owner or member who is not one of `current` now,
+    /// (ARCH-0038, RD-20). Floors scoped to restored entities are checked
+    /// after compartments land; a refusal removes `destination`, as when
+    /// the result would make someone an owner or member who is not one of `current` now,
     /// or when a decision the engine makes from restored rows would permit
     /// more than it does in `current` (`decisions`).
     ///
@@ -823,7 +824,7 @@ impl Vault {
             crate::federation::removal_archive_owners_in_rows(&image.databases["vault_meta"]);
         // The carried rows hold `current`'s custody binding and retirements,
         // and its pad objects are captured in the read that carried them.
-        let (home_table_notes, current_pads) =
+        let (home_table_notes, current_pads, image_floors) =
             authority_plane::carry_current_authority(&mut image.databases, current)?;
         // Each kept removal archive's file and descriptor follow its Live
         // row (FIX 3679).
@@ -859,7 +860,9 @@ impl Vault {
         // Refused here, or unwound, the bindings above drop in reverse: the
         // copy closes, the custody it forked goes, and then the directory
         // made for it, still under the copy's lease (review r3, Sol F4).
-        authority_plane::refuse_new_members(current, &vault)
+        image_floors
+            .refuse_changes(&vault)
+            .and_then(|()| authority_plane::refuse_new_members(current, &vault))
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
         pad_objects::land_on_restore(&vault, &current_pads, &mut report);
         forked.keep();
