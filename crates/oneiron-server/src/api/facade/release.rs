@@ -250,13 +250,7 @@ pub(crate) fn replayed_claim_value(
         rows: release.rows,
     };
     Ok((
-        replayed_value(
-            vault,
-            auth,
-            verb,
-            release,
-            owner_whole_vault_export,
-        ),
+        replayed_value(vault, auth, verb, release, owner_whole_vault_export),
         hook_notice,
     ))
 }
