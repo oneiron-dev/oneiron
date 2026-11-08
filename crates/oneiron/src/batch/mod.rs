@@ -55,6 +55,7 @@ pub(crate) use self::vad_postcommit::queue_committed_rows;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_committed_rows_in_txn;
 pub(crate) use self::vad_postcommit::queue_consent_answer;
+pub(crate) use self::vad_postcommit::queue_decision_answer;
 pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
@@ -63,6 +64,7 @@ pub(crate) use self::vad_postcommit::queue_room_join;
 pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
+pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,

@@ -92,7 +92,7 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority for every slot (FIX 7462).
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {

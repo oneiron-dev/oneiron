@@ -114,7 +114,10 @@ impl SyncConnection {
                 }
             },
         };
-        if sent.is_err() {
+        // A peer session confirms nothing for the home: each full-window
+        // write it sent is queued too, and the home session replays it when
+        // the home returns (FIX 4748).
+        if sent.is_err() || client.peer_session.is_some() {
             // Opened writes already have durable sequences. Full-window writes
             // keep the original reconnect/VV-confirmation recovery contract.
             for update in full_updates {
@@ -125,6 +128,16 @@ impl SyncConnection {
             // Documents remain in their own durable journal until the home ACK.
         }
         sent.map_err(LoopExit::Disconnected)?;
+        if let Some(frame) = documents.first() {
+            let doc = transport::decode_unsplit_document(&frame[1..])
+                .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
+            if doc.kind == transport::document_sub_tags::NOTE_OPS
+                && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
+            {
+                let frame = documents.remove(0);
+                self.send_document_response(write, client, frame).await?;
+            }
+        }
         send_publication_part(self, write, client, publication).await
     }
 }
@@ -292,7 +305,8 @@ fn take_document(
     size: &mut usize,
 ) -> Result<bool, String> {
     while let Some(frame) = documents.first() {
-        let doc = transport::decode_document(&frame[1..]).map_err(|error| error.to_string())?;
+        let doc =
+            transport::decode_unsplit_document(&frame[1..]).map_err(|error| error.to_string())?;
         let subscribed = {
             let txn = client
                 .vault
@@ -308,6 +322,11 @@ fn take_document(
         if !subscribed || client.frame_withheld(frame) {
             documents.remove(0);
             continue;
+        }
+        if doc.kind == transport::document_sub_tags::NOTE_OPS
+            && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
+        {
+            return Ok(false);
         }
         if !fits(frames, *size, frame).map_err(|error| error.to_string())? {
             return Ok(false);

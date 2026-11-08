@@ -19,6 +19,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_RECORD_REVISION, CONTENT),
     (&t::SCOPE_RECORD_V1, CONTENT),
     (&t::SCOPE_RECORD, CONTENT),
+    // A source-free text's birth record stands with its stamp (FIX 8741).
+    (&t::SCOPE_SOURCE_FREE_TEXT, CONTENT),
     (&t::SCOPE_SUMMARY_ARC_WORK, CONTENT),
     (&t::SCOPE_SUMMARY_PROJECTION, CONTENT),
     (&t::SCOPE_SUMMARY_PURPOSE, LIVE),
@@ -262,6 +264,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
     // A held-back row stays denied in the image as it was.
     (&t::SOURCE_AUDIENCE_HELD, CONTENT),
+    // Whether a source landed a row stands with the rows the image holds.
+    (&t::SOURCE_AUDIENCE_LANDED, CONTENT),
     (&t::SOURCE_AUDIENCE_POLICY, LIVE),
     // A policy's pending wake and the windows it rides are this vault's own
     // work over its live policies and stored windows (fix list row 17203).
@@ -367,6 +371,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TYPED_QUESTION_WATCH, CONTENT),
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
     (&t::VAULT_CLEANUP_ATTEMPT_ARCHIVE, CONTENT),
+    (&t::VAULT_CLEANUP_ATTEMPT_DELETE, CONTENT),
     (&t::VAULT_CLEANUP_DIGEST, CONTENT),
     (&t::VAULT_CLEANUP_ENTITY_ROW, CONTENT),
     (&t::VAULT_CLEANUP_EXTRACTION_PERSON, CONTENT),

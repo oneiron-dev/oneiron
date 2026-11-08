@@ -53,11 +53,18 @@ verb-read exposure tracking is separate work. No guest, image, artifact pin,
 deployment, configuration, default or cap changes are needed for this source
 change.
 
-## Windows native stack floor
+## Native callable stack
 
-The Windows callable path now reads the current thread's stack limits through
-`GetCurrentThreadStackLimits`. It applies the same existing 1 MiB native stack
-floor as Linux, Android and Apple. The Windows dependency only enables
-`Win32_System_Threading` on the existing `windows-sys` version. The other
-platform implementations and the unsupported-platform fallback are unchanged.
-No Windows compile, VM run or stack-overflow execution is claimed.
+On x86_64/aarch64 Unix and Windows, a nested callable that reaches the existing
+1 MiB native stack floor runs on an extra 2 MiB stack segment on the same OS
+thread. The segment size is twice the floor: one floor for the callable's frames
+and one left below them. `stacker` tracks the active segment, restores the
+original stack before returning, and resumes a panic only after that restore.
+The host and runtime stay borrowed; neither gains a `Send` bound or a new thread.
+
+Other targets retain their original native stack-bounds readers and
+`skills_call_stack_floor` result. Callable admission, the configured nest-depth
+question, cancellation and result recording are unchanged. Each nested runtime
+still owns its guest worker and store; this change does not account their memory
+or the extra native stack against the result-body pool.
+No platform compile, VM run or stack-overflow execution is claimed here.

@@ -134,12 +134,16 @@ impl LaunchAdmission {
     /// Reserves the launch's own scope, keyed by `attempt`, in the launch's
     /// transaction. A carve the cap cannot cover refuses, and the caller's
     /// transaction (with its enqueue) aborts. Returns the scope, if metered.
+    /// A pinned scope, its tree's root, keeps `funding`, the owner's agent
+    /// Grant the launch's work is funded by (FIX 7766); a child scope reads
+    /// its root's instead.
     pub(super) fn reserve_in_txn(
         &self,
         dispatcher: &AgentDispatcher<'_>,
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         agent: Option<EntityId>,
+        funding: Option<super::GrantSpendBinding>,
         now: u64,
     ) -> Result<Option<SpendScope>> {
         let mut scope = match &self.reserve {
@@ -151,6 +155,7 @@ impl LaunchAdmission {
                     agent,
                     unit.clone(),
                     *cap_units,
+                    funding,
                     now,
                 )?)
             }
@@ -186,7 +191,7 @@ impl AgentDispatcher<'_> {
         {
             let (project, _) =
                 self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
-            let type_ref =
+            let (type_ref, _) =
                 self.spawn_type_in_txn(&txn, project, input.target.agent_definition_ref()?, spawn)?;
             crate::learning_setting_choice::owner_spawn_budget_in_txn(
                 self.vault,

@@ -33,8 +33,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/ladder.rs` | src | m | 4 crate-vis | — | One page through the ladder (ARCH-0077, "Layout selection"): a layout chosen by capability; then a… |
 | `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
-| `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const · 2 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
-| `src/docx_body/projection.rs` | src | m | 2 struct · 6 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
+| `src/docx_body.rs` | src | m | 6 struct · 5 enum · 7 fn · 1 const · 2 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxCellParagraph, DocxChange, DocxLock, DocxMark +3 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
+| `src/docx_body/cells.rs` | src | s | 1 crate-vis | — | Per-paragraph cell text, separate from the flat current-redline cell read |
+| `src/docx_body/projection.rs` | src | L | 2 struct · 6 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
+| `src/docx_body/projection/story_cells.rs` | src | s | 1 crate-vis | — | Scoped native table-cell projection |
 | `src/docx_body/stories.rs` | src | s | 2 struct · 2 enum · 1 fn | DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope | Native non-body stories, kept separate from the document body's id space |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
@@ -83,7 +85,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/convert/chart.rs` | src | m | 2 crate-vis | — | A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out… |
 | `src/live/convert/chart/special.rs` | src | m | 7 crate-vis | — | A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its… |
 | `src/live/deck_export.rs` | src | m | 7 struct · 1 enum · 7 fn · 1 const · 2 re-export | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
-| `src/live/deck_export/chart.rs` | src | s | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
+| `src/live/deck_export/chart.rs` | src | m | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
 | `src/live/deck_export/evidence.rs` | src | s | 3 fn | — | — |
 | `src/live/deck_export/payload.rs` | src | m | 5 crate-vis | — | — |
 | `src/live/deck_export/projector.rs` | src | m | 1 fn | — | — |

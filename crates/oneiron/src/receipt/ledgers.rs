@@ -4,9 +4,10 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
+    FIELD_ATTEMPT_CALLER, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
     append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
-    append_task_project_field, append_task_type_fields, append_team_receipt_fields,
+    append_task_project_field, append_task_type_fields, append_task_type_parent_fields,
+    append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
@@ -176,12 +177,23 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     // and unattributed runs alike (FIX 6038).
     if let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(record) {
         append_task_type_fields(&mut receipt, &type_ref)?;
-        let project = crate::agent_dispatch::record_dispatch_input(record)
-            .and_then(|input| input.project_ref);
-        append_task_project_field(&mut receipt, project);
+        if let Some(input) = crate::agent_dispatch::record_dispatch_input(record) {
+            if let Some(parents) = &input.type_parents {
+                append_task_type_parent_fields(&mut receipt, parents)?;
+            }
+            append_task_project_field(&mut receipt, input.project_ref);
+        }
     }
     if let Some(team) = &team {
         append_team_receipt_fields(&mut receipt.fields, team);
+    }
+    // FIX 12306: the caller whose agent dispatch or turn program froze
+    // callable cases under this receipt. Other attempt kinds have no caller
+    // principal to record; the amend door fails closed on their absence.
+    if let Some(caller) = attempt_calling_principal_in_txn(store, wtxn, record) {
+        receipt
+            .fields
+            .insert(FIELD_ATTEMPT_CALLER.to_owned(), caller.to_hex());
     }
     // FIX 8259: the lease generation it settled under. Additive; the receipt
     // id is unchanged and old rows decode without it.
@@ -190,6 +202,53 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         record.attempt_count.to_string(),
     );
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
+    Ok(())
+}
+
+/// The principal whose agent dispatch or turn program `record` ran as, on
+/// the stamper's or reader's own snapshot (FIX 12306). `None` for every other
+/// attempt kind and for a row whose dispatch input does not decode as one.
+/// A missing or invalid stamp is also `None`: the stamper omits the field
+/// rather than failing a terminal transition (L07-A 12:38), and amend fails
+/// closed instead of mistaking corruption for authority.
+pub(crate) fn attempt_calling_principal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Option<EntityId> {
+    if let Some(input) = crate::agent_dispatch::record_dispatch_input(record) {
+        return crate::agent_dispatch::agent_dispatch_actor(&input)
+            .ok()
+            .map(|actor| actor.entity_ref());
+    }
+    if record.kind == crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+        return crate::dreamer_runner::program_actor_for_attempt_in_txn(store, txn, record.id)
+            .map(|actor| actor.entity_ref());
+    }
+    None
+}
+
+/// Scrubs caller identity while preserving the receipt's project rescoping.
+pub(crate) fn erase_attempt_receipt_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    crate::learning::erase_receipt_scope_in_txn(vault, wtxn, entity)?;
+    const RECEIPTS: SideTable<Vec<u8>, ReceiptRecord, Named> =
+        SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
+    let erased = entity.to_hex();
+    let rows = RECEIPTS
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in rows {
+        if let Ok(mut receipt) = RECEIPTS.decode_value(&value)
+            && receipt.fields.get(FIELD_ATTEMPT_CALLER) == Some(&erased)
+        {
+            receipt.fields.remove(FIELD_ATTEMPT_CALLER);
+            RECEIPTS.put(&vault.store, wtxn, &key, &receipt)?;
+        }
+    }
     Ok(())
 }
 

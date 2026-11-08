@@ -10,11 +10,12 @@ mod readers;
 mod receipts;
 mod replay_context;
 mod results;
+mod skill_delivery;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
 use super::program_entry::{InjectedAnswer, PROGRAM_RESUME_HELD, ProgramInjection};
-use super::stack_floor::below_stack_floor;
+use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
@@ -26,13 +27,13 @@ use super::types::{
     StoreReceiptInput,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
-    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
-    SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
-    SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of, result_cannot,
-    result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
+    CapturedSkillDelivery, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
+    CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage,
+    GatedActorWrite, ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead,
+    ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
+    SelfEffect, SelfFailedResult, SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall,
+    SelfSkillCallResult, SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of,
+    result_cannot, result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
 };
 use crate::code_run::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -95,11 +96,18 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The rows the run's recorded verb answers were served from, `None`
     /// when one kept no set (DEC-0005).
     recorded_rows: Option<Vec<EntityId>>,
+    /// The records whose words the run's recorded fold answers copy (FIX
+    /// 18924): known dependencies of each value it stores, apart from rows.
+    recorded_fold_sources: Vec<EntityId>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     /// What this step's guest read, for the step's replay context: each
     /// response it handed out, at the position of the row that answers it
     /// (FIX 6351), and what its result reads saw of reader state (FIX 6352).
     pub(super) context_capture: StepContextCapture,
+    /// The skill bodies the call this host answered last delivers to the
+    /// step's own program, held until the runtime hands its guest the reply
+    /// whole (FIX 3608, `skill_delivery`).
+    held_delivery: Vec<CapturedSkillDelivery>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
     /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
@@ -195,11 +203,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             bound: Vec::new(),
             receipts: Vec::new(),
             recorded_rows: Some(Vec::new()),
+            recorded_fold_sources: Vec::new(),
             bridge_calls: Vec::new(),
             context_capture: StepContextCapture::new(replay_context::captured_reader_child(
                 gated_write,
                 run_id,
             )),
+            held_delivery: Vec::new(),
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
@@ -287,6 +297,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        self.recorded_fold_sources = crate::code_run::recorded_fold_words(&record.bridge_calls)
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .collect();
         // The skills and other runs' result rows its earlier steps' callables
         // answered from, so this step judges its results with them too
         // (FIX 5763).
@@ -429,9 +443,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let Some(storage) = self.storage else {
             return Ok(None);
         };
+        // A stored card stands for the reply: no skill body it holds reaches
+        // the guest (FIX 3608).
+        self.held_delivery.clear();
         let mut sink = storage.code_run_output_sink()?;
         write_json(&mut sink, reply)?;
         self.bind_stored(storage, sink, None).map(Some)
+    }
+
+    fn guest_reply_delivered(&mut self) {
+        self.deliver_held();
     }
 
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
