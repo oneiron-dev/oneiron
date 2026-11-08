@@ -6,11 +6,14 @@
 //! exactly. Each file reads from the ASSET its hash names, as a code locator
 //! reads it, and a path the snapshot's custody withholds is never read. The
 //! words are found with the plain-text search, so a span counts characters
-//! as every code locator does.
+//! as every code locator does. A place is found and offered in the text of
+//! the sight the words were read through, and lands at the owner's offsets
+//! (FIX 22109).
 
 use super::super::anchor_text::{MAX_OFFERS, UnitFormat, find_text, text_span};
 use super::super::code_units::{
-    CodeFile, FileHash, code_span_words_in_txn, file_bytes_by_hash_in_txn, file_hash_hex,
+    CodeFile, CodeSpace, FileHash, code_locator_shown_in_txn, code_raw_locator_in_txn,
+    code_span_words_in_txn, file_bytes_by_hash_in_txn, file_hash_hex,
 };
 use super::super::model::{CODE_ANCHOR_VERSION, Locator};
 use super::{ReattachOffer, UnattachedThread};
@@ -28,8 +31,11 @@ use crate::secret_custody::SecretSight;
 /// is skipped; a file that is not text holds no place. A place holds the
 /// raw words the thread's pin held, compared in memory and never stored,
 /// and a thread whose pinned words no longer read is offered nothing.
-/// No snapshot offers nothing. A resource refusal is the engine's error
-/// (FIX 10587), never empty offers.
+/// Each thread's locator is the stored one, at the owner's offsets; a place
+/// is found and offered in `sight`'s text and its raw words are read at the
+/// owner's offsets it translates to, so a span that does not translate is
+/// no place (FIX 22109). No snapshot offers nothing. A resource refusal is
+/// the engine's error (FIX 10587), never empty offers.
 pub(super) fn code_reattach_offers_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -76,8 +82,9 @@ pub(super) fn code_reattach_offers_in_txn(
             continue;
         };
         let hash = file_hash_hex(&entry.content_hash);
-        // The file's raw bytes, read once and only when a place is found.
-        let mut raw: Option<Option<Vec<u8>>> = None;
+        // The file's raw bytes, and how `sight`'s offsets translate to them,
+        // read once and only when a place is found.
+        let mut raw: Option<Option<(Vec<u8>, CodeSpace)>> = None;
         for ((_, words, pinned), found) in wanted.iter().zip(places.iter_mut()) {
             if found.len() >= MAX_OFFERS {
                 continue;
@@ -91,17 +98,26 @@ pub(super) fn code_reattach_offers_in_txn(
                     continue;
                 };
                 if raw.is_none() {
-                    raw = Some(file_bytes_by_hash_in_txn(
-                        vault,
-                        txn,
-                        &entry.content_hash,
-                        SecretSight::Owner,
-                    )?);
+                    raw = Some(
+                        file_bytes_by_hash_in_txn(
+                            vault,
+                            txn,
+                            &entry.content_hash,
+                            SecretSight::Owner,
+                        )?
+                        .map(|stored| {
+                            let space = CodeSpace::between(&stored, &bytes);
+                            (stored, space)
+                        }),
+                    );
                 }
                 let same = raw
                     .as_ref()
-                    .and_then(|bytes| bytes.as_deref())
-                    .and_then(|bytes| text_span(bytes, char_start, char_end))
+                    .and_then(Option::as_ref)
+                    .and_then(|(raw_bytes, space)| {
+                        let (start, end) = space.raw_span(char_start, char_end)?;
+                        text_span(raw_bytes, start, end)
+                    })
                     .as_deref()
                     == Some(pinned.as_str());
                 if !same {
@@ -137,22 +153,27 @@ pub(super) fn code_reattach_offers_in_txn(
 }
 
 /// The words a one-click reattach at `locator` on the code artifact
-/// `artifact` would land on, read in `txn` through the masked projection,
-/// the one the Unattached list's snapshot words were read through
+/// `artifact` would land on, with the locator it lands at. `locator` reads
+/// in `sight`'s text, the sight of the offers it came from, and lands at the
+/// owner's offsets it translates to (FIX 22109). The words are read in
+/// `txn` at that landing through the masked projection, the one the
+/// Unattached list's snapshot words were read through
 /// (`record_detached_in_txn`), so the two compare in one projection and no
 /// plaintext secret is returned to compare them. Refused unless `locator`
 /// is a code locator that names the artifact's current repo_ref commit and
 /// that commit's file hash for its path. `None` when the path is withheld,
-/// the span does not read, or its raw words are not the raw words `pinned`
-/// (the thread's pin) held: equal masked words are not the same words, and
-/// the raw words are compared in memory only (review #6752).
+/// the span does not read or translate, or its raw words are not the raw
+/// words `pinned` (the thread's stored pin) held: equal masked words are
+/// not the same words, and the raw words are compared in memory only
+/// (review #6752).
 pub(super) fn code_reattach_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     artifact: &EntityId,
     pinned: &Locator,
     locator: &Locator,
-) -> Result<Option<String>> {
+    sight: SecretSight,
+) -> Result<Option<(String, Locator)>> {
     let Some(file) = CodeFile::of(locator) else {
         return Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "a code artifact reattaches only at a code locator",
@@ -172,19 +193,22 @@ pub(super) fn code_reattach_words_in_txn(
             "a code reattach names the artifact's current commit and that commit's file hash",
         )));
     }
-    let Some(words) = code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Masked)?
+    let Some(landed) = code_raw_locator_in_txn(vault, txn, artifact, locator, sight)? else {
+        return Ok(None);
+    };
+    let Some(words) = code_span_words_in_txn(vault, txn, artifact, &landed, SecretSight::Masked)?
     else {
         return Ok(None);
     };
     let pinned_raw = raw_words_in_txn(vault, txn, artifact, pinned)?;
     let same =
-        pinned_raw.is_some() && raw_words_in_txn(vault, txn, artifact, locator)? == pinned_raw;
-    Ok(same.then_some(words))
+        pinned_raw.is_some() && raw_words_in_txn(vault, txn, artifact, &landed)? == pinned_raw;
+    Ok(same.then_some((words, landed)))
 }
 
-/// The raw words under `locator` on `artifact`, read through the owner's
-/// sight for an in-memory comparison only: never stored, and never returned
-/// to a reader.
+/// The raw words under `locator`, a locator at the owner's offsets, on
+/// `artifact`, read through the owner's sight for an in-memory comparison
+/// only: never stored, and never returned to a reader.
 fn raw_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -194,11 +218,31 @@ fn raw_words_in_txn(
     code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Owner)
 }
 
+/// Puts each code thread's stored locator in `unattached` on `artifact`
+/// into `sight`'s text, read in `txn` (FIX 22109), for a reader of the
+/// Unattached list; a reattach offer reads the stored locators.
+pub(super) fn code_threads_shown_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+    unattached: &mut [UnattachedThread],
+    sight: SecretSight,
+) -> Result<()> {
+    for row in unattached {
+        if matches!(row.thread.anchor.locator, Locator::Code { .. }) {
+            row.thread.anchor.locator =
+                code_locator_shown_in_txn(vault, txn, artifact, &row.thread.anchor.locator, sight)?;
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     /// [`Vault::annotation_reattach_offers`] on a code artifact (FIX 7905):
     /// the files read through the masked projection, the one the stored
     /// snapshot words were read through, so an offer is a place where those
-    /// words read again and its reattach takes it.
+    /// words read again and its reattach takes it. Each place reads in the
+    /// masked text, as the reattach that takes it reads it (FIX 22109).
     pub(super) fn code_annotation_reattach_offers(
         &self,
         artifact_id: &EntityId,

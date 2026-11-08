@@ -221,6 +221,18 @@ fn reader_sight(auth: &CoreAuth) -> oneiron::secret_custody::SecretSight {
     }
 }
 
+/// The sight a reattach place reads in: the sight of this reader's own
+/// offers and Unattached list (FIX 22109). A credential with record caveats
+/// reads them through [`reader_sight`]; any other reads the unscoped list,
+/// whose words and places read masked.
+fn reattach_place_sight(auth: &CoreAuth) -> oneiron::secret_custody::SecretSight {
+    if auth.require_unrestricted_record_scope().is_ok() {
+        oneiron::secret_custody::SecretSight::Masked
+    } else {
+        reader_sight(auth)
+    }
+}
+
 /// The read a proposal's named made_by is admitted under as it waits (FIX
 /// 1229): the writing credential's own lane, built only when it names one.
 fn made_by_reader<'v>(
@@ -1241,6 +1253,7 @@ pub(super) async fn reattach(
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
     let locator = place_locator(request.place)?;
+    let sight = reattach_place_sight(&auth);
     let reattached = blocking("reattach failed", move || {
         let (occurred, now) = moment(&server);
         server.vault().reattach_annotation_thread(
@@ -1248,6 +1261,7 @@ pub(super) async fn reattach(
             &thread,
             request.version,
             &locator,
+            sight,
             actor,
             occurred,
             now,

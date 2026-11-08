@@ -2,7 +2,8 @@
 
 use super::anchor_text::{UnitFormat, anchor_text, unit_texts};
 use super::code_units::{
-    CodeFile, code_file_unit, code_line_units, code_span_words, file_bytes_by_hash,
+    CodeFile, CodeSpace, code_file_unit, code_line_units, code_span_shown,
+    file_bytes_and_space_by_hash,
 };
 use super::codec::decode_thread_head;
 use super::wire::{
@@ -87,7 +88,9 @@ impl Memory<'_> {
     /// reads at the artifact's repo_ref commit, a withheld path read as
     /// absent. Without a path, one whole-file unit per file that reads as
     /// text, with no quote (a code file's words are read by pin or with
-    /// `path`); with a path, that file's lines with their words.
+    /// `path`); with a path, that file's lines with their words. Units count
+    /// the caller's text; a file whose offsets do not translate to the
+    /// owner's text has none (FIX 22109).
     fn code_artifact_units(
         &self,
         artifact: EntityId,
@@ -114,9 +117,14 @@ impl Memory<'_> {
                     if mount.is_withheld(&entry.path) {
                         continue;
                     }
-                    let Some(bytes) = self.code_file_bytes(&entry.content_hash, sight)? else {
+                    let Some((bytes, space)) =
+                        self.code_file_bytes_and_space(&entry.content_hash, sight)?
+                    else {
                         continue;
                     };
+                    if space.is_unmappable() {
+                        continue;
+                    }
                     // A file that is not text, or whose path is past the
                     // locator bound, has no code span.
                     if let Some(locator) =
@@ -140,17 +148,23 @@ impl Memory<'_> {
                     .map(|at| &snapshot.files[at])
                     .filter(|entry| !mount.is_withheld(&entry.path))
                     .ok_or_else(absent)?;
-                let bytes = self
-                    .code_file_bytes(&entry.content_hash, sight)?
+                let (bytes, space) = self
+                    .code_file_bytes_and_space(&entry.content_hash, sight)?
                     .ok_or_else(absent)?;
-                code_line_units(commit, path, &entry.content_hash, &bytes)?
-                    .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
-                    .into_iter()
-                    .map(|(locator, quote)| ArtifactUnitView {
-                        locator: (&locator).into(),
-                        quote,
-                    })
-                    .collect()
+                if space.is_unmappable() {
+                    Vec::new()
+                } else {
+                    code_line_units(commit, path, &entry.content_hash, &bytes)?
+                        .ok_or_else(|| {
+                            MemoryError::bad_request("artifact units could not be read")
+                        })?
+                        .into_iter()
+                        .map(|(locator, quote)| ArtifactUnitView {
+                            locator: (&locator).into(),
+                            quote,
+                        })
+                        .collect()
+                }
             }
         };
         Ok(ArtifactUnitsView::Supported {
@@ -191,7 +205,10 @@ impl Memory<'_> {
 
     /// The words of an exact code anchor, read from the file its hash names
     /// through the caller's code file sight (FIX 7905). A code artifact takes
-    /// only a code locator at [`CODE_ANCHOR_VERSION`].
+    /// only a code locator at [`CODE_ANCHOR_VERSION`]. The stored locator
+    /// counts the owner's text and the view reads in the caller's (FIX
+    /// 22109); a spot that does not read, or whose offsets do not translate,
+    /// keeps the stored locator with no words.
     fn code_anchor_view(&self, anchor: &Anchor) -> MemoryResult<AnnotationAnchorView> {
         require_code_anchor_version(Some(anchor.version))?;
         if !matches!(anchor.locator, Locator::Code { .. }) {
@@ -203,8 +220,8 @@ impl Memory<'_> {
             Some(file) => self.code_file_row_readable(&file.hash)?,
             None => false,
         };
-        let quote = if readable {
-            code_span_words(
+        let shown = if readable {
+            code_span_shown(
                 self.vault(),
                 &anchor.artifact_id,
                 &anchor.locator,
@@ -213,10 +230,11 @@ impl Memory<'_> {
         } else {
             None
         };
+        let (locator, quote) = shown.unwrap_or_else(|| (anchor.locator.clone(), None));
         Ok(AnnotationAnchorView {
             artifact_id: anchor.artifact_id,
             version: anchor.version,
-            locator: (&anchor.locator).into(),
+            locator: (&locator).into(),
             quote,
             body: anchor.body.as_ref().map(Into::into),
         })
@@ -224,12 +242,15 @@ impl Memory<'_> {
 
     /// `vault.artifacts.anchors.pin` on a code artifact: the locator names
     /// the artifact's current repo_ref commit and that commit's file hash for
-    /// a path its snapshot reads, and its span holds words.
-    fn code_anchors_pin(
+    /// a path its snapshot reads, and its span holds words. The span is read
+    /// in the caller's text and pins at the owner's (FIX 22109): the anchor
+    /// holds that canonical locator, and the view reads it in the caller's
+    /// text again. A file whose offsets do not translate pins nothing.
+    fn code_anchor_pin(
         &self,
         artifact: EntityId,
         input: &AnnotationPinRequest,
-    ) -> MemoryResult<AnnotationAnchorView> {
+    ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
         require_code_anchor_version(input.version)?;
         let locator = Locator::try_from(&input.locator)?;
         let Some(file) = CodeFile::of(&locator) else {
@@ -253,11 +274,16 @@ impl Memory<'_> {
         if !current {
             return Err(unreadable());
         }
-        let pin = self.code_anchor_view(&Anchor::new(artifact, CODE_ANCHOR_VERSION, locator))?;
+        let (_, space) = self
+            .code_file_bytes_and_space(&file.hash, self.code_file_sight()?)?
+            .ok_or_else(unreadable)?;
+        let raw = space.raw_locator(&locator).ok_or_else(unreadable)?;
+        let anchor = Anchor::new(artifact, CODE_ANCHOR_VERSION, raw);
+        let pin = self.code_anchor_view(&anchor)?;
         if pin.quote.is_none() {
             return Err(unreadable());
         }
-        Ok(pin)
+        Ok((anchor, pin))
     }
 
     /// `vault.artifacts.anchors.pin`: a readable locator in a real version.
@@ -266,9 +292,19 @@ impl Memory<'_> {
         &self,
         input: &AnnotationPinRequest,
     ) -> MemoryResult<AnnotationAnchorView> {
+        Ok(self.anchor_pin(input)?.1)
+    }
+
+    /// [`Self::artifacts_anchors_pin`] with the anchor its view reads: the
+    /// canonical anchor a thread opened on the pin stores, a code span at
+    /// the owner's offsets (FIX 22109).
+    fn anchor_pin(
+        &self,
+        input: &AnnotationPinRequest,
+    ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
         if self.vault().get_entity_type(&artifact)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
-            return self.code_anchors_pin(artifact, input);
+            return self.code_anchor_pin(artifact, input);
         }
         let file = self
             .vault()
@@ -293,13 +329,14 @@ impl Memory<'_> {
                 "locator format does not match the artifact",
             ));
         }
-        let pin = self.annotation_anchor_view(&Anchor::new(artifact, file.version, locator))?;
+        let anchor = Anchor::new(artifact, file.version, locator);
+        let pin = self.annotation_anchor_view(&anchor)?;
         if pin.quote.is_none() {
             return Err(MemoryError::bad_request(
                 "the exact locator has no readable unambiguous quote",
             ));
         }
-        Ok(pin)
+        Ok((anchor, pin))
     }
 
     /// Reconstructs the durable opening locator from its append-only head
@@ -389,16 +426,13 @@ impl Memory<'_> {
         &self,
         input: &AnnotationThreadOpenRequest,
     ) -> MemoryResult<AnnotationThreadView> {
-        let pin = self.artifacts_anchors_pin(&AnnotationPinRequest {
+        // The thread stores the pin's canonical anchor, never its view: a
+        // code view reads in the caller's text (FIX 22109).
+        let (anchor, _) = self.anchor_pin(&AnnotationPinRequest {
             artifact_ref: input.artifact_ref.clone(),
             version: Some(input.version),
             locator: input.locator.clone(),
         })?;
-        let anchor = Anchor::new(
-            pin.artifact_id,
-            pin.version,
-            Locator::try_from(&pin.locator)?,
-        );
         let (occurred, now) = self.annotation_moment();
         let thread = self.vault().open_annotation_thread(
             &anchor,
@@ -526,17 +560,18 @@ impl Memory<'_> {
     }
 
     /// A code file's bytes by its hash, through the caller's row read and
-    /// code file sight; `None` when the caller does not read its row or the
+    /// code file sight, with how their offsets translate to the owner's text
+    /// (FIX 22109); `None` when the caller does not read its row or the
     /// ASSET is gone.
-    fn code_file_bytes(
+    fn code_file_bytes_and_space(
         &self,
         hash: &[u8; 32],
         sight: crate::secret_custody::SecretSight,
-    ) -> MemoryResult<Option<Vec<u8>>> {
+    ) -> MemoryResult<Option<(Vec<u8>, CodeSpace)>> {
         if !self.code_file_row_readable(hash)? {
             return Ok(None);
         }
-        Ok(file_bytes_by_hash(self.vault(), hash, sight)?)
+        Ok(file_bytes_and_space_by_hash(self.vault(), hash, sight)?)
     }
 }
 
