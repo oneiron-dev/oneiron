@@ -339,6 +339,7 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                 questions,
                 live_until_ms,
                 reasons,
+                budget_steering,
             } => Ok(Self::AwaitingInput {
                 handle,
                 call_ref,
@@ -353,6 +354,11 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                     None
                 } else {
                     Some(reasons)
+                },
+                budget_steering: if budget_steering.is_empty() {
+                    None
+                } else {
+                    Some(budget_steering)
                 },
             }),
         }

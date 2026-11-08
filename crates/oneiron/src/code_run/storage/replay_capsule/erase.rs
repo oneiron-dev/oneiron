@@ -3,9 +3,11 @@
 //! loses what it held: its request, start, replay context, route prompt
 //! (FIX 6255) and fork answers are released as the run's occurrences, each
 //! with only its own taint and secret marks, so another holder of the same
-//! bytes keeps them and its marks. A soft delete runs this scrub too, so it retires no body instance: the erase cause
-//! comes from the provenance door alone (KS-2B1), and a release keeps the
-//! restore window. A restore runs this again for every erased actor, so a
+//! bytes keeps them and its marks. It retires no body instance: the erase
+//! cause comes from the provenance door alone (KS-2B1), and a release keeps
+//! the restore window. A soft delete keeps the capsules and runs only the
+//! response scrub (FIX 15532), reading their runs ([`capsule_runs_in_txn`]).
+//! A restore runs this again for every erased actor, so a
 //! restored capsule stays erased. It is also the one callback the actor's
 //! erase reaches its runs' reply content by (FIX 5718,
 //! `response_erase`); the hard erase's retirement of the same bodies comes
@@ -109,6 +111,23 @@ pub(in crate::code_run::storage) fn capsule_bodies_in_txn(
         bodies.extend(pieces.into_iter().map(|(body, path)| (run, body, path)));
     }
     Ok(bodies)
+}
+
+/// The runs of `actor`'s capsules, read for its soft delete's response
+/// scrub (FIX 15532), which leaves the capsules as they are.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::code_run::storage) fn capsule_runs_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(owned_capsules_in_txn(dbs, txn, actor)?
+        .into_iter()
+        .map(|(_, capsule)| capsule.run)
+        .collect())
 }
 
 /// The capsules that hold `actor`'s steps, by their keys. A row that does
@@ -241,4 +260,22 @@ pub(crate) fn actor_gone_in_store(
         );
         true
     })
+}
+
+/// Whether `actor`'s hard erasure is complete here (FIX 6591): it holds the
+/// hard-delete marker, which the erase's writer puts beside its retirement,
+/// so no later erase of it runs. A row a late write leaves for it then names
+/// no actor. A gone actor without that marker (soft-deleted, or removed by a
+/// delete that is still pending) is not: its row keeps the actor and the
+/// bodies released, for the retirement still to come.
+///
+/// # Errors
+///
+/// A marker read error, which the writer returns.
+pub(crate) fn actor_hard_erased_in_store(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<bool> {
+    crate::ports::owner_hard_erased_in_txn(store, txn, actor)
 }

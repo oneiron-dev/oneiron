@@ -76,6 +76,25 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
     )
 }
 
+/// A writer that hashes every byte it passes on, so a copy is checked as it
+/// is written rather than read again.
+struct HashingWriter<W> {
+    inner: W,
+    hasher: blake3::Hasher,
+}
+
+impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.hasher.update(&buf[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// BLAKE3 and length of everything `source` holds, read from its start.
 fn measure(source: &mut (impl Read + Seek)) -> Result<([u8; 32], u64)> {
     source.seek(SeekFrom::Start(0))?;
@@ -158,6 +177,7 @@ impl Vault {
                     body: staged.body.clone(),
                 },
                 result: None,
+                code_run_output: None,
             },
         )?;
         Ok(ArchiveFile {
@@ -182,6 +202,57 @@ impl Vault {
         row: ArchiveRow,
         file: &ArchiveFile,
     ) -> Result<Vec<u8>> {
+        let mut reader = self.open_removal_archive_in_txn(txn, row, file)?;
+        let mut bytes = Vec::with_capacity(usize::try_from(file.body.bytes).unwrap_or(0));
+        reader.read_to_end(&mut bytes)?;
+        if blake3::hash(&bytes).as_bytes() != &file.body.blake3 {
+            return Err(Error::CorruptedIndex("removal archive digest"));
+        }
+        Ok(bytes)
+    }
+
+    /// The archive `file` of the row `row` copied into an anonymous spool
+    /// file of the vault's own, checked against its length and digest as it
+    /// is copied and rewound to its start: what a projection reads where it
+    /// lies (FIX 21529), so no archive is held whole. A sealed file is
+    /// opened through its instance, so the spool holds the plaintext. Read
+    /// in `txn`, as [`Vault::read_removal_archive_in_txn`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::read_removal_archive_in_txn`]; spool filesystem errors.
+    pub(super) fn spool_removal_archive_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: ArchiveRow,
+        file: &ArchiveFile,
+    ) -> Result<std::fs::File> {
+        let mut reader = self.open_removal_archive_in_txn(txn, row, file)?;
+        let mut spool = HashingWriter {
+            inner: std::io::BufWriter::new(self.archive_spool_file()?),
+            hasher: blake3::Hasher::new(),
+        };
+        let len = std::io::copy(&mut reader, &mut spool)?;
+        let HashingWriter { inner, hasher } = spool;
+        let mut spool = inner
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?;
+        if len != file.body.bytes || hasher.finalize().as_bytes() != &file.body.blake3 {
+            return Err(Error::CorruptedIndex("removal archive digest"));
+        }
+        spool.seek(SeekFrom::Start(0))?;
+        Ok(spool)
+    }
+
+    /// The archive `file` of the row `row`, opened for reading once its
+    /// descriptor is checked: the complete body its archive owner's
+    /// occurrence names, through the instance row `txn` holds.
+    fn open_removal_archive_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: ArchiveRow,
+        file: &ArchiveFile,
+    ) -> Result<crate::store::BodyFile> {
         let named = crate::provenance::body::owned_body_in_txn(
             &self.store,
             txn,
@@ -198,17 +269,10 @@ impl Vault {
             return Err(Error::CorruptedIndex("removal archive descriptor"));
         }
         let key = crate::store::body_key_row_in_txn(&self.store, txn, &file.body.blake3)?;
-        let mut reader = self
-            .store
+        self.store
             .body_dir()?
             .open_reader(&file.body.blake3, file.body.bytes, key.as_ref())?
-            .ok_or(Error::CorruptedIndex("removal archive file"))?;
-        let mut bytes = Vec::with_capacity(usize::try_from(file.body.bytes).unwrap_or(0));
-        reader.read_to_end(&mut bytes)?;
-        if blake3::hash(&bytes).as_bytes() != &file.body.blake3 {
-            return Err(Error::CorruptedIndex("removal archive digest"));
-        }
-        Ok(bytes)
+            .ok_or(Error::CorruptedIndex("removal archive file"))
     }
 
     /// Releases the archive file `file` of the row `row` in `wtxn`: its

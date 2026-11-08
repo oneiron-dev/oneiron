@@ -332,6 +332,7 @@ pub fn connector_call_status_read_with_questions(
                         questions,
                         live_until_ms: input.live_until_ms,
                     },
+                    Vec::new(),
                 )),
                 name,
                 tool,
