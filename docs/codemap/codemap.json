@@ -17230,8 +17230,8 @@
      "path": "src/code_run/dispatcher/binding.rs",
      "purpose": "Host construction, binding and captured identity for a dispatcher",
      "surface": {
-      "crate-vis": 13,
-      "fn": 10
+      "crate-vis": 14,
+      "fn": 11
      }
     },
     {
@@ -17700,7 +17700,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 55,
       "mod": 8,
       "re-export": 35
      }
@@ -18528,7 +18528,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "re-export": 6
      }
     },
@@ -18561,7 +18561,7 @@
      "path": "src/code_run/storage/read_worlds.rs",
      "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "enum": 1
      }
     },
@@ -18596,10 +18596,21 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 14,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/caller.rs",
+     "purpose": "The latest actual parent entry's destination (FIX 1837), not its first spawn's destination",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
@@ -69707,7 +69718,7 @@
      "path": "src/settings/device_only.rs",
      "purpose": "What a world flagged device-only keeps on this device, row by row (DEC-0005)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -94708,7 +94719,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 233,
+     "files": 234,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96047,7 +96058,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6802,
+   "source_files": 6803,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110034,7 +110045,7 @@
      "path": "src/llm/assembly.rs",
      "purpose": "Shared typed stream assembly",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
