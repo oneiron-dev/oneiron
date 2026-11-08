@@ -12,7 +12,9 @@
 use sha2::{Digest, Sha256};
 
 use super::read_join::{DefinitionRows, FileRow, RepoReadSelection, SnapshotRows, file_absent};
-use super::work::{RepoOwnWork, resolve_repo_queue_target, snapshot_file, work_view};
+use super::work::{
+    RepoOwnWork, repo_ref_pin, resolve_repo_queue_target, same_folder, snapshot_file, work_view,
+};
 use super::{
     NO_PATHS, RepoMergeQueueObserveInput, RepoMergeQueueObserveOutput, RepoRunAdmitted,
     RepoRunAnswer, RepoRunBinding, RepoSnapshotView, RepoSnapshotsGetInput, RepoSnapshotsGetOutput,
@@ -23,13 +25,14 @@ use super::{
 use crate::EdgeActorClass;
 use crate::EntityId;
 use crate::code_view::CodeViewSet;
+use crate::codebase::CodebaseSnapshotMount;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::reveal::RepoReadDoor;
-use oneiron_authority::federation::RepoAccessIntent;
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 impl Memory<'_> {
     /// `self.code.snapshots.get` for a run: the manifest of the named
@@ -407,6 +410,43 @@ impl Memory<'_> {
         Ok(read
             .filter(|read| read.proof.is_some())
             .map(|read| (read.projection.into_bytes(), rows)))
+    }
+
+    /// The snapshot `snapshot` names of the admitted repo, at the commit the
+    /// run's full ref names now, with that commit (CALLS "FIX 6867 run-only
+    /// ref contract"): no snapshot of another commit or another repo is
+    /// served under an admitted ref. The run's lane must read the repo and
+    /// the snapshot's artifact.
+    pub(super) fn repo_pinned_snapshot(
+        &self,
+        binding: &RepoRunBinding,
+        admitted: &RepoRunAdmitted,
+        git_ref: &str,
+        snapshot: &str,
+    ) -> MemoryResult<(CodebaseSnapshotMount<'_>, String)> {
+        let fork_hash = super::read_join::parse_fork_hash(snapshot)?;
+        let membership = &admitted.membership;
+        let Some(commit) = repo_ref_pin(self.vault, &membership.repo_ref, git_ref) else {
+            return Err(refusal_error(RepoAccessRefusal::WrongRef));
+        };
+        let mut pinned = None;
+        for artifact in self.vault.codebase_snapshots_by_fork_hash(&fork_hash)? {
+            let Some(mount) = self.vault.mount_codebase_snapshot(&artifact)? else {
+                continue;
+            };
+            let held = mount.snapshot();
+            if held.commit_hash.as_deref() == Some(commit.as_str())
+                && same_folder(&held.repo_ref, &membership.repo_ref)
+            {
+                pinned = Some(mount);
+                break;
+            }
+        }
+        let Some(mount) = pinned else {
+            return Err(refusal_error(RepoAccessRefusal::WrongRef));
+        };
+        self.repo_lane_reads(binding, &[membership.bounds.repo, mount.code_artifact_id()])?;
+        Ok((mount, commit.as_str().to_owned()))
     }
 }
 

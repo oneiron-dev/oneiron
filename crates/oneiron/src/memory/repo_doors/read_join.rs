@@ -466,7 +466,7 @@ fn lane_reads_in_txn(
 }
 
 /// A snapshot selector: its fork hash in 64 lower-hex characters.
-fn parse_fork_hash(snapshot: &str) -> MemoryResult<[u8; 32]> {
+pub(super) fn parse_fork_hash(snapshot: &str) -> MemoryResult<[u8; 32]> {
     let invalid =
         || MemoryError::bad_request("snapshot must be the fork hash, 64 lower-hex characters");
     if snapshot.len() != 64
