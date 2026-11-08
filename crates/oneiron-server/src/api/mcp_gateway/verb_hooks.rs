@@ -139,31 +139,38 @@ pub(super) fn mcp_verb_ask_door(
         })
 }
 
+/// A paced call's saved answer beside the rows it was derived from, `None`
+/// when its door listed none (FIX 22259).
+pub(super) type McpPacedReply =
+    oneiron::memory::MemoryResult<(Value, Option<Vec<oneiron::EntityId>>)>;
+
 tokio::task_local! {
     /// The saved answer of a paced call the drain already ended, as the MCP
     /// admission door read it for this retry before it skipped a new intent
     /// (FIX 19034). The row answers it, never a second read of the line.
-    pub(super) static ENDED_PACED_REPLY: std::cell::RefCell<Option<oneiron::memory::MemoryResult<Value>>>;
+    pub(super) static ENDED_PACED_REPLY: std::cell::RefCell<Option<McpPacedReply>>;
 }
 
 /// What a retry of a call its budget window paced meets at the MCP row
 /// door, before its hooks or its row run again (FIX 19034): still held, or
 /// the saved answer of the drain's turn, the caller's view after every post
-/// hook. The door's own admission of `tool` stands first, as for any call.
-/// `None` when nothing of the invocation is held, and on the drain's run.
+/// hook, beside the rows that answer was derived from (`None` when its door
+/// listed none), which the reply is released by (FIX 22259). The door's own
+/// admission of `tool` stands first, as for any call. `None` when nothing
+/// of the invocation is held, and on the drain's run.
 pub(crate) fn mcp_row_paced_reply(
     server: &Arc<SyncServer>,
     tool: &str,
     actor: &McpCallContext,
     memory: &Memory<'_>,
-) -> Result<Option<Value>, McpGatewayError> {
+) -> Result<Option<(Value, Option<Vec<oneiron::EntityId>>)>, McpGatewayError> {
     // The answer the admission door already read for this retry comes
     // first: the line's expiry may have removed the row since (FIX 19034).
     let captured = ENDED_PACED_REPLY
         .try_with(|slot| slot.borrow_mut().take())
         .ok()
         .flatten();
-    let Some(reply) = captured.or_else(|| memory.paced_verb_reply(tool)) else {
+    let Some(reply) = captured.or_else(|| memory.paced_verb_reply_listed(tool)) else {
         return Ok(None);
     };
     mcp_hooks_admitted(server, tool, actor, memory)?;
