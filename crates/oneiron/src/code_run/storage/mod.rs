@@ -10,6 +10,7 @@ mod program_resume;
 mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
+pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
