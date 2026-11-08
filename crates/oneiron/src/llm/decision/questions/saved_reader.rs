@@ -3,8 +3,8 @@
 //! unit, its neighbours and evidence, its media, a trial of its answers, the
 //! files an artifact ask or a wake's re-ask reads, the read a wake's carried
 //! made_by is admitted through) builds its reader here:
-//! the principal's own live key, as a question's reads always built it,
-//! narrowed by the version's frozen lane
+//! the principal's own live key, or the current caller's credential key on
+//! a proof-bearing workflow, narrowed by the version's frozen lane
 //! ([`crate::claim::FrozenReadLane::narrow_in_txn`]). A version saved as the
 //! principal's own reads exactly as before; a narrowed one reads only inside
 //! its narrowing, and nothing once its credential is no longer live.
@@ -43,6 +43,50 @@ pub(super) fn saved_reader(
 ) -> Result<ScopedReadActorKey> {
     let txn = vault.store.env.read_txn()?;
     saved_reader_in_txn(vault, &txn, principal, read_lane)
+}
+
+/// The saved lane met with the current caller's credential key in the same
+/// snapshot. Without a carried credential, keep the native saved reader.
+pub(super) fn saved_reader_in_txn_with_current(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    read_lane: &FrozenReadLane,
+    current: Option<&ScopedReadActorKey>,
+) -> Result<ScopedReadActorKey> {
+    let Some(current) = current else {
+        return saved_reader_in_txn(vault, txn, principal, read_lane);
+    };
+    if current.actor_ref() != principal.to_hex() {
+        return Err(super::super::types::invalid(
+            "current question reader is not its principal",
+        ));
+    }
+    read_lane.narrow_in_txn(vault, txn, current.clone())
+}
+
+/// [`saved_reader_in_txn_with_current`] in its own media-read snapshot.
+pub(super) fn saved_reader_with_current(
+    vault: &Vault,
+    principal: EntityId,
+    read_lane: &FrozenReadLane,
+    current: Option<&ScopedReadActorKey>,
+) -> Result<ScopedReadActorKey> {
+    let txn = vault.store.env.read_txn()?;
+    saved_reader_in_txn_with_current(vault, &txn, principal, read_lane, current)
+}
+
+/// A caller-supplied credential never opts into a locally built question
+/// reader's extra owner authority. Native saved readers keep that behavior.
+pub(super) fn current_reader_lane<'v>(
+    vault: &'v Vault,
+    key: ScopedReadActorKey,
+    current: Option<&ScopedReadActorKey>,
+) -> ScopedRead<'v> {
+    match current {
+        Some(_) => vault.scoped_read(key),
+        None => super::reader_authority::question_lane(vault, key),
+    }
 }
 
 /// The lane the version `answer` answered was saved under, read in `txn`;

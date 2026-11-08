@@ -53,7 +53,14 @@ pub fn read_event_scoped(
     read: &ScopedRead<'_>,
     req: &CalendarReadRequest,
 ) -> Result<ScopedReadResult<Option<CalendarEventView>>> {
-    receipted(read, |lane| read_event_in(lane, req))
+    // The request's own filter meets the lane before any event or fact is
+    // read, and the receipt names it (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(crate::memory::ReadFilterInput::to_filter);
+    let read = read.narrowed_by_request(request.as_ref())?;
+    receipted(&read, |lane| read_event_in(lane, req))
 }
 
 fn read_event_in(
@@ -78,7 +85,14 @@ pub fn search_events_scoped(
     read: &ScopedRead<'_>,
     req: &CalendarSearchRequest,
 ) -> Result<ScopedReadResult<Vec<CalendarEventView>>> {
-    receipted(read, |lane| search_events_in(lane, req))
+    // The request's own filter meets the lane before any event is read or
+    // the page is cut, and the receipt names it (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(crate::memory::ReadFilterInput::to_filter);
+    let read = read.narrowed_by_request(request.as_ref())?;
+    receipted(&read, |lane| search_events_in(lane, req))
 }
 
 fn search_events_in(
@@ -109,7 +123,14 @@ pub(super) fn search_events_page_scoped(
     resume_from: Option<u64>,
     deadline: Option<Instant>,
 ) -> Result<ScopedReadResult<CalendarSearchPage>> {
-    receipted(read, |lane| {
+    // The request's own filter meets the lane before any event is read or
+    // the page is cut, as a whole search's does (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(crate::memory::ReadFilterInput::to_filter);
+    let read = read.narrowed_by_request(request.as_ref())?;
+    receipted(&read, |lane| {
         search_events_page_in(lane, req, resume_from, deadline)
     })
 }

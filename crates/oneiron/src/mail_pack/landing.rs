@@ -14,8 +14,9 @@ use serde_json::{Map, Value};
 
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
-    BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
-    occurrence_key, owe_header_retirements_in_txn, record_occurrence_rows_in_txn,
+    BODY_QUEUE, MailOccurrence, MailPresence, MailReplyHeaders, MailStage, OCCURRENCES, SYNC,
+    THREAD_EPOCHS, body_queue_key, occurrence_key, owe_header_retirements_in_txn,
+    record_occurrence_rows_in_txn, thread_hash,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -81,6 +82,22 @@ fn label(text: &str) -> String {
 fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
     let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
     EntityId::derive(domain, &parts)
+}
+
+/// The CONVERSATION a thread's new message lands in: the thread's own, or
+/// after its forgotten ones, the one of its current epoch.
+fn conversation_of(source_hex: &str, thread_key: &str, epoch: u64) -> Result<EntityId> {
+    if epoch == 0 {
+        return derive(
+            derived_domains::MAIL_CONVERSATION,
+            &[source_hex, thread_key],
+        );
+    }
+    let epoch = epoch.to_string();
+    derive(
+        derived_domains::MAIL_CONVERSATION,
+        &[source_hex, thread_key, epoch.as_str()],
+    )
 }
 
 /// The thread a message lands in: the provider's thread id, else the root
@@ -270,8 +287,12 @@ impl<'v> Landing<'v> {
         let text = content(headers, full.and_then(|full| full.body_text.as_deref()));
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let key = occurrence_key(source, &headers.provider_id);
-        let (prior, order, birth) = {
+        let epoch_key = (source, thread_hash(&thread_key));
+        let (prior, order, epoch, birth) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let epoch = THREAD_EPOCHS
+                .get(&vault.store, &txn, &epoch_key)?
+                .unwrap_or(0);
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
             if let Some(prior) = &prior
                 && matches!(prior.presence, MailPresence::Forgotten { .. })
@@ -282,11 +303,12 @@ impl<'v> Landing<'v> {
                 && prior.content_hashes.contains(&hash)
             {
                 drop(txn);
-                // The same words with the whole message read: the body stage
-                // and its attachments land on the occurrence, no new revision.
-                if let Some(full) = full {
-                    self.settle_full_in_place(&key, full)?;
-                }
+                // The same words: the reply headers land on the occurrence
+                // whole (a message landed before its To and Cc were kept
+                // gains them, fix list row 17645), and with the whole
+                // message read, so do the body stage and its attachments; no
+                // new revision.
+                self.settle_same_in_place(&key, headers, full)?;
                 return Ok(LandOutcome::Same);
             }
             let turn = prior.as_ref().map_or(
@@ -305,14 +327,11 @@ impl<'v> Landing<'v> {
                     Ok(birth) => birth,
                     Err(error) => return refused(error.into()),
                 };
-            (prior, order, birth)
+            (prior, order, epoch, birth)
         };
         let conversation = match &prior {
             Some(prior) => prior.conversation,
-            None => derive(
-                derived_domains::MAIL_CONVERSATION,
-                &[&source_hex, &thread_key],
-            )?,
+            None => conversation_of(&source_hex, &thread_key, epoch)?,
         };
         let turn = match &prior {
             Some(prior) => prior.turn,
@@ -378,6 +397,21 @@ impl<'v> Landing<'v> {
                     &[],
                 ));
             }
+            // A forget that took the thread's CONVERSATION since the read
+            // above moved the thread on: the message lands in its new one at
+            // the next step, never in the one being forgotten.
+            if prior.is_none()
+                && THREAD_EPOCHS
+                    .get(&vault.store, wtxn, &epoch_key)?
+                    .unwrap_or(0)
+                    != epoch
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the thread was forgotten meanwhile; the message lands at the next step",
+                    &[],
+                ));
+            }
             // The proof the rows were stamped under is the one this writer
             // mints from the mailbox's live source policy.
             let minted =
@@ -419,6 +453,8 @@ impl<'v> Landing<'v> {
                 received_at: headers.received_at,
                 searched,
                 attachments: Vec::new(),
+                reply: None,
+                listed_in: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -456,6 +492,7 @@ impl<'v> Landing<'v> {
             if let Some(full) = full {
                 occurrence.attachments.clone_from(&full.attachments);
             }
+            occurrence.reply = Some(MailReplyHeaders::of(headers));
             occurrence.updated_at = self.imported_at;
             let queued = body_queue_key(source, occurrence.received_at, &headers.provider_id);
             if occurrence.stage == MailStage::Headers {
@@ -510,35 +547,50 @@ impl<'v> Landing<'v> {
 }
 
 impl Landing<'_> {
-    /// Records that the occurrence `key` was read whole when its words are
-    /// those it landed with already: its stage is the body, it keeps the
-    /// message's attachments, and it leaves the body queue.
-    fn settle_full_in_place(
+    /// Records the occurrence `key` landed again with the words it landed
+    /// with already: it keeps the reply headers `headers` give, whole, and
+    /// when the message was read whole (`full`), its stage is the body, it
+    /// keeps the message's attachments, and it leaves the body queue.
+    fn settle_same_in_place(
         &self,
         key: &(EntityId, [u8; 32]),
-        full: &MailFull,
+        headers: &MailHeaders,
+        full: Option<&MailFull>,
     ) -> MemoryResult<()> {
         let vault = self.vault;
+        let reply = MailReplyHeaders::of(headers);
         vault.with_write_txn_grouped(|wtxn| {
             let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
                 return Ok(());
             };
-            if occurrence.stage == MailStage::Body && occurrence.attachments == full.attachments {
+            // A message erased meanwhile stays forgotten: its fence is not
+            // given its headers or attachments again.
+            if matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
                 return Ok(());
             }
-            let first_body = occurrence.stage == MailStage::Headers;
-            occurrence.stage = MailStage::Body;
-            occurrence.attachments.clone_from(&full.attachments);
+            let reply_changed = occurrence.reply.as_ref() != Some(&reply);
+            let full = full.filter(|full| {
+                occurrence.stage != MailStage::Body || occurrence.attachments != full.attachments
+            });
+            if !reply_changed && full.is_none() {
+                return Ok(());
+            }
+            occurrence.reply = Some(reply);
             occurrence.updated_at = self.imported_at;
-            BODY_QUEUE.delete(
-                &vault.store,
-                wtxn,
-                &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
-            )?;
-            if first_body {
-                let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
-                sync.bodies += 1;
-                SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+            if let Some(full) = full {
+                let first_body = occurrence.stage == MailStage::Headers;
+                occurrence.stage = MailStage::Body;
+                occurrence.attachments.clone_from(&full.attachments);
+                BODY_QUEUE.delete(
+                    &vault.store,
+                    wtxn,
+                    &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
+                )?;
+                if first_body {
+                    let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
+                    sync.bodies += 1;
+                    SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+                }
             }
             OCCURRENCES.put(&vault.store, wtxn, key, &occurrence)
         })?;

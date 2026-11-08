@@ -13,7 +13,7 @@ use super::SyncConnection;
 use super::server_close::ServerClose;
 use super::session::{
     ConvergenceSession, FullResyncMarker, ITEM11_REBOOTSTRAP_UNREADABLE, MAX_CONVERGENCE_ROUNDS,
-    PumpBudget, WsSink, WsSource,
+    PumpBudget, SessionFault, WsSink, WsSource,
 };
 
 impl SyncConnection {
@@ -35,7 +35,7 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         queued: &[QueuedUpdate],
         force_resync: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         let mut session = if force_resync.is_empty() {
             ConvergenceSession::from_queued(queued)
         } else {
@@ -83,7 +83,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         queued: &[QueuedUpdate],
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         let mut session = ConvergenceSession::from_queued(queued);
         if self
             .confirm_rounds(write, read, client, event_tx, &mut session, false)
@@ -91,10 +91,10 @@ impl SyncConnection {
         {
             return Ok(());
         }
-        Err(format!(
+        Err(SessionFault::Remote(format!(
             "the peer did not come level in {MAX_CONVERGENCE_ROUNDS} rounds; the peer session \
              ends and nothing re-bootstraps"
-        ))
+        )))
     }
 
     /// VV rounds over the session's pending windows: `true` once all of them
@@ -107,11 +107,11 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         session: &mut ConvergenceSession,
         strict: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SessionFault> {
         loop {
             let frames = session
                 .begin_round(client)
-                .map_err(|e| format!("Convergence round failed: {e}"))?;
+                .map_err(|e| SessionFault::Local(format!("Convergence round failed: {e}")))?;
             let Some(frames) = frames else {
                 return Ok(false);
             };
@@ -119,7 +119,7 @@ impl SyncConnection {
                 write
                     .send(Message::Binary(frame.into()))
                     .await
-                    .map_err(|e| format!("Convergence send failed: {e}"))?;
+                    .map_err(|e| SessionFault::Remote(format!("Convergence send failed: {e}")))?;
             }
             self.pump_server_frames(
                 read,
@@ -147,10 +147,10 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         force_resync: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         let frames = self
             .re_bootstrap_local_state(client, force_resync)
-            .map_err(|e| format!("Re-bootstrap queue clear failed: {e}"))?;
+            .map_err(|e| SessionFault::Local(format!("Re-bootstrap queue clear failed: {e}")))?;
         // A forced window's replacement retires its queued sends, deletes included, into the
         // window itself: until this re-bootstrap proves the window, `fr:w:` is what makes a later
         // connect, after a restart too, fetch and prove it again.
@@ -165,19 +165,19 @@ impl SyncConnection {
             write
                 .send(Message::Binary(frame.into()))
                 .await
-                .map_err(|e| format!("Re-bootstrap send failed: {e}"))?;
+                .map_err(|e| SessionFault::Remote(format!("Re-bootstrap send failed: {e}")))?;
         }
         let received = self
             .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
             .await?;
         if received == 0 {
-            return Err("Re-bootstrap sync timeout".to_string());
+            return Err(SessionFault::remote("Re-bootstrap sync timeout"));
         }
         // F25 H17/H21: a reply proves nothing about a given window. The delete
         // rows the queue clear kept are sent again, and every forced or
         // replayed window must be VV-confirmed against this re-bootstrap's
         // own server witness before the caller clears `fr:w:` or says Synced.
-        let kept = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let kept = self.queue.drain_updates().map_err(SessionFault::local)?;
         let sent = self
             .replay_queued_updates(write, client, event_tx, kept)
             .await?;
@@ -188,9 +188,9 @@ impl SyncConnection {
                 .confirm_rounds(write, read, client, event_tx, &mut session, true)
                 .await?
         {
-            return Err(format!(
+            return Err(SessionFault::Remote(format!(
                 "Re-bootstrap not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds"
-            ));
+            )));
         }
         if !sent.is_empty()
             && let Err(e) = self.queue.clear_through_confirmed(session.max_seq)
@@ -274,7 +274,7 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         budget: PumpBudget,
         strict: bool,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, SessionFault> {
         let mut received = 0usize;
         let mut wait = budget.first_frame;
         while received < budget.max_frames {
@@ -293,13 +293,18 @@ impl SyncConnection {
                                 .into_iter()
                                 .filter(|frame| !client.frame_withheld(frame))
                             {
-                                write
-                                    .send(Message::Binary(resp.into()))
+                                self.send_document_response(write, client, resp)
                                     .await
-                                    .map_err(|e| format!("Send response failed: {e}"))?;
+                                    .map_err(|exit| {
+                                        SessionFault::remote(
+                                            super::document_response::response_error(exit),
+                                        )
+                                    })?;
                             }
                         }
-                        Err(e) if strict => return Err(format!("Protocol error: {e}")),
+                        Err(e) if strict => {
+                            return Err(SessionFault::Remote(format!("Protocol error: {e}")));
+                        }
                         Err(e) => {
                             let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
                         }
@@ -311,15 +316,15 @@ impl SyncConnection {
                     write
                         .send(Message::Pong(data))
                         .await
-                        .map_err(|e| format!("Pong failed: {e}"))?;
+                        .map_err(|e| SessionFault::Remote(format!("Pong failed: {e}")))?;
                 }
                 Some(Ok(Message::Pong(_) | Message::Text(_) | Message::Frame(_))) => {}
                 // The close code tells a server fault from a refusal (FIX 5927).
                 Some(Ok(Message::Close(frame))) => {
-                    return Err(ServerClose::read(frame.as_ref()).to_string());
+                    return Err(SessionFault::remote(ServerClose::read(frame.as_ref())));
                 }
-                Some(Err(e)) => return Err(format!("WS error: {e}")),
-                None => return Err("WS stream ended".to_string()),
+                Some(Err(e)) => return Err(SessionFault::Remote(format!("WS error: {e}"))),
+                None => return Err(SessionFault::remote("WS stream ended")),
             }
         }
         Ok(received)

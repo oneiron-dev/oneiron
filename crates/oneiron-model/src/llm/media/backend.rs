@@ -206,4 +206,11 @@ impl MediaBackend for ImageMedia {
 /// call holds this, never a backend or a bare lease.
 pub trait AiMediaDoor: Send + Sync {
     fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse>;
+
+    /// Rechecks call-local release at each physical dispatch, including retries.
+    fn call_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaFuture<'a, MediaResponse>;
 }

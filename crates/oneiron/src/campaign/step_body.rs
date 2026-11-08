@@ -89,11 +89,33 @@ impl Vault {
         call_seq: u64,
         expected: &[u8],
     ) -> Result<Option<String>> {
+        let txn = self.store.env.read_txn()?;
+        self.campaign_step_body_latest_ref_if_matches_in_txn(
+            &txn,
+            program_ref,
+            step_ref,
+            call_seq,
+            expected,
+        )
+    }
+
+    pub(crate) fn campaign_step_body_latest_ref_if_matches_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        program_ref: EntityId,
+        step_ref: EntityId,
+        call_seq: u64,
+        expected: &[u8],
+    ) -> Result<Option<String>> {
         let artifact_id = campaign_step_body_artifact_id(program_ref, step_ref, call_seq)?;
-        let Some(head) = self.blob_artifact_head(&artifact_id)? else {
+        let Some(head) =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, txn, &artifact_id)?
+        else {
             return Ok(None);
         };
-        let Some(latest) = self.read_blob_artifact_version(&artifact_id, head.version)? else {
+        let Some(latest) =
+            self.read_blob_artifact_version_in_txn(txn, &artifact_id, head.version)?
+        else {
             return Ok(None);
         };
         if latest.as_slice() != expected {
