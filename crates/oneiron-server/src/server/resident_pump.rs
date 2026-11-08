@@ -50,8 +50,8 @@ use oneiron::agent_def::{
     note_unbound_listed_run,
 };
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
-    PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, HealerSlot, LeaderStarterSkills,
+    PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
     agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
     resident_attempt_wakes_for_room,
 };
@@ -176,6 +176,9 @@ struct Claimed {
     /// What started the run, from its dispatch (FIX 15011); `None` for a
     /// run no event started.
     wake: Option<TurnWake>,
+    /// The fence its claim took on its run TASK (FIX 4747); `None` for a
+    /// resident's run and a run with no run TASK, which run as before.
+    fence: Option<AgentRunFence>,
 }
 
 impl Claimed {
@@ -207,6 +210,33 @@ impl Claimed {
 }
 
 impl SyncServer {
+    /// Releases the agent-run executor leases this machine holds (FIX 4747
+    /// slice 5), beside its send executor leases, as serve stops gracefully
+    /// and before its device-sync link stops
+    /// ([`oneiron::Vault::release_agent_run_leases`]). A release that fails
+    /// leaves each lease to expire, logged with its kind.
+    pub(crate) async fn release_agent_run_leases(&self) {
+        let vault = Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.release_agent_run_leases()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(released)) => {
+                tracing::info!(
+                    released,
+                    "agent run executor leases released for another machine"
+                );
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "agent run executor lease release failed");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "agent run executor lease release task failed"
+                );
+            }
+        }
+    }
+
     /// Starts the pump, or returns `None` when no engine-native code host
     /// serves this vault.
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
@@ -492,6 +522,9 @@ impl SyncServer {
         }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
+        // FIX 4747: the run left this host; its next claim takes a fence
+        // again.
+        AgentDispatcher::new(vault).forget_agent_run_fence(id);
         self.desktop_seats.run_settled(run, waits);
         self.browser_seats.run_settled(run, waits);
         if let Some(run) = completed_run {
@@ -524,6 +557,7 @@ fn claim(
                     wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
+                    fence: None,
                 };
                 (claimed, briefing)
             }),
@@ -533,6 +567,7 @@ fn claim(
                 |AgentRun {
                      status,
                      qa_thread_ref,
+                     fence,
                  }| {
                     let briefing = briefing(&dispatcher, &status);
                     let claimed = Claimed {
@@ -543,6 +578,7 @@ fn claim(
                         wake: status.attempt.task_ref.as_ref().map(|_| TurnWake::Task),
                         status,
                         objectives: Vec::new(),
+                        fence,
                     };
                     (claimed, briefing)
                 },
