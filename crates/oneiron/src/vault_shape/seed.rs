@@ -51,14 +51,15 @@ pub(super) fn seed_digest(seed: &ShapeSeed) -> Result<[u8; 32]> {
         .as_bytes())
 }
 
-/// Whether `body` is what [`decode`] reads as a seed revision, valid or
-/// not: its marker names the seed's format (FIX 22091).
-pub(crate) fn names_shape_seed(body: &[u8]) -> bool {
+/// Whether the body `read` yields is what [`decode`] reads as a seed
+/// revision, valid or not: its marker names the seed's format, in any
+/// field-name form the decoder takes (FIX 22091).
+pub(crate) fn names_shape_seed(read: impl std::io::Read) -> bool {
     #[derive(Deserialize)]
     struct Marker {
         format: String,
     }
-    rmp_serde::from_slice::<Marker>(body).is_ok_and(|marker| marker.format == FORMAT)
+    rmp_serde::from_read::<_, Marker>(read).is_ok_and(|marker| marker.format == FORMAT)
 }
 
 fn decode(id: EntityId, body: &[u8]) -> Result<Option<StoredShapeSeed>> {

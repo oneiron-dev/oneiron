@@ -64,6 +64,9 @@ impl Vault {
         refuse_engine_namespace(&source)?;
         refuse_local_name(&source)?;
         let prior = {
+            // A carrier's body file stays on disk while this snapshot reads it
+            // (FIX 22091).
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
         };
@@ -560,6 +563,9 @@ impl Vault {
         pack_name: &str,
         section_id: &str,
     ) -> Result<Vec<EntityId>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let pack = self
             .installed_pack_in_txn(&txn, pack_name)?
@@ -583,6 +589,9 @@ impl Vault {
         Ok(ids)
     }
     pub fn candidate_pack(&self, source: &PackSource) -> Result<Option<PackInstallReceipt>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         PACK_CANDIDATE
             .get(&self.store, &txn, &candidate_key(source))
@@ -595,10 +604,16 @@ impl Vault {
             })
     }
     pub fn installed_pack(&self, name: &str) -> Result<Option<PackInstallReceipt>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.installed_pack_in_txn(&txn, name)
     }
     pub fn pack_for_predicate(&self, name: &str) -> Result<Option<PackInstallReceipt>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let Some(pack) = PACK_PREDICATE.get(&self.store, &txn, &name.to_owned())? else {
             return Ok(None);
