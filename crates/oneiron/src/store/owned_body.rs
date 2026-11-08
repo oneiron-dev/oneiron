@@ -98,6 +98,52 @@ pub(crate) fn prune_digest_in_rows(
     Ok(())
 }
 
+/// Among raw `vault_meta` rows, every descriptor holding `digest` as a
+/// file turned to hold it inline: a restore that put the body back inline
+/// (FIX 4192) leaves no descriptor naming a file the image does not carry,
+/// so the next census does not look for one. The held length and digest
+/// stay. Rows stay in order.
+///
+/// # Errors
+///
+/// A descriptor row that does not decode or encode.
+pub(crate) fn hold_digest_inline_in_rows(
+    rows: &mut [(Vec<u8>, Vec<u8>)],
+    digest: &[u8; 32],
+) -> Result<()> {
+    for (key, value) in rows.iter_mut() {
+        if !key.starts_with(BODY.decl().prefix) {
+            continue;
+        }
+        let mut body = BODY.decode_value(value)?;
+        let held = match &mut body.state {
+            BodyState::Complete { body } => Some(body),
+            BodyState::Incomplete { retained } => retained.as_mut(),
+        };
+        if let Some(held) = held
+            && held.blake3 == *digest
+            && held.location == BodyLocation::File
+        {
+            held.location = BodyLocation::Inline;
+            *value = BODY.encode_value(&body)?;
+        }
+    }
+    Ok(())
+}
+
+/// Every holder of `blake3`: each occurrence holding it and its owner.
+pub(crate) fn digest_holders_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    blake3: &[u8; 32],
+) -> Result<Vec<(EntityId, EntityId)>> {
+    Ok(BODY_DIGEST
+        .scan_from(store, txn, blake3)?
+        .into_iter()
+        .map(|((_, occurrence), owner)| (occurrence, owner))
+        .collect())
+}
+
 /// Whether any descriptor still holds `blake3`.
 pub(crate) fn digest_is_held_in_txn(
     store: &impl ManifestDbs,

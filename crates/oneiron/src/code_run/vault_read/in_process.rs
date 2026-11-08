@@ -1,7 +1,10 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
+mod deferred_forms;
 mod frames;
 mod media_query;
+
+pub use deferred_forms::DeferredServedForms;
 
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
@@ -47,6 +50,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     media: Option<&'v [EmbeddedMediaSeed]>,
     media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
+    deferred_forms: Option<&'v DeferredServedForms>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -89,6 +93,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             media: None,
             media_memory: None,
             image_pick: None,
+            deferred_forms: None,
         }
     }
 
@@ -182,6 +187,32 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     pub fn listing_producers(mut self, producers: &'v crate::memory::ProducerRows) -> Self {
         self.producers = Some(producers);
         self
+    }
+
+    /// Holds every form a hydrate serves in `forms` for the host to commit,
+    /// instead of committing it before the hydrate answers (FIX 26).
+    #[must_use]
+    pub fn deferring_served_forms(mut self, forms: &'v DeferredServedForms) -> Self {
+        self.deferred_forms = Some(forms);
+        self
+    }
+
+    /// Commits `served`, or holds it for the host that defers its forms.
+    fn record_served_forms(
+        &self,
+        method: VaultReadMethod,
+        served: &[ServedForm],
+    ) -> VaultReadResult<()> {
+        match self.deferred_forms {
+            Some(deferred) => {
+                deferred.defer(served);
+                Ok(())
+            }
+            None => self
+                .scoped_read
+                .commit_served_forms(served)
+                .map_err(|error| engine_failure(method, &error)),
+        }
     }
 
     fn query_op(&self, request: &CoreQueryRequest) -> VaultReadResult<CoreQueryResponse> {
@@ -521,9 +552,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             view,
             &hydrate_reader(request.image_input, view),
         )?;
-        self.scoped_read
-            .commit_served_forms(served.as_slice())
-            .map_err(|error| engine_failure(METHOD, &error))?;
+        self.record_served_forms(METHOD, served.as_slice())?;
         Ok(response)
     }
 
@@ -588,10 +617,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             results.push(batch_item_from_result(reference.clone(), result)?);
         }
         // Every form the batch served is recorded in one write before it
-        // answers.
-        self.scoped_read
-            .commit_served_forms(&served)
-            .map_err(|error| engine_failure(METHOD, &error))?;
+        // answers, or held for the host that defers its forms.
+        self.record_served_forms(METHOD, &served)?;
         Ok(CoreBatchShortIdHydrateResponse { narrowing, results })
     }
 
@@ -727,12 +754,14 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
     ) -> VaultReadResult<VaultReadResponse> {
         // Keep request-local reader state isolated. Policy is re-resolved in
         // each body snapshot, so a retained actor binding is not retained authority.
-        // The fresh reader lists into the host's producer set.
+        // The fresh reader lists into the host's producer set, and holds its
+        // served forms for a host that defers them.
         let mut reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),
         );
         reader.producers = self.producers;
+        reader.deferred_forms = self.deferred_forms;
         reader.media = self.media;
         reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
