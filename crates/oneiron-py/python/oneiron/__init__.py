@@ -4512,6 +4512,12 @@ class Oneiron:
     class _VaultCodeWaitsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def rebind_prepare(self, spec):
+            """Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind_prepare(json.dumps(spec))))
+        def rebind(self, spec):
+            """Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind(json.dumps(spec))))
         def resolve(self, spec):
             """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_resolve(json.dumps(spec))))
@@ -5809,6 +5815,9 @@ class Oneiron:
         def signature(self, spec):
             """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
             return json.loads(_translate(lambda: self._client.vault_esign_signing_signature(json.dumps(spec))))
+        def preview(self, spec):
+            """The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_preview(json.dumps(spec))))
     class _VaultEsignSealVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6897,9 +6906,9 @@ class Oneiron:
         @property
         def answer(self) -> "Oneiron._TasksAnswerVerbs":
             return Oneiron._TasksAnswerVerbs(self._client)
-        def outcomes(self, handle):
-            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
-            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        @property
+        def outcomes(self) -> "Oneiron._TasksOutcomesVerbs":
+            return Oneiron._TasksOutcomesVerbs(self._client)
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
@@ -6924,6 +6933,15 @@ class Oneiron:
         def status(self, intent_ref):
             """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
             return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
+    class _TasksOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle):
+            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        def route_calibration(self, handle):
+            """Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes_route_calibration(json.dumps(handle))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

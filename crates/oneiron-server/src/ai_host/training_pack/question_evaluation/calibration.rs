@@ -2,7 +2,8 @@
 
 use serde::Serialize;
 
-pub(super) const ECE_BINS: usize = 10;
+// The engine's one bin count, shared with the per-route calibration report.
+pub(super) use oneiron::llm::decision::questions::ECE_BINS;
 const FIT_STEPS: usize = 96;
 
 #[derive(Serialize)]
