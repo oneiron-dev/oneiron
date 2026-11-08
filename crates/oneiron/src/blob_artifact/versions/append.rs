@@ -533,8 +533,7 @@ impl VersionEntry {
             actor,
             provenance.claim_source(),
             WriteProvenance::new(write_provenance)?,
-            seal_permit
-                .map_or_else(|| provenance.approval_status(), |permit| permit.approval()),
+            seal_permit.map_or_else(|| provenance.approval_status(), |permit| permit.approval()),
         );
         let record = BlobArtifactVersion {
             version: place.next_version,
