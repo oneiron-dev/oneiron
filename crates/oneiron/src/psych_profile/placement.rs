@@ -1,12 +1,13 @@
-//! Where a snapshot's sources live, stamped as it is written (FIX 11149,
-//! 8141). A source revision the snapshot cites that names a live record is
-//! placed at that record and each world it lies in, read in the writing
-//! transaction, so a recipient read honours the owner's recipient choice for
-//! every source's world. A placement the writer supplied stands as given. A
-//! revision that names no live record, whose record cannot prove its world,
-//! or whose placement cannot be read, gets none, and only the read's own
-//! world is judged for it, as before; the write goes on. Word spans are not
-//! recorded.
+//! Where a snapshot's sources live, supplemented as it is written (FIX
+//! 11149, 8141, 11766). Each source the producer supplied names one record,
+//! the exact version of it read and the words of that version the profile
+//! was built from; that association stands as given, attached to the version
+//! it names. Placement only adds each world the record lies in now, read in
+//! the writing transaction, as a further placement of that same source, so a
+//! recipient read honours the owner's recipient choice for every source's
+//! world. It never makes a source, a version or a span: a record that is not
+//! live, cannot prove its world, or whose placement cannot be read gets no
+//! added world, and the write goes on.
 
 use super::record::{PsychProfile, PsychProfileSource};
 use crate::claim::base_world_id;
@@ -19,36 +20,22 @@ use crate::registry::ENTITY_TYPE_NOTE;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 impl crate::Vault {
-    /// `profile` with a placement for every source revision it cites that
-    /// none of its own placements covers: the record the revision names and
-    /// each world that record lies in, read in `txn`.
+    /// `profile` with each of its sources also placed in every world its
+    /// record lies in now, read in `txn`.
     pub(super) fn psych_profile_placed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         profile: &PsychProfile,
     ) -> Result<PsychProfile> {
         let mut sources = profile.sources.clone();
-        for revision in &profile.source_revision_ids {
-            if profile
-                .sources
-                .iter()
-                .any(|source| source.revision_ref == *revision)
-            {
-                continue;
-            }
+        for source in &profile.sources {
             let worlds = self
-                .psych_profile_source_worlds_in(txn, revision)
+                .psych_profile_source_worlds_in(txn, &source.document_ref)
                 .unwrap_or_default();
-            for world_ref in worlds {
-                sources.push(PsychProfileSource {
-                    revision_ref: *revision,
-                    document_ref: *revision,
-                    world_ref,
-                });
-            }
-        }
-        if sources.len() == profile.sources.len() {
-            return Ok(profile.clone());
+            sources.extend(worlds.into_iter().map(|world_ref| PsychProfileSource {
+                world_ref,
+                ..source.clone()
+            }));
         }
         profile.clone().with_sources(sources)
     }

@@ -41,6 +41,49 @@ pub(super) fn validate_container_provenance(
     Ok(())
 }
 
+/// A source's containers take only a source landing's rows (fix list row
+/// 16256). A turn landing under a source landing's proof joins only a
+/// conversation and a turn that carry the source-audience obligation in
+/// their own bytes: their ids derive from public source ids, so a plain
+/// writer could claim one first, and the landing refuses such a squatter
+/// rather than stamp it. A turn landing under no proof joins no container
+/// that names the obligation, so no unstamped MESSAGE is appended there.
+pub(super) fn validate_container_obligation(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source_bound: bool,
+    conversation_id: &EntityId,
+    existing_turn: Option<&EntityRecord>,
+) -> MemoryResult<()> {
+    use crate::store::source_audience_obligation::{
+        SourceAudienceObligation, decode_source_audience_obligation,
+    };
+    let admits = |body: &[u8]| {
+        let obligation = decode_source_audience_obligation(body);
+        if source_bound {
+            obligation == SourceAudienceObligation::Required
+        } else {
+            !obligation.is_present()
+        }
+    };
+    let refusal = |container: &str| {
+        MemoryError::bad_request(if source_bound {
+            format!("a source landing joins only a {container} a source landing stamped")
+        } else {
+            format!("a turn joins no {container} a source landing stamped")
+        })
+    };
+    if let Some(conversation) = dbs.port_entity_record(txn, conversation_id)?
+        && !admits(&conversation.body)
+    {
+        return Err(refusal("conversation"));
+    }
+    if existing_turn.is_some_and(|turn| !admits(&turn.body)) {
+        return Err(refusal("turn"));
+    }
+    Ok(())
+}
+
 /// A receipt type is host-owned, not an extra vocabulary choice for callers.
 pub(super) fn validate_witness_origin(turn: &WitnessTurn, host_executor: bool) -> MemoryResult<()> {
     if !host_executor
@@ -90,6 +133,7 @@ pub(super) fn overlay_receipt(
         .map(|alias| session_short_ref_string(&alias))
         .collect();
     Ok(WitnessReceipt {
+        turn_id: plan.turn_id,
         turn_short_id,
         message_short_ids,
         receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),

@@ -10,7 +10,7 @@ use super::loro_support::{
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::types::WindowKey;
-use super::window_packing_excludes_entity;
+use super::window_packing_excludes_entity_with;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -60,6 +60,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 /// sealed-content door calls it, and what it packs leaves this machine only
 /// sealed under the world's key. It packs no key pad, which lives in its
 /// world's windows too: pads ride only the sealed pad object.
+///
+/// After the pass, the erased-actor scrubs that every window export and
+/// persist runs (`egress::export_scrubbed_window_snapshot`) run over
+/// the whole mirror (FIX 19525): a room fact, origin claim, section-fit
+/// receipt or birth carrier that names an actor this vault erased is
+/// rewritten or goes, also one a merged bundle section brought for a row not
+/// held here, and the window is pinned history-free first.
 pub(crate) fn reverse_rematerialize_for_sealing(
     vault: &Vault,
     doc: &LoroDoc,
@@ -70,7 +77,17 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     if let Err(error) = super::sealed_membership::drop_departed_carriers(vault, doc, window_key) {
         tracing::warn!(%error, window = %window_key.as_str(), "sealed mirror kept departed rows");
     }
-    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)
+    let packed =
+        reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)?;
+    // FIX 4227, 4228: a room fact that names an erased actor.
+    crate::sync::room_facts::scrub_room_facts(vault, doc, Some(window_key))?;
+    // FIX 3877: an origin claim carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(window_key))?;
+    // FIX 12769: a section-fit receipt carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(window_key))?;
+    // FIX 6279: a birth carrier whose maker this vault erased.
+    crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(window_key))?;
+    Ok(packed)
 }
 
 /// [`reverse_rematerialize`] for only the `rows` a commit just wrote, not the
@@ -218,6 +235,10 @@ fn reverse_rematerialize_scan(
         entities_in_range = kept;
     }
     let device_only = withhold.worlds(vault)?;
+    // One snapshot for the pass's source-audience verdicts, kept across its
+    // rows and edge ends (FIX 16254).
+    let lineage_txn = vault.store.env.read_txn()?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -313,7 +334,7 @@ fn reverse_rematerialize_scan(
         let hex_id = id.to_hex();
 
         // Defer-sync egress door, before reading or packing the payload.
-        if window_packing_excludes_entity(vault, &device_only, id)? {
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, id)? {
             continue;
         }
 
@@ -474,6 +495,12 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // Engine A: so do its binding and policy closure.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::source_audiences::mirror_record(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
             if map_contains_binary(&entities_map, &hex_id)
                 && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
             {
@@ -542,7 +569,7 @@ fn reverse_rematerialize_scan(
     // Only its edges reaching this world are packed below. Apply the same
     // locality and egress gates before adding it to the edge-only pass.
     for id in base_edge_sources {
-        if window_packing_excludes_entity(vault, &device_only, &id)?
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, &id)?
             || !local_claim_sync_allowed(vault, &id)?
             || local_entity_is_unsyncable(vault, &id)?
         {
@@ -573,7 +600,12 @@ fn reverse_rematerialize_scan(
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
             if tombstones.contains(&edge.target)
-                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                || window_packing_excludes_entity_with(
+                    vault,
+                    &mut lineage,
+                    &device_only,
+                    &edge.target,
+                )?
             {
                 continue;
             }
@@ -620,8 +652,18 @@ fn reverse_rematerialize_scan(
                 if super::types::entity_world(&source_raw)?.is_some()
                     || is_unsyncable_secret_custody(&source_raw)
                     || edge.kind == EdgeKind::Blocks
-                    || window_packing_excludes_entity(vault, &device_only, &source)?
-                    || window_packing_excludes_entity(vault, &device_only, target)?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        &source,
+                    )?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        target,
+                    )?
                     || !local_claim_sync_allowed(vault, &source)?
                     || !local_claim_sync_allowed(vault, target)?
                     || local_entity_is_unsyncable(vault, &source)?
@@ -764,6 +806,12 @@ pub(super) fn remove_entity_crdt_carriers(
     if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
         removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
         removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
+    }
+    // So does its binding, and each policy no other binding reaches.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
+        && crate::sync::source_audiences::remove_record(&doc, id)?
+    {
+        removed = true;
     }
     Ok(removed)
 }
