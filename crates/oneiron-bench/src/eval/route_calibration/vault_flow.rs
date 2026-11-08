@@ -265,6 +265,12 @@ impl CaseRun<'_> {
             )
             .map_err(|error| (CaseStatus::LadderFailed, error.to_string()))?;
         row.clock = decision.receipt.time;
+        row.paired = decision
+            .receipt
+            .paired
+            .iter()
+            .map(|reading| reading.probability)
+            .collect();
         row.human_ask = decision.human_ask;
         row.prediction = Some(decision.answer.clone());
         if decision.answer == DecisionAnswer::Abstain {

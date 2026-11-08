@@ -106,6 +106,9 @@ pub(super) struct CaseRow {
     pub(super) route: Option<DecisionRoute>,
     /// The decision's clock, as its receipt keeps it.
     pub(super) clock: Option<DecisionTime>,
+    /// The paired "does this need more thinking?" P(yes) of each measurement
+    /// that read it, as the receipt keeps them; empty when none read it.
+    pub(super) paired: Vec<f64>,
     pub(super) human_ask: Option<HumanAskReason>,
     pub(super) error: Option<String>,
 }
@@ -127,6 +130,7 @@ impl CaseRow {
             probability: None,
             route: None,
             clock: None,
+            paired: Vec::new(),
             human_ask: None,
             error: None,
         }
