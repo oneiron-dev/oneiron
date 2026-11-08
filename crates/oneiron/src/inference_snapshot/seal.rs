@@ -24,8 +24,8 @@
 
 use std::borrow::Cow;
 
-use aes_gcm::aead::{AeadInPlace, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce, Tag};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::{Aes256Gcm, Nonce};
 use getrandom::SysRng;
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
@@ -315,35 +315,32 @@ fn wrap_aad(id: &[u8; ID_LEN]) -> [u8; WRAP_AAD_DOMAIN.len() + ID_LEN] {
     aad
 }
 
-/// Wraps `raw` under `vault_key` for snapshot `id` in the fallibly reserved
-/// canonical wrapped-key bytes. This buffer is wiped if encryption fails.
+/// Wraps `raw` under `vault_key` for snapshot `id`.
 fn wrap_key(vault_key: &[u8; 32], id: &[u8; ID_LEN], raw: &[u8; 32]) -> Result<WrappedSnapshotKey> {
     let mut nonce = [0; WRAP_NONCE_LEN];
     os_fill(&mut nonce)?;
     let cipher = Aes256Gcm::new_from_slice(vault_key)
         .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    let mut bytes = Zeroizing::new(Vec::new());
+    let ciphertext = cipher
+        .encrypt(
+            &Nonce::from(nonce),
+            Payload {
+                msg: raw,
+                aad: &wrap_aad(id),
+            },
+        )
+        .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(WRAPPED_LEN)
         .map_err(std::io::Error::from)?;
     bytes.push(VERSION);
     bytes.extend_from_slice(&nonce);
-    bytes.extend_from_slice(raw);
-    let tag = cipher
-        .encrypt_in_place_detached(
-            &Nonce::from(nonce),
-            &wrap_aad(id),
-            &mut bytes[1 + WRAP_NONCE_LEN..],
-        )
-        .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    bytes.extend_from_slice(&tag);
-    Ok(WrappedSnapshotKey {
-        bytes: std::mem::take(&mut *bytes),
-    })
+    bytes.extend_from_slice(&ciphertext);
+    Ok(WrappedSnapshotKey { bytes })
 }
 
-/// Opens `wrapped` under `vault_key` for snapshot `id` directly into the
-/// zeroizing data-key array, without a heap plaintext intermediate.
+/// Opens `wrapped` under `vault_key` for snapshot `id`.
 fn open_wrapped(
     vault_key: &[u8; 32],
     id: &[u8; ID_LEN],
@@ -356,17 +353,21 @@ fn open_wrapped(
         .split_first_chunk::<WRAP_NONCE_LEN>()
         .ok_or_else(corrupt)?;
     let cipher = Aes256Gcm::new_from_slice(vault_key).map_err(|_| corrupt())?;
-    let mut raw = Zeroizing::new([0u8; 32]);
-    let (ciphertext, tag) = ciphertext.split_at(raw.len());
-    raw.copy_from_slice(ciphertext);
-    cipher
-        .decrypt_in_place_detached(
+    let plain = cipher
+        .decrypt(
             &Nonce::from(*nonce),
-            &wrap_aad(id),
-            &mut raw[..],
-            Tag::from_slice(tag),
+            Payload {
+                msg: ciphertext,
+                aad: &wrap_aad(id),
+            },
         )
-        .map_err(|_| corrupt())?;
+        .map_err(|_| corrupt())
+        .map(Zeroizing::new)?;
+    if plain.len() != 32 {
+        return Err(corrupt());
+    }
+    let mut raw = Zeroizing::new([0u8; 32]);
+    raw.copy_from_slice(&plain);
     Ok(raw)
 }
 
