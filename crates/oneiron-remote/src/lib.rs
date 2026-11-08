@@ -453,6 +453,18 @@ impl OneironClient {
         }
     }
 
+    /// The content-free hook notice beside the last facade call's reply.
+    /// Typed results keep their shape. A clone starts with none, and the next
+    /// facade call clears it before sending. Session-only calls may carry one
+    /// without keeping a durable receipt. Vault-direct handles return `None`.
+    #[must_use]
+    pub fn last_hook_notice(&self) -> Option<String> {
+        match &self.backend {
+            Backend::Embedded(_) => None,
+            Backend::Remote(remote) => remote.last_hook_notice(),
+        }
+    }
+
     /// The 32-hex id of the actor an embedded handle writes as; `None` when
     /// remote.
     ///

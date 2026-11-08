@@ -70,6 +70,7 @@
 //! - `self.secrets.renew`
 //! - `self.secrets.teardown`
 //! - `self.secrets.use`
+//! - `vault.shares.issue_view_link`
 //! - `vault.shares.revoke`
 //! - `vault.shares.view`
 //! - `vault.artifacts.live_preview.read`
@@ -759,6 +760,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultAgentsGrantsRevoke,
     VaultAgentsVerbClassesGet,
     VaultAgentsVerbClassesConfigure,
+    VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultRepoAnchorBind,
@@ -1541,6 +1543,7 @@ impl HostDoorRow {
             "vault.agents.grants.revoke" => Self::VaultAgentsGrantsRevoke,
             "vault.agents.verb_classes.get" => Self::VaultAgentsVerbClassesGet,
             "vault.agents.verb_classes.configure" => Self::VaultAgentsVerbClassesConfigure,
+            "vault.oauth.authorization.answer" => Self::VaultOauthAuthorizationAnswer,
             "vault.repo.git_push.mint" => Self::VaultRepoGitPushMint,
             "vault.repo.git_push.revoke" => Self::VaultRepoGitPushRevoke,
             "vault.repo.anchor.bind" => Self::VaultRepoAnchorBind,
@@ -1826,6 +1829,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.secrets.renew"
                 | "self.secrets.teardown"
                 | "self.secrets.use"
+                | "vault.shares.issue_view_link"
                 | "vault.shares.revoke"
                 | "vault.shares.view"
                 | "vault.artifacts.live_preview.read"

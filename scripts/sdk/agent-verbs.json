@@ -10125,6 +10125,22 @@
       "section": false
     },
     {
+      "name": "vault.shares.issue_view_link",
+      "description": "Issues a holder-bound view-only pairing link for one admitted share's recipient.",
+      "input": "crate::task_verb::sdk::ShareViewLinkRequest",
+      "output": "crate::authority::PairingLink",
+      "call": "crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.shares.revoke",
       "input": "crate::task_verb::sdk::ShareRevokeRequest",
       "output": "crate::receipt::ShareRevokeReceipt",
@@ -10915,7 +10931,7 @@
     },
     {
       "name": "vault.code.symbols.release",
-      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.",
+      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver.",
       "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
       "output": "crate::memory::code_doors::CodeSymbolsReleased",
       "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
@@ -12151,7 +12167,7 @@
     },
     {
       "name": "vault.code.merge_queue.requeue_survivors",
-      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written.",
+      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch.",
       "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueRequeueView",
       "call": "memory.merge_queue_requeue_survivors_as(&memory.embedded_owner(\"vault.code.merge_queue.requeue_survivors\")?, input)?",
@@ -12482,6 +12498,22 @@
       "scope": "Write",
       "host_door": true,
       "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.oauth.authorization.answer",
+      "description": "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint.",
+      "input": "crate::task_verb::sdk::OAuthAuthorizationAnswer",
+      "output": "crate::task_verb::sdk::OAuthAuthorizationAnswered",
+      "call": "crate::task_verb::sdk::answer_oauth_authorization_as(memory.vault(), &memory.embedded_owner(\"vault.oauth.authorization.answer\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },

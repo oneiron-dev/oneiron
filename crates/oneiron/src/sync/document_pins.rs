@@ -122,8 +122,9 @@ pub(crate) fn mirror_document_pins(
     message: &EntityId,
     window: &WindowKey,
 ) -> Result<bool> {
-    let pins = {
+    let (pins, replaced_version) = {
         let rtxn = vault.store.env.read_txn()?;
+        let replaced_version = vault.replaced_message_version_in_txn(&rtxn, message)?;
         let mut pins = Vec::new();
         for pin in vault.message_quote_pins_in_txn(&rtxn, message)? {
             let erased = match pin.carried_ids() {
@@ -136,7 +137,7 @@ pub(crate) fn mirror_document_pins(
                 pins.push(pin);
             }
         }
-        pins
+        (pins, replaced_version)
     };
     if pins.is_empty() {
         return Ok(false);
@@ -167,7 +168,28 @@ pub(crate) fn mirror_document_pins(
         write_carrier(doc, &map, &key, pin)?;
         wrote = true;
     }
-    if replaced {
+    // The window's copies of the pins of the history a canonical restore's
+    // successor replaced here go, each beside its twin on the successor
+    // (FIX 3464).
+    let mut superseded = false;
+    if let Some(version) = &replaced_version {
+        let prefix = format!("{}/", message.to_hex());
+        for (key, bytes) in pin_rows(&map, |key, _| key.starts_with(&prefix)) {
+            let Ok(Some(old)) = carried_pin(&map, &key, &bytes) else {
+                continue;
+            };
+            if old.within(version)
+                && pins
+                    .iter()
+                    .any(|pin| !pin.within(version) && pin.twin_of(&old))
+            {
+                map_delete(&map, &key)?;
+                superseded = true;
+                wrote = true;
+            }
+        }
+    }
+    if replaced || superseded {
         // And the live twins' parts, which no pin lists now.
         for part in unreferenced_parts(&map, &listed_parts(&map)) {
             map_delete(&map, &part)?;
