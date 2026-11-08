@@ -422,6 +422,8 @@ vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
 vaultSyncQuarantineHeldEdits(input: unknown): unknown
+vaultSyncDocumentsCopyEditReview(input: unknown): unknown
+vaultSyncDocumentsCopyEditSettle(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
@@ -599,6 +601,8 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
+vaultCampaignHeld(input: unknown): unknown
+vaultCampaignApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
@@ -1245,6 +1249,7 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
+vaultNotesReadIndexed(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
 vaultNotesFork(input: unknown): unknown
 vaultNotesForksRead(input: unknown): unknown
