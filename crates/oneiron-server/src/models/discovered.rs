@@ -136,6 +136,28 @@ pub(super) fn discovered_offers(vault: &Vault) -> oneiron::Result<Vec<OfferBindi
         .collect())
 }
 
+/// Marks stale each row the vault's mesh catalog refreshes wrote, as a
+/// withdrawn offer's row is kept (FIX 4546), at the start of a host whose
+/// mesh is off: no refresh keeps them current there, so neither its raw
+/// router nor `oneiron maintain` after it counts those models (FIX 22227).
+/// The next refresh of a host with the mesh on writes each row its node
+/// still offers live again. A row that does not read or write stays as it
+/// is, said in the log.
+pub(crate) fn withdraw_discovered(vault: &Vault) {
+    let rows = match vault.model_registry_rows() {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "mesh model rows left as they were: the vault's discovery rows did not read");
+            return;
+        }
+    };
+    for row in rows.iter().filter(|row| mesh_peer(row).is_some()) {
+        if let Err(error) = vault.withdraw_model_registry_row(row) {
+            tracing::warn!(kind = ?error.kind(), model = %row.catalog.model, "mesh model row left as it was");
+        }
+    }
+}
+
 /// The node a row names, when the row is discovery's own: an own-server
 /// route a mesh catalog refresh wrote for a model that node offers. A row a
 /// withdrawn offer left stale routes nowhere (FIX 4546).

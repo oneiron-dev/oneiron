@@ -116,6 +116,10 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_CODE_FIX_FACET => Some(coach::COACH_CODE_FIX_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
+        // A provider-deleted, kept message's claims, checked again (FIX 15414).
+        super::super::maintenance::CLAIM_SOURCE_RECHECK_FACET => {
+            Some(super::super::maintenance::CLAIM_SOURCE_RECHECK_FACET)
+        }
         super::super::maintenance::action_mode::ACTION_MODE_FACET => {
             Some(super::super::maintenance::action_mode::ACTION_MODE_FACET)
         }

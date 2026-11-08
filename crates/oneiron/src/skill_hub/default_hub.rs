@@ -274,7 +274,13 @@ impl Vault {
     /// it asked for (FIX 10202): the package is fetched once from the pinned
     /// commit, its declared id and the requested version are checked before
     /// any write, and the import commits that same package. A mismatch
-    /// writes nothing.
+    /// writes nothing. `rows` notes the library hub once its row is read and
+    /// the stored skill a content dedup answers, landed or refused (FIX
+    /// 11699).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the library door's inputs, the skill identity asked for and its read report"
+    )]
     pub(crate) fn import_default_hub_skill_expecting(
         &self,
         owner: &AuthenticatedOwner,
@@ -283,24 +289,30 @@ impl Vault {
         version: Option<&str>,
         occurred: TimeRange,
         learned_at: u64,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
-        let row = self.skill_hub_record(&id)?;
+        let row = self.skill_hub_record(&id);
+        rows.hub_read(id, &row);
+        let row = row?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(HUB_COMMIT.to_owned()))?;
         let adapter = library_fetch(id, &row, &reference)?;
         let package = adapter.fetch_package(&reference)?;
         super::hub_owner::check_expected_skill(&package.record, skill_id, version)?;
         let inventory = super::osv::dependency_inventory(&package)?;
+        // [`Self::install_skill_with_advisories`], with its read report.
         Ok(self
-            .install_skill_with_advisories(
-                owner,
+            .import_with_advisories(
+                Some(owner),
                 &reference,
                 &package,
+                EntityId::now(),
                 &inventory,
                 super::osv::hub_advisory_query(row.kind),
                 occurred,
                 learned_at,
+                rows,
             )?
             .entity)
     }

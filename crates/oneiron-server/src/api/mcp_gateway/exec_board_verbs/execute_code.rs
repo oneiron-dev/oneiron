@@ -173,9 +173,8 @@ pub(in crate::api::mcp_gateway) struct McpCodeRunEntered {
 
 /// The admitted entry of the durable run `entry` holds, which `run_ref`
 /// names under `actor`: the host's single flight, run admission, model seat
-/// and spend line, as every entry of the run takes them. The caller's own
-/// call renders its answer; the automatic re-entry of a parked run whose
-/// reply was delivered renders none (FIX 4606). The outcome settles
+/// and spend line, as every entry of the run takes them. This is the
+/// caller's own call, which renders its answer. The outcome settles
 /// `entry`: a run parked on a wait registers it, and any other end removes
 /// the registration.
 pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
@@ -192,6 +191,64 @@ pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
     let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
         server, actor, run_id,
     ));
+    let outcome = host
+        .execute(mcp_code_run_request(
+            server, actor, run_ref, task, run_id, &verbs,
+        ))
+        .await;
+    Ok(mcp_code_run_ended(
+        server, actor, run_ref, task, entry, verbs, outcome,
+    ))
+}
+
+/// The automatic re-entry of a parked run whose reply was delivered (FIX
+/// 4606), through the same admitted entry as the caller's own call. It
+/// renders no answer. `condition` is the wait and the generation the
+/// re-entry was readied for, and the host checks it under the run's single
+/// flight. `None`: the run had left them, as when a caller's own call took
+/// it first, so no batch ran and the entry ends as one that started
+/// nothing. Any other outcome settles `entry` as a caller's call does.
+pub(in crate::api::mcp_gateway) async fn resume_mcp_code_run(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    run_ref: &str,
+    task: &str,
+    entry: McpCodeRunEntry,
+    condition: crate::mcp::McpCodeRunResumeCondition,
+) -> Result<Option<McpCodeRunEntered>, McpGatewayError> {
+    let host = server
+        .code_execution_host()
+        .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
+    let run_id = entry.run_id();
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
+        server, actor, run_id,
+    ));
+    let request = mcp_code_run_request(server, actor, run_ref, task, run_id, &verbs);
+    let outcome = match host.execute_resumed(request, condition).await {
+        Ok(crate::mcp::McpCodeRunResumed::Superseded) => {
+            entry.supersede();
+            return Ok(None);
+        }
+        Ok(crate::mcp::McpCodeRunResumed::Entered(outcome)) => Ok(*outcome),
+        Err(error) => Err(error),
+    };
+    Ok(Some(mcp_code_run_ended(
+        server, actor, run_ref, task, entry, verbs, outcome,
+    )))
+}
+
+/// The host request for one entry of `run_id`, the run `run_ref` names
+/// under `actor`, behind the verb door `verbs`, bound for `actor` as the
+/// admitted caller a code consent wait of the run keeps (FIX 4606), with
+/// the run's self brief when `actor`'s connection has one.
+fn mcp_code_run_request<'a>(
+    server: &Arc<SyncServer>,
+    actor: &'a McpCallContext,
+    run_ref: &'a str,
+    task: &'a str,
+    run_id: oneiron::EntityId,
+    verbs: &Arc<super::code_mode_verbs::McpCodeModeVerbs>,
+) -> crate::mcp::McpCodeExecutionRequest<'a> {
     // FIX 17594 D5: the durable run's self brief, keyed by its trusted run
     // id, for a connection that has one; the host installs it under the
     // run's single flight and closes it when the run completes. A parked
@@ -201,21 +258,39 @@ pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
             server, actor, run_id,
         )) as Arc<dyn crate::mcp::McpCodeRunSelfBrief>
     });
-    let outcome = host
-        .execute(crate::mcp::McpCodeExecutionRequest {
-            vault: Arc::clone(&server.vault),
-            actor,
-            off_record_session: actor.off_record_session.clone(),
-            run_ref,
-            task,
-            run_id,
-            verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
-            brief,
-        })
-        .await;
-    // A run that ended ends its desktop and closes the live lens cards it
-    // created, named by its run id's hex (OF-181, FIX 2612); any other entry
-    // leaves them parked for the run's next entry (CUA-001).
+    crate::mcp::McpCodeExecutionRequest {
+        vault: Arc::clone(&server.vault),
+        actor,
+        off_record_session: actor.off_record_session.clone(),
+        run_ref,
+        task,
+        run_id,
+        verbs: Arc::clone(verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
+        consent_origin: super::super::code_run_resume::mcp_code_consent_origin(
+            server, actor, run_ref,
+        ),
+        brief,
+    }
+}
+
+/// Ends one entry of `entry`'s run with what its host answered. A run that
+/// ended ends its desktop and closes the live lens cards it created, named
+/// by its run id's hex (OF-181, FIX 2612); any other entry leaves them
+/// parked for the run's next entry (CUA-001). The outcome then settles
+/// `entry`.
+fn mcp_code_run_ended(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    run_ref: &str,
+    task: &str,
+    entry: McpCodeRunEntry,
+    verbs: Arc<super::code_mode_verbs::McpCodeModeVerbs>,
+    outcome: Result<
+        oneiron::engine_executor::EngineExecutorOutcome,
+        crate::mcp::McpCodeExecutionError,
+    >,
+) -> McpCodeRunEntered {
+    let run_id = entry.run_id();
     if outcome.as_ref().is_ok_and(|outcome| {
         matches!(
             outcome.status,
@@ -230,11 +305,11 @@ pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
         }
     }
     entry.settle(actor, run_ref, task, &outcome);
-    Ok(McpCodeRunEntered {
+    McpCodeRunEntered {
         run_id,
         verbs,
         outcome,
-    })
+    }
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {

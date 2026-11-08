@@ -22,8 +22,9 @@
 //! later, it counts nothing. A home session that fails on a fault of this
 //! machine's own instead (FIX 22107: its store or queue, its full-resync
 //! markers, an encode, the recovery it needs first; FIX 22153: its store as
-//! it applies the home's frames or index) says nothing of the home: it
-//! counts nothing, resets nothing, and a turn a probe gave the home stays.
+//! it applies the home's frames or index; FIX 22217: a carrier it cannot set
+//! up for the home's URL) says nothing of the home: it counts nothing,
+//! resets nothing, and a turn a probe gave the home stays.
 //!
 //! A peer session (`SyncClient::peer_session`) exchanges
 //! updates both ways as a home session does (queue replay, vector rounds,
@@ -64,20 +65,23 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::SyncPeerDialer;
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use crate::sync::peer_route::{HOME_DOWN_AFTER_SECS, HOME_PROBE_SECS, HOME_PROBE_TIMEOUT_SECS};
-use crate::sync::transport::TAG_SYNC_UPDATE;
+use crate::sync::transport::{TAG_ROOT_PART, TAG_SYNC_UPDATE};
 use crate::{EntityId, Vault};
 
 use super::session::SessionFault;
 
 /// Whether the first frame the far end sent a session is its root
-/// (`TAG_SYNC_UPDATE`). A home sends its root first only once it has
-/// admitted this machine's upgrade and taken the session's hello, its root
-/// read from its own store; a refused upgrade, a refused hello, a fault or a
-/// close sends none. It proves no more: a probe that reads it gives the home
-/// a turn, and only a completed first round counts the home served
-/// ([`HomeReach`]).
+/// (`TAG_SYNC_UPDATE`, or a large root's first `TAG_ROOT_PART`). A home
+/// sends its root first only once it has admitted this machine's upgrade
+/// and taken the session's hello, its root read from its own store; a
+/// refused upgrade, a refused hello, a fault or a close sends none. It
+/// proves no more: a probe that reads it gives the home a turn, and only a
+/// completed first round counts the home served ([`HomeReach`]).
 const fn first_frame_is_root(first_frame: &[u8]) -> bool {
-    matches!(first_frame.first(), Some(&TAG_SYNC_UPDATE))
+    matches!(
+        first_frame.first(),
+        Some(&(TAG_SYNC_UPDATE | TAG_ROOT_PART))
+    )
 }
 
 /// Whether the home serves this machine's sync, as the reconnect loop has

@@ -105,8 +105,9 @@ pub(super) enum RpcFault {
     /// timed out, its refusal, or a reply that breaks the RPC contract.
     Remote(TransportError),
     /// This machine's own: its actor session or selector, the endpoint it
-    /// chose, its upgrade's signing or header, its bind's or request's
-    /// encode or size, or its request ids running out.
+    /// chose, its upgrade's signing or header, a carrier it cannot set up for
+    /// the endpoint's URL (FIX 22217), its bind's or request's encode or
+    /// size, or its request ids running out.
     Local(TransportError),
 }
 
@@ -116,9 +117,10 @@ impl RpcFault {
         Self::Remote(refused())
     }
 
-    /// This machine's own fault, told as [`refused`].
-    fn local() -> Self {
-        Self::Local(refused())
+    /// This machine's own fault, told with `cause`: the step of this
+    /// machine's that failed (FIX 22236).
+    fn local(cause: &'static str) -> Self {
+        Self::Local(TransportError::InvalidPayload(cause))
     }
 
     /// The error the call tells, its side dropped.
@@ -160,8 +162,9 @@ impl ResidenceRpc {
     }
 
     /// [`Self::connect`], its fault told by the side it is on (FIX 22179): a
-    /// missing actor session or selector, the endpoint, the upgrade and the
-    /// bind's encode are this machine's own; the home's answer is the home's.
+    /// missing actor session or selector, the endpoint, the upgrade, the
+    /// carrier's setup (FIX 22217) and the bind's encode are this machine's
+    /// own; the home's answer is the home's.
     pub(super) async fn connect_by_side(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -169,11 +172,13 @@ impl ResidenceRpc {
     ) -> Result<Option<Self>, RpcFault> {
         let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
         let deadline = tokio::time::Instant::now() + timeout;
-        let session = config.note_session.as_ref().ok_or_else(RpcFault::local)?;
+        let session = config.note_session.as_ref().ok_or_else(|| {
+            RpcFault::local("this machine has no actor session for the residence RPC")
+        })?;
         config
             .residence_selector
             .as_ref()
-            .ok_or_else(RpcFault::local)?;
+            .ok_or_else(|| RpcFault::local("this machine has no selector for the residence RPC"))?;
         let Some((mut socket, home, address)) = Self::dial(vault, config, deadline).await? else {
             return Ok(None);
         };
@@ -185,7 +190,8 @@ impl ResidenceRpc {
             .map_err(|_| RpcFault::remote())?;
         // A future server may send an ephemeral snapshot before the bind ack.
         // Only the exact fixed-ID null reply opens the RPC lane.
-        for _ in 0..16 {
+        let mut opening_messages = 0;
+        while opening_messages < 16 {
             let msg = tokio::time::timeout_at(deadline, socket.next())
                 .await
                 .map_err(|_| RpcFault::remote())?
@@ -194,6 +200,15 @@ impl ResidenceRpc {
             let Message::Binary(frame) = msg else {
                 return Err(RpcFault::remote());
             };
+            if frame.first() == Some(&transport::TAG_ROOT_PART) {
+                let part =
+                    transport::decode_root_update_part(&frame[1..]).map_err(RpcFault::Remote)?;
+                if part.offset + part.bytes.len() == part.total {
+                    opening_messages += 1;
+                }
+                continue;
+            }
+            opening_messages += 1;
             match frame.first() {
                 Some(&TAG_RPC) => {
                     super::super::note_session::accept_bind_reply(&frame[1..])
@@ -245,7 +260,9 @@ impl ResidenceRpc {
     /// socket, the machine the home proved on its upgrade, and the dialed
     /// endpoint's route address, or `None` on a transport outage. The
     /// endpoint, its URL and the upgrade's credential are this machine's own
-    /// (FIX 22179); a refused upgrade and the hello's send are the home's.
+    /// (FIX 22179), and so is a carrier it cannot set up for that URL
+    /// ([`crate::sync::carrier::own_setup_fault`], FIX 22217); a refused
+    /// upgrade and the hello's send are the home's.
     async fn dial(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -254,12 +271,12 @@ impl ResidenceRpc {
         // FIX 8862: the endpoint is read once, the carrier is chosen for
         // that endpoint, and both pass the credential check before any
         // header below is added.
-        let endpoint = ResidenceEndpoint::select(config).ok_or_else(RpcFault::local)?;
-        let mut request = endpoint
-            .url
-            .as_str()
-            .into_client_request()
-            .map_err(|_| RpcFault::local())?;
+        let endpoint = ResidenceEndpoint::select(config).ok_or_else(|| {
+            RpcFault::local("no residence endpoint fits this machine's sync config")
+        })?;
+        let mut request = endpoint.url.as_str().into_client_request().map_err(|_| {
+            RpcFault::local("the residence endpoint URL is not a WebSocket request")
+        })?;
         // The upgrade proves the device's transport slip, as the sync
         // socket does, signed on the wall clock as it is; a bind then
         // attenuates it to the actor.
@@ -268,12 +285,16 @@ impl ResidenceRpc {
             binding = Some(
                 credential
                     .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                    .map_err(|_| RpcFault::local())?,
+                    .map_err(|_| {
+                        RpcFault::local("this machine could not sign its residence upgrade")
+                    })?,
             );
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
-                .map_err(|_| RpcFault::local())?;
+                .map_err(|_| {
+                    RpcFault::local("this machine's bearer token is not a valid header")
+                })?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
         let (mut socket, response) = match tokio::time::timeout_at(
@@ -285,6 +306,11 @@ impl ResidenceRpc {
             Ok(Ok(connected)) => connected,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => {
                 return Err(RpcFault::remote());
+            }
+            Ok(Err(error)) if crate::sync::carrier::own_setup_fault(&error) => {
+                return Err(RpcFault::local(
+                    "this machine cannot set up a carrier for the residence endpoint",
+                ));
             }
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
@@ -370,7 +396,10 @@ impl ResidenceRpc {
         machine: Option<(&crate::Vault, crate::EntityId)>,
     ) -> Result<Result<Value, HomeRefused>, RpcFault> {
         let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).ok_or_else(RpcFault::local)?;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| RpcFault::local("this socket's residence RPC request ids ran out"))?;
         let request = RequestEnvelope {
             kind: "rpc.req",
             id,
@@ -378,9 +407,12 @@ impl ResidenceRpc {
             last: true,
             payload: json!({"method": method, "params": params}),
         };
-        let bytes = rmp_serde::to_vec_named(&request).map_err(|_| RpcFault::local())?;
+        let bytes = rmp_serde::to_vec_named(&request)
+            .map_err(|_| RpcFault::local("the residence RPC request did not encode"))?;
         if bytes.len() > transport::MAX_DECODED_PAYLOAD_BYTES {
-            return Err(RpcFault::local());
+            return Err(RpcFault::local(
+                "the residence RPC request is over the frame limit",
+            ));
         }
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
@@ -437,7 +469,9 @@ impl ResidenceRpc {
                 // home opens each socket with; a bound lane takes none.
                 let opening = matches!(
                     frame.first(),
-                    Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE)
+                    Some(&transport::TAG_EPHEMERAL)
+                        | Some(&transport::TAG_SYNC_UPDATE)
+                        | Some(&transport::TAG_ROOT_PART)
                 );
                 if !(self.unbound && opening) {
                     break frame;

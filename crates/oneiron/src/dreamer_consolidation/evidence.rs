@@ -437,7 +437,16 @@ impl VerifiedEvidenceSet {
                 span.frontier.as_deref(),
             )?;
         }
-        Ok(())
+        // A claim drawn from a kept copy of mail the provider deleted is
+        // checked again, as the claims drawn before the delete were (fix list
+        // row 15414).
+        let cited: Vec<EntityId> = self
+            .rows
+            .iter()
+            .flat_map(|row| &row.messages)
+            .map(|span| span.message)
+            .collect();
+        crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)
     }
     pub(super) fn check_pins(&self, resources: &BranchResources<'_>) -> Result<()> {
         for row in &self.rows {

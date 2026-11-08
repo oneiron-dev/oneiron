@@ -49,6 +49,10 @@ pub struct BatchBuilder<'a> {
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
+    /// Each NOTE `put_authored_note` queued, with its explicit birth text:
+    /// its document is born from that text in the transaction that applies
+    /// the batch, after every op (FIX 7783).
+    note_births: Vec<(EntityId, String)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
     /// The bytes of each interpreted body file this batch puts, which the
@@ -126,6 +130,7 @@ impl<'a> BatchBuilder<'a> {
             birth_mask: None,
             text_births: std::collections::HashMap::new(),
             births: Vec::new(),
+            note_births: Vec::new(),
             asset_files: std::collections::HashMap::new(),
             asset_file_bodies: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
