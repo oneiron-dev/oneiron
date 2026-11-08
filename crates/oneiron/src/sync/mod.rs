@@ -57,6 +57,7 @@ pub mod manager;
 pub mod mesh_path;
 pub(crate) mod message_docs;
 pub(crate) mod note;
+pub(crate) mod office_proposals;
 pub(crate) mod origin_claims;
 pub(crate) mod pack_sync;
 pub mod peer_route;
@@ -82,6 +83,7 @@ mod sweep_fence;
 #[cfg(test)]
 mod tests;
 pub mod transport;
+pub(crate) mod typed_body_rows;
 pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
