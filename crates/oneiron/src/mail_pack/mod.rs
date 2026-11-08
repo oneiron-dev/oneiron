@@ -39,9 +39,11 @@
 //! the engine's own MIME reader ([`mime`]).
 
 mod attachments;
+mod caldav_calendar;
 mod calendar;
 mod compliance;
 mod credential;
+mod dav_xml;
 mod doors;
 mod gmail;
 mod google_calendar;
@@ -66,6 +68,7 @@ mod reply_mime;
 mod reply_recipients;
 mod reply_send;
 mod rest;
+mod search;
 mod share;
 mod smtp_client;
 mod source;
@@ -76,6 +79,7 @@ mod wire;
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 pub(crate) use attachments::collect_after_delete;
 pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
+pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
@@ -113,6 +117,7 @@ pub use reply::{
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,

@@ -111,6 +111,36 @@ impl Vault {
         self.put_pack_prepared_in_txn(txn, HookBinder::Owner(owner), prepared)
     }
 
+    /// Prepares a resident agent's put of the `local` pack without opening
+    /// its install writer (HOOKS-07, FIX 4692): the same checks as
+    /// [`Self::put_local_pack_as_agent`]'s.
+    pub(crate) fn prepare_agent_local_pack_put(
+        &self,
+        files: Vec<HubFile>,
+    ) -> Result<PreparedPackPut> {
+        let tree = PackSource::from_tree(files)?;
+        if tree.source.manifest.name != LOCAL_PACK_NAME {
+            return Err(invalid("an agent puts the local pack only"));
+        }
+        self.prepare_pack_put_source(tree, None)
+    }
+
+    /// A resident agent's put of the `local` pack in a caller-owned writer:
+    /// each hook whose body it wrote binds as its own, at its ceiling, as
+    /// [`Self::put_local_pack_as_agent`] binds it. The caller sends the
+    /// bindings-changed notification only after that writer commits.
+    pub(crate) fn put_agent_pack_prepared_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: &WriteActor,
+        prepared: &PreparedPackPut,
+    ) -> Result<PackInstallDisposition> {
+        if agent.actor_class() != EdgeActorClass::Agent {
+            return Err(invalid("an agent's put takes an agent writer"));
+        }
+        self.put_pack_prepared_in_txn(txn, HookBinder::Agent(*agent), prepared)
+    }
+
     fn prepare_pack_put_source(
         &self,
         tree: PackTree,
@@ -201,6 +231,11 @@ impl Vault {
     }
 }
 
+/// The local pack's seed source: its one embedded PACK.md.
+pub(super) fn local_seed_source() -> Result<PackSource> {
+    PackSource::from_files(vec![HubFile::new("PACK.md", LOCAL_PACK_MD.as_bytes())])
+}
+
 /// Vault open creates the `local` pack once, like the bootstrap skills. A
 /// later put replaces it; this never does.
 pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
@@ -208,7 +243,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
     if PACK_INSTALL.contains(&vault.store, &vault.store.env.read_txn()?, &name)? {
         return Ok(());
     }
-    let source = PackSource::from_files(vec![HubFile::new("PACK.md", LOCAL_PACK_MD.as_bytes())])?;
+    let source = local_seed_source()?;
     let hub = put_ref(&source)?;
     vault.with_write_txn_grouped(|txn| {
         if PACK_INSTALL.contains(&vault.store, txn, &name)? {
