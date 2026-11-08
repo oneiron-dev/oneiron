@@ -8166,6 +8166,7 @@ dependencies = [
  "futures-util",
  "libc",
  "memchr",
+ "oneiron-sandbox-contract",
  "oneiron-spawn",
  "rcgen",
  "reqwest 0.12.28",

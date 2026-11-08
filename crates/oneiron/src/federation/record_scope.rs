@@ -126,9 +126,11 @@ pub(crate) fn backfill_task_base(
 }
 
 /// Retire an id's scope sidecar in the same transaction that erases its body.
-/// A later same-id write never inherits the deleted record's birth position.
+/// A later same-id write never inherits the deleted record's birth position,
+/// nor a source-free text's birth record (FIX 8741).
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
     SCOPE_RECORD.delete(store, txn, &id)?;
+    asset_text::retire_source_free_birth(store, txn, id)?;
     bump_scope_revision(store, txn)
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
@@ -225,9 +227,10 @@ fn derived_position(
         let scope = note_world::note_position(store, txn, id, kind, birth);
         (scope, facet)
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
-        // A text born from its sources sits under their facet; one born
-        // unplaced keeps its own (`asset_text`). A stamp added later is
-        // refused by `stamp_put` as a restamp.
+        // A text born from its sources sits under their facet, one born
+        // source-free under its batch mask or vault default (FIX 8741), and
+        // one born unplaced keeps its own (`asset_text`). A stamp added
+        // later is refused by `stamp_put` as a restamp.
         let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
     } else if kind == crate::registry::ENTITY_TYPE_EVENT
