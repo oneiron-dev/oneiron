@@ -31,8 +31,9 @@ use serde::{Deserialize, Serialize};
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskTarget, TaskAskWord,
 };
 use super::training_offer_ask::{canonical_digest, canonical_id, single_str};
 use super::{ConsultPayloadRef, TaskAssignee};
@@ -301,7 +302,10 @@ fn swap_ask_spec(key: &SwapAskKey, turn: EntityId) -> MemoryResult<TaskAskSpec> 
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(turn));
     let mut options = BTreeMap::new();
     for (id, _, label) in OPTIONS {
-        options.insert(TaskAskOptionId::new(id)?, label.to_owned());
+        options.insert(
+            TaskAskOptionId::new(id)?,
+            TaskAskOption::new(label.to_owned()),
+        );
     }
     what.options = options;
     let who = TaskAskTarget::Responder(TaskAssignee::Human { actor_ref: key.1 });
@@ -624,7 +628,7 @@ fn issue_one(
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
-                author: WitnessAuthor::System,
+                author: WitnessAuthor::Companion,
                 message_type: SWAP_QUESTION_TYPE.to_owned(),
                 content: swap_question_text(&row.run, &route.expected)?,
                 parts: None,

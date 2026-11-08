@@ -512,13 +512,13 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     if let Some(world) = body.world {
         // Board fences use identity from this authorized snapshot, not a later read.
         out.insert(
-            "world".to_owned(),
+            "worldId".to_owned(),
             serde_json::Value::String(world.to_hex()),
         );
     }
     if body.rel.is_some() {
-        // On-disk `rel` is MessagePack binary and renders as JSON null.
-        out.insert("rel".to_owned(), serde_json::Value::Null);
+        // Relationship references retain this projection's null representation.
+        out.insert("scopeRelationshipId".to_owned(), serde_json::Value::Null);
     }
     // On-disk `subj` is MessagePack binary; the generic projection renders
     // binary as null, and so does this one.
