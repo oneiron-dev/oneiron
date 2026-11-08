@@ -1,7 +1,9 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
 use super::door::CalendarConnectorOperation;
-use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
+use super::outbound::{
+    CalendarRemoteObjectRow, ingest_error, omission_observed, write_remote_object,
+};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, classify_remote_change, parse_remote_object,
@@ -108,18 +110,28 @@ pub fn run_calendar_connector_sync_with_screener(
         )?;
     }
 
+    // An omission a write in flight or a moved row holds back stays owed:
+    // every other change of this pull stands, and the next pull lists the
+    // calendar whole again, so the omission is read again, never dropped
+    // (fix list row 19192).
+    let next_cursor = match batch.next_cursor {
+        Some(cursor) if counters.owed_omissions > 0 => {
+            Some(transport.cursor_owing_full_listing(&cursor))
+        }
+        cursor => cursor,
+    };
     let next_not_before = seat.jittered_next_poll_at(now, jitter_seed)?;
     enqueue_next_sync(
         vault,
         seat,
         transport.provider_key(),
-        batch.next_cursor.clone(),
+        next_cursor.clone(),
         next_not_before,
         now,
     )?;
 
     Ok(CalendarSyncOutcome::Reenqueued {
-        next_cursor: batch.next_cursor,
+        next_cursor,
         next_not_before,
         applied: counters.applied,
         acknowledged: counters.acknowledged,
@@ -135,6 +147,9 @@ struct SyncCounters {
     acknowledged: u32,
     source_absences: u32,
     status_cancellations: u32,
+    /// Omissions a write in flight or a moved row held back (fix list row
+    /// 19192).
+    owed_omissions: u32,
 }
 
 /// Applies one pulled change under the echo law, each admission under
@@ -244,9 +259,50 @@ fn apply_remote_change(
                 classify_remote_change(None, change),
                 EchoDisposition::ApplyRemoteDeletion
             );
-            apply_remote_deletion(vault, seat, provider, uid, screen, now, counters)
+            apply_remote_deletion(
+                vault,
+                seat,
+                provider,
+                uid,
+                RemovalEvidence::Tombstone,
+                screen,
+                now,
+                counters,
+            )
+        }
+        RemoteCalendarChange::Omitted {
+            uid, observation, ..
+        } => {
+            // Fix list row 19192: checked inside this turn, which a write's
+            // prepared row is published in too, so the row and the outbox
+            // are the ones the absence lands against.
+            operation.revalidate(vault)?;
+            if !omission_observed(vault, operation, uid, *observation)? {
+                counters.owed_omissions += 1;
+                return Ok(());
+            }
+            apply_remote_deletion(
+                vault,
+                seat,
+                provider,
+                uid,
+                RemovalEvidence::Omission,
+                screen,
+                now,
+                counters,
+            )
         }
     }
+}
+
+/// What says a remote resource is gone.
+#[derive(Clone, Copy)]
+enum RemovalEvidence {
+    /// The provider's own tombstone: an explicit cancellation.
+    Tombstone,
+    /// A full listing that no longer carries it (fix list row 19192): an
+    /// absence, as an omitted feed item is.
+    Omission,
 }
 
 /// A remote deletion marks exactly one source's passport absent, once.
@@ -256,11 +312,16 @@ fn apply_remote_change(
 /// supersedes only that passport, never the EVENT status. The EVENT is never
 /// deleted, CAL-07's outcome predicate is never written, and no delete is bounced
 /// back to any provider.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a removal's evidence and its pull's screen meet the one passport sweep"
+)]
 fn apply_remote_deletion(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     uid: &str,
+    evidence: RemovalEvidence,
     screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
@@ -291,18 +352,28 @@ fn apply_remote_deletion(
         after = ids.last().copied();
     }
     let record = pull_source_record_id(provider, seat, uid);
-    crate::calendar::ingest::delete_connector_resource(
-        vault,
-        &seat.config.system,
-        ConnectorAdmissionSource {
-            record: &record,
-            source_version: None,
-            screen,
-            source: None,
-        },
-        uid,
-        now,
-    )?;
+    let source = ConnectorAdmissionSource {
+        record: &record,
+        source_version: None,
+        screen,
+        source: None,
+    };
+    match evidence {
+        RemovalEvidence::Tombstone => crate::calendar::ingest::delete_connector_resource(
+            vault,
+            &seat.config.system,
+            source,
+            uid,
+            now,
+        )?,
+        RemovalEvidence::Omission => crate::calendar::ingest::sweep_connector_uids(
+            vault,
+            &seat.config.system,
+            source,
+            &std::collections::BTreeSet::from([uid]),
+            now,
+        )?,
+    }
     counters.source_absences += absent_count;
     for (event, was_cancelled) in newly_absent {
         if !was_cancelled && imported_cancellation(vault, event)? {
@@ -443,6 +514,11 @@ pub(super) fn reconcile_remote_object(
         let Ok(parsed) = parse_remote_object(object) else {
             continue;
         };
+        // The whole resource's hash, as a pull stores it, so a full
+        // listing's omission sweep reads this row as the archived copy.
+        let Ok(content_hash) = super::remote::ics_content_hash(&object.ics, uid) else {
+            continue;
+        };
         // The refreshed copy is the base a rebased write renders over.
         let source_blob_ref = super::resource::archive_remote_source(
             vault,
@@ -464,7 +540,7 @@ pub(super) fn reconcile_remote_object(
                 href: Some(object.href.clone()),
                 etag: object.etag.clone(),
                 last_sequence: parsed.sequence,
-                content_hash: parsed.content_hash,
+                content_hash,
                 last_seen_at: now,
                 source_blob_ref,
                 carrier: None,

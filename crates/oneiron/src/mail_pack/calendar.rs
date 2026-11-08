@@ -557,7 +557,8 @@ impl Vault {
                 };
                 CALENDAR_RESOURCES.put(&self.store, txn, &key, &resource)
             }
-            RemoteCalendarChange::Delete { href, .. } => {
+            RemoteCalendarChange::Delete { href, .. }
+            | RemoteCalendarChange::Omitted { href, .. } => {
                 CALENDAR_RESOURCES.delete(&self.store, txn, &resource_key(source, href))?;
                 Ok(())
             }

@@ -45,7 +45,7 @@ pub(crate) fn apply_calendar_source_change(
         RemoteCalendarChange::Upsert(object) => Ok(CalendarSourceChange::Applied {
             span: apply_upsert(vault, system, object, now)?,
         }),
-        RemoteCalendarChange::Delete { uid, .. } => {
+        RemoteCalendarChange::Delete { uid, .. } | RemoteCalendarChange::Omitted { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
             super::delete_connector_resource(vault, system, record.as_str(), uid, now)?;
             Ok(CalendarSourceChange::Deleted)
