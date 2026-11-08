@@ -114,6 +114,16 @@ pub(super) fn render(
     let civil = civil_series(vault, *master)?;
     let mut out =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
+    // The source's zone heads the resource again, so its all-day events keep
+    // their days through a write-back and its reading back (fix list row
+    // 17868).
+    if let Some(zone) =
+        source.and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid))
+    {
+        out.push_str("X-WR-TIMEZONE:");
+        out.push_str(&zone);
+        out.push_str("\r\n");
+    }
     for &event in &member_ids {
         let rendered = String::from_utf8(render_component(vault, &event, uid, sequence, now)?)
             .map_err(|_| ingest_error("calendar renderer did not return UTF-8"))?;
