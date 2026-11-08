@@ -181,12 +181,6 @@ pub enum BriefOutboundScope {
     },
     /// `calendar.invite` for the bookings confirmed on one booking page.
     BookingPageInvites { page_ref: EntityId },
-    /// One verb class sent from one channel identity, inside one envelope.
-    ChannelIdentityEnvelope {
-        identity_ref: EntityId,
-        envelope_ref: EntityId,
-        verb_class: String,
-    },
 }
 
 impl BriefOutboundScope {
