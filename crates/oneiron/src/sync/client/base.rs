@@ -58,6 +58,7 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(super) root_parts: Mutex<super::root_updates::RootUpdateAssembly>,
     /// The home answered this connection's NOTE session bind: the NOTE lane
     /// (NOTE requests, operations, imports and receipts, publications) runs.
     /// A peer session binds the socket's actor, never the NOTE authority, so
@@ -238,6 +239,7 @@ impl SyncClient {
             vault,
             manager,
             root_doc,
+            root_parts: Mutex::default(),
             client_id,
             config,
             server_vvs: HashMap::new(),

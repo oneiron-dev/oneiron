@@ -3,8 +3,10 @@
 //! `[models.decision_read]` door's reader on the `local_reasoner` rung, its
 //! recipe's paired question as the ladder's own, and the ThinkThreshold row at
 //! the door's start value and the host's start version. Each read is admitted
-//! and settled on one bare meter. No other rung is filled and no person is
-//! asked, so one run measures exactly the routes this one rung returns.
+//! and settled on one bare meter. When the file binds
+//! `[models.decisions.big]`, the Big rung is the served host's own binding of
+//! it ([`big_rung`]); no other rung is filled and no person is asked, so one
+//! run measures exactly the routes these rungs return.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,12 +22,16 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, HostingPrivacyPosture};
 use oneiron_server::config::ModelsConfig;
-use oneiron_server::decision_host::THINK_THRESHOLD_VERSION;
+use oneiron_server::config::models::BigSettings;
+use oneiron_server::decision_host::{BigRung, THINK_THRESHOLD_VERSION};
 use oneiron_server::models::ModelRuntime;
 use serde::Serialize;
 
 use super::failure;
 use crate::eval::EvalResult;
+
+mod big_rung;
+use big_rung::BigPins;
 
 /// The units the read meter holds: far past any bench run, so no case is
 /// refused for spend while every read still reserves and settles on it.
@@ -54,18 +60,26 @@ pub(super) struct ModelPins {
     /// The PersonThreshold row's start value; no dial this bench runs reaches
     /// the person, so it routes nothing here.
     pub(super) person_threshold: f64,
+    /// The Big rung `[models.decisions.big]` binds; none without the section.
+    pub(super) big: Option<BigPins>,
 }
 
-/// The escalation rung's parts, owned for the run; each call lends them to
-/// one ladder.
+/// The escalation rung's parts, and the Big rung once bound, owned for the
+/// run; each call lends them to one ladder.
 pub(super) struct HouseReadRung {
     pins: ModelPins,
     reader: Arc<dyn LabelReadModel>,
     meter: BudgetGuard,
     paired: DecisionQuestion,
     bands: DecisionBandPolicy,
-    /// The runtime the reader was bound on, held for the run.
-    _models: ModelRuntime,
+    /// The runtime the reader was bound on, held for the run; the Big rung
+    /// binds on it too.
+    models: Arc<ModelRuntime>,
+    /// `[models.decisions.big]` as the file binds it, with the raw routes'
+    /// units its meter falls back to; none without the section.
+    big_section: Option<(BigSettings, u64)>,
+    /// The Big rung, once bound on the run's vault.
+    big: Option<BigRung>,
 }
 
 impl HouseReadRung {
@@ -102,6 +116,7 @@ impl HouseReadRung {
             ModelRuntime::build(Some(&config), HostingPrivacyPosture::default())
         };
         provider_ready(&models, &rung.model.provider)?;
+        let big_section = big_rung::ready_section(&config, &models)?;
         let door = models.decision_read().ok_or_else(|| {
             failure(
                 "the models runtime bound no decision read: its local_reasoner rung keeps work on the device and is third-party, or the read could not bind"
@@ -141,6 +156,7 @@ impl HouseReadRung {
             think_threshold,
             think_threshold_version: think_threshold.map(|_| THINK_THRESHOLD_VERSION),
             person_threshold: door.person_threshold(),
+            big: None,
         };
         let meter = BudgetGuard::new(
             READ_METER_ATTEMPT,
@@ -153,7 +169,9 @@ impl HouseReadRung {
             meter,
             paired,
             bands,
-            _models: models,
+            models: Arc::new(models),
+            big_section,
+            big: None,
         })
     }
 
@@ -162,9 +180,9 @@ impl HouseReadRung {
     }
 
     /// One typed decision of `question` for `principal` over `state`, on a
-    /// ladder whose escalation rung is this read, inside `dial`, on a hard
-    /// clock of `budget`. A read blocks on the models runtime, so this runs
-    /// on a thread outside it.
+    /// ladder whose escalation rung is this read and whose Big rung is the
+    /// bound one, inside `dial`, on a hard clock of `budget`. A read blocks
+    /// on the models runtime, so this runs on a thread outside it.
     pub(super) fn decide(
         &self,
         question: &DecisionQuestion,
@@ -184,6 +202,7 @@ impl HouseReadRung {
         let held = HeldLadder::unstaffed();
         let mut ladder = held.ladder();
         ladder.escalation = Some(&provider as &dyn DecisionProvider);
+        ladder.big = self.big.as_ref().map(BigRung::provider);
         ladder.paired = Some(&self.paired);
         let deadline = RetrievalDeadline::hard(Instant::now(), budget);
         ladder.run(
