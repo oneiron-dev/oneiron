@@ -461,6 +461,20 @@ impl Vault {
                         // emits Deletes for every prior new) or never inserted
                         // (a ghost): nothing to delete.
                     }
+                    DocxChange::SetStoryText { scope, block, text } => {
+                        main.push(DocxChange::SetStoryText {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            text: text.clone(),
+                        });
+                    }
+                    DocxChange::SetStoryRuns { scope, block, runs } => {
+                        main.push(DocxChange::SetStoryRuns {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            runs: runs.clone(),
+                        });
+                    }
                 }
             }
             let imported: HashSet<&str> = state
