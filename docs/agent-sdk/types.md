@@ -1597,7 +1597,7 @@ class Oneiron:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
         def open(self, spec: Facade.OpenSpendLeaseRequest) -> Facade.SpendLeaseView:
-            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."""
+            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."""
         def top_up(self, spec: Facade.TopUpSpendLeaseRequest) -> Facade.SpendLeaseView:
             """The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."""
     class _VaultBudgetsHoldVerbs:
@@ -3363,8 +3363,12 @@ class Oneiron:
         def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs": ...
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
+        def session_model_heal_count(self, spec: Facade.CodeRunSessionModelHealCountRequest) -> Facade.CodeRunSessionModelHealCountView:
+            """Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused."""
         def corrections(self, spec: Facade.CodeRunCorrectionsRequest) -> Facade.CodeRunCorrectionsView:
             """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
+        def step_evidence(self, spec: Facade.CodeRunStepEvidenceRequest) -> Facade.CodeRunStepEvidenceView | None:
+            """Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records."""
         def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedbackRelease | None:
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
         @property
@@ -3534,7 +3538,7 @@ class Oneiron:
             """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
         def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
         def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
@@ -3600,6 +3604,8 @@ class Oneiron:
         def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs": ...
         @property
         def grants(self) -> "Oneiron._VaultAgentsGrantsVerbs": ...
+        @property
+        def verb_classes(self) -> "Oneiron._VaultAgentsVerbClassesVerbs": ...
         def base(self, spec: Facade.EmptyRequest | None = None) -> Facade.BaseAgentList:
             """The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."""
         @property
@@ -3612,9 +3618,14 @@ class Oneiron:
             """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsGrantsVerbs:
         def mint(self, spec: Facade.AgentGrantMintRequest) -> Facade.AgentGrantMinted:
-            """The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."""
+            """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
         def revoke(self, spec: Facade.AgentGrantRevokeRequest) -> Facade.AgentGrantRevoked:
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
+    class _VaultAgentsVerbClassesVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.AgentVerbClassesView:
+            """The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash."""
+        def configure(self, spec: Facade.AgentVerbClassesConfigureRequest) -> Facade.AgentVerbClassesReceipt:
+            """The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."""
     class _VaultAgentsSpawnVerbs:
         def __call__(self, spec: Facade.SpawnIntentRequest) -> Facade.SpawnIntentReply:
             """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
@@ -3648,7 +3659,7 @@ class Oneiron:
             """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
     class _VaultRepoAnchorVerbs:
         def bind(self, spec: Facade.RepoAnchorBindInput) -> Facade.RepoAnchorBindOutput:
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
     class _VaultRepoSnapshotsVerbs:
         def get(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsGetInput]) -> Facade.RepoSnapshotsGetOutput:
             """Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."""

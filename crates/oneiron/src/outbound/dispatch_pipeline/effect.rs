@@ -210,6 +210,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         gate_reason_codes: effect_result.gate_reason_codes,
         gate_receipt_reasons: effect_result.gate_receipt_reasons,
         effector_charge: effect_result.budget_charge,
+        budget_settlement_events: effect_result.budget_settlement_events,
         effect_state: effect_result.dispatch.state,
         resolution,
         outcome,

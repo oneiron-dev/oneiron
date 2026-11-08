@@ -347,6 +347,7 @@ impl AgentDispatcher<'_> {
                 },
             },
             result: None,
+            code_run_output: None,
         };
         Ok(WorkflowOutput {
             id: result,
