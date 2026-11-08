@@ -624,7 +624,7 @@ fn issue_one(
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
-                author: WitnessAuthor::System,
+                author: WitnessAuthor::Companion,
                 message_type: SWAP_QUESTION_TYPE.to_owned(),
                 content: swap_question_text(&row.run, &route.expected)?,
                 parts: None,

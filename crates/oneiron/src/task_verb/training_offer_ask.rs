@@ -531,7 +531,7 @@ fn issue_one(
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
-                author: WitnessAuthor::System,
+                author: WitnessAuthor::Companion,
                 message_type: OFFER_QUESTION_TYPE.to_owned(),
                 content: offer_question_text(offer),
                 parts: None,
