@@ -1015,6 +1015,7 @@ fn granted(units: u64, generation: u64) -> Arc<HostAccount> {
             },
             units,
             unit: micro_usd(),
+            wallet: None,
         })
         .expect("grant");
     account
@@ -1060,6 +1061,7 @@ fn a_host_paid_permit_binds_the_payer_catalog_and_allocation_and_settles_both_li
             },
             units: 100,
             unit: micro_usd(),
+            wallet: None,
         }),
         Err(AllocationGrantError::StaleGeneration)
     );

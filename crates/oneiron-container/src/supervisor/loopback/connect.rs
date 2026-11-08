@@ -181,3 +181,57 @@ pub(super) fn enqueue(
     socket.release_control();
     Ok(wire::Reply::default())
 }
+
+/// Queues the guest end of a fresh pair in the same line as guest connects.
+/// The returned host peer keeps its own descriptor charge after accept
+/// transfers the guest end and drops the queued descriptor's charge.
+pub(super) fn enqueue_host(
+    state: &State,
+    listener: &Listener,
+    own: SocketAddr,
+    waiting: impl Fn() -> bool,
+) -> io::Result<crate::supervisor::LoopbackConnection> {
+    let number = listener
+        .queue
+        .lock()
+        .map_err(|_| poisoned())?
+        .pending
+        .join();
+    let ticket = Ticket { listener, number };
+    loop {
+        if !state.alive.load(Ordering::Acquire) || !waiting() {
+            return Err(errno(libc::EINTR));
+        }
+        let mut queue = listener.queue.lock().map_err(|_| poisoned())?;
+        if queue.closed {
+            return Err(errno(libc::ECONNREFUSED));
+        }
+        if queue.pending.heads(number) && queue.occupied() < queue.backlog {
+            let floor = state.relay.host_net_floor();
+            let (fds, workers) = QUEUED;
+            let queued_charge = floor.acquire(fds, workers)?;
+            let host_charge = floor.acquire(fds, workers)?;
+            let (guest, host) = std::os::unix::net::UnixStream::pair()?;
+            listener.token();
+            queue.waiting.push_back(Queued {
+                stream: guest,
+                peer: own,
+                _charge: queued_charge,
+            });
+            listener.ready.notify_one();
+            queue.pending.leave(number);
+            listener.space.notify_all();
+            drop(queue);
+            drop(ticket);
+            return Ok(crate::supervisor::LoopbackConnection::new(
+                host,
+                host_charge,
+            ));
+        }
+        let (queue, _) = listener
+            .space
+            .wait_timeout(queue, BLOCKED_CALL_POLL)
+            .map_err(|_| poisoned())?;
+        drop(queue);
+    }
+}

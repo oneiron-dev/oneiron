@@ -7,7 +7,9 @@ use crate::runtime_hooks::body::{HookBodyRuntime, HookRunContext, HookVerdict};
 use crate::runtime_hooks::store::{HookReadPin, HookRunRecord};
 use crate::{Error, Result, Vault};
 
-use super::body::{Verdict, VerdictPins, ask_verdict, judge, record, verdict_context};
+use super::body::{
+    Verdict, VerdictPins, ask_verdict, judge, record, record_in_txn, verdict_context,
+};
 use super::{Run, read};
 
 pub(super) struct PreparedRun {
@@ -34,6 +36,26 @@ impl PreparedRun {
             self.runtime_identity.clone(),
         )
     }
+
+    pub(super) fn memo_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        run: &Run<'_>,
+    ) -> Result<HookRunRecord> {
+        record_in_txn(
+            vault,
+            txn,
+            run,
+            &self.input,
+            self.reads.clone(),
+            self.verdicts.clone(),
+            &self.verdict,
+            self.duration_ms,
+            self.now,
+            self.runtime_identity.clone(),
+        )
+    }
 }
 
 pub(super) fn evaluate(
@@ -46,6 +68,56 @@ pub(super) fn evaluate(
     now: u64,
     catch_runtime_panic: bool,
 ) -> PreparedRun {
+    evaluate_in_snapshot(
+        runtime,
+        host,
+        run,
+        lane,
+        None,
+        body,
+        input,
+        now,
+        catch_runtime_panic,
+    )
+}
+
+/// Evaluate only after Allow, with the real lane and body guard prepared before
+/// the caller's writer. This entry owns neither that writer nor its commit.
+pub(super) fn evaluate_in_txn(
+    runtime: &dyn HookBodyRuntime,
+    host: Option<&dyn HookVerdict>,
+    run: &Run<'_>,
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    body: std::result::Result<String, String>,
+    input: String,
+    now: u64,
+    catch_runtime_panic: bool,
+) -> PreparedRun {
+    evaluate_in_snapshot(
+        runtime,
+        host,
+        run,
+        lane,
+        Some(txn),
+        body,
+        input,
+        now,
+        catch_runtime_panic,
+    )
+}
+
+fn evaluate_in_snapshot(
+    runtime: &dyn HookBodyRuntime,
+    host: Option<&dyn HookVerdict>,
+    run: &Run<'_>,
+    lane: &ScopedRead<'_>,
+    txn: Option<&heed::RoTxn<'_>>,
+    body: std::result::Result<String, String>,
+    input: String,
+    now: u64,
+    catch_runtime_panic: bool,
+) -> PreparedRun {
     let started = Instant::now();
     let mut context = HookRunContext::new(run.binding.selector.budget_ms);
     let deadline = context.deadline();
@@ -53,7 +125,10 @@ pub(super) fn evaluate(
     let mut verdicts = VerdictPins::new();
     let result = match body {
         Ok(body) => {
-            let mut answer = |request: &str| read::answer(lane, run.grant, request, &mut pins);
+            let mut answer = |request: &str| match txn {
+                Some(txn) => read::answer_in_txn(lane, txn, run.grant, request, &mut pins),
+                None => read::answer(lane, run.grant, request, &mut pins),
+            };
             let mut verdict = |request: &str| {
                 let trusted = verdict_context(
                     run.binding_id,

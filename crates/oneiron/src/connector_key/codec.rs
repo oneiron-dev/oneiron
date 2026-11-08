@@ -25,8 +25,8 @@ use self::charter::{
 
 /// Current ConnectorKeyRecord body schema version.
 ///
-/// v4 retains the successful suite receipt on the key itself.
-pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 4;
+/// v5 binds charter usage reservations to the actual approval that reset them.
+pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 5;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
 ///

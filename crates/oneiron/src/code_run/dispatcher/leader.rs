@@ -195,6 +195,9 @@ impl HostSelfDispatcher<'_> {
             .zip(planner_clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
         let spawn_host = PlannedSpawnHost {
+            // FIX 4973: a leased spawn inherits its leased parent's frozen
+            // origin in reserve; this host value never replaces it.
+            caller_origin: crate::agent_dispatch::CallerOrigin::Unknown,
             seats: &planner.seats,
             skills: &planner.skills,
             executor: &planner.executor,

@@ -27,8 +27,9 @@ use super::rest::{
 };
 use super::source::MailProvider;
 use super::wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
+    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
+    MailSyncSource,
 };
 use crate::Vault;
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
@@ -43,7 +44,7 @@ const GMAIL_HISTORY_PAGE_SIZE: u32 = 500;
 /// The deepest MIME nesting read for a body.
 const MAX_PART_DEPTH: usize = 32;
 /// The headers a header stage reads.
-const MESSAGE_HEADERS: [&str; 8] = [
+const MESSAGE_HEADERS: [&str; 9] = [
     "From",
     "To",
     "Cc",
@@ -52,6 +53,7 @@ const MESSAGE_HEADERS: [&str; 8] = [
     "Message-ID",
     "In-Reply-To",
     "References",
+    "Reply-To",
 ];
 
 /// Host-side Gmail REST mail wire over `reqwest::blocking`, for the mailbox
@@ -228,6 +230,45 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         Ok(Some(full_from(headers, parts)))
     }
 
+    fn raw_address_headers(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<MailAddressHeaders>> {
+        // Gmail's `metadata` and `full` headers come with their encoded
+        // words decoded, so an encoded comma or address would split a
+        // mailbox; only `raw` keeps each one's bounds as the sender wrote
+        // them (fix list row 20520).
+        let params = [("format", "raw".to_owned())];
+        let answer = self
+            .get(source, &Self::message_url(provider_id)?, &params)?
+            .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
+        let raw = answer
+            .get("raw")
+            .and_then(Value::as_str)
+            .ok_or_else(|| refused("gmail_mail_raw_message_missing"))?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(raw.trim_end_matches('='))
+            .map_err(|_| refused("gmail_mail_raw_message_unreadable"))?;
+        Ok(Some(super::mime::raw_address_headers(&bytes)))
+    }
+
+    fn own_addresses(&self, source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        // The mailbox's primary address and each alias Gmail verified it
+        // owns (fix list row 20400); a pending alias never counts.
+        let Some(listed) = self.get(source, &format!("{GMAIL_USER_URL}/settings/sendAs"), &[])?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            array(&listed, "sendAs")
+                .iter()
+                .filter(|alias| proven_send_as(alias))
+                .filter_map(|alias| text_of(alias.get("sendAsEmail")))
+                .collect(),
+        ))
+    }
+
     fn history(
         &self,
         source: &MailSyncSource,
@@ -334,49 +375,74 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         // An attachment Gmail keeps apart is fetched by its id; a small one
         // rides inline in its part of the whole message.
         if let Some(id) = &attachment.provider_attachment_id {
-            let plain = id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-            if id.is_empty() || !plain {
-                return Err(refused("gmail_mail_attachment_id_not_plain"));
-            }
-            let url = format!("{message_url}/attachments/{id}");
-            let Some(answer) = self.get(source, &url, &[])? else {
-                return Ok(None);
-            };
-            let data = answer
-                .get("data")
-                .and_then(Value::as_str)
-                .ok_or_else(|| refused("gmail_mail_attachment_without_data"))?;
-            return base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(data.trim_end_matches('='))
-                .map(Some)
-                .map_err(|_| refused("gmail_mail_attachment_data_unreadable"));
+            return self.attachment_by_id(source, &message_url, id);
         }
         let params = [("format", "full".to_owned())];
         let Some(message) = self.get(source, &message_url, &params)? else {
             return Ok(None);
         };
-        Ok(message
+        let Some(part) = message
             .get("payload")
-            .and_then(|payload| part_bytes(payload, &attachment.part_id, 0)))
+            .and_then(|payload| part_by_id(payload, &attachment.part_id, 0))
+        else {
+            return Ok(None);
+        };
+        if let Some(data) = part.pointer("/body/data").and_then(Value::as_str) {
+            return attachment_data(data).map(Some);
+        }
+        // A part described without its id (an imported copy) whose bytes
+        // Gmail keeps apart: fetched by the id its part names now.
+        match part.pointer("/body/attachmentId").and_then(Value::as_str) {
+            Some(id) => self.attachment_by_id(source, &message_url, id),
+            None => Ok(None),
+        }
     }
 }
 
-/// The bytes of one part of a Gmail `full` answer, by its part id.
-fn part_bytes(part: &Value, part_id: &str, depth: usize) -> Option<Vec<u8>> {
+impl HttpGmailMailWire<'_> {
+    /// The bytes of the attachment `id` of the message at `message_url`.
+    fn attachment_by_id(
+        &self,
+        source: &MailSyncSource,
+        message_url: &str,
+        id: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        let plain = id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+        if id.is_empty() || !plain {
+            return Err(refused("gmail_mail_attachment_id_not_plain"));
+        }
+        let url = format!("{message_url}/attachments/{id}");
+        let Some(answer) = self.get(source, &url, &[])? else {
+            return Ok(None);
+        };
+        let data = answer
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| refused("gmail_mail_attachment_without_data"))?;
+        attachment_data(data).map(Some)
+    }
+}
+
+/// An attachment's bytes from Gmail's URL-safe base64.
+fn attachment_data(data: &str) -> Result<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.trim_end_matches('='))
+        .map_err(|_| refused("gmail_mail_attachment_data_unreadable"))
+}
+
+/// One part of a Gmail `full` answer, by its part id.
+fn part_by_id<'a>(part: &'a Value, part_id: &str, depth: usize) -> Option<&'a Value> {
     if depth > MAX_PART_DEPTH {
         return None;
     }
     if part.get("partId").and_then(Value::as_str) == Some(part_id) {
-        let data = part.pointer("/body/data").and_then(Value::as_str)?;
-        return base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(data.trim_end_matches('='))
-            .ok();
+        return Some(part);
     }
     array(part, "parts")
         .iter()
-        .find_map(|child| part_bytes(child, part_id, depth + 1))
+        .find_map(|child| part_by_id(child, part_id, depth + 1))
 }
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.
@@ -409,6 +475,7 @@ fn headers_of(message: &Value) -> Result<MailHeaders> {
         from: header("From").map(str::to_owned),
         to: header("To").map(address_list).unwrap_or_default(),
         cc: header("Cc").map(address_list).unwrap_or_default(),
+        reply_to: header("Reply-To").map(address_list).unwrap_or_default(),
         subject: header("Subject").map(str::to_owned),
         date: header("Date").and_then(rfc2822_seconds),
         received_at,
@@ -447,6 +514,13 @@ fn reads_mailbox(profile: &Value, source: &MailSyncSource) -> Result<()> {
     } else {
         Err(refused("gmail_mail_credential_reads_another_mailbox"))
     }
+}
+
+/// Whether a Gmail `sendAs` entry is an address the mailbox owns: its
+/// primary address, or an alias whose verification Gmail accepted.
+fn proven_send_as(alias: &Value) -> bool {
+    alias.get("isPrimary").and_then(Value::as_bool) == Some(true)
+        || alias.get("verificationStatus").and_then(Value::as_str) == Some("accepted")
 }
 
 /// What a message's MIME parts hold.
@@ -560,28 +634,131 @@ fn charset_of(content_type: &str) -> Option<String> {
     })
 }
 
-/// The addresses of an address-list header, split at the commas outside
-/// quotes and angle brackets.
-fn address_list(value: &str) -> Vec<String> {
-    let mut addresses = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut angle = 0_u32;
-    for ch in value.chars() {
-        match ch {
-            '"' => quoted = !quoted,
-            '<' if !quoted => angle += 1,
-            '>' if !quoted => angle = angle.saturating_sub(1),
-            ',' if !quoted && angle == 0 => {
-                push_address(&mut addresses, &current);
-                current.clear();
-                continue;
+/// Where one character of an RFC 5322 address header value stands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AddressPlace {
+    /// Outside every quoted string, comment, angle address and domain
+    /// literal. The delimiters that open and close one stand here too.
+    Top,
+    /// Inside a quoted string (`"Name, Jr."`).
+    Quoted,
+    /// Inside a comment (`(work)`), nested ones included.
+    Comment,
+    /// Inside an angle address (`<a@b>`), a quoted local part included.
+    Angle,
+    /// Inside a domain literal (`[192.0.2.1]`).
+    Literal,
+}
+
+/// Each character of the address header value `value`, with its byte
+/// offset and its [`AddressPlace`]; and whether a quoted string, comment,
+/// angle address or domain literal is still open at its end. A `\\`
+/// escape inside a quoted string, comment or domain literal takes the next
+/// character with it, so an escaped delimiter closes nothing.
+pub(super) fn address_places(value: &str) -> (Vec<(usize, char, AddressPlace)>, bool) {
+    let mut places = Vec::with_capacity(value.len());
+    let (mut comment, mut quoted, mut angled, mut literal, mut escaped) =
+        (0_usize, false, false, false, false);
+    for (at, character) in value.char_indices() {
+        let place = if comment > 0 {
+            if escaped {
+                escaped = false;
+            } else {
+                match character {
+                    '\\' => escaped = true,
+                    '(' => comment += 1,
+                    ')' => comment -= 1,
+                    _ => {}
+                }
             }
-            _ => {}
-        }
-        current.push(ch);
+            if comment > 0 || character != ')' {
+                AddressPlace::Comment
+            } else {
+                AddressPlace::Top
+            }
+        } else if angled {
+            if escaped {
+                escaped = false;
+            } else if quoted {
+                match character {
+                    '\\' => escaped = true,
+                    '"' => quoted = false,
+                    _ => {}
+                }
+            } else {
+                match character {
+                    '"' => quoted = true,
+                    '>' => angled = false,
+                    _ => {}
+                }
+            }
+            if angled {
+                AddressPlace::Angle
+            } else {
+                AddressPlace::Top
+            }
+        } else if quoted {
+            if escaped {
+                escaped = false;
+                AddressPlace::Quoted
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Quoted
+                    }
+                    '"' => {
+                        quoted = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Quoted,
+                }
+            }
+        } else if literal {
+            if escaped {
+                escaped = false;
+                AddressPlace::Literal
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Literal
+                    }
+                    ']' => {
+                        literal = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Literal,
+                }
+            }
+        } else {
+            match character {
+                '(' => comment = 1,
+                '"' => quoted = true,
+                '<' => angled = true,
+                '[' => literal = true,
+                _ => {}
+            }
+            AddressPlace::Top
+        };
+        places.push((at, character, place));
     }
-    push_address(&mut addresses, &current);
+    (places, comment > 0 || quoted || angled || literal)
+}
+
+/// The addresses of an address-list header, split at its top-level commas:
+/// a comma inside a quoted string, a comment, an angle address or a domain
+/// literal never splits a mailbox.
+pub(super) fn address_list(value: &str) -> Vec<String> {
+    let mut addresses = Vec::new();
+    let mut start = 0;
+    for (at, character, place) in address_places(value).0 {
+        if character == ',' && place == AddressPlace::Top {
+            push_address(&mut addresses, &value[start..at]);
+            start = at + 1;
+        }
+    }
+    push_address(&mut addresses, &value[start..]);
     addresses
 }
 
@@ -593,7 +770,7 @@ fn push_address(addresses: &mut Vec<String>, text: &str) {
 }
 
 /// An RFC 5322 `Date` value as Unix seconds; a trailing comment is dropped.
-fn rfc2822_seconds(value: &str) -> Option<u64> {
+pub(super) fn rfc2822_seconds(value: &str) -> Option<u64> {
     let bare = value
         .split_once(" (")
         .map_or(value, |(head, _)| head)
