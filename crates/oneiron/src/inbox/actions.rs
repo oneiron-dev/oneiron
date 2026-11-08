@@ -59,7 +59,9 @@ impl Memory<'_> {
     /// (FIX 6505), a waiting OAuth sign-in request is allowed at the tier it
     /// asked for or denied (FIX 4902), a send that may have gone out is sent
     /// again or left (FIX 4747), and a model pack change is reverted
-    /// (FIX 5369). Any other row, and a target that no longer reads or has
+    /// (FIX 5369). An applied stock switch offers the owner's undo while its
+    /// binding still holds (FIX 4663). Any other row, and a target that no
+    /// longer reads or has
     /// settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();

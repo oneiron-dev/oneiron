@@ -291,9 +291,7 @@ fn start_arm_check(
 fn seed_store(prepared: &PreparedShadowStep, store: &ShadowBodyStore) -> Result<()> {
     let foreign = prepared.foreign.iter().map(|held| &held.body);
     for frozen in prepared.frozen.iter().chain(foreign) {
-        if let Some(bytes) = &frozen.bytes {
-            store.import(frozen.output.output_ref(), bytes)?;
-        }
+        frozen.seed(store)?;
     }
     Ok(())
 }

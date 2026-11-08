@@ -1,23 +1,33 @@
 //! The `schedule.tick` source (ARCH-0080 §4 Watchers; FIX 4749). A TASK
-//! created with a due time is a watcher: it ticks once, after that time
-//! passes. The due index holds each TASK not yet ticked, ordered by its due
-//! time. A runner pass releases the due rows into the tick feed in one write:
-//! a row leaves the index and gains its feed sequence together, so each tick
-//! is released once, and feed order is commit order. Hooks read the feed
-//! through their own cursors, as they read the settlement feed, so a restart
-//! neither skips nor repeats a tick.
+//! created with a due time is a watcher: it ticks once per due time, after
+//! that time passes. The due index holds each TASK not yet ticked, ordered by
+//! its due time. The storage door keeps it beside every TASK body that lands,
+//! a peer's synced copy too, so the index follows the TASK to each device.
+//! The vault's elected home releases the due rows into the tick feed in one
+//! write: a row leaves the index and gains its feed sequence together, so
+//! each tick is released once per vault, and feed order is commit order.
+//! Hooks read the feed through their own cursors, as they read the
+//! settlement feed, so a restart neither skips nor repeats a tick. A watch
+//! TASK's tick settles it Done in the write that releases it (FIX 22121);
+//! its hooks are still offered the tick, as it was open at its due time.
 
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{FactEntry, FactKind, FactOp, FactPosition, SchedulePosition, SourceBatch};
 
 /// Each TASK waiting for its tick, by due time (Unix seconds) and id.
 const TASK_DUE: SideTable<(u64, EntityId), (), Named> = SideTable::new(&side_table::HOOKS_TASK_DUE);
+/// Each indexed TASK's due time and the tick its release committed: a body
+/// written again at the same due time adds no second tick, and a new
+/// binding starts at the earliest tick of a TASK still open.
+const TASK_DUE_REVERSE: SideTable<EntityId, DueEntry, Named> =
+    SideTable::new(&side_table::HOOKS_TASK_DUE_REVERSE);
 /// The tick feed: one row per released tick, keyed by its sequence.
 const TICKS: SideTable<u64, TickRow, Named> = SideTable::new(&side_table::HOOKS_TICK);
 /// The last tick sequence handed out.
@@ -27,6 +37,15 @@ const TICKS_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::HOOKS_
 /// engine call that bounds one write. A longer backlog moves on the next
 /// passes, which the runner starts at once.
 const HOOK_TICK_RELEASE_ROWS: usize = 256;
+
+/// One TASK's place in the due index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct DueEntry {
+    /// The due time the index holds, Unix seconds.
+    due_at: u64,
+    /// The tick feed sequence its release committed; `None` while it waits.
+    tick: Option<u64>,
+}
 
 /// One released tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,24 +74,57 @@ pub(in crate::runtime_hooks) struct TickDetails {
     pub(in crate::runtime_hooks) due_at: u64,
 }
 
-/// Holds `task` for its tick at `due_at` (Unix seconds), in the TASK mint's
-/// own write, so a due TASK never commits without its row.
+/// Keeps `task`'s due index row in step with its body's due time, in the
+/// write that stores the body: `due_at` is the time the body ticks at, or
+/// `None` for a body that ticks at no time. A due time the index already
+/// holds, waiting or ticked, changes nothing, so a body written again never
+/// ticks twice; a new due time replaces the old row and ticks again.
 pub(crate) fn index_task_due_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
-    due_at: u64,
+    due_at: Option<u64>,
 ) -> Result<()> {
-    TASK_DUE.put(&vault.store, txn, &(due_at, task), &())
+    let held = TASK_DUE_REVERSE.get(store, txn, &task)?;
+    if held.map(|entry| entry.due_at) == due_at {
+        return Ok(());
+    }
+    if let Some(entry) = held {
+        TASK_DUE.delete(store, txn, &(entry.due_at, task))?;
+    }
+    let Some(due_at) = due_at else {
+        TASK_DUE_REVERSE.delete(store, txn, &task)?;
+        return Ok(());
+    };
+    TASK_DUE.put(store, txn, &(due_at, task), &())?;
+    TASK_DUE_REVERSE.put(store, txn, &task, &DueEntry { due_at, tick: None })
+}
+
+/// Whether this node releases the vault's ticks. The vault's elected MACRO
+/// home does (ARCH-0026), the one node its due digests and bookings run on,
+/// so a tick fires once per vault however many devices hold its TASK. A
+/// vault with no elected home releases where its rows are.
+fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    let home =
+        crate::dreamer_runner::DreamerRunnerStore::new(vault).home_node_designation_in_txn(txn)?;
+    match home {
+        None => Ok(true),
+        Some(home) => Ok(crate::identity::read_client_id_in_txn(vault, txn)? == Some(home.node_id)),
+    }
 }
 
 /// Moves the due rows at or before `now` (Unix seconds) into the tick feed,
-/// in due order, at most [`HOOK_TICK_RELEASE_ROWS`]. A row whose TASK is
-/// gone, has settled, or is no longer due at that time leaves the index with
-/// no tick. Returns whether due rows remain past the bound.
+/// in due order, at most [`HOOK_TICK_RELEASE_ROWS`], on the vault's home
+/// alone. A row whose TASK is gone, has settled, or is no longer due at that
+/// time leaves the index with no tick. A watch TASK settles Done with its
+/// tick, whether or not a hook takes it (FIX 22121). Returns whether due
+/// rows remain past the bound.
 pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
+        if !releases_here(vault, &rtxn)? {
+            return Ok(false);
+        }
         let mut due = Vec::new();
         let mut more = false;
         for row in TASK_DUE.iter_from(&vault.store, &rtxn, &[])? {
@@ -111,10 +163,42 @@ pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Re
                 recorded_at,
             };
             TICKS.put(&vault.store, txn, &sequence, &row)?;
+            let entry = DueEntry {
+                due_at: *due_at,
+                tick: Some(sequence),
+            };
+            TASK_DUE_REVERSE.put(&vault.store, txn, task, &entry)?;
+            // Its tick is a watch TASK's whole work (FIX 22121): it settles
+            // here, after the row above, which its settled body then drops.
+            crate::task_verb::settle_watch_task_in_txn(vault, txn, *task, recorded_at)?;
         }
         TICKS_NEXT.put(&vault.store, txn, &(), &sequence)
     })?;
     Ok(more)
+}
+
+/// Where a binding new to the tick feed starts: just before the earliest
+/// tick of a TASK still open at that due time, so a watcher bound after its
+/// TASK ticked still sees that tick; at the feed head when no open TASK has
+/// ticked here.
+pub(super) fn open_tick_start_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<FactPosition>> {
+    let mut earliest: Option<u64> = None;
+    for row in TASK_DUE_REVERSE.iter_from(&vault.store, txn, &[])? {
+        let (_, entry) = row?;
+        earliest = match (earliest, entry.tick) {
+            (Some(held), Some(tick)) => Some(held.min(tick)),
+            (held, tick) => held.or(tick),
+        };
+    }
+    match earliest {
+        Some(tick) => Ok(Some(FactPosition::Schedule(SchedulePosition(
+            tick.saturating_sub(1),
+        )))),
+        None => head_in_txn(vault, txn),
+    }
 }
 
 /// Ticks after `after`. A tick's actor is the engine's own principal: the
