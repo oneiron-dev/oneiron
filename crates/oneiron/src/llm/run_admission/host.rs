@@ -10,6 +10,7 @@ use super::declaration::LeaseUnit;
 use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
+use crate::federation::WalletRef;
 pub use crate::store::resident_budget_rows::AllocationRef;
 
 /// Who pays the provider for a call an offer serves.
@@ -369,6 +370,12 @@ pub struct Allocation {
     pub reference: AllocationRef,
     pub units: u64,
     pub unit: LeaseUnit,
+    /// The host wallet that funds this allocation (FIX 7766), host-supplied
+    /// metadata beside its generation reference: a run whose work an owner's
+    /// agent Grant funds takes a hold only on an allocation of the wallet
+    /// that Grant names. `None`: the host named none, and such a run takes
+    /// no hold on it.
+    pub wallet: Option<WalletRef>,
 }
 
 /// Why the host refused a vault a fresh allocation.
@@ -420,6 +427,8 @@ pub(super) struct LiveAllocation {
     pub(super) reference: AllocationRef,
     pub(super) unit: LeaseUnit,
     pub(super) meter: BudgetGuard,
+    /// The wallet the host named for this allocation (FIX 7766).
+    pub(super) wallet: Option<WalletRef>,
 }
 
 impl HostAccount {
@@ -467,6 +476,7 @@ impl HostAccount {
             reference: allocation.reference,
             unit: allocation.unit,
             meter,
+            wallet: allocation.wallet,
         });
         Ok(())
     }
