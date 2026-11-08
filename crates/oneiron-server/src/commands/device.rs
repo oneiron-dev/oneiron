@@ -205,7 +205,11 @@ fn restore_empty_store(path: &std::path::Path, set_aside: &std::path::Path) -> a
             .map_err(|error| anyhow::anyhow!("remove {}: {error}", path.display()))?;
     }
     std::fs::rename(set_aside, path).map_err(|error| {
-        anyhow::anyhow!("move {} back to {}: {error}", set_aside.display(), path.display())
+        anyhow::anyhow!(
+            "move {} back to {}: {error}",
+            set_aside.display(),
+            path.display()
+        )
     })
 }
 
