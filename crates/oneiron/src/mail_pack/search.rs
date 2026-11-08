@@ -1,7 +1,8 @@
 //! Searching a mailbox at its provider (fix list row 15424, its remote
 //! search slice): `vault.mail.sources.search` asks the mailbox's provider
 //! for one page of the messages a query finds, in that provider's own search
-//! language (Gmail's `q`, Microsoft Graph's `$search`), and lands each one
+//! language (Gmail's `q`, Microsoft Graph's `$search`, an IMAP server's
+//! `SEARCH` keys, fix list row 19089), and lands each one
 //! the vault does not hold yet whole, bound to the source's audience in the
 //! same commit as every imported message. A message a search fetched stays
 //! kept, so a mailbox whose copy setting is "Search only" holds exactly what
@@ -13,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
+use super::imap::ImapMailWire;
 use super::landing::{LandOutcome, Landing};
 use super::microsoft365::HttpGraphMailWire;
 use super::pack::require_pack_active_in;
@@ -38,7 +40,8 @@ pub struct MailSourceSearchRequest {
     pub source_ref: String,
     /// The query, in the provider's own search language: Gmail's search
     /// operators for a Google mailbox, Microsoft Graph's `$search` text for
-    /// a Microsoft 365 one.
+    /// a Microsoft 365 one, `SEARCH` keys (RFC 3501 6.4.4, such as
+    /// `FROM "ann" SINCE 1-Jan-2025`) for an IMAP one.
     pub query: String,
     /// The provider's token for the next page of hits, as the last page
     /// returned it.
@@ -70,13 +73,15 @@ pub struct MailSearchReport {
 
 /// The query `query`, checked: 1 to 1024 bytes, no control character, its
 /// quotes closed and, outside them, its parentheses balanced. So a caller's
-/// `)` never closes the group a wire puts the query in.
-fn valid_query(query: &str) -> MemoryResult<&str> {
+/// `)` never closes the group a wire puts the query in. With `escapes`, a
+/// backslash inside a quoted string escapes the character after it, as the
+/// provider reads it (IMAP); without, a quote always ends the string.
+fn valid_query(query: &str, escapes: bool) -> MemoryResult<&str> {
     let query = query.trim();
     if query.is_empty()
         || query.len() > MAX_SEARCH_QUERY_BYTES
         || query.chars().any(char::is_control)
-        || !grouped(query)
+        || !grouped(query, escapes)
     {
         return Err(MemoryError::bad_request(format!(
             "a search query is 1 to {MAX_SEARCH_QUERY_BYTES} bytes, with no control character, \
@@ -87,12 +92,19 @@ fn valid_query(query: &str) -> MemoryResult<&str> {
 }
 
 /// Whether `query`'s quotes close and, outside them, each `)` closes a `(`
-/// the query opened itself.
-fn grouped(query: &str) -> bool {
+/// the query opened itself; with `escapes`, a backslash inside quotes takes
+/// the character after it as text.
+fn grouped(query: &str, escapes: bool) -> bool {
     let mut quoted = false;
     let mut depth = 0_usize;
-    for c in query.chars() {
+    let mut chars = query.chars();
+    while let Some(c) = chars.next() {
         match c {
+            '\\' if quoted && escapes => {
+                if chars.next().is_none() {
+                    return false;
+                }
+            }
             '"' => quoted = !quoted,
             '(' if !quoted => depth += 1,
             ')' if !quoted => {
@@ -128,7 +140,7 @@ impl Vault {
         page: Option<&str>,
         limit: u32,
     ) -> MemoryResult<MailSearchReport> {
-        let query = valid_query(query)?;
+        let query = valid_query(query, wire.search_escapes())?;
         let actor = owner.revalidate(self)?;
         let unknown = || MemoryError::not_found("no searchable mailbox source by that ref");
         let row = {
@@ -193,7 +205,7 @@ impl Vault {
 
     /// [`Self::mail_search_step`] through this host's wire for the source's
     /// provider: Gmail for Google mailboxes, Microsoft Graph for Microsoft
-    /// 365 ones.
+    /// 365 ones, the mailbox's own server for IMAP ones.
     ///
     /// # Errors
     ///
@@ -218,9 +230,12 @@ impl Vault {
             let wire = HttpGraphMailWire::new(self)?;
             return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
         }
-        Err(MemoryError::bad_request_with(
-            "this host searches Google and Microsoft 365 mailboxes at their provider",
-            &["An IMAP mailbox copies its mail through its sync; search it in the vault."],
+        if snapshot.provider == MailProvider::Imap {
+            let wire = ImapMailWire::new(self);
+            return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
+        }
+        Err(MemoryError::bad_request(
+            "this host searches Google, Microsoft 365 and IMAP mailboxes at their provider",
         ))
     }
 }

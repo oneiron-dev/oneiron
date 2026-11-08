@@ -46,7 +46,7 @@ mod ask_forward;
 mod base;
 mod connect;
 mod documents;
-mod endpoint;
+pub(in crate::sync) mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;
