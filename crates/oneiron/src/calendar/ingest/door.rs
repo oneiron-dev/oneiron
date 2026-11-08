@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
+use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
 use crate::calendar::safeguard::CalendarBodyScreener;
@@ -159,6 +160,7 @@ pub fn move_instance_as_owner(
         .ok_or_else(|| MemoryError::not_found("series master is absent or not admitted"))?;
     let visible = memory.calendar_read(&CalendarReadRequest {
         event_ref: master.to_hex(),
+        filter: None,
     })?;
     if visible.value.is_none()
         || !memory.calendar_instance_admitted(master, &input.uid, input.original_start_utc)?
@@ -216,6 +218,7 @@ pub fn move_instance_as_owner(
     ) {
         let current = memory.calendar_read(&CalendarReadRequest {
             event_ref: target.to_hex(),
+            filter: None,
         })?;
         if current.value.as_ref().is_none_or(|view| {
             view.start_utc != Some(input.start_utc) || view.end_utc != Some(input.end_utc)
@@ -259,6 +262,10 @@ fn apply_upload(
         preserve_direction: !complete,
         now: vault.now_recorded_at(),
         blob_ref: &blob_ref,
+        source: Some(CalendarPassportSource {
+            artifact: source,
+            version,
+        }),
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
     };

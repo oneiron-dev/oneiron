@@ -25,10 +25,11 @@ use crate::gate::constants::{
     POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PERSONA_CORE_PREFIXES_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_OWNER_CHANGE_WAIT_SECS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_PRECEDENCE_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PERSONA_CORE_PREFIXES_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
     POLICY_PROJECT_COLLABORATION_KEY, POLICY_PROJECT_CONVERSION_KEY,
     POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
     POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
@@ -107,6 +108,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(in crate::gate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
+    pub(in crate::gate) owner_change_wait_secs: Option<u64>,
     pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
@@ -179,6 +181,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
+    pub(in crate::gate) code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::CodeConsentSettlementRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(in crate::gate) entity_resolution_bands:
         Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
@@ -455,9 +459,6 @@ fn parse_sheet_answer_limits(
     let Value::Array(rows) = value else {
         return None;
     };
-    if rows.len() > 1024 {
-        return None;
-    }
     let mut out = Vec::with_capacity(rows.len());
     let mut seen = std::collections::BTreeSet::new();
     for row in rows {

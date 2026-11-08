@@ -49,7 +49,7 @@ pub use object::{Dictionary, Object, ObjectId, Stream, StringFormat};
 
 pub use bookmarks::Bookmark;
 pub use common_data_structures::{decode_text_string, text_string};
-pub use decode_admission::{DecodeAdmission, DecodeAdmissionError};
+pub use decode_admission::{DecodeAdmission, DecodeAdmissionError, ReadProgress as DecodeReadProgress};
 pub use destinations::Destination;
 pub use encodings::{Encoding, encode_utf8, encode_utf16_be};
 pub use encryption::{EncryptionState, EncryptionVersion, Permissions};
