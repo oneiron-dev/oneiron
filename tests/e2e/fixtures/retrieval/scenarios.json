@@ -297,6 +297,7 @@
           {
             "label": "cross-script",
             "name": "クオモ",
+            "evidence": "This distinct person is クオモ.",
             "queries": [
               "Cuomo"
             ]
@@ -304,6 +305,7 @@
           {
             "label": "misheard",
             "name": "Robert",
+            "evidence": "This distinct person is Robert.",
             "queries": [
               "Rupert"
             ]

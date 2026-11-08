@@ -25,8 +25,9 @@ mod types;
 
 pub use host::ExternalGitSourceHost;
 pub use types::{
-    ExternalImportDoor, ExternalImportLookup, ExternalImportPhase, ExternalImportReceipt,
-    ExternalImportRequest, ExternalImportSource, ExternalImportStatus,
+    ExternalImportDoor, ExternalImportLfsRoute, ExternalImportLfsTransfer, ExternalImportLookup,
+    ExternalImportPhase, ExternalImportReceipt, ExternalImportRequest, ExternalImportSource,
+    ExternalImportStatus,
 };
 
 pub(crate) use source::EXTERNAL_IMPORT_SOURCE_PREDICATE;

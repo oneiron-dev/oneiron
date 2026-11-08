@@ -23,6 +23,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, EnginePairState};
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
@@ -40,7 +42,8 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Where a failure's captured source sits, read before any of its bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A kept owner pair keeps one per step, as proof data (FIX 20607).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CaptureRefs {
     /// Every world the failing run touched.
     worlds: Vec<EntityId>,

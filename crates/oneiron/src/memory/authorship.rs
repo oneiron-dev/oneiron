@@ -167,6 +167,9 @@ pub(crate) fn guard_existing_claim_in_txn(
     Ok(())
 }
 
+/// The exact action delegated for one claim's review and settlement.
+pub(super) const CLAIM_REVIEW_GRANT_VERB: &str = "memory.claim.review";
+
 /// Exact memory verbs an owner can delegate. No delete/erase bit exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryAuthoringAction {
@@ -178,6 +181,7 @@ pub enum MemoryAuthoringAction {
     EditSkill,
     ForkSkill,
     ReviewConflict,
+    ReviewClaim,
 }
 impl MemoryAuthoringAction {
     fn verb(self) -> &'static str {
@@ -190,6 +194,7 @@ impl MemoryAuthoringAction {
             Self::EditSkill => "memory.skill.edit",
             Self::ForkSkill => "memory.skill.fork",
             Self::ReviewConflict => "memory.conflict_review",
+            Self::ReviewClaim => CLAIM_REVIEW_GRANT_VERB,
         }
     }
 }
