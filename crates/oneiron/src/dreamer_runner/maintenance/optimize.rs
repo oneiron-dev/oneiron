@@ -26,7 +26,6 @@ use crate::skill_optimize::{
     SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief, SkillOptimizeDecisions,
     SkillReplayResponses, measure_skill_edit_goal_axes, optimize_target_input,
     run_skill_optimize_targeted, score_gate_skill_edit_in_cycle, skill_edit_needs_goal_axis_report,
-    skill_edit_verdict, skill_tradeoff_ask,
 };
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use rmpv::Value;
@@ -322,6 +321,20 @@ fn pending_proposal(
     attempt: crate::attempt_queue::AttemptId,
     target: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
+    pending_proposal_sourced(vault, resident, attempt, target).map(|(proposal, _)| proposal)
+}
+
+/// The native pending sweep's consulted rows, kept off the drafting brief.
+/// Each reader keeps its original snapshot; an opaque dependency keeps the
+/// union unknown and never changes which proposal is resumed.
+fn pending_proposal_sourced(
+    vault: &Vault,
+    resident: Option<EntityId>,
+    attempt: crate::attempt_queue::AttemptId,
+    target: Option<EntityId>,
+) -> Result<(Option<EntityId>, Option<Vec<EntityId>>)> {
+    let mut sources = Vec::new();
+    let mut sources_known = true;
     let mut after = None;
     let attempt_hex = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
     let mut first = None;
@@ -332,6 +345,7 @@ fn pending_proposal(
             let Some(record) = vault.get_skill_record(id)? else {
                 continue;
             };
+            sources.push(*id);
             // A team-shape revision moves its task-type tree, not its
             // instructions: this pass's judge reads only instructions, and
             // the skill keeps no reserve of its own, so resuming one here
@@ -365,20 +379,42 @@ fn pending_proposal(
                 continue;
             }
             if field(PROVENANCE_OPTIMIZE_ATTEMPT_KEY) == Some(attempt_hex.as_str()) {
-                return Ok(Some(*id));
+                let sources = crate::attempt_queue::source_rows::union_source_rows([
+                    sources_known.then_some(sources)
+                ]);
+                return Ok((Some(*id), sources));
             }
-            if let Some(verdict) = skill_edit_verdict(vault, id)? {
-                if verdict.disposition.admits()
-                    || (verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                        && skill_tradeoff_ask(vault, id)?.is_some())
-                {
+            let (verdict, verdict_rows) =
+                crate::skill_optimize::skill_edit_verdict_sourced(vault, id)?;
+            if let Some(rows) = verdict_rows {
+                sources.extend(rows);
+            } else {
+                sources_known = false;
+            }
+            if let Some(verdict) = verdict {
+                if verdict.disposition.admits() {
                     continue;
+                }
+                if verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision {
+                    let (ask, ask_rows) =
+                        crate::skill_optimize::skill_tradeoff_ask_sourced(vault, id)?;
+                    if let Some(rows) = ask_rows {
+                        sources.extend(rows);
+                    } else {
+                        sources_known = false;
+                    }
+                    if ask.is_some() {
+                        continue;
+                    }
                 }
             }
             first.get_or_insert(*id);
         }
         if page.len() < 128 {
-            return Ok(first);
+            let sources = crate::attempt_queue::source_rows::union_source_rows([
+                sources_known.then_some(sources)
+            ]);
+            return Ok((first, sources));
         }
         after = page.last().copied();
     }

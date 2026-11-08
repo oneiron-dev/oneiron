@@ -10,10 +10,16 @@
 //! parent parked on them, read in the transaction that settles the reply
 //! (FIX 7083). Any other reply has unknown origins.
 
+mod caller;
+mod close;
+mod coverage;
 mod findings;
+pub(crate) use self::close::settle_evaporated_reader_spend;
 mod read;
 mod scoped;
 mod txn;
+
+pub(crate) use caller::erase_reader_caller_actor_in_txn;
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -333,6 +339,8 @@ impl ReaderTxn<'_, '_> {
             ReaderJobState::Queued => {
                 self.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
                 self.delete_index(&parked_key(job.task))?;
+                // A queued job's witness is a requeued claim's: stale (FIX 7735).
+                job.delivery_witness = None;
             }
             ReaderJobState::Active => {}
             _ => return Ok(job),
@@ -693,6 +701,7 @@ impl ExecutorStorage<'_> {
                 finding: None,
                 enqueued_at_ms: now_ms,
                 settled_at_ms: None,
+                delivery_witness: None,
             };
             let ordinal = parent.next_ordinal;
             parent.next_ordinal = parent.next_ordinal.saturating_add(1);
@@ -775,6 +784,8 @@ impl ExecutorStorage<'_> {
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
             job.state = ReaderJobState::Active;
             job.generation = job.generation.saturating_add(1);
+            // Each claim's witness starts empty (FIX 7735).
+            job.delivery_witness = None;
             parent.queued = parent.queued.saturating_sub(1);
             parent.active = parent.active.saturating_add(1);
             tx.put_job(&job)?;
@@ -1105,7 +1116,10 @@ impl ExecutorStorage<'_> {
         max_bytes: u64,
     ) -> Result<SummaryRead> {
         let refused = |reason: &str| Ok(SummaryRead::Refused(reason.to_owned()));
-        let Some((_, members)) = self.live_summary(task, generation)? else {
+        let Some((job, members)) = self.live_summary(task, generation)? else {
+            return refused("reader_task_settled");
+        };
+        let ReaderJobKind::Summarize { window_tokens, .. } = job.kind else {
             return refused("reader_task_settled");
         };
         let total = members
@@ -1114,7 +1128,9 @@ impl ExecutorStorage<'_> {
             .fold(0_u64, u64::saturating_add);
         if total > max_bytes {
             return refused(&crate::code_run::summary_exceeds_window_bytes(
-                total, max_bytes,
+                total,
+                max_bytes,
+                window_tokens,
             ));
         }
         let mut read = Vec::with_capacity(members.len());

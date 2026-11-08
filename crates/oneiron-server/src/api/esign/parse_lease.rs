@@ -48,8 +48,9 @@ pub(super) fn inspected(
 /// the lease holds. A PDF that came to need more since it was measured (the
 /// sealed output in place of the original) grows the lease to its length on
 /// the same deadline and is read then. The lease is then grown for its parse
-/// ([`inspected`]). Blocks its thread while it waits.
+/// ([`inspected_with_worker`]). Blocks its thread while it waits.
 pub(super) fn inspected_from_vault(
+    server: &crate::server::SyncServer,
     memory: &MachineMemory,
     bytes: u64,
     stream_decode_bytes: u64,
@@ -68,12 +69,12 @@ pub(super) fn inspected_from_vault(
     };
     let reserved = lease.bytes();
     lease.materialized(reserved, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
-    inspected(lease, deadline, &pdf, stream_decode_bytes)
+    inspected_with_worker(server, lease, deadline, &pdf, stream_decode_bytes)
 }
 
-/// Geometry uses an installed inspection worker when available.
+/// Geometry and ceremony preview use an installed inspection worker when available.
 /// Hosts without that worker keep their existing native path; installation
-/// is not a new prerequisite for an already working geometry request.
+/// is not a new prerequisite for an already working inspection request.
 pub(super) fn inspected_with_worker(
     server: &crate::server::SyncServer,
     lease: MemoryLease,

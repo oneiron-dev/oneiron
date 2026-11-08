@@ -235,6 +235,42 @@ fn scan_catalog_mode(
     Ok(())
 }
 
+/// Collect action facts without extending the prepared-input rejection rules.
+/// References are not descended here: every indirect object is already a root,
+/// so only inline containers need a stack and reference cycles cannot recur.
+pub(crate) fn active_content_facts(
+    doc: &Document,
+    limits: &SealResourceLimits,
+) -> Result<crate::api::ActiveContentFacts, SealMemoryRefusal> {
+    let mut facts = crate::api::ActiveContentFacts::default();
+    let mut pending = Vec::new();
+    for root in doc.objects.values() {
+        admitted::push(limits, &mut pending, root)?;
+        while let Some(object) = pending.pop() {
+            let dict = match object {
+                Object::Array(objects) => {
+                    admitted::reserve(limits, &mut pending, objects.len())?;
+                    pending.extend(objects);
+                    continue;
+                }
+                Object::Dictionary(dict) => dict,
+                Object::Stream(stream) => &stream.dict,
+                _ => continue,
+            };
+            if let Ok(subtype) = dict.get(b"S")
+                && let Some(subtype) = walk::resolve_security_name(doc, subtype, limits)?
+            {
+                facts.javascript |= name_is(subtype, b"JavaScript");
+                facts.launch |= name_is(subtype, b"Launch");
+            }
+            for (_, value) in dict.iter() {
+                admitted::push(limits, &mut pending, value)?;
+            }
+        }
+    }
+    Ok(facts)
+}
+
 /// Shared security analysis: prepared input rejects existing signatures;
 /// verification permits their presence but still refuses active content and
 /// embedded files. Both doors resolve the same reference chains.

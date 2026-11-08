@@ -50,7 +50,7 @@ pub(crate) use self::deferral::{
     BACKLOG_DEFERRED_REASON, SELECTION_DEFERRED_REASON, selection_deferred,
 };
 pub use self::free_time::*;
-pub(crate) use self::home::reelect_home_in_txn;
+pub(crate) use self::home::{declared_home_candidate, home_candidate_rank, reelect_home_in_txn};
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};

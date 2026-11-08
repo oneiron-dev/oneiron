@@ -130,6 +130,31 @@ pub(super) fn aged_admission_ceiling(
     Ok(None)
 }
 
+/// Whether the sibling route `sibling` still holds its send: its call 0 is
+/// admitted and not stopped definitely unsent. A pending call may go on a
+/// later attempt, and a remote task that failed after its provider accepted
+/// it may have done its work; only one route of a send is ever admitted
+/// while the other can still go.
+fn sibling_route_holds_send_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sibling: crate::attempt_queue::AttemptId,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
+    };
+    let Some(record) = read_intent_for_attempt_in_txn(vault, txn, sibling, 0)? else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        IntentResolution::from_record(&record)?,
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason,
+        } if reason != IntentEscalationReason::RemoteTaskFailed
+    ))
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -215,6 +240,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if let Some(result) = accounting_replay_in_txn(vault, &wtxn, &command, intent_id)? {
         drop(wtxn);
         return Ok(result);
+    }
+    // FIX 11029: a send is not admitted, nor parked, while its sibling
+    // route (an interrupt and its ambient alternative) holds the send, under
+    // this writer: at most one route of a send is ever live.
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command
+        && let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, &wtxn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
     }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
@@ -392,6 +428,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         ));
         let stored = stored_admission_in_txn(vault, &mut wtxn, &suppressed, &payload_context)?;
         insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
+        // FIX 11030: a party with no PERSON yet is kept for a later erase.
+        crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+            vault,
+            &mut wtxn,
+            &suppressed.id,
+            suppressed.payload(),
+            payload_context.recipient,
+        )?;
         crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
@@ -654,6 +698,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
+    // FIX 11030: a party with no PERSON yet is kept for a later erase.
+    crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+        vault,
+        &mut wtxn,
+        &pending.id,
+        pending.payload(),
+        payload_context.recipient,
+    )?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
