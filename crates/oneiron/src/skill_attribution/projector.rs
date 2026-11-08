@@ -161,12 +161,13 @@ pub fn run_attribution_projector_with_decisions(
         ));
         if verdict == AttributionVerdict::Unclear {
             // The context the notes were written in, frozen with them (FIX
-            // 7824); the project and task type are read in the writer.
+            // 7824); the project, task type and world are read in the writer.
             let context = UnclearContext {
                 actor: evidence.actor,
                 skill: evidence.skill,
                 scope: None,
                 project: None,
+                world: None,
                 type_ref: None,
                 attempt_receipt: Some(evidence.receipt_ref.clone()),
                 judge_revision: revision.clone(),
@@ -225,6 +226,8 @@ pub fn run_attribution_projector_with_decisions(
             }
             (row.context.project, row.context.type_ref) =
                 outcome_scope_in_txn(vault, wtxn, &evidence.receipt_ref)?;
+            row.context.world =
+                super::split::outcome_world_in_txn(vault, wtxn, &evidence.receipt_ref)?;
             put_unclear_in_txn(vault, wtxn, row)?;
         }
         for (judgment, (revision, receipts)) in judgments.iter_mut().zip(&stamps) {
