@@ -174,12 +174,14 @@ impl Vault {
     /// binding to the fetched source and permissions, imports at `preferred`
     /// (a fresh id when `None`; content dedup may still answer an existing
     /// holder), co-commits the advisory scans, runs the shared install plan
-    /// and writes the source receipt. The caller owns the writer.
+    /// and writes the source receipt. The caller owns the writer. `rows`
+    /// notes the stored skill a content dedup answers (FIX 11699).
     pub(crate) fn commit_fitted_skill_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fitted: &FittedSkill,
         preferred: Option<EntityId>,
+        rows: &mut crate::skill_hub::SkillImportRows,
     ) -> Result<EntityId> {
         let FittedSkill {
             source,
@@ -210,8 +212,9 @@ impl Vault {
             Some(id) => id,
             None => self.store.clock.entity_id()?,
         };
-        let entity = self
-            .import_skill_from_hub_in_txn(txn, source, parsed, preferred, occurred, learned_at)?;
+        let entity = self.import_skill_from_hub_in_txn(
+            txn, source, parsed, preferred, occurred, learned_at, rows,
+        )?;
         for scan in advisory_scans {
             self.ingest_skill_scan_verdict_in_txn(txn, &entity, hash, scan, occurred, learned_at)?;
         }
