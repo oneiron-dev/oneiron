@@ -384,6 +384,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.leave", post(facade_route))
         .route("/vault.members.invitations", post(facade_route))
         .route("/vault.members.accept", post(facade_route))
+        .route("/vault.members.accept_with_credential", post(facade_route))
         .route("/vault.members.decline", post(facade_route))
         .route("/vault.members.withdraw_invitation", post(facade_route))
         .route("/vault.shared.object", post(facade_route))
@@ -1176,6 +1177,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.search.temporal", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))
         .route("/vault.neighbors", post(facade_route))
+        .route("/vault.edges.provenance", post(facade_route))
         .route("/vault.structural.put", post(facade_route))
         .route("/vault.habits.checkin", post(facade_route))
         .route("/vault.productivity.create", post(facade_route))
@@ -1386,6 +1388,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.sync.repo_manifests.conflict.discard",
             post(facade_route),
         )
+        .route("/vault.dreamer.follower.keyframe", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))
