@@ -254,12 +254,13 @@ impl Vault {
     /// [`Self::plan_shape_into`]), the seed revision it stored, every live
     /// read an owner's landing made, the staged source a pack installs
     /// from, the custody record a delegated channel provision reads, the
-    /// hub a refused skill import read, and the entity each landing wrote.
-    /// The journal keeps them (FIX 3411, 3513), so a resumed apply lists
-    /// them beside its own reads without planning again. `None` once a read
-    /// ran whose rows it does not follow (a skill import refused after its
-    /// import began), and from then on for every apply of that journal. A
-    /// refusal answers beside the rows read before it.
+    /// hub a skill import read and the stored skill its content
+    /// deduplicated to, landed or refused (FIX 11699), and the entity each
+    /// landing wrote. The journal keeps them (FIX 3411, 3513), so a resumed
+    /// apply lists them beside its own reads without planning again. `None`
+    /// once a read ran whose rows it does not follow, and from then on for
+    /// every apply of that journal. A refusal answers beside the rows read
+    /// before it.
     pub fn apply_shape_listing(
         &self,
         applier: ShapeApplier<'_>,
