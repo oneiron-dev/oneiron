@@ -148,10 +148,7 @@ enum Staged<'e> {
         value: &'e [u8],
         id: EntityId,
         hard: bool,
-        replayed: Result<(
-            ReplayedTombstoneOutcome,
-            Vec<(crate::attempt_queue::AttemptId, u32)>,
-        )>,
+        replayed: Result<(ReplayedTombstoneOutcome, crate::deletion::ErasureEffects)>,
     },
 }
 
@@ -225,9 +222,8 @@ impl Pass<'_> {
                     hard,
                     replayed,
                 } => {
-                    let replayed = replayed.and_then(|(outcome, cancelled)| {
-                        crate::attempt_queue::AttemptQueue::new(vault)
-                            .erased_payload_cancellations_committed(&cancelled);
+                    let replayed = replayed.and_then(|(outcome, effects)| {
+                        effects.committed(vault);
                         collect_after_replay(vault).map(|()| outcome)
                     });
                     self.settle(key, value, id, hard, replayed);
@@ -273,10 +269,10 @@ impl Pass<'_> {
                 .as_deref()
                 .and_then(EntityMetadataHeader::parse)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
-            let (outcome, _changed, cancelled) =
+            let (outcome, _changed, effects) =
                 quarantine::apply_replayed_tombstone_for_sync_in_txn(vault, child, &id, value)?;
             let item_claims_changed = is_claim && outcome.changed_local_state();
-            Ok((outcome, cancelled, item_claims_changed))
+            Ok((outcome, effects, item_claims_changed))
         });
         match replayed {
             Err(err) if out_of_room(&err) => return Err(err),
@@ -284,14 +280,14 @@ impl Pass<'_> {
                 self.quarantine_in(parent, key, value, &err)?;
                 staged.push(Staged::Terminal(Some(id)));
             }
-            Ok((outcome, cancelled, item_claims_changed)) => {
+            Ok((outcome, effects, item_claims_changed)) => {
                 *claims_changed |= item_claims_changed;
                 staged.push(Staged::Replayed {
                     key,
                     value,
                     id,
                     hard,
-                    replayed: Ok((outcome, cancelled)),
+                    replayed: Ok((outcome, effects)),
                 });
             }
             Err(err) => staged.push(Staged::Replayed {
