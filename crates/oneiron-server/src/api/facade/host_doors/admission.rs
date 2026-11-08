@@ -188,6 +188,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultPacksPreview
         | Row::VaultMailPackInstall
         | Row::VaultMailSourcesSync
+        | Row::VaultMailSourcesSearch
         | Row::VaultMailReplyApprove
         | Row::VaultPacksConnectorPrepare
         | Row::VaultPacksConnectorGet
@@ -273,7 +274,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet
+        | Row::VaultHooksRegenHistory
+        | Row::VaultHooksRegenRun
         | Row::VaultHooksRegenAdopt
+        | Row::VaultHooksRegenRevert
+        | Row::VaultHooksRegenCancel
         | Row::VaultLensesActivate
         | Row::VaultLensesDeactivate
         | Row::VaultAuthorityHandoffAlarms
@@ -622,6 +627,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeSessionModelHealCount
         | Row::VaultCodeTypeDiagnostics
+        | Row::VaultCodeWaitsRebind
         | Row::VaultCodeCorrections
         | Row::VaultCodeStepEvidence
         | Row::VaultCodeExport
@@ -836,7 +842,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultOffRecordRoomsExport => {
             crate::api::facade::off_record_room_doors::off_record_room_admits(auth, verb)
         }
-        Row::VaultGuestsExportEnvelope => {
+        Row::VaultGuestsExportEnvelope | Row::VaultGuestsPropose => {
             crate::api::facade::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         Row::ExecuteCode => {
