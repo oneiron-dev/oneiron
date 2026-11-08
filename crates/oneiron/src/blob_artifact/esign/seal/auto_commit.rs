@@ -4,7 +4,9 @@ use super::{
 };
 use crate::attempt_queue::AttemptRecord;
 use crate::blob_artifact::BlobVersionProvenance;
-use crate::blob_artifact::esign::{EsignSealed, EsignState, EsignVerdict, SealProfile};
+use crate::blob_artifact::esign::{
+    EsignSealed, EsignState, EsignVerdict, SealActiveContentFacts, SealProfile,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::gate::{NativeAutoChecker, resolve_policy_manifest};
@@ -18,6 +20,7 @@ pub(super) struct VerifiedSealOutput {
     sha256: [u8; 32],
     audit_chain_sha256: [u8; 32],
     profile: SealProfileEvidence,
+    active_content: SealActiveContentFacts,
 }
 
 impl VerifiedSealOutput {
@@ -46,6 +49,7 @@ impl VerifiedSealOutput {
                 achieved: sealed.achieved,
                 degraded: sealed.degraded,
             },
+            active_content: checked.active_content,
         })
     }
 
@@ -54,6 +58,9 @@ impl VerifiedSealOutput {
     }
     pub(super) fn profile(&self) -> &SealProfileEvidence {
         &self.profile
+    }
+    pub(super) fn active_content(&self) -> SealActiveContentFacts {
+        self.active_content
     }
     pub(super) fn audit_chain_sha256(&self) -> [u8; 32] {
         self.audit_chain_sha256
