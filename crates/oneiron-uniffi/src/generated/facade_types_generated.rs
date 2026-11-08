@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1336 facade rows, 4804 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1288.
+// UniFFI census: 1338 facade rows, 4810 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1290.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -39165,6 +39165,47 @@ pub struct ShareCreated {
     pub travel: TravelChoice,
 }
 
+/// `oneiron::verbs::share::ShareViewLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShareViewLinkRequest {
+    #[serde(rename = "share_ref")]
+    pub share_ref: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(rename = "slip_lifetime_secs")]
+    pub slip_lifetime_secs: u64,
+}
+
+/// `oneiron::authority::slip_pairing::PairingPinRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PairingPinRef {
+    #[serde(rename = "challenge")]
+    pub challenge: Vec<u8>,
+    #[serde(rename = "digest")]
+    pub digest: Vec<u8>,
+}
+
+/// `oneiron::authority::slip_pairing::PairingLink`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PairingLink {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "pin", default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<PairingPinRef>,
+    #[serde(rename = "comm")]
+    pub comm: CommReach,
+}
+impl std::fmt::Debug for PairingLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingLink").finish_non_exhaustive()
+    }
+}
+
 /// `oneiron::verbs::share::ShareRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -40942,6 +40983,8 @@ pub struct CodeProposalSubmitRequest {
     pub op_provenance: CodeOpProvenance,
     #[serde(rename = "catalog", default, skip_serializing_if = "Option::is_none")]
     pub catalog: Option<LensCatalog>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<String>,
 }
 
 /// `oneiron::memory::code_doors::types::CodeProposalSubmitted`.
@@ -40949,6 +40992,8 @@ pub struct CodeProposalSubmitRequest {
 pub struct CodeProposalSubmitted {
     #[serde(rename = "proposal")]
     pub proposal: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
     #[serde(rename = "repo")]
     pub repo: String,
     #[serde(rename = "actor")]
@@ -41210,6 +41255,19 @@ pub struct RepoProposalSettlement {
     pub settled_at: u64,
 }
 
+/// `oneiron::memory::code_doors::conflict_types::CodeProposalReplacementView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeProposalReplacementView {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "replacement")]
+    pub replacement: String,
+    #[serde(rename = "replacement_base")]
+    pub replacement_base: String,
+}
+
 /// `oneiron::memory::code_doors::conflict_types::CodeProposalSettlementView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeProposalSettlementView {
@@ -41243,6 +41301,22 @@ pub struct CodeProposalSettlementView {
         skip_serializing_if = "Option::is_none"
     )]
     pub resolution: Option<String>,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(rename = "attempt_receipts")]
+    pub attempt_receipts: Vec<String>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<CodeProposalReplacementView>,
+    #[serde(
+        rename = "replaced_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replaced_by: Option<CodeProposalReplacementView>,
 }
 
 /// `oneiron::memory::code_doors::conflict_types::CodeProposalSettleRequest`.
@@ -42089,6 +42163,19 @@ pub struct CodeWaitBrowserAction {
     pub press: String,
 }
 
+/// `oneiron::code_run::consent_wait::standing_offer::CodeConsentStandingOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeConsentStandingOffer {
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "verb_class")]
+    pub verb_class: String,
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
 /// `oneiron::memory::code_wait_doors::types::CodeWaitAnswerView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeWaitAnswerView {
@@ -42112,6 +42199,18 @@ pub struct CodeWaitAnswerView {
     pub decision_ref: String,
     #[serde(rename = "answered_at_ms")]
     pub answered_at_ms: u64,
+    #[serde(
+        rename = "standing_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_grant_ref: Option<String>,
+    #[serde(
+        rename = "standing_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_receipt_ref: Option<String>,
 }
 
 /// `oneiron::memory::code_wait_doors::types::CodeWaitSettleOutcome`.
@@ -42189,6 +42288,12 @@ pub struct CodeWaitReceiptView {
     pub ask_ref: Option<String>,
     #[serde(rename = "allowed_answers")]
     pub allowed_answers: Vec<CodeWaitChoice>,
+    #[serde(
+        rename = "standing_offer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_offer: Option<CodeConsentStandingOffer>,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<CodeWaitAnswerView>,
     #[serde(
@@ -45424,6 +45529,16 @@ pub struct CodeSnapshotView {
     pub capture_receipt: Option<String>,
 }
 
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotCaptureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotCaptureRequest {
+    #[serde(rename = "project_id")]
+    pub project_id: String,
+    #[serde(rename = "local_folder")]
+    pub local_folder: String,
+}
+
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -45678,6 +45793,20 @@ pub struct MergeQueueBatchView {
     pub quarantine: Option<Quarantine>,
     #[serde(rename = "selected_tests")]
     pub selected_tests: AffectedTests,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(
+        rename = "completion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completion_receipt: Option<String>,
+    #[serde(rename = "proposal_admission_receipts")]
+    pub proposal_admission_receipts: Vec<String>,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueBatchRequest`.
@@ -47210,6 +47339,20 @@ pub struct RepoQueueEntryView {
     pub landed_head: Option<String>,
     #[serde(rename = "blockers")]
     pub blockers: Vec<String>,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(
+        rename = "completion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completion_receipt: Option<String>,
+    #[serde(rename = "proposal_admission_receipts")]
+    pub proposal_admission_receipts: Vec<String>,
 }
 
 /// `oneiron::memory::repo_doors::types::RepoMergeQueueObserveOutput`.
@@ -47395,6 +47538,8 @@ pub struct RepoProposalSubmitInput {
         skip_serializing_if = "Option::is_none"
     )]
     pub declaration: Option<String>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<String>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoProposalSubmitInput`.
@@ -47412,6 +47557,8 @@ pub struct LiveRunRequestRepoProposalSubmitInput {
 pub struct RepoProposalSubmitOutput {
     #[serde(rename = "proposal")]
     pub proposal: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
     #[serde(rename = "work")]
     pub work: String,
     #[serde(rename = "path")]
@@ -63741,6 +63888,12 @@ pub enum VerbHookStop {
         invocation: String,
         #[serde(rename = "result")]
         result: crate::WireJson,
+        #[serde(
+            rename = "hook_notice",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        hook_notice: Option<bool>,
     },
     #[serde(rename = "completed_with_error")]
     CompletedWithError {
@@ -63756,6 +63909,12 @@ pub enum VerbHookStop {
             skip_serializing_if = "Option::is_none"
         )]
         receipt_ref: Option<String>,
+        #[serde(
+            rename = "hook_notice",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        hook_notice: Option<bool>,
     },
 }
 

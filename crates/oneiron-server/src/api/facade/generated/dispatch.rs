@@ -23130,16 +23130,20 @@ async fn vault_shares_issue_view_link(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_shares_revoke(
@@ -27458,16 +27462,20 @@ async fn vault_code_snapshots_capture(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_code_snapshots_get(
@@ -28605,16 +28613,20 @@ async fn vault_oauth_authorization_answer(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_repo_git_push_mint(
