@@ -689,6 +689,9 @@ impl ServeConfig {
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
+        // Retrieval-run capture stays off unless this server's owner turns it
+        // on (`[recall] retrieval_telemetry_capture`, FIX 21998).
+        config.retrieval_telemetry_capture = self.recall.retrieval_telemetry_capture;
         // A plain serve is self-run whatever posture it declares, so "Help
         // improve Oneiron" and training on what it sends stay off until its
         // owner turns them on; only the managed serve entry sets the managed

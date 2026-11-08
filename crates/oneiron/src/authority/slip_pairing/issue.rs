@@ -274,6 +274,7 @@ impl Vault {
                 actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
                 ..PairingPrincipal::default()
             },
+            share_ref: None,
             machine: None,
             pin: None,
             owner: Some(owner),

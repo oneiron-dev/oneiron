@@ -102,7 +102,7 @@ impl Vault {
                 hub_ref,
                 &package,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
             )?
@@ -144,7 +144,7 @@ impl Vault {
                 &package,
                 preferred_id,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
             )?
