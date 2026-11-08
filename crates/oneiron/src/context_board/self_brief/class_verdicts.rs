@@ -58,8 +58,9 @@ pub struct BriefClassVerdict {
     /// hold holds it, each hold named in `holds`.
     pub inside: CanEffectVerdict,
     /// The Gate's reason codes behind `inside`, `GateReasonCode::as_str`
-    /// tokens; none for `allow`, and none for an act-policy row's `deny`,
-    /// which no reason code names.
+    /// tokens, or the connector driver's own token for its administrative
+    /// stop; none for `allow`, and none for an act-policy row's `deny`, which
+    /// no reason code names.
     pub reasons: Vec<String>,
     /// Each administrative hold among `reasons`, its token without its
     /// `gate.pending.` prefix (for example `actor_ceiling`).
