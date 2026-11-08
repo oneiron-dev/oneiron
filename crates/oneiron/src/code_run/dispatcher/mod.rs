@@ -20,13 +20,16 @@ mod memory_verbs;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;
+mod record_refs;
 mod repo;
 mod repo_sources;
 mod routed_entry;
 mod session_verbs;
+mod skill_bodies;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
+mod team_submit_entity;
 mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
@@ -54,6 +57,8 @@ use crate::{ClaimSource, Vault, WriteActor};
 
 use self::admission::gate_rejection;
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+pub(crate) use self::agent_verb::write_receipt_may_have_run;
+pub(crate) use self::coordination::agent_attempt_run_ref;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
@@ -61,7 +66,9 @@ pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
-pub(crate) use self::reader_spawn::ReaderChildBinding;
+pub(crate) use self::reader_spawn::{
+    ReaderChildBinding, delegated_input, delegated_occurrence_input,
+};
 
 /// Host-bound dispatcher for one first-party code run.
 ///
@@ -117,6 +124,10 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// Where the last call's native producer witnessed the skill bodies its
+    /// answer carries (FIX 3608): the executor's host takes them with the
+    /// call's answer. Host-internal: no guest call reaches it.
+    pub(super) skill_bodies: RefCell<Option<crate::skill::SkillBodyCapture>>,
     /// The public fold boundary's completed pre chain, for its exact Mark only.
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
@@ -141,6 +152,8 @@ pub struct HostSelfDispatcher<'a> {
     /// start the host reads through it on its route (FIX 2594, FIX 7507);
     /// `None` until a host binds one. No guest call reaches it.
     bound_run: Option<EntityId>,
+    /// Actual host-bound write placement, never a requested read-world set.
+    birth_world: Option<EntityId>,
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,

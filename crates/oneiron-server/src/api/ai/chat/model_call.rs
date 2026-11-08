@@ -1,14 +1,20 @@
-//! Model-call evidence from the actual answering leg, independent of delivery.
+//! Model-call evidence from the actual answering leg, independent of delivery,
+//! and the drafter's view of the same leg (FIX 15128, FIX 15129): its call as
+//! its rung sent it and the span it generated. The same leg's answering rung
+//! reaches the answer's breakpoint, its record kept or not (FIX 4933).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::{EntityId, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, Vault};
+use oneiron::{
+    ContentPart, EntityId, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
+    LlmResult, LlmStream, LlmStreamEvent, Vault,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use super::TurnCredential;
-use crate::models::{ModelCallBinding, OfferLadder, RoleCall};
+use crate::models::{AnsweringRung, ModelCallBinding, OfferLadder, RoleCall};
 
 /// Retention for evidence written directly to base, not the session overlay.
 pub(crate) fn model_call_keeps_no_record(
@@ -40,6 +46,58 @@ pub(super) struct Capture {
     room: Option<EntityId>,
     no_record_at_arrival: bool,
     terminal: mpsc::Receiver<CompletedCall>,
+    answered: AnsweredSlot,
+    terminal_rung: TerminalRung,
+}
+
+/// The answering leg's call as its rung sent it and what it generated, for
+/// the drafter's training example (FIX 15128, FIX 15129). Taken at the
+/// terminal, before the reply is saved, only for a call whose model-call
+/// record is kept.
+pub(super) struct AnsweredCall {
+    /// The request exactly as the answering rung sent it.
+    pub(super) request: LlmRequest,
+    /// The model the answering rung's wire named.
+    pub(super) wire_model: String,
+    /// The weights identity the answering worker reported for the call
+    /// (its inference receipt's `CacheIdentity` model digest), the identity
+    /// a drafter target names; `None` when no receipt names one.
+    pub(super) target_model: Option<String>,
+    /// The terminal's message: its reasoning, tool calls and text, in order.
+    pub(super) generated: LlmMessage,
+    pub(super) finish_reason: FinishReason,
+}
+
+/// Where the producer leaves the answering call for the reply's post-save
+/// hooks.
+pub(super) type AnsweredSlot = Arc<Mutex<Option<AnsweredCall>>>;
+
+/// Where the producer leaves the answering leg's rung and its sent call
+/// for the answer's breakpoint (FIX 4933): `None` until a leg answers, and
+/// for an answer whose stream ended any other way.
+pub(super) type TerminalRung = Arc<Mutex<Option<AnsweringRung>>>;
+
+/// `request` as the rung `binding` names sent it, as the ladder binds a
+/// rung's call: its model at that rung's locality, its route prompt as the
+/// first message, each cache boundary moved past it. The segment manifest
+/// is never serialized and stays as it was.
+fn sent_request(request: &LlmRequest, binding: &ModelCallBinding) -> LlmRequest {
+    let mut sent = request.clone();
+    sent.model = binding.rung.model.clone();
+    sent.envelope.locality = binding.rung.locality;
+    if let Some(prompt) = &binding.rung.prompt {
+        sent.messages.insert(
+            0,
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text {
+                    text: prompt.clone(),
+                }],
+            },
+        );
+        oneiron::code_run::shift_cache_boundaries(&mut sent);
+    }
+    sent
 }
 
 pub(super) fn channel(
@@ -56,6 +114,8 @@ pub(super) fn channel(
             room,
             no_record_at_arrival,
             terminal,
+            answered: AnsweredSlot::default(),
+            terminal_rung: TerminalRung::default(),
         },
     )
 }
@@ -89,6 +149,17 @@ impl Recorder {
 }
 
 impl Capture {
+    /// Where [`Self::record`] leaves the answering call for the drafter.
+    pub(super) fn answered(&self) -> AnsweredSlot {
+        Arc::clone(&self.answered)
+    }
+
+    /// Where [`Self::record`] leaves the answering leg's rung for the
+    /// answer's breakpoint (FIX 4933).
+    pub(super) fn terminal_rung(&self) -> TerminalRung {
+        Arc::clone(&self.terminal_rung)
+    }
+
     pub(super) fn record(
         &mut self,
         vault: &Vault,
@@ -106,6 +177,19 @@ impl Capture {
         else {
             return;
         };
+        // FIX 4933: the answering leg's rung reaches the answer's breakpoint
+        // whether or not its record is kept.
+        let terminal = self.terminal.try_recv().ok().map(|mut call| {
+            let binding = call.binding.try_recv().ok();
+            (call, binding)
+        });
+        if let Some(answering) = terminal
+            .as_ref()
+            .and_then(|(_, binding)| binding.as_ref()?.answering.clone())
+            && let Ok(mut slot) = self.terminal_rung.lock()
+        {
+            *slot = Some(answering);
+        }
         let session = match credential {
             TurnCredential::Request { auth, .. } => auth.off_record_session(),
             TurnCredential::Action { .. } => None,
@@ -116,11 +200,28 @@ impl Capture {
         {
             return;
         }
-        let Ok(mut call) = self.terminal.try_recv() else {
+        let Some((call, binding)) = terminal else {
             tracing::warn!("chat terminal has no answering model-call context");
             return;
         };
-        let binding = call.binding.try_recv().ok();
+        // FIX 15128: the drafter's view of the leg, by the rung that
+        // answered; a leg that names no route is no example.
+        if let Some(binding) = binding.as_ref()
+            && let Some(route) = binding.route.as_ref()
+            && let Ok(mut slot) = self.answered.lock()
+        {
+            *slot = Some(AnsweredCall {
+                request: sent_request(&call.request, binding),
+                wire_model: route.wire_model.clone(),
+                target_model: usage
+                    .inference_calls()
+                    .last()
+                    .and_then(|receipt| receipt.worker.identity.model.as_ref())
+                    .map(|model| model.as_str().to_owned()),
+                generated: message.clone(),
+                finish_reason: finish_reason.clone(),
+            });
+        }
         let response = LlmResponse {
             message: message.clone(),
             usage: usage.clone(),

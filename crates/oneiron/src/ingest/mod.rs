@@ -6,7 +6,11 @@
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
 mod ag_ui;
-pub use ag_ui::{AG_UI_SOURCE_ID, AgUiDecodedEvent, AgUiEventLinks, AgUiSource};
+pub use ag_ui::{
+    AG_UI_FILE_PREDICATE, AG_UI_SOURCE_ID, AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent,
+    AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
+    AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
+};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{
@@ -109,6 +113,7 @@ mod audience;
 mod connector_archive_link;
 mod connector_conversation;
 pub use connector_conversation::ConnectorWitness;
+pub(crate) use connector_conversation::connector_witness_row_ids;
 mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,

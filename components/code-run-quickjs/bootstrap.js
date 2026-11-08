@@ -62,7 +62,8 @@
     // `list`, `schema`, `status`, `outbound`) stay the table's rows, and the
     // wrong roots (`tools.`, `connectors.`, `mcp.`, `self.mcp.`,
     // `self.connectors.`) keep their refusal below: none of them ever
-    // reaches a connector.
+    // reaches a connector. The callable `connector.answer` also exposes
+    // missing tool members of the connector named `answer`.
     let connectorCall = null;
     const tools = name => new Proxy(Object.create(null), {
       get: (_, tool) => typeof tool === "string" && !plain.has(tool)
@@ -72,8 +73,10 @@
     // `connector` answers a name it does not hold with that connector's tools.
     guard = (path, object) => {
       for (const [key, value] of Object.entries(object))
-        if (value && typeof value === "object") object[key] = guard(`${path}.${key}`, value);
-      const missing = path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
+        if (value && (typeof value === "object" || typeof value === "function" && (Object.keys(value).length || path === "connector" && key === "answer"))) object[key] = guard(`${path}.${key}`, value);
+      const missing = path === "connector.answer" && connectorCall
+        ? tool => tools("answer")[tool]
+        : path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
       return new Proxy(object, {
         get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
           ? Reflect.get(target, key, receiver) : missing(key),
@@ -255,8 +258,10 @@
     };
     if (helpers.can && helpers.summarize && helpers.spawn && helpers.wait) bare.readAll = makeReaderForks(helpers);
     if (helpers.can) bare.diff = makeDiff(helpers);
+    // A wrong-root name answers WRONG_ROOT only where no served namespace or
+    // bare row owns it: a catalog row of that name stays callable (FIX 7142).
     for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
-      if (!roots.has(root)) bare[root] = refusal(root);
+      if (!roots.has(root) && !(root in bare)) bare[root] = refusal(root);
     for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);
     roots.add("self");
     // A bare verb that is also a root (`reveal` and `reveal.wait`) is one

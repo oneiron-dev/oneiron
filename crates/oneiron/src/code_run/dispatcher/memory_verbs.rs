@@ -6,7 +6,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::code_run::consent;
 use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
-    SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfCall, SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
@@ -42,13 +42,24 @@ impl HostSelfDispatcher<'_> {
     /// `revalidate` refuses the write instead of splitting the record across
     /// the flip.
     ///
+    /// An anonymous room keeps no memory (ARCH-0052), so it serves only a
+    /// call that keeps nothing: the run's own search, a context descriptor,
+    /// and the five reads its room's view answers (FIX 5166). The rule reads
+    /// the whole `call`, not only its effect: an `AgentVerb` read passes
+    /// only when [`Self::room_session_read`] routes it to
+    /// `dispatch_session_read`, never because its verb writes nothing.
+    ///
     /// The match is exhaustive so a new effect cannot default into either
     /// answer — it has to be ruled on here.
-    pub(super) fn enforce_off_record_effect_policy(&self, effect: SelfEffect) -> Result<()> {
-        // Anonymous permits only effects with no transcript or mandatory
+    pub(super) fn enforce_off_record_effect_policy(&self, call: &SelfCall) -> Result<()> {
+        let effect = call.effect();
+        // Anonymous permits only calls with no transcript or mandatory
         // audit. Do not execute destructive/outbound/approval effects while
-        // silently dropping the evidence their ordinary doors require.
-        if !matches!(effect, SelfEffect::MemorySearch | SelfEffect::Context)
+        // silently dropping the evidence their ordinary doors require. A
+        // room read's retrieval telemetry and its hooks' records take the
+        // room's Discard route (FIX 5166).
+        if !matches!(call, SelfCall::MemorySearch(_) | SelfCall::Context(_))
+            && self.room_session_read(call).is_none()
             && let ExecutorStorage::Session(binding) = &self.storage
         {
             binding
@@ -95,6 +106,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSnapshotsGet
             | SelfEffect::RepoSnapshotsRead
             | SelfEffect::RepoSymbolsDefinitions
+            | SelfEffect::RepoSymbolsNeighbors
             | SelfEffect::RepoViewsGet
             | SelfEffect::RepoViewsRead
             | SelfEffect::RepoMergeQueueObserve
@@ -104,6 +116,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSymbolsRenew
             | SelfEffect::RepoSymbolsRelease
             | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoProposalResolve
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
@@ -125,8 +138,9 @@ impl HostSelfDispatcher<'_> {
             // DOOR-127: a claim put and a fixture claim stage in the room's
             // overlay (`OffRecordSession::stage_session_claim`). A verb
             // forward reaches `dispatch_agent_verb`, which writes a NOTE or a
-            // claim into the room and refuses every other verb, whose door
-            // runs against the canonical vault.
+            // claim into the room, reads the five session reads through its
+            // view, and refuses every other verb, whose door runs against
+            // the canonical vault.
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::AgentVerb
@@ -169,15 +183,37 @@ impl HostSelfDispatcher<'_> {
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
+        let filter = call
+            .filter
+            .as_ref()
+            .map(crate::memory::ReadFilterInput::to_filter);
+        // A caller filter narrows a reader key's lane; with no key there is
+        // no lane to narrow, and an unfiltered answer is never served for a
+        // filtered ask (FIX 3977).
+        if filter.is_some() && read_as.is_none() {
+            return Err(Error::InvalidConfig(
+                "a filtered vault.search needs the run's reader key".to_owned(),
+            ));
+        }
         let results = match (&self.storage, site) {
-            (ExecutorStorage::Canonical(vault), Some(site)) => {
-                self.search_noting_worlds(vault, site, &call.query, limit, read_as)?
-            }
+            (ExecutorStorage::Canonical(vault), Some(site)) => self.search_noting_worlds(
+                vault,
+                site,
+                &call.query,
+                limit,
+                read_as,
+                filter.as_ref(),
+            )?,
             _ => match read_as {
                 Some(reader) => {
                     let claims = self.keyed_claims();
-                    self.storage
-                        .search_text_as(&call.query, limit, reader, claims)?
+                    self.storage.search_text_as(
+                        &call.query,
+                        limit,
+                        reader,
+                        claims,
+                        filter.as_ref(),
+                    )?
                 }
                 None => self.own_entry_hits(self.storage.search_text(&call.query, limit)?)?,
             },
@@ -209,20 +245,35 @@ impl HostSelfDispatcher<'_> {
         query: &str,
         limit: usize,
         read_as: Option<ScopedReadActorKey>,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scored = ServedRows::new();
-        let hits = vault.search_text_observed(query, limit, |txn, hits| {
+        let observe = |txn: &heed::RoTxn<'_>, hits: &[ScoredEntity]| {
             scored = hits
                 .iter()
                 .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
                 .collect();
-        })?;
-        let (hits, admitted) = match read_as {
-            Some(reader) => {
+        };
+        let attempt = self.agent_lease.as_ref().map(|lease| lease.attempt);
+        let lane = read_as.map(|reader| {
+            vault
+                .scoped_read(reader)
+                .with_claim_status(self.keyed_claims())
+                .with_read_filter(filter)
+        });
+        // A caller filter is met inside the scan, before the rank and the
+        // cut, so a row it excludes takes no place an admitted row could
+        // fill (FIX 3977).
+        let hits = match (&lane, filter) {
+            (Some(lane), Some(_)) => {
+                vault.search_text_scoped_observed(lane, query, limit, observe, attempt)?
+            }
+            _ => vault.search_text_observed_for_attempt(query, limit, observe, attempt)?,
+        };
+        let (hits, admitted) = match lane {
+            Some(lane) => {
                 let mut admitted = ServedRows::new();
-                let hits = vault
-                    .scoped_read(reader)
-                    .with_claim_status(self.keyed_claims())
+                let hits = lane
                     .filter_scored_entities_observed(hits, None, |txn, id| {
                         admitted.insert(id, served_row_in(vault, txn, id));
                     })?
@@ -270,6 +321,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -313,7 +366,10 @@ impl HostSelfDispatcher<'_> {
     pub(super) fn dispatch_memory_put_claim(
         &self,
         call: SelfMemoryPutClaimCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -341,16 +397,32 @@ impl HostSelfDispatcher<'_> {
                 "Dreamer rule author is not the bound resident".into(),
             ));
         }
+        // The subject it names resolves for its writer (OF-063, FIX 1214).
+        let subject = match gate_body.subject {
+            ClaimSubject::Entity(id) => vec![("/subject", id)],
+            ClaimSubject::Edge { source, target, .. } => {
+                vec![("/subject", source), ("/subject", target)]
+            }
+        };
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemoryPutClaim,
+            "vault.claims.put",
+            read_as.as_ref(),
+            &subject,
+        )? {
+            return Ok(refused);
+        }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
-                &call.id,
-                candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-                |_| Ok(()),
-            )?,
+        let actual_id = match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .put_claim_candidate_with_landing_returning_actual(
+                    &call.id,
+                    candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                    |_| Ok(()),
+                )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
@@ -359,20 +431,20 @@ impl HostSelfDispatcher<'_> {
                 call.occurred,
                 call.learned_at,
             )?,
-        }
+        };
 
         if let Some(json) = authored_rules {
             let admitted = match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
                     crate::dreamer_consolidation::admitted_authored_claim(
-                        vault, &call.id, self.actor,
+                        vault, &actual_id, self.actor,
                     )?
                 }
-                ExecutorStorage::Session(binding) => {
-                    binding
-                        .session
-                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
-                }
+                ExecutorStorage::Session(binding) => binding.session.admitted_executor_claim(
+                    &binding.route,
+                    &actual_id,
+                    self.actor,
+                )?,
             };
             if !admitted {
                 return Err(Error::InvalidConfig(
@@ -380,10 +452,10 @@ impl HostSelfDispatcher<'_> {
                 ));
             }
             let record =
-                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&actual_id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &actual_id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(
@@ -396,14 +468,26 @@ impl HostSelfDispatcher<'_> {
             }
         }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: call.id,
+            id: actual_id,
         }))
     }
 
     pub(super) fn dispatch_memory_supersede_claim(
         &self,
         call: SelfMemorySupersedeClaimCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
+        // Both claims it names resolve for its writer (OF-063, FIX 1214).
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemorySupersedeClaim,
+            "vault.claims.supersede",
+            read_as.as_ref(),
+            &[("/new_id", call.new_id), ("/old_id", call.old_id)],
+        )? {
+            return Ok(refused);
+        }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),
@@ -480,6 +564,17 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
+        // Both ends it names resolve for its writer (OF-063, FIX 1214).
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemoryPutEdge,
+            "vault.edges.put",
+            read_as.as_ref(),
+            &[("/src", call.src), ("/tgt", call.tgt)],
+        )? {
+            return Ok(refused);
+        }
         let placement = read_as.filter(|_| call.kind == EdgeKind::FacetOf);
         if placement.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
             // A room's rows include overlay rows a door's lane cannot name, so

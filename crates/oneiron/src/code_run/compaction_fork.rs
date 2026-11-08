@@ -1,10 +1,12 @@
 //! The live fork (FIX 4465 C): a run's live request, captured at the
 //! breakpoint that seals a self-written compaction flight, exactly as the
-//! host's admitted rung sends it (its model, the rung's prompt first, its
-//! system blocks, messages, tools, params and options). It is never rebuilt
-//! from the replay. The flight carries one immutable copy; each of its calls
-//! sends that prefix unchanged on the same rung, with the compaction's own
-//! words after it, and the flight drops it when it ends.
+//! host's rung sent it (its model, the rung's prompt first, its system
+//! blocks, messages, tools, params and options). Since FIX 4933 it is the
+//! run's latest completed call, on the rung that answered it, never the
+//! rung a walk would take now. It is never rebuilt from the replay. The
+//! flight carries one immutable copy; each of its calls sends that prefix
+//! unchanged on the same rung, with the compaction's own words after it,
+//! and the flight drops it when it ends.
 //!
 //! A host-owned descriptor in the request's own provider options names where
 //! the prefix ends, so a provider that caches by marked blocks can reuse it.
@@ -156,10 +158,10 @@ pub fn live_fork_offer_digest(offer: &OfferBinding) -> Option<String> {
     ))
 }
 
-/// The rung a live request was admitted on, as its host bound it: its
-/// provider, its place in the configured ladder, the model its wire names
-/// and the offer a run admits its calls under (route, credential binding,
-/// catalog revision, locality and payer).
+/// The rung that answered a live request, as its host bound it (FIX 4933):
+/// its provider, its place in the configured ladder, the model its wire
+/// names and the offer a run admits its calls under (route, credential
+/// binding, catalog revision, locality and payer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveForkRung {
     pub provider: String,
@@ -179,6 +181,7 @@ pub struct LiveCompactionFork {
     writer: EntityId,
     source: SelfCompactionSource,
     room: u64,
+    prefix_sources: Vec<EntityId>,
 }
 
 impl LiveCompactionFork {
@@ -187,12 +190,16 @@ impl LiveCompactionFork {
     /// left beside it for the compaction's own input. A capture is always
     /// the resolved live fork: a row on `auto` resolved to it at the
     /// breakpoint (FIX 6029), and a capture never carries `auto` itself.
+    /// `prefix_sources` is every row the request was read from, witnessed
+    /// whole by its host (FIX 9463): a summary the fork writes derives from
+    /// each, so a request read from rows no host witnessed is never captured.
     #[must_use]
     pub const fn capture(
         request: LlmRequest,
         rung: LiveForkRung,
         writer: EntityId,
         room: u64,
+        prefix_sources: Vec<EntityId>,
     ) -> Self {
         Self {
             request,
@@ -200,6 +207,7 @@ impl LiveCompactionFork {
             writer,
             source: SelfCompactionSource::LiveFork,
             room,
+            prefix_sources,
         }
     }
 
@@ -209,7 +217,7 @@ impl LiveCompactionFork {
         &self.request
     }
 
-    /// The rung it was admitted on.
+    /// The rung that answered its call (FIX 4933).
     #[must_use]
     pub const fn rung(&self) -> &LiveForkRung {
         &self.rung
@@ -235,6 +243,14 @@ impl LiveCompactionFork {
     #[must_use]
     pub const fn input_room(&self) -> u64 {
         self.room
+    }
+
+    /// Every row the captured request was read from (FIX 9463): what a
+    /// summary and a paid call of its flight derive from beside their
+    /// window and the home they wore.
+    #[must_use]
+    pub fn prefix_sources(&self) -> &[EntityId] {
+        &self.prefix_sources
     }
 }
 

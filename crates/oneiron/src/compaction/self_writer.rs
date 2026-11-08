@@ -55,6 +55,11 @@ pub enum SelfCompactionUnavailable {
     /// The live request and the reply's reserve leave the live model no
     /// room for the window: the prefix is never cut to make room.
     LivePrefixTooLong,
+    /// The live request was read from rows its host did not witness whole
+    /// (a code-run step's host-built task, today), so a summary forked from
+    /// it could not derive from each (FIX 9463). A row on `auto` is written
+    /// by the cheap writer instead.
+    LivePrefixUnwitnessed,
     /// The run's driver did not admit the capture: the profile's writer is
     /// not `self`, or it was captured for another actor.
     LiveForkNotAdmitted,
@@ -86,6 +91,7 @@ impl SelfCompactionUnavailable {
             Self::LiveForkNotCaptured => "live_fork_not_captured",
             Self::LiveRungUnbound => "live_rung_unbound",
             Self::LivePrefixTooLong => "live_prefix_too_long",
+            Self::LivePrefixUnwitnessed => "live_prefix_unwitnessed",
             Self::LiveForkNotAdmitted => "live_fork_not_admitted",
             Self::LiveForkStale => "live_fork_stale",
             Self::NoIdentity => "no_identity",
@@ -197,6 +203,9 @@ pub fn compaction_home_worn_rows(
 pub struct CompactionExecution {
     /// The agent the summary is written as: the run's authenticated actor.
     pub writer: EntityId,
+    /// The actual dispatch's frozen caller provenance, supplied by its
+    /// flight's host. Unknown for a genuinely unbound runtime constructor.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
     /// The context the call read as it ran: the retained turns or the live
     /// fork, never `auto`, which a flight resolves before its first call
     /// (FIX 6029).
@@ -218,6 +227,10 @@ pub struct CompactionExecution {
     pub step_hash: Option<String>,
     /// The home the call wore.
     pub home: Vec<CompactionHomeRef>,
+    /// On the live fork, every row its captured request was read from
+    /// (FIX 9463); empty on the retained turns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefix_sources: Vec<EntityId>,
     /// The accepted summary's snapshot, stamped when the gate accepted it:
     /// the hex BLAKE3 of its bytes and their length.
     pub snapshot_hash: Option<String>,
@@ -323,6 +336,7 @@ pub struct CompactionLandingReceipt {
     /// The summary's words while they stand. Only the check reads them.
     #[serde(skip)]
     pub summary: Option<String>,
+    /// What ran this summary, including its frozen caller provenance.
     pub execution: CompactionExecution,
 }
 
@@ -367,6 +381,15 @@ impl CompactionExecution {
         compaction_home_worn_rows(&self.home)
     }
 
+    /// Every row the call read beyond its request's sources: each home part
+    /// it wore whole, then, on the live fork, each row its captured prefix
+    /// was read from (FIX 9463). Its summary depends on each for withdrawal,
+    /// so erasing a row only the live context held withdraws what it shaped.
+    pub fn input_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.home_dependencies()
+            .chain(self.prefix_sources.iter().copied())
+    }
+
     /// The accepted snapshot, when the gate accepted this pass.
     pub(crate) fn snapshot(&self) -> Option<CompactionSnapshotRef> {
         Some(CompactionSnapshotRef {
@@ -375,11 +398,18 @@ impl CompactionExecution {
         })
     }
 
-    /// The receipt's digest, the hex BLAKE3 of its JSON: what the epoch's
-    /// birth names as its process parameters, so the summary points at the
-    /// receipt its run's coverage keeps.
+    /// The receipt's digest, the hex BLAKE3 of its JSON less the accepted
+    /// snapshot: what the epoch's birth names as its process parameters, so
+    /// the summary points at the receipt its run's coverage keeps.
     pub(crate) fn receipt_digest_hex(&self) -> Result<String> {
-        let bytes = serde_json::to_vec(self)
+        // Content-free (FIX 928): the accepted words' snapshot never enters
+        // it, so the birth that names it and a check that compares it keep
+        // no confirmation hash of words a withdrawal erases, and clearing
+        // the snapshot at withdrawal leaves the digest as it was.
+        let mut content_free = self.clone();
+        content_free.snapshot_hash = None;
+        content_free.snapshot_len = None;
+        let bytes = serde_json::to_vec(&content_free)
             .map_err(|_| Error::InvariantViolation("a compaction receipt did not encode"))?;
         Ok(crate::entity_id::bytes_to_hex_lower(
             blake3::hash(&bytes).as_bytes(),

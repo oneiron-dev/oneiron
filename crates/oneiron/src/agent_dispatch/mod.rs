@@ -22,8 +22,11 @@
 
 mod agent_run;
 mod attenuation;
+mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod caller_origin;
+pub use caller_origin::CallerOrigin;
 mod codec;
 mod comm;
 pub(crate) use self::comm::{
@@ -34,7 +37,7 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
@@ -130,8 +133,8 @@ pub use self::spend_calibration::{
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused, SpendScope,
-    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
+    SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
 pub use self::budget_hold::{
@@ -211,7 +214,10 @@ use crate::failure_ladder::HealerCase;
 use rmpv::Value;
 
 pub use agent_run::AgentRun;
-pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+pub use resident::{
+    ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode, resident_attempt_reviews_diary,
+    resident_attempt_wakes_for_room,
+};
 
 #[cfg(test)]
 mod resident_tests;

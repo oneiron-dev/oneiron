@@ -8,7 +8,8 @@ impl Memory<'_> {
     /// Prior-claim match for auto-supersede: the standing head on `key`.
     /// Deterministic when multiple actives match: the newest id (UUIDv7
     /// order) wins. A write held `beside_stated` (OF-023) never replaces a
-    /// `UserStated` head, so those are passed over.
+    /// `UserStated` head, so those are passed over. Set-cardinality predicates
+    /// replace only an agreeing answer; distinct answers remain standing.
     pub(super) fn find_prior_claim(
         &self,
         key: &MemoryKey<'_>,
@@ -16,6 +17,9 @@ impl Memory<'_> {
         beside_stated: bool,
     ) -> MemoryResult<Option<EntityId>> {
         let ids = self.vault.claims_for_subject(&key.subject)?;
+        let set_answer = SET_CARDINALITY_PREDICATES
+            .contains(&key.input.predicate.as_str())
+            .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in ids {
             if id == *exclude {
@@ -24,7 +28,47 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            if !key.stands(&body)
+                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+                || set_answer
+                    .as_ref()
+                    .is_some_and(|answer| !answers_agree(answer, &body.value))
+            {
+                continue;
+            }
+            best = match best {
+                Some(current) if current.to_hex() >= id.to_hex() => Some(current),
+                _ => Some(id),
+            };
+        }
+        Ok(best)
+    }
+
+    /// [`Self::find_prior_claim`] read in `rtxn` (FIX 9403): an atomic
+    /// batch's writer sees the heads its own earlier elements staged there.
+    pub(super) fn find_prior_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        key: &MemoryKey<'_>,
+        exclude: &EntityId,
+        beside_stated: bool,
+    ) -> crate::Result<Option<EntityId>> {
+        let set_answer = SET_CARDINALITY_PREDICATES
+            .contains(&key.input.predicate.as_str())
+            .then(|| json_to_rmpv(&key.input.value));
+        let mut best: Option<EntityId> = None;
+        for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
+            if id == *exclude {
+                continue;
+            }
+            let Some(body) = self.vault.get_claim_in_txn(rtxn, &id)? else {
+                continue;
+            };
+            if !key.stands(&body)
+                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+                || set_answer
+                    .as_ref()
+                    .is_some_and(|answer| !answers_agree(answer, &body.value))
             {
                 continue;
             }
@@ -73,8 +117,9 @@ impl Memory<'_> {
 
     /// OF-023: one `core.conflict.open` marker per disagreeing stated peer,
     /// naming `[observed, stated]` under the pair's deterministic id, so a
-    /// replay finds its marker and writes nothing. The marker is signed on
-    /// its own and lands through this actor's content transaction.
+    /// replay finds its marker and writes nothing. Peers must currently be
+    /// valid and share the landed observation's facet and project. The marker
+    /// is signed on its own and lands through this actor's content transaction.
     pub(super) fn open_preference_conflicts_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -87,7 +132,18 @@ impl Memory<'_> {
             .vault
             .get_claim_in_txn(content.read(), &observed)?
             .ok_or(Error::EntityNotFound)?;
+        let standing_at = self.vault.store.clock.now_recorded_at();
         for old in stated {
+            let Some(peer) = self.vault.get_claim_in_txn(content.read(), old)? else {
+                continue;
+            };
+            if peer.scope_facet != body.scope_facet
+                || peer.scope_project != body.scope_project
+                || peer.valid_from.is_some_and(|start| start > standing_at)
+                || peer.valid_to.is_some_and(|end| end <= standing_at)
+            {
+                continue;
+            }
             let marker = crate::claim::conflict_marker(&observed, old, &body, envelope)?;
             if marker.landed_in_txn(self.vault, content.read())? {
                 continue;

@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
 /// In-flight streamed message recovery seed. Key: id16 (message id).
@@ -17,6 +17,46 @@ const RECEIPT: SideTable<EntityId, MessageStreamReceipt, Named> =
 /// (hex32(message id) ":" hex32(generation)).
 const RECEIPT_BY_REF: SideTable<String, MessageStreamReceipt, Named> =
     SideTable::new(&side_table::MESSAGE_STREAM_RECEIPT_BY_REF);
+/// The stream generations an erase dropped (FIX 9973). The erase's own
+/// transaction marks each seed it drops, so a resident stream of that
+/// generation, whose text and turn outlive its row in memory, reads as gone
+/// once the erase commits and is retired; a rolled-back erase leaves no
+/// mark. A mark names the generation only. Key: hex32(message id) ":"
+/// hex32(generation).
+const ERASED: SideTable<String, (), Raw> = SideTable::new(&side_table::MESSAGE_STREAM_ERASED);
+fn erased_key(message: &EntityId, generation: &EntityId) -> String {
+    format!("{}:{}", message.to_hex(), generation.to_hex())
+}
+/// Whether an erase dropped `seed`'s generation (FIX 9973).
+pub(super) fn stream_generation_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> Result<bool> {
+    ERASED.contains(
+        &vault.store,
+        txn,
+        &erased_key(&seed.message_id, &seed.generation),
+    )
+}
+/// Whether an erase committed over `seed`'s stream (FIX 9973): one that
+/// dropped this generation's seed, or a hard delete of its MESSAGE, TURN or
+/// conversation. A missing seed alone proves nothing.
+pub(super) fn stream_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> Result<bool> {
+    if stream_generation_erased_in_txn(vault, txn, seed)? {
+        return Ok(true);
+    }
+    for id in [&seed.message_id, &seed.turn, &seed.conversation] {
+        if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Seed {
     pub message_id: EntityId,
@@ -121,20 +161,27 @@ impl Seed {
 }
 /// Drops the recovery seeds an erase of `id` covers: the message's own, and
 /// every seed whose turn or conversation is `id`. A seed holds accepted reply
-/// text, so it leaves with its record. Registered in `deletion/derived_rows.rs`.
+/// text, so it leaves with its record, and each one dropped marks its
+/// generation erased in the same transaction (FIX 9973), so the resident
+/// stream goes once the erase commits. A message's own seed that does not
+/// decode still goes, unmarked. Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_stream_seeds_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    if let Ok(Some(seed)) = ACTIVE.get(store, txn, id) {
+        ERASED.put(store, txn, &erased_key(id, &seed.generation), &())?;
+    }
     ACTIVE.delete(store, txn, id)?;
-    let covered: Vec<EntityId> = ACTIVE
+    let covered: Vec<(EntityId, EntityId)> = ACTIVE
         .scan(store, txn)?
         .into_iter()
         .filter(|(_, seed)| seed.turn == *id || seed.conversation == *id)
-        .map(|(message, _)| message)
+        .map(|(message, seed)| (message, seed.generation))
         .collect();
-    for message in covered {
+    for (message, generation) in covered {
+        ERASED.put(store, txn, &erased_key(&message, &generation), &())?;
         ACTIVE.delete(store, txn, &message)?;
     }
     Ok(())
@@ -382,6 +429,33 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let suffix = reference[10..].to_owned();
         Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
+    }
+    /// The live MESSAGE a stored continuation names in the caller's snapshot.
+    /// Fresh, missing or malformed seeds and absent or non-MESSAGE records
+    /// stay unknown; no source is reconstructed from a terminal receipt.
+    pub(crate) fn message_stream_continuation_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let Some(seed) = ACTIVE.get_lenient(&self.store, txn, message)? else {
+            return Ok(None);
+        };
+        if seed.message_id != *message || !seed.continuation {
+            return Ok(None);
+        }
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &seed.message_id)?
+        else {
+            return Ok(None);
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
+            return Ok(None);
+        }
+        Ok(Some(seed.message_id))
     }
 }
 

@@ -268,18 +268,35 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
-renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
+renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1); LibreOffice workbook recalculations take the host's own turns here
 media_reply_bytes = 2147483648    # bytes provider media replies (images, clips, speech) hold until decoded; past it a reply waits its turn, never refused for size (default: an eighth of memory)
 chat_reply_bytes = 2147483648     # bytes the JSON replies a chat send reads whole hold until the send ends; past it a crossing is recorded, never a wait or a refusal (default: an eighth of memory)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
 projection_body_bytes = 4194304   # body bytes one multi-row read decodes
+request_body_bytes = 67108864     # one request body a route reads whole (default: memory / 1024, at least 64 MiB; 413 naming the row past it)
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
+paced_verb_wait_secs = 604800     # how long a call a budget window paced waits in its caller's line before it ends unrun
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
+keyed_namespace_segments = 65536  # segments of one keyed-memory namespace, prefix or suffix; past it the namespace is kept whole and the row asks
+keyed_namespace_bytes = 1048576   # UTF-8 bytes of one keyed-memory namespace, prefix or suffix; past it the namespace is kept whole and the row asks
+keyed_key_bytes = 1048576         # UTF-8 bytes of one keyed-memory key; past it the key is kept whole and the row asks
+booking_email_bytes = 1048576     # booker email bytes one authenticated booking confirm carries; past it the address is kept whole and the row asks
+booking_intake_answers = 65536    # intake answers one authenticated booking confirm carries; past it every answer is kept and the row asks
+booking_intake_value_bytes = 67108864 # largest intake answer value one authenticated confirm carries; past it the answer is kept whole and the row asks
+booking_local_time_windows = 65536 # distinct local time windows one booking constraint carries; past it every window is solved and the row asks
+claim_input_json_bytes = 67108864 # serialized JSON bytes of one claim input at the vault's claim door; past it the claim is written whole and the row asks
+core_batch_entities = 1048576     # entities one core batch write carries; past it every entity lands in the same one atomic batch and the row asks
+legacy_batch_entities = 1048576   # entities one legacy batch_put_entities call (N-API or C FFI) carries; past it every entity lands in one atomic transaction and the row asks
+blob_content_bytes = 4294967296  # raw bytes of one blob artifact version or asset an engine door stores (default: memory / 16, the least of RAM and the container limit); past it the content is stored whole and the row asks
+booking_availability_calls_per_minute = 1000000 # availability listings one authenticated booking actor asks for in one minute; past it every listing is served and the row asks
+booking_hold_calls_per_minute = 1000000 # holds one authenticated booking actor requests in one minute; past it every hold is served and the row asks
+booking_write_calls_per_minute = 1000000 # confirms and amendments one authenticated booking actor sends in one minute, counted together; past it every write is served and the row asks
+booking_quarantine_calls_per_minute = 1000000 # quarantined confirms one authenticated booking actor submits in one minute; past it every submission is kept for review and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
 code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
 code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
@@ -292,6 +309,8 @@ maintenance_text_bytes = 65536    # bytes of one text field a maintenance or Coa
 maintenance_scan_rows = 50000     # rows one maintenance or Coach pass reads to find its work; past it the pass reads them all and the row asks
 import_decoded_messages = 1000000 # messages one history import holds decoded; past it the import lands whole and the row asks
 import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
+witness_metadata_nodes = 1048576  # metadata nodes (keys and values) one MESSAGE carries, each metadata part apart; past it the metadata is kept whole and the row asks
+witness_metadata_bytes = 67108864 # canonical MessagePack bytes of one MESSAGE's metadata, each part apart; past it the metadata is kept whole and the row asks
 signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /sign/image) allocates; a raster past it asks and is decoded whole
 pptx_comment_patches = 10000      # comment edits one PowerPoint comment proposal carries; past it the proposal is written whole and the row asks
 import_xlsx_live_cells = 200000   # cells one workbook import writes into a live office body; past it the workbook is imported whole and the row asks
@@ -484,6 +503,60 @@ seat_host = true    # the default; false leaves queued CLI attempts to another r
 GH_TOKEN = "cli:gh"
 ```
 
+A secret reaches a run's process only when the run declares it. The repo's
+`.oneiron/secret-manifest.toml`, at the commit the run's checkout pins, names
+the secret and the environment variable it is read as (`env_name`). The host
+mints one T1 grant per declared secret whose variable it offers, before the
+CLI starts, and revokes it when the CLI is done (FIX 10624). A declared
+secret the vault refuses fails the run before it starts. The process's
+environment never changes while it runs.
+
+`[runtime.helper_destinations]` serves a value a tool asks for mid-run,
+through git's credential-helper protocol. Each entry names the secret, the
+effector the owner's binding names, and the exact git context and username
+it answers. A run whose pinned manifest declares the secret gets a slip bound
+to its claim. git then calls `oneiron credential-helper` for that context,
+and the helper asks this host over loopback (`POST
+/v1/seat/credential-helper`). The value goes back to git alone, never into
+the CLI's environment. The host clears every other helper for that context,
+so no other helper stores the value. The slip ends with the claim, and the
+grants are revoked at the run's end. The table is empty by default, so no
+helper is offered.
+
+```toml
+[runtime.helper_destinations.github]
+secret = "GITHUB_TOKEN"     # the custody name the manifest declares
+effector = "cli:git"        # the owner's binding must admit T1 for it
+protocol = "https"
+host = "github.com"
+username = "x-access-token"
+# path = "owner/repo"       # optional: answer one repository's path alone
+```
+
+`[runtime.seat_model_providers]` sends a seat's model calls through this
+host, with the provider key kept in the vault (T0). Each slot names a
+`[models.providers]` entry with a `key_secret` and the exact wire models a
+seat may ask for. A run whose pinned manifest declares that key gets a fresh
+reference to the slot. Its CLI gets the reference and the slot's loopback URL
+in the variables its SDK reads: `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`
+for an Anthropic slot, `OPENAI_BASE_URL` and `OPENAI_API_KEY` for an OpenAI
+chat slot. The SDK posts to `/v1/seat/model/<slot>/v1/messages` or
+`/v1/seat/model/<slot>/v1/chat/completions`. The host reads the key at the
+custody door for each call and sends the request through the credential
+broker. The CLI never holds the key. The reference works only from this
+device and only while the run's claim holds. A request that names another
+model is refused. A request with `stream: true` gets the provider's events
+as they come, the key stripped from them. Messages also takes Claude Code's
+`?beta=true`; the door takes no other query. With this slot the CLI calls
+the provider on the key, not on the person's own login. The table is empty
+by default, so no seat is offered the door.
+
+```toml
+[runtime.seat_model_providers.anthropic]
+provider = "anthropic"            # a [models.providers] entry with key_secret
+models = ["claude-sonnet-5-5"]    # the wire models a seat may ask for
+```
+
 ## Prompt layout
 
 A vault's `[models] prompt_layout` key chooses where a turn's context
@@ -544,6 +617,19 @@ Calibri and Cambria.
 
 Without both tools the slides stay withdrawn, and their wake is held and tried
 again every five minutes. The rest of the review still lands on Keep.
+
+## Workbook Precision Recalculation
+
+An XLSX export, preview or live read whose workbook the in-process formula
+engine refuses recalculates through LibreOffice Calc headless when `soffice`
+is on the server's `PATH`. Each run uses its own temporary profile, which
+recalculates every formula on load, updates no external link, runs no macro
+and reaches no network, and a timeout. Only the computed formula values come
+back, written into the workbook itself; every other part keeps its bytes. The
+version names `libreoffice` and the `soffice --version` line as its
+calculator. LibreOffice reads `NOW()` and `TODAY()` from the server's clock,
+in the caller's zone. Without `soffice`, or when a run fails, the workbook is
+marked to recalculate when it is opened.
 
 ## Service Templates
 

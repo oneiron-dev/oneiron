@@ -143,14 +143,19 @@ pub(super) fn mcp_release_error(
     if !destination.is_off_device() {
         return error;
     }
-    let words = serde_json::to_string(&(
+    let mut words = serde_json::to_string(&(
         &error.message,
         &error.field,
         &error.successor_short_id,
+        &error.room_join_hold,
         &error.vault_read,
         &error.effective_scope,
     ))
     .ok();
+    if let (Some(notice), Some(words)) = (error.hook_notice.as_deref(), words.as_mut()) {
+        words.push('\n');
+        words.push_str(notice);
+    }
     let hold = match (rows, words) {
         (None, _) => Some(ReleaseHold::ProducersUnknown),
         (Some(_), None) => Some(ReleaseHold::Placement),
@@ -220,6 +225,7 @@ pub(super) fn mcp_rerelease_refusal(
                 "field",
                 "vault_read",
                 "successor_short_id",
+                "room_join_hold",
                 "effective_scope",
                 "max_bytes",
                 "received_bytes",
@@ -228,6 +234,7 @@ pub(super) fn mcp_rerelease_refusal(
                 "schemaRef",
                 "row_receipt",
                 "legal_hold",
+                "hook_notice",
             ] {
                 data.remove(field);
             }

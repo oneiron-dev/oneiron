@@ -213,7 +213,8 @@ pub(crate) use self::transition::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::{
-    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
+    CustodyPieces, completed_custody_groups_in_txn, holds_custody_carrier_in_txn,
+    keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
@@ -224,12 +225,13 @@ pub use self::use_handle::{
     BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply, KeptSentValue,
     SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_BROKER_MODELS, SECRET_USE_CLEAR_VALUE_SOURCE,
     SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
-    SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
-    SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
-    SecretUseSend, SentPresentation, SentValue,
+    SECRET_USE_SEAL_SIGN, SECRET_USE_T1_LEASE_TTL_SECS, SecretBindRequest, SecretBound,
+    SecretClearValueSource, SecretReleasePolicy, SecretUseCallback, SecretUseDecision,
+    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
+    SentValue,
 };
 pub(crate) use self::use_handle::{
-    SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,
+    SecretUseConsumed, SecretUseContext, SecretUseT1Operation, SecretUser, handle_record_in_txn,
 };
 // The holder's manifest judgment an enacted register's result signs (FIX
 // 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.

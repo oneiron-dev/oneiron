@@ -6,6 +6,10 @@ mod cold_attach;
 mod device;
 mod eligibility;
 mod evidence;
+#[cfg(feature = "sync")]
+pub(crate) mod home_vectors;
+#[cfg(feature = "sync")]
+pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
 #[cfg(feature = "sync")]
@@ -37,18 +41,22 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub use evidence::EmbeddingMatchEvidence;
-pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use media::text_vector_sources_in_txn;
-pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
+pub use media::{
+    MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
+};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
-    apply_ops_session_projected, finalize_repo_derived_index_copies_in_txn,
-    refresh_repo_derived_projection_in_txn, repo_blob_body_in_txn, repo_derived_batch,
-    repo_derived_fields, repo_derived_index_text_in, repo_envelope_copies_in_txn, repo_media_bytes,
-    requeue_repo_embedding_in_txn, retire_repo_derived_index_copies_in_txn,
+    apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
+    finalize_repo_derived_index_copies_in_txn, refresh_repo_derived_projection_in_txn,
+    repo_blob_body_in_txn, repo_derived_batch, repo_derived_fields, repo_derived_index_text_in,
+    repo_envelope_copies_in_txn, repo_media_bytes, requeue_repo_embedding_in_txn,
+    retire_repo_derived_index_copies_in_txn,
 };
 pub use session_media::SessionMediaRefusals;
+pub(crate) use session_media::{RoomMediaDrops, drop_room_media_copies_in_txn};
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
@@ -372,6 +380,15 @@ impl PendingEmbeddingReconciler {
         now_ms: u64,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
+        let work = self.prepare_reconcile_pass(now_ms, report)?;
+        self.reconcile_prepared_work(work, report)
+    }
+
+    fn prepare_reconcile_pass(
+        &self,
+        now_ms: u64,
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<Vec<LeasedPendingEmbedding>> {
         *report = PendingEmbeddingReconcileReport::default();
         self.validate_embedder_for_vault()?;
         let batch = self.lease_due_jobs(now_ms)?;
@@ -384,12 +401,19 @@ impl PendingEmbeddingReconciler {
             device_local: batch.device_local,
             ..PendingEmbeddingReconcileReport::default()
         };
-        if batch.work.is_empty() {
+        Ok(batch.work)
+    }
+
+    fn reconcile_prepared_work(
+        &self,
+        work: Vec<LeasedPendingEmbedding>,
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<()> {
+        if work.is_empty() {
             return Ok(());
         }
 
-        let (remote_work, local_work): (Vec<_>, Vec<_>) = batch
-            .work
+        let (remote_work, local_work): (Vec<_>, Vec<_>) = work
             .into_iter()
             .partition(|work| work.route == EmbedRoute::Remote);
 
@@ -518,7 +542,7 @@ impl PendingEmbeddingReconciler {
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
         for (item, entry) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, &entry.vector, locality, &entry.provenance)? {
+            if self.complete_leased_work(item, &entry.vector, locality, &entry.provenance, None)? {
                 report.filled += 1;
                 if let Some(input_tokens) = entry.input_tokens {
                     report.measured_fills.push(MeasuredEmbedFill {
@@ -692,9 +716,15 @@ impl PendingEmbeddingReconciler {
         vector: &[f32],
         locality: EmbedderLocality,
         provenance: &EmbeddingProvenance,
+        home_replica: Option<&home_vectors::ReceivedHomeClaimVector>,
     ) -> Result<bool> {
         let mut filled_current = false;
         self.vault.with_write_txn_grouped(|wtxn| {
+            if let Some(replica) = home_replica
+                && !home_vectors::replica_matches_in_txn(&self.vault, wtxn, &work.input, replica)?
+            {
+                return Ok(());
+            }
             let current_before = self
                 .vault
                 .store
@@ -735,6 +765,21 @@ impl PendingEmbeddingReconciler {
                     &self.vault.store,
                     wtxn,
                     &work.input.entity_id,
+                )?;
+            }
+            // A fill the revision door staged keeps its locality with it, for
+            // idle publication to stamp beside the vector (FIX 12783).
+            if token_was_current
+                && current_after.as_deref() == Some(work.input.pending_embedding_token.as_slice())
+            {
+                crate::vault::entity_revision::defer_index_inputs(
+                    &self.vault.store,
+                    wtxn,
+                    &work.input.entity_id,
+                    None,
+                    Some((vector, Some(provenance))),
+                    Some(work.input.pending_embedding_token.as_slice()),
+                    Some(locality),
                 )?;
             }
             filled_current = token_was_current && current_after.is_none();

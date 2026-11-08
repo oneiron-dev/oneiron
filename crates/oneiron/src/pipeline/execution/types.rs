@@ -29,6 +29,8 @@ pub(super) struct RetrievalTxnOutput {
     /// See [`super::super::types::PipelineOutput::words_bound`].
     pub(super) words_bound: HashSet<EntityId>,
     pub(super) diagnostics: RetrievalDiagnostics,
+    /// See [`super::super::types::PipelineOutput::text_exhausted`].
+    pub(super) text_exhausted: bool,
     pub(super) scores: Vec<ScoredEntity>,
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
     /// first (`PipelineBuilder::fold_messages_into_turns`).
@@ -37,6 +39,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
     pub(super) read_suppressed: usize,
+    pub(super) read_suppressed_candidates: HashSet<EntityId>,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
     pub(super) cosine_ghosts_dampened: usize,
     /// Scored rows the pack's disclosure clamp withheld before selection.
@@ -59,6 +62,7 @@ pub(super) struct RetrievalTxnOutput {
     /// The pack's critical candidates before its cuts, and those the cuts
     /// left out (FIX 9760). Empty outside a pack run.
     pub(super) critical: crate::context_pack::PackCriticalAccounting,
+    pub(super) replay_inputs_memory: Option<super::super::trace::ReplayInputsMemory>,
 }
 
 /// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`

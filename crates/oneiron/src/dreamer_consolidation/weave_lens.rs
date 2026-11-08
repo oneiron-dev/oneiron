@@ -157,6 +157,7 @@ fn lens_request(
     model: ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -178,6 +179,7 @@ fn lens_request(
             },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -222,6 +224,7 @@ pub fn live_weave_lens_request(
         model,
         locality,
         false,
+        inference.selected_paid(),
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -253,10 +256,15 @@ pub async fn run_weave_lens(
     }
     let (reader, scheduled_for, rendered_at) =
         crate::claim::weave_lens_attempt_period(&attempt.status.payload.input)?;
+    let report_revision = crate::claim::weave_lens_attempt_revision(&attempt.status.payload.input)?;
     let Some(stored) = ctx.vault.weave_digest_for_lens(reader, scheduled_for)? else {
         return owed_nothing();
     };
-    if stored.rendered_at != rendered_at || stored.lens.is_some() || stored.lens_refused.is_some() {
+    if stored.rendered_at != rendered_at
+        || stored.report_revision != report_revision
+        || stored.lens.is_some()
+        || stored.lens_refused.is_some()
+    {
         return owed_nothing();
     }
     // The render reads the skill's pack and the period's report: both
@@ -320,7 +328,15 @@ pub async fn run_weave_lens(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
-    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
+    let paid = model.inference.selected_paid();
+    let request = lens_request(
+        model.model.clone(),
+        locality,
+        keyless,
+        paid,
+        instruction,
+        text,
+    )?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -364,6 +380,7 @@ pub async fn run_weave_lens(
                     reader,
                     scheduled_for,
                     rendered_at,
+                    report_revision,
                     &WeaveLensRender {
                         plan,
                         skill_ref: skill.to_hex(),
@@ -404,6 +421,7 @@ pub async fn run_weave_lens(
         reader,
         scheduled_for,
         rendered_at,
+        report_revision,
         &WeaveLensRefusal {
             reason,
             skill_ref: skill.to_hex(),

@@ -16,8 +16,6 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
-
 /// Idempotent command carried by the canonical document frame. There is no
 /// actor field: the receiving host obtains that from its authenticated session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +135,7 @@ pub(super) fn record_authorship(
     record: &NoteAuthorship,
     stamp: ActorStamp,
 ) -> crate::Result<()> {
-    insert_authorship(doc, record, &stamp.token.to_hex())
+    insert_authorship(&doc.doc, record, &stamp.token.to_hex())
 }
 
 /// [`record_authorship`] for a birth's own record, its commit naming no one
@@ -149,9 +147,31 @@ pub(super) fn record_birth_authorship(
     record: &NoteAuthorship,
 ) -> crate::Result<()> {
     insert_authorship(
-        doc,
+        &doc.doc,
         &record.stored_for_note(doc.id),
         &super::NoteActor::Erased.to_wire(),
+    )
+}
+
+/// The actual authenticated program edit, recorded on the fork before storage.
+/// A later review receipt is a separate act, not the author of these operations.
+pub(super) fn record_fork_authorship(
+    fork: &super::documents::NoteDocument,
+    edit: &super::NoteProgramEdit,
+    actor: crate::WriteActor,
+    stamp: ActorStamp,
+) -> crate::Result<()> {
+    let command = serde_json::to_vec(edit).map_err(|_| invalid("NOTE fork command encode"))?;
+    insert_authorship(
+        &fork.doc,
+        &NoteAuthorship {
+            operation: fork.head,
+            actor: NoteActor::Actor(stamp.token),
+            actor_class: actor.actor_class().gate_actor_class().to_owned(),
+            grant: None,
+            command_hash: *blake3::hash(&command).as_bytes(),
+        },
+        &stamp.token.to_hex(),
     )
 }
 
@@ -159,16 +179,15 @@ pub(super) fn record_birth_authorship(
 /// authorship count refuses it: a NOTE's edits are never capped (rule 5, FIX
 /// 10345).
 fn insert_authorship(
-    doc: &NoteDocument,
+    doc: &loro::LoroDoc,
     record: &NoteAuthorship,
     named: &str,
 ) -> crate::Result<()> {
     let value = serde_json::to_string(record).map_err(|_| invalid("NOTE authorship encode"))?;
-    doc.doc
-        .get_map("authorship")
+    doc.get_map("authorship")
         .insert(&record.operation.to_hex(), value)
         .map_err(|_| invalid("NOTE authorship insert"))?;
-    doc.doc.commit_with(
+    doc.commit_with(
         loro::CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")),
     );
     Ok(())
@@ -219,6 +238,9 @@ pub(super) fn resolved_authorship_with_birth_in_txn(
                         })
                 }
                 NoteActor::Erased => NoteActor::Erased,
+                // A source vault's author resolves through no local stamp
+                // token (FIX 7777).
+                imported @ NoteActor::Imported(_) => imported,
             }
         };
         resolved.push(record);
@@ -262,7 +284,8 @@ fn resolved_receipt_in_txn(
 impl crate::Vault {
     /// Whether a queued NOTE receipt still has its authoritative durable row.
     /// Host delivery combines this freshness check with current selector admission.
-    /// Erasure deletes copied full-view receipts in the same writer as their pins.
+    /// Erasure strips its pins from a saved receipt and drops the queued copies
+    /// in the same writer.
     pub fn note_receipt_is_current(
         &self,
         note: EntityId,
@@ -300,7 +323,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid("replica NOTE cannot act as an admission authority").into());
                 }
@@ -325,7 +348,13 @@ impl Memory<'_> {
                 if let NoteChange::Cite { pin } = &operation.change {
                     super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, pin)?;
                 }
-                self.apply_note_operation_in_txn(txn, note, operation, Some(selector.grant_id))
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    Some(selector.grant_id),
+                    lane,
+                )
             })
         })?;
         #[cfg(feature = "sync")]
@@ -345,7 +374,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid("replica NOTE cannot act as an admission authority").into());
                 }
@@ -354,7 +383,7 @@ impl Memory<'_> {
                 }
                 self.verify_owner_in_txn(txn)?;
                 crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
-                self.apply_note_operation_in_txn(txn, note, operation, None)
+                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
             })
         })?;
         self.vault().notify_note_document(note);
@@ -367,14 +396,14 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid(
                         "replica NOTE edits must be submitted to its authenticated authority",
                     )
                     .into());
                 }
-                self.apply_note_operation_in_txn(txn, note, operation, None)
+                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
             })
         })?;
         #[cfg(feature = "sync")]
@@ -388,6 +417,78 @@ impl Memory<'_> {
         note: EntityId,
         operation: &NoteOperation,
         grant: Option<EntityId>,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_operation_in_lane(
+            txn,
+            note,
+            operation,
+            grant,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    pub(super) fn apply_note_operation_in_lane(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        operation: &NoteOperation,
+        grant: Option<EntityId>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane)
+    }
+
+    /// Loads the actual native fork under the same writer as admission. There
+    /// is no byte-taking import door: only a stored, undecided fork can enter.
+    pub(super) fn apply_native_note_fork_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fork_id: EntityId,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        let fork = super::proposals::NOTE_FORK
+            .get(&self.vault().store, txn, &fork_id)?
+            .ok_or(invalid("missing proposal record"))?;
+        if fork.fork != fork_id || fork.decided || fork.rewrite || fork.recovery_merge.is_some() {
+            return Err(invalid("fork is not a native pending merge").into());
+        }
+        let current = super::documents::live_doc(self.vault(), txn, fork.note)?;
+        if current.head != fork.parent {
+            return Err(invalid("parent is not the canonical NOTE").into());
+        }
+        let proposed = super::documents::load_head(self.vault(), txn, fork.note, fork.fork)?;
+        let candidate = NoteDocument::from_loro(fork.note, current.doc.fork())?;
+        super::storage::import_complete(
+            &candidate.doc,
+            &super::documents::snapshot(&proposed.doc)?,
+        )?;
+        let operation = NoteOperation {
+            request_id: self.vault().store.clock.entity_id()?,
+            change: NoteChange::Edit {
+                base: current.doc.oplog_frontiers().encode(),
+                edits: vec![super::documents::text_change(
+                    &current.text(),
+                    &candidate.view()?.markdown,
+                )],
+            },
+        };
+        self.apply_note_candidate_in_lane(
+            txn,
+            fork.note,
+            &operation,
+            None,
+            Some(candidate),
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    fn apply_note_candidate_in_lane(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        operation: &NoteOperation,
+        grant: Option<EntityId>,
+        native: Option<NoteDocument>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
@@ -421,7 +522,34 @@ impl Memory<'_> {
         let outcome = match &operation.change {
             NoteChange::Edit { base, edits } => {
                 let cited_by = cited_by(self.vault(), txn, note)?;
-                if doc.edit(base, edits, stamp, &cited_by)? {
+                let guarded = if native.is_some() {
+                    // The conservative review decision must not author the
+                    // accepted text as the reviewer. These operations are disposable.
+                    NoteDocument::from_loro(note, doc.doc.fork())?
+                        .edit(base, edits, stamp, &cited_by)?
+                } else {
+                    doc.edit(base, edits, stamp, &cited_by)?
+                };
+                let mut accepted = guarded;
+                if guarded && let Some(candidate) = &native {
+                    for pin in candidate.pins()? {
+                        validate_pin_source(self.vault(), txn, &pin)?;
+                    }
+                    for pin in doc
+                        .pins()?
+                        .iter()
+                        .chain(&cited_by)
+                        .filter(|pin| pin.document == note)
+                    {
+                        if !matches!(
+                            candidate.resolve(pin)?,
+                            super::NoteSpanResolution::Mapped { .. }
+                        ) {
+                            accepted = false;
+                        }
+                    }
+                }
+                if accepted {
                     None
                 } else {
                     if !policy.enforces_write_gate() {
@@ -430,7 +558,7 @@ impl Memory<'_> {
                         );
                     }
                     Some(NoteScalarEditOutcome::Proposed(propose_claim(
-                        self, txn, note, operation,
+                        self, txn, note, operation, lane,
                     )?))
                 }
             }
@@ -455,19 +583,24 @@ impl Memory<'_> {
         let outcome = match outcome {
             Some(proposed) => proposed,
             None => {
-                record_authorship(
-                    &doc,
-                    &NoteAuthorship {
-                        operation: operation.request_id,
-                        actor: super::NoteActor::Actor(stamp.token),
-                        actor_class: self.actor_class().gate_actor_class().to_owned(),
-                        grant: grant.map(|id| id.to_hex()),
-                        command_hash: hash,
-                    },
-                    stamp,
-                )?;
-                persist_authoritative(self.vault(), txn, &doc)?;
-                NoteScalarEditOutcome::Applied(doc.view()?)
+                let applied = if let Some(candidate) = &native {
+                    candidate
+                } else {
+                    record_authorship(
+                        &doc,
+                        &NoteAuthorship {
+                            operation: operation.request_id,
+                            actor: super::NoteActor::Actor(stamp.token),
+                            actor_class: self.actor_class().gate_actor_class().to_owned(),
+                            grant: grant.map(|id| id.to_hex()),
+                            command_hash: hash,
+                        },
+                        stamp,
+                    )?;
+                    &doc
+                };
+                persist_authoritative(self.vault(), txn, applied)?;
+                NoteScalarEditOutcome::Applied(applied.view()?)
             }
         };
         let receipt = NoteOperationReceipt {
@@ -475,14 +608,9 @@ impl Memory<'_> {
             command_hash: hash,
             outcome,
         };
-        let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
-        // The receipt goes to its requester whole in one NOTE_RECEIPT
-        // document frame: an 18-byte head and this payload within the
-        // transport's 8 MiB frame (`sync::transport::encode_document`). This
-        // bound protects that frame and stays (FIX 10345).
-        if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
-            return Err(invalid("NOTE receipt exceeds wire bound").into());
-        }
+        // Validate the full receipt before persistence as before. Its socket
+        // delivery splits the complete result, never a truncated view.
+        let _ = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
         // The stored receipt keeps the stamp tokens its view names; its
         // caller reads them resolved (FIX 11964).
         NOTE_RECEIPT_BY_REQUEST.put(
@@ -524,6 +652,7 @@ fn propose_claim(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     op: &NoteOperation,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> MemoryResult<CommitReceipt> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use crate::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -578,7 +707,7 @@ fn propose_claim(
                 now,
             ),
         )
-        .apply_recording_gate_decisions(txn)?;
+        .apply_recording_gate_decisions_in_lane(txn, lane)?;
     let claim = memory
         .vault()
         .get_claim_in_txn(txn, &id)?

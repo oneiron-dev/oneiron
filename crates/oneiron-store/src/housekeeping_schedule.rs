@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// One sweep the housekeeping pass knows. The engine runs the first fifteen;
-/// the rest need a host's authority and are reported, never run.
+/// One sweep the housekeeping pass knows. The engine runs the first
+/// eighteen; the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -56,6 +56,16 @@ pub enum HousekeepingSweep {
     /// on a thread on a version the body holds, lands it on the newest export
     /// and follows the body's edits.
     AnnotationBodyAnchors,
+    /// Removal of the sealed drafter corpora no live drafter version names
+    /// (FIX 14973, FIX 15259), and of the training examples past the
+    /// drafter traffic's bound (FIX 15128).
+    DrafterCorpusSweep,
+    /// Model pack retirement (FIX 5368, 20193): each retirement notice due
+    /// today, 60, 30 and 7 days before, and on the day the move of a pin, or
+    /// of the pack the vault follows, to its successor, recorded as a pack
+    /// change. Every host that runs the pass runs it: a serving host against
+    /// the access its offers hold, `oneiron maintain` against none.
+    ModelPackRetirement,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -111,7 +121,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 24] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -128,6 +138,8 @@ impl HousekeepingSweep {
         Self::FoundKeyNotices,
         Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
+        Self::DrafterCorpusSweep,
+        Self::ModelPackRetirement,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -155,6 +167,8 @@ impl HousekeepingSweep {
             Self::FoundKeyNotices => "found_key_notices",
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
+            Self::DrafterCorpusSweep => "drafter_corpus_sweep",
+            Self::ModelPackRetirement => "model_pack_retirement",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -180,7 +194,14 @@ impl HousekeepingSweep {
     /// (FIX 11702). The found-key drain looks for due notices every
     /// fifteen minutes. The line-index rebuild drain looks for queued bodies
     /// every fifteen minutes. Comments follow their live body every minute
-    /// and at open, so a stopped process leaves none behind.
+    /// and at open, so a stopped process leaves none behind. The drafter
+    /// corpus sweep runs at open and daily, beside the night's own sweeps
+    /// around its export, so a version superseded, rejected or erased
+    /// between nights, or a write a stopped process left, keeps no sealed
+    /// bytes past the next start or day. The model pack retirement pass runs
+    /// every minute, the lifecycle tick a serving host ran it on before it
+    /// joined the pass (FIX 20193), so a retirement day's move is recorded
+    /// within a minute of the day's start.
     pub const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -213,6 +234,11 @@ impl HousekeepingSweep {
                 every: MINUTE,
                 at_open: true,
             },
+            Self::DrafterCorpusSweep => Runner::Engine {
+                every: DAY,
+                at_open: true,
+            },
+            Self::ModelPackRetirement => engine(MINUTE),
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),

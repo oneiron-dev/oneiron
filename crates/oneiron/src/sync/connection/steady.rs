@@ -34,6 +34,9 @@ impl SyncConnection {
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
         let (mut write, mut read) = ws_stream.split();
+        // A staged import body pass a returned run left settles first
+        // (FIX 12408); its socket closed with that run.
+        client.end_staged_body_pull();
         // Live, bounded and lossy. Partials never enter the durable offline queue.
         let mut presence_rx = self
             .manager
@@ -51,6 +54,9 @@ impl SyncConnection {
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
         let mut publication_slot = None;
+        // Where this connection stands in the windows a policy wake readied
+        // (FIX 19634): a new connection asks again for every one.
+        let mut ready_windows = crate::sync::manager::ReadyProgress::default();
         let mut debounce_deadline = (!debounce_buffer.is_empty())
             .then(|| Instant::now() + Duration::from_millis(debounce_ms));
         let mut ephemeral_housekeeping =
@@ -65,6 +71,9 @@ impl SyncConnection {
         // The committed pad tombstones no postcommit published (FIX 3849): one
         // retry at a time on the same tick, every lane, federation's included.
         let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
+        // One staged import body pass at a time (FIX 12408): its producer's
+        // socket runs off this loop, and its frames are handled here.
+        let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
         // The machine-claim history this machine is owed (FIX 3820): rounds on
         // their own sockets, off this loop, at connect, every retry interval,
         // and once an import or a round lands rows it waits on.
@@ -82,6 +91,17 @@ impl SyncConnection {
         let mut left_rx = self.left.subscribe();
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();
+        // FIX 4748: a peer session takes none of the home's upkeep (residence
+        // directives, home handoff rounds, machine history, authority
+        // catch-up, leaf-key requests, publications), and it probes the home
+        // on its cadence, with this session's own hello, ending once the
+        // home serves this machine's sync.
+        let peer_session = client.peer_session;
+        let mut home_probe = super::peer_session::HomeProbe::new(
+            peer_session.is_some(),
+            self.manager.vault(),
+            &client.config,
+        );
 
         // Every `break` is the run's shutdown; any other exit returns, and
         // its upkeep rounds run on beside the next connection.
@@ -105,13 +125,15 @@ impl SyncConnection {
                 }
                 return exit;
             }
-            self.run_machine_history(
-                &mut machine_history_tasks,
-                &machine_history_due,
-                event_tx,
-                &mut gate,
-            )
-            .await;
+            if peer_session.is_none() {
+                self.run_machine_history(
+                    &mut machine_history_tasks,
+                    &machine_history_due,
+                    event_tx,
+                    &mut gate,
+                )
+                .await;
+            }
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -173,6 +195,32 @@ impl SyncConnection {
                     gate.hold_promotion(key);
                 }
 
+                // A frame from the staged import body pass's producer (FIX
+                // 12408), handled under the host's admission. Its socket
+                // gone, the pass ends.
+                frame = async {
+                    match staged_pump.as_mut() {
+                        Some(pump) => pump.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if staged_pump.is_some() && !gate.paused() => {
+                    let admitted = match frame {
+                        Some(frame) => gate.admit().await.map(|batch| (frame, batch)),
+                        None => None,
+                    };
+                    if let Some((frame, _batch)) = admitted {
+                        let out = client.handle_staged_body_frame(&frame);
+                        if let Some(pump) = &staged_pump {
+                            pump.send(out);
+                        }
+                    } else {
+                        if let Some(pump) = staged_pump.take() {
+                            pump.stop().await;
+                        }
+                        client.end_staged_body_pull();
+                    }
+                }
+
                 // Live and lossy: no admission, and none sent while paused.
                 partial = presence_rx.recv(), if !gate.paused() => {
                     match partial {
@@ -201,10 +249,12 @@ impl SyncConnection {
                 frame = client.document_updates.recv() => {
                     match frame {
                         Ok(frame) => {
-                            let id = match transport::decode_document(&frame[1..]) {
+                            let id = match transport::decode_unsplit_document(&frame[1..]) {
                                 Ok(doc) => {
                                     if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
-                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
+                                        // A NOTE's own commands, requests and fork uploads
+                                        // (FIX 12789) go to its authority; its invalidations stay here.
+                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST | transport::document_sub_tags::NOTE_FORK_UPLOAD) { continue; }
                                         if !client.note_session_bound { continue; }
                                     }
                                     doc.entity
@@ -212,6 +262,9 @@ impl SyncConnection {
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             let withheld = client.frame_withheld(&frame);
+                            // FIX 10872: a marked source's own edit, withheld, leaves
+                            // as its copy lineage's operations under its copy id.
+                            let released = if withheld { client.copy_release_frames(id) } else { Vec::new() };
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
                                 Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
@@ -219,6 +272,11 @@ impl SyncConnection {
                             match subscribed {
                                 Ok(true) => {
                                     document_buffer.push(frame);
+                                    debounce_deadline.get_or_insert_with(||
+                                        Instant::now() + Duration::from_millis(debounce_ms));
+                                }
+                                Ok(false) if !released.is_empty() => {
+                                    document_buffer.extend(released);
                                     debounce_deadline.get_or_insert_with(||
                                         Instant::now() + Duration::from_millis(debounce_ms));
                                 }
@@ -280,8 +338,11 @@ impl SyncConnection {
                         }
                         Ok(None) => {}
                     }
-                    // The next owed part goes on the next tick.
-                    if let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // The next owed part goes on the next tick; the home's
+                    // receipt retires it, so none goes to a peer.
+                    if peer_session.is_none()
+                        && let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    {
                         let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}")));
                     }
                     if !debounce_buffer.is_empty() || !document_buffer.is_empty() || publication_slot.is_some() {
@@ -300,7 +361,9 @@ impl SyncConnection {
                         continue;
                     };
                     // The home handoff's delivery round (FIX 5661 C2a).
-                    self.home_handoff_wake.notify_one();
+                    if peer_session.is_none() {
+                        self.home_handoff_wake.notify_one();
+                    }
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
@@ -319,6 +382,8 @@ impl SyncConnection {
                                     windows_evicted = eviction.windows_evicted,
                                     windows_busy = eviction.windows_busy,
                                     windows_unconfirmed = eviction.windows_unconfirmed,
+                                    windows_with_local_members =
+                                        eviction.windows_with_local_members,
                                     removed = eviction.removed,
                                     kept = eviction.kept,
                                     cached_items_removed = eviction.cached_items_removed,
@@ -335,6 +400,7 @@ impl SyncConnection {
                         }));
                     }
                     if self.config.client_config.federation_peer.is_none()
+                        && peer_session.is_none()
                         && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {
                         let manager = std::sync::Arc::clone(&self.manager);
@@ -487,8 +553,19 @@ impl SyncConnection {
                         }
                         result = async {
                             crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
-                            crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
-                            crate::sync::client::send_sealed_updates(client, &mut write).await
+                            if peer_session.is_none() {
+                                crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            }
+                            crate::sync::client::send_sealed_updates(client, &mut write).await?;
+                            // The windows a policy wake readied since this
+                            // connection last asked, on this tick (FIX 19634).
+                            // They are owed the home: a peer session (FIX 4748)
+                            // asks none, and the home's next session asks again
+                            // for every one.
+                            if peer_session.is_none() {
+                                send_ready_window_requests(client, &mut write, &mut ready_windows).await?;
+                            }
+                            Ok::<(), String>(())
                         } => result,
                     };
                     if let Err(e) = send_result {
@@ -497,9 +574,40 @@ impl SyncConnection {
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }
+                    // The staged import body pass (FIX 12408): its next Want
+                    // goes out, or it ends, or the next one due begins.
+                    let now = std::time::Instant::now();
+                    if staged_pump.is_none() {
+                        match client.begin_staged_body_pull(now) {
+                            Ok(Some(start)) => {
+                                staged_pump = Some(crate::sync::client::StagedBodyPump::spawn(
+                                    std::sync::Arc::clone(self.manager.vault()),
+                                    start,
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let _ = event_tx.send(SyncEvent::Error(format!(
+                                    "Staged import body pull failed: {error}"
+                                )));
+                            }
+                        }
+                    } else if client.staged_body_pull_done(now) {
+                        if let Some(pump) = staged_pump.take() {
+                            pump.stop().await;
+                        }
+                        client.end_staged_body_pull();
+                    } else if let Some(pump) = &staged_pump {
+                        pump.send(client.poll_staged_body_pull(now));
+                    }
                     // Pinned artifact pointers this device still owes the server,
-                    // one part at a time.
-                    match client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // one part at a time; the home's, never a peer's.
+                    let pulled = if peer_session.is_none() {
+                        client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    } else {
+                        Ok(false)
+                    };
+                    match pulled {
                         Ok(true) => {
                             debounce_deadline.get_or_insert_with(||
                                 Instant::now() + Duration::from_millis(debounce_ms));
@@ -517,6 +625,23 @@ impl SyncConnection {
 
                 // The host thawed: what the pause held goes first (FIX 12036).
                 () = gate.thawed(), if gate.paused() => {}
+
+                // FIX 4748: the home serves a peer session's probe: this
+                // session ends, what it buffered queued, and the next
+                // connect is the home's.
+                () = home_probe.served() => {
+                    self.queue_on_exit(&mut gate, debounce_buffer).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        _ = write.send(Message::Close(None)) => {}
+                    }
+                    return LoopExit::HomeReturned;
+                }
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
@@ -578,6 +703,11 @@ impl SyncConnection {
                 }
             }
         };
+        // The staged import body pass ends with the run (FIX 12408).
+        if let Some(pump) = staged_pump.take() {
+            pump.stop().await;
+        }
+        client.end_staged_body_pull();
         // FIX 12037: the run ends with its residence upkeep ended, so none of
         // its writes lands after it (a reap's export waits on this): the
         // async rounds are aborted, and each task, the blocking tombstone
@@ -638,4 +768,42 @@ impl SyncConnection {
             }
         }));
     }
+}
+
+/// Sends the version requests `client` owes the home for ready windows (fix
+/// list row 19634), up to [`crate::sync::manager::READY_WINDOWS_PER_PASS`] a
+/// tick, and stamps each window's generation once its request is on the
+/// socket. Requests that cannot be read now stay owed for the next tick; a
+/// failed send ends the connection, and the next one asks again from the
+/// start.
+async fn send_ready_window_requests<S>(
+    client: &mut SyncClient,
+    write: &mut S,
+    progress: &mut crate::sync::manager::ReadyProgress,
+) -> Result<(), String>
+where
+    S: futures_util::Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    // A window whose answer could not be judged whole is asked again.
+    for key in client.take_ready_retries() {
+        progress.retry(&key);
+    }
+    let requests = match client
+        .ready_window_requests(progress, crate::sync::manager::READY_WINDOWS_PER_PASS)
+    {
+        Ok(requests) => requests,
+        Err(error) => {
+            tracing::warn!(%error, "ready window requests not made");
+            return Ok(());
+        }
+    };
+    for (key, generation, frame) in requests {
+        write
+            .send(Message::Binary(frame.into()))
+            .await
+            .map_err(|error| format!("Send failed: {error}"))?;
+        progress.stamp(key, generation);
+    }
+    Ok(())
 }

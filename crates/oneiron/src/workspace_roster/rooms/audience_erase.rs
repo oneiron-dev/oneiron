@@ -33,7 +33,7 @@ use super::audience_events::{AudienceEvent, erased_here_in, event_body, live_edi
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{ConfirmedEraseOutcome, DeleteEntityOutcome, due_erase_requester_in_txn};
-use crate::memory::{DeleteReceipt, DeleteRequestState, SafeDeleteReason};
+use crate::memory::{DeleteReceipt, DeleteRequestState};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::legal_hold::{HoldActor, PendingErase, PendingEraseKind};
 
@@ -46,9 +46,10 @@ pub(crate) fn erase_audience_edit(
     vault: &Vault,
     id: &EntityId,
     actor: HoldActor,
+    reason: crate::deletion::DeleteReason,
     reverify: impl Fn(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<Option<DeleteEntityOutcome>> {
-    let erased = erase_edit_as(vault, id, |txn| {
+    let erased = erase_edit_as(vault, id, reason, |txn| {
         reverify(txn)?;
         Ok(Some(actor.clone()))
     })?;
@@ -73,6 +74,7 @@ pub(crate) fn erase_audience_edit(
 fn erase_edit_as(
     vault: &Vault,
     id: &EntityId,
+    reason: crate::deletion::DeleteReason,
     reverify: impl Fn(&heed::RoTxn<'_>) -> Result<Option<HoldActor>>,
 ) -> Result<Option<ConfirmedEraseOutcome>> {
     let edit = {
@@ -80,7 +82,7 @@ fn erase_edit_as(
         kept_root_in(&vault.store, &txn, id)?.is_some()
     };
     let signs = edit && vault.prepare_install_signing_logged();
-    vault.with_write_txn_grouped(|txn| {
+    let outcome = vault.with_write_txn_grouped(|txn| {
         if kept_root_in(&vault.store, txn, id)?.is_none() {
             return Ok(None);
         }
@@ -98,15 +100,24 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        let outcome = if signs {
-            let requested_at = vault.store.clock.now_recorded_at();
-            vault.record_audience_edit_erase_in_txn(
+        if matches!(
+            reason,
+            crate::deletion::DeleteReason::OwnerErase | crate::deletion::DeleteReason::GdprDelete
+        ) {
+            vault
+                .store
+                .roll_checkpoint_payload_for_purge_in_txn(txn, id)?;
+        } else {
+            crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
+                &vault.store,
                 txn,
                 id,
-                principal,
-                crate::deletion::DeleteReason::GdprDelete,
-                requested_at,
-            )?
+                Some(reason.into()),
+            )?;
+        }
+        let outcome = if signs {
+            let requested_at = vault.store.clock.now_recorded_at();
+            vault.record_audience_edit_erase_in_txn(txn, id, principal, reason, requested_at)?
         } else {
             DeleteEntityOutcome {
                 existed: true,
@@ -116,7 +127,13 @@ fn erase_edit_as(
             }
         };
         Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))
-    })
+    })?;
+    if matches!(&outcome, Some(ConfirmedEraseOutcome::Completed(_))) {
+        vault
+            .store
+            .finish_checkpoint_payload_retirements_after_commit();
+    }
+    Ok(outcome)
 }
 
 /// Rewrites the stored audience edit `id` as recording `event`, in place:
@@ -269,12 +286,16 @@ impl Memory<'_> {
         &self,
         owner: &AuthenticatedOwner,
         record: EntityId,
-        reason: SafeDeleteReason,
+        reason: crate::deletion::DeleteReason,
     ) -> MemoryResult<DeleteReceipt> {
         let vault = self.vault();
-        let erased = erase_audience_edit(vault, &record, HoldActor::owner(self.actor()), |txn| {
-            owner.revalidate_in_txn(vault, txn).map(drop)
-        })?;
+        let erased = erase_audience_edit(
+            vault,
+            &record,
+            HoldActor::owner(self.actor()),
+            reason,
+            |txn| owner.revalidate_in_txn(vault, txn).map(drop),
+        )?;
         match erased {
             Some(outcome) => Ok(DeleteReceipt {
                 existed: outcome.existed,
@@ -294,8 +315,8 @@ impl Vault {
     /// asked, nothing holding it now (FIX 5906, 1465): under an explicit
     /// lift-and-erase or a privacy erasure, an audience edit its live root
     /// keeps is erased as [`Memory::owner_confirmed_erase`] erases it, a
-    /// hold placed since refusing it; any other record, and any owner's
-    /// plain delete, is deleted under the request's own reason. Either
+    /// hold placed since refusing it; any other record is deleted under the
+    /// request's own reason. Either
     /// arm's writer re-proves that this request still waits, and a hold's
     /// refusal there names the owner its row records as confirming it (FIX
     /// 6099). None waiting, or a newer request, cancels it, and a cancelled
@@ -311,7 +332,7 @@ impl Vault {
         if pending.kind == PendingEraseKind::LiftAndErase
             || pending.reason == crate::deletion::DeleteReason::GdprDelete
         {
-            let erased = erase_edit_as(self, record, |txn| {
+            let erased = erase_edit_as(self, record, pending.reason, |txn| {
                 due_erase_requester_in_txn(self, txn, record, &generation)
             })?;
             if let Some(outcome) = erased {

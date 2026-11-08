@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::outbound::{
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, ServedChannelSink,
+    EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    SentLookup, SentLookupTarget, ServedChannelSink,
 };
 use reqwest::header::HeaderValue;
 
@@ -17,7 +18,7 @@ mod transcript_drain;
 mod xml;
 pub(crate) use caldav::HttpCalDav;
 pub(crate) use card_pass::spawn_calendar_card_pass;
-pub(crate) use feed_poll::spawn_ics_feed_polls;
+pub(crate) use feed_poll::spawn_calendar_polls;
 pub(crate) use ics::HttpIcsFeed;
 pub(crate) use safeguard::calendar_body_screener;
 pub use safeguard::install_calendar_label_head;
@@ -220,6 +221,20 @@ impl OutboundExecutionSink for CalendarChannelSink<'_> {
             self.invite(request)
         } else {
             self.ordinary.execute(request)
+        }
+    }
+
+    /// FIX 4747: an iMIP invite keeps no id of ours to look up; every other
+    /// send is the served sink's to look up.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        if target.intent.channel == "calendar" && target.intent.verb == "calendar.invite" {
+            SentLookup::CannotTell
+        } else {
+            self.ordinary.lookup_sent(engine_send_id, target)
         }
     }
 }

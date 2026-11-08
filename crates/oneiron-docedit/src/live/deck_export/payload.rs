@@ -14,6 +14,7 @@ pub(super) fn project_payload(
     part: &str,
     native: u32,
     assets: &dyn Assets,
+    graphics: GraphicLimits,
 ) -> Result<(), LiveError> {
     let node = &deck.nodes[&id];
     let view = work.view()?;
@@ -81,7 +82,7 @@ pub(super) fn project_payload(
                         record: &record,
                         bytes: &bytes,
                         requested: requested(image),
-                        limits: GraphicLimits::default(),
+                        limits: graphics,
                     },
                 })?;
                 // The raster is what the picture shows now: an SVG its blip's
@@ -102,16 +103,24 @@ pub(super) fn project_payload(
             // it is, bytes and blip, whatever its format: only a retarget to
             // other media goes through the admission below.
             let shown = held::picture_media(&work.package, part, &tree, at);
-            if shown.as_ref() != Some(media)
-                && convert::show_held_media(work.next_mut(), part, native, media)?
-            {
-                work.changed.insert(part.to_owned());
-                work.converted(
-                    id,
-                    [Conversion::HeldMediaShown {
-                        part: media.part.clone(),
-                    }],
-                );
+            if shown.as_ref() != Some(media) {
+                let (changed, done) =
+                    convert::show_held_media(work.next_mut(), part, native, media)?;
+                if changed {
+                    if !done.is_empty() {
+                        work.changed
+                            .extend(work.package.changed_parts().into_iter().map(str::to_owned));
+                    }
+                    work.changed.insert(part.to_owned());
+                    work.converted(
+                        id,
+                        [Conversion::HeldMediaShown {
+                            part: media.part.clone(),
+                        }]
+                        .into_iter()
+                        .chain(done),
+                    );
+                }
             }
         }
         Some(NodePayload::SmartArt { nodes }) => {

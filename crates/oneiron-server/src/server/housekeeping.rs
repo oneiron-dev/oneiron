@@ -3,11 +3,13 @@
 //! off the request path, unless the last pass is still running; the engine
 //! decides which sweeps are due. After it, the host prunes what only the
 //! process holds: MCP credentials that were revoked or have expired, and live
-//! runs whose lease has gone. Hourly, on a task of its own, the host runs the
-//! served repositories' git maintenance, each repository waiting for a git
-//! exchange permit. The owner's "run now" is a pass of the same kind. Every
-//! pass is held in [`HousekeepingPasses`], so stopping the host stops and
-//! waits for each.
+//! runs whose lease has gone. The host lends the engine's pass the access its
+//! offers hold, against which the pass's model pack retirement sweep reads
+//! the active pack's roles (FIX 5368, 20193). Hourly, on a task of
+//! its own, the host runs the served repositories' git maintenance, each
+//! repository waiting for a git exchange permit. The owner's "run now" is a
+//! pass of the same kind. Every pass is held in [`HousekeepingPasses`], so
+//! stopping the host stops and waits for each.
 //!
 //! Log lines carry a sweep's code, its counts and an error's kind, never row
 //! text or an error's message.
@@ -18,6 +20,7 @@ use std::time::Duration;
 
 use oneiron::authority::AuthorityCheckpointUpkeep;
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport, SweepOutcome};
+use oneiron::llm::model_pack::AccessSnapshot;
 use oneiron::origin::smart_http::maintain_served_repositories;
 use tokio::task::JoinHandle;
 
@@ -190,8 +193,15 @@ impl SyncServer {
         let budget = self.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
         let pass = tokio::spawn(async move {
             let _admission = admission;
-            let vault = Arc::clone(server.vault());
-            match tokio::task::spawn_blocking(move || vault.housekeeping(budget)).await {
+            let host = Arc::clone(&server);
+            // The shadow arms a stopped host left go with the first admitted
+            // pass, whether or not a shadow runner ever opens (FIX 6353).
+            let upkeep = move || {
+                crate::ai_host::shadow_runner::sweep_stopped_runners();
+                let access = host.model_pack_access();
+                host.vault().housekeeping_with_access(budget, &access)
+            };
+            match tokio::task::spawn_blocking(upkeep).await {
                 Ok(Ok(report)) => log_report(&report),
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "housekeeping pass could not read its schedule");
@@ -199,6 +209,29 @@ impl SyncServer {
                 Err(error) => {
                     tracing::warn!(panicked = error.is_panic(), "housekeeping task failed");
                 }
+            }
+            // Every retained shared environment gets its own bounded pass
+            // under the same admission, sequentially in this existing task
+            // (FIX 11136). Active and left handles are both included.
+            for vault in server.shared_vault_handles() {
+                let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+                match tokio::task::spawn_blocking(move || vault.housekeeping(budget)).await {
+                    Ok(Ok(report)) => log_report(&report),
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "shared-env housekeeping could not read its schedule");
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "shared-env housekeeping task failed"
+                        );
+                    }
+                }
+            }
+            let copies = Arc::clone(server.vault());
+            let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+            if let Err(error) = copies.reuse_pending_home_claim_vectors(budget).await {
+                tracing::warn!(kind = ?error.kind(), "home CLAIM vector catch-up failed");
             }
             server
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
@@ -377,6 +410,17 @@ impl SyncServer {
         self.vault().upkeep_authority_checkpoint(issuer)
     }
 
+    /// The access this host's offers hold now (FIX 5366), as its router
+    /// reads it for a role's model pack pick: what the engine's pass lends
+    /// its model pack retirement sweep (FIX 20193). None with no router.
+    fn model_pack_access(&self) -> AccessSnapshot {
+        self.ai
+            .model_runtime()
+            .router()
+            .map(|router| router.access_snapshot())
+            .unwrap_or_default()
+    }
+
     /// Runs every engine sweep now, as the owner asked, on a pass the host
     /// holds: a caller that stops waiting does not end it, and stopping the
     /// host waits for it. `None` when the pass ended without a report.
@@ -385,10 +429,37 @@ impl SyncServer {
         let vault = Arc::clone(self.vault());
         let consults = Arc::clone(&vault);
         let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
+        let access = self.model_pack_access();
+        let shared = self
+            .shared_vault_handles()
+            .into_iter()
+            .map(|vault| {
+                let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
+                (vault, budget)
+            })
+            .collect::<Vec<_>>();
         let pass = tokio::spawn(async move {
-            if let Ok(done) =
-                tokio::task::spawn_blocking(move || vault.housekeeping_all(budget)).await
-            {
+            let done = tokio::task::spawn_blocking(move || {
+                vault.housekeeping_all_with_access(budget, &access)
+            })
+            .await;
+            // The owner's "run now" covers every retained environment too,
+            // with an independent budget per handle (FIX 11136).
+            for (vault, budget) in shared {
+                match tokio::task::spawn_blocking(move || vault.housekeeping_all(budget)).await {
+                    Ok(Ok(report)) => log_report(&report),
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "shared-env owner housekeeping failed");
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "shared-env owner housekeeping task failed"
+                        );
+                    }
+                }
+            }
+            if let Ok(done) = done {
                 let _ = report.send(done);
             }
             // Overdue consults expire on the owner's pass too (DOOR-063).
@@ -399,7 +470,8 @@ impl SyncServer {
     }
 
     /// Drops MCP credential records that were revoked or have expired, with
-    /// their stream state. A live slip the registry no longer holds is learned
+    /// their stream state, and closes the self brief of each connection the
+    /// registry detached. A live slip the registry no longer holds is learned
     /// again on its next use, so this takes nothing a caller still has.
     async fn prune_mcp_credentials(&self) {
         // Records expire with their slips, which run on the authority clock.
@@ -420,6 +492,15 @@ impl SyncServer {
                 cursors.close_mcp_connection(&id.0);
             }
             let evicted = before.saturating_sub(cursors.entries.len() + cursors.read_sets.len());
+            // FIX 17594 D4: each detached connection's self brief closes with
+            // it, while the installation its setup made still holds the key.
+            let detached = registry.take_detached_self_briefs();
+            if !detached.is_empty() {
+                let mut briefs = self.self_brief_sessions.lock().await;
+                for (key, owner) in detached {
+                    briefs.close(&key, owner);
+                }
+            }
             (pruned, evicted)
         };
         if pruned > 0 {

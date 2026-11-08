@@ -26,6 +26,7 @@ pub(in crate::gate) enum PolicyValue {
     ArtifactAnswerQuietSeconds(u64),
     CalendarOutcomeGraceSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
+    CriticalConfirmLifetimeSeconds(u64),
     DreamerRetryParkSeconds(u64),
     EsignRateDocumentThreshold(u64),
     EsignRateRecipientThreshold(u64),
@@ -43,7 +44,7 @@ pub(in crate::gate) enum PolicyValue {
     WorkflowStepMaxTries(u64),
 }
 impl PolicyValue {
-    pub(super) fn restrict(self, other: Self) -> Self {
+    pub(in crate::gate) fn restrict(self, other: Self) -> Self {
         match (self, other) {
             // A longer quiet never wakes a proposer sooner than any trusted
             // row asks.
@@ -57,6 +58,11 @@ impl PolicyValue {
             }
             (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
                 Self::CommOptOutPosture(a.restrict(b))
+            }
+            // A shorter lifetime never leaves a critical write waiting on its
+            // confirm longer than any trusted row allows.
+            (Self::CriticalConfirmLifetimeSeconds(a), Self::CriticalConfirmLifetimeSeconds(b)) => {
+                Self::CriticalConfirmLifetimeSeconds(a.min(b))
             }
             // A longer pause never resumes a Retry park sooner than any
             // trusted row asks.
@@ -121,6 +127,7 @@ impl PolicyValue {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
             Self::ArtifactAnswerQuietSeconds(value)
             | Self::CalendarOutcomeGraceSeconds(value)
+            | Self::CriticalConfirmLifetimeSeconds(value)
             | Self::DreamerRetryParkSeconds(value)
             | Self::EsignRateDocumentThreshold(value)
             | Self::EsignRateRecipientThreshold(value)

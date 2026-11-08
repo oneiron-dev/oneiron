@@ -43,6 +43,22 @@ pub(crate) async fn self_skills_call(
         .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
 
+/// A graph workflow needs the attached run's host context. The ordinary
+/// HTTP/MCP facade has no run or lease in this request; it must not guess
+/// one from the actor or mint one. RunHostDoor serves this verb with its
+/// actual registered lease, executor and current read proof.
+pub(crate) async fn self_skills_graph(
+    _server: &Arc<SyncServer>,
+    _auth: &CoreAuth,
+    _input: oneiron::receipt::GraphSkillRunRequest,
+) -> Listed<oneiron::receipt::GraphSkillRunOutcome> {
+    refused(MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        "graph workflow skills execute through the attached run's host door",
+        &[],
+    ))
+}
+
 async fn skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -103,6 +119,7 @@ async fn skills_call(
                 server: Arc::clone(server),
                 auth: auth.clone(),
                 runtime: tokio::runtime::Handle::current(),
+                observer: super::admission_observer(),
             }),
         };
     let auth = auth.clone();
@@ -161,6 +178,10 @@ struct SkillCredentialDoor {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     runtime: tokio::runtime::Handle,
+    /// The skill call's admission observer, taken where the door is built:
+    /// a nested verb's wait in a line shows on the call's admission receipt
+    /// (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
 }
 
 impl SkillCredentialDoor {
@@ -192,12 +213,16 @@ impl AgentVerbDoor for SkillCredentialDoor {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         // The skill's call is its run's (FIX 10748): its handles carry the
         // run's origin and its writes are witnessed for the run's lease.
-        self.runtime.spawn(with_calling_origin(origin, async move {
-            let id = invocation.to_hex();
-            let call = FacadeCall::bound(&auth, None, Some(&id), None);
-            let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
-            let _ = sender.send(answer);
-        }));
+        let observer = self.observer.clone();
+        self.runtime.spawn(with_calling_origin(
+            origin,
+            super::with_admission_observer(observer, async move {
+                let id = invocation.to_hex();
+                let call = FacadeCall::bound(&auth, None, Some(&id), None);
+                let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
+                let _ = sender.send(answer);
+            }),
+        ));
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
@@ -219,9 +244,10 @@ impl AgentVerbDoor for SkillCredentialDoor {
                 super::action_routes::require_action_scope(&self.auth, effect.as_str())
                     .map_err(FacadeApiError::into_memory_error)?;
             }
-            // A search, an edge's target, a consult's refs and a TASK
-            // binding's TASK and workflow are read on the credential's lane.
+            // A search, an edge's target, a consult's refs, a TASK binding's
+            // TASK and workflow, and repo membership use the credential's lane.
             Ok(match call {
+                RunCall::Bridge(effect) if effect.is_repo() => Some(key),
                 RunCall::Bridge(
                     SelfEffect::MemorySearch
                     | SelfEffect::MemoryPutEdge

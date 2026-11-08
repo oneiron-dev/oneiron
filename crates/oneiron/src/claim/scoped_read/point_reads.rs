@@ -40,7 +40,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         Ok(self
             .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
@@ -57,7 +57,7 @@ impl ScopedRead<'_> {
         ids: &[EntityId],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
@@ -110,7 +110,7 @@ impl ScopedRead<'_> {
         mode: ReadMode,
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| {
                 let Some(revision) =
@@ -158,7 +158,7 @@ impl ReadRowRevision for ReadRow {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Compatibility projection of point rows; policy and body share the read snapshot.
     pub fn get_entity_parts_with_receipt(
         &self,
@@ -217,6 +217,31 @@ impl<'v> ScopedRead<'v> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// Reads every target in ordered frames under one snapshot and receipt.
+    ///
+    /// `offset` is the first input slot in the frame. The callback runs inside
+    /// the original read transaction and body pin; use only in-hand projection
+    /// and accounting, not new vault reads, writes, hooks or model waits.
+    /// Existing body projection may sample host memory telemetry while this
+    /// read is held; the callback is not a blanket no-I/O or no-blocking port.
+    /// Frames use the existing native batch geometry, not a result-count cap.
+    /// A caller that retains rows across callbacks still retains their bodies.
+    pub fn read_frames<S, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        state: S,
+        mut project: impl FnMut(usize, Vec<Option<ReadRow>>, &mut S) -> std::result::Result<(), E>,
+    ) -> std::result::Result<ScopedReadResult<S>, E> {
+        self.read_projected_frames(
+            reads,
+            requested,
+            state,
+            |_, offset, rows, state| project(offset, rows, state),
+            |_, state| Ok(state),
+        )
     }
 
     /// [`Self::read`] under an as-of temporal selection (unix seconds),
@@ -304,7 +329,7 @@ impl<'v> ScopedRead<'v> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
@@ -359,7 +384,7 @@ impl<'v> ScopedRead<'v> {
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut suppressed = 0;
         let frame_size = crate::request_limits::MAX_BATCH_ENTITIES;
         for (frame_index, frame) in reads.chunks(frame_size).enumerate() {
@@ -404,7 +429,7 @@ impl<'v> ScopedRead<'v> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let admitted = self.admit_in(txn, &id, || {
             self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
@@ -427,7 +452,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         mode: ReadMode,
         suppressed: usize,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> usize {
         if suppressed == 0 {
             return 0;
@@ -457,7 +482,7 @@ impl<'v> ScopedRead<'v> {
         short_id: &str,
         content_hash: u8,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let hydrated = match mode {
             ReadMode::Pinned(revision) => {

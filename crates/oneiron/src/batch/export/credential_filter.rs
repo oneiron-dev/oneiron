@@ -1,4 +1,7 @@
-//! Credential filtering at memory serve and export serialization boundaries.
+//! Core half of `batch::export::credential_filter`: its store-layer items live in `oneiron_store::batch::export::credential_filter` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
@@ -233,14 +236,19 @@ impl Vault {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::InvariantViolation("invalid export entity header"))?;
             // Words a deletion withdrew, or whose recorded sources no longer
-            // stand, leave with the export too (I1).
+            // stand, leave with the export too (I1). The whole vault's
+            // bundle keeps a record a cleanup archive filed away (FIX 21912).
             if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                 &self.store,
                 &txn,
                 id,
                 header.entity_type,
             )? || (raw.len() > ENTITY_METADATA_HEADER_LEN
-                && !crate::ports::raw_readable_in_txn(&self.store, &txn, id, &raw)?)
+                && !(if scope == ExportScope::WholeVault {
+                    crate::ports::raw_exportable_in_txn(&self.store, &txn, id, &raw)?
+                } else {
+                    crate::ports::raw_readable_in_txn(&self.store, &txn, id, &raw)?
+                }))
             {
                 continue;
             }
