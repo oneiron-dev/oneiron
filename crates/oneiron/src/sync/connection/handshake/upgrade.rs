@@ -13,6 +13,7 @@ use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use crate::sync::home_proof::UpgradeBinding;
 
 use super::super::SyncConnection;
+use super::super::session::SessionFault;
 
 /// The upgrade request of a sync session over `config`: to its home, or, for
 /// a `peer` session (FIX 4748), to the peer it dials on the paired mesh.
@@ -75,10 +76,12 @@ impl SyncConnection {
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<(SyncSocket, HeaderMap, Option<UpgradeBinding>), String> {
+    ) -> Result<(SyncSocket, HeaderMap, Option<UpgradeBinding>), SessionFault> {
         let config = &self.config.client_config;
+        // The request is this machine's own: its URL, credential and proof.
         let (request, binding, withheld) =
-            upgrade_request(self.manager.vault(), config, client.peer_session.is_some())?;
+            upgrade_request(self.manager.vault(), config, client.peer_session.is_some())
+                .map_err(SessionFault::Local)?;
         if withheld && !client.cleartext_withhold_logged {
             client.cleartext_withhold_logged = true;
             tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
@@ -100,7 +103,7 @@ impl SyncConnection {
                 if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
                     let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
                 }
-                format!("WS connect failed: {e}")
+                SessionFault::Remote(format!("WS connect failed: {e}"))
             })?;
         Ok((ws_stream, response, binding))
     }

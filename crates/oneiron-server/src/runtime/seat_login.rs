@@ -706,7 +706,7 @@ where
         match routed {
             Ok(SeatRoute::Settled(_)) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             }),
             Ok(SeatRoute::Park { receipt, until, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: match until {
