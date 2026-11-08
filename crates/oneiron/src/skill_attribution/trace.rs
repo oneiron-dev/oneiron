@@ -269,7 +269,7 @@ fn loaded_revisions(
 }
 
 /// The attempt a stamped receipt id names.
-fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
+pub(super) fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt = AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes()).ok()?;
     (attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)

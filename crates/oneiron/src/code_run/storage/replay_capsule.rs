@@ -63,8 +63,8 @@ pub(crate) use self::context::{
     capsule_context_body, join_step_context_in_txn, stage_step_context,
 };
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
-pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
-pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
+pub(super) use self::erase::{capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(super) use self::fold_words::retire_fold_word_capsules_in_txn;
 pub(crate) use self::fork_erase::ForkProvenance;
