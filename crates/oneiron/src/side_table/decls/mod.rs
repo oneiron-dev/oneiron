@@ -1,8 +1,9 @@
 //! The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`,
-//! one entry each. The entries sit in eight included files (by database, then leading byte) so
-//! no file outgrows the size bar; they are one list in one module.
-//! `no_declared_prefix_is_a_byte_prefix_of_another` pins that no entry is a byte prefix of another
-//! in the same database, so two tables never read each other's rows.
+//! one entry each. The entries sit in nine included files (by database, then leading byte) so
+//! no file outgrows the size bar. The crate's build script reads every `side_tables!` row and
+//! writes [`CATALOGUE`], all of them sorted by database and prefix (core split slice 1).
+//! `assert_disjoint` pins at compile time that no entry is a byte prefix of another in the same
+//! database, so two tables never read each other's rows.
 //!
 //! An entry names the database, the prefix bytes (unchanged from the rows already on disk) and
 //! the codec. `Named` is the codec; entries on a legacy codec (`LegacyJson`, `LegacyCompact`,
@@ -200,20 +201,19 @@ const CALLABLE_CASE_REFS: &[RefPath] = &[
     ref_path!(source_rows),
 ];
 
-/// Every declared table: the restore-class census walks it, and so does a
+// `CATALOGUE`: every row, sorted by database and prefix, written by the crate's build script.
+include!(concat!(env!("OUT_DIR"), "/side_table_catalogue.rs"));
+
+/// Every declared table, in catalogue order: the restore-class census walks it, and so does a
 /// left shared vault's purge (`store::local_replica`, `sync`-only).
 pub(crate) fn declared() -> impl Iterator<Item = &'static SideTableDecl> {
-    PARTS.into_iter().flatten().copied()
+    CATALOGUE.iter().copied()
 }
 
 /// Every `vault_meta` table the catalog classes `Authored`, in prefix order:
 /// the historical lift sweep walks their rows (OF-067).
 pub(crate) fn authored_vault_meta() -> impl Iterator<Item = &'static SideTableDecl> {
-    PARTS
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|decl| decl.db == SideDb::VaultMeta && decl.payload == SidePayload::Authored)
+    declared().filter(|decl| decl.db == SideDb::VaultMeta && decl.payload == SidePayload::Authored)
 }
 
 /// The scrub of every table whose entry names one, in catalog order: an actor's erase runs
@@ -226,17 +226,13 @@ pub(crate) fn actor_scrubs() -> impl Iterator<Item = (&'static SideTableDecl, Ac
 /// no declared prefix matches. Declared prefixes are disjoint within one
 /// database (`assert_disjoint`), so at most one table can match; this is the
 /// production door a caller-chosen key (a host's `sync_state` row) is checked
-/// against before it is allowed to write, over the same [`PARTS`] list the
+/// against before it is allowed to write, over the same [`CATALOGUE`] the
 /// disjointness check walks at compile time. Gated with its only callers
 /// (the generic host doors, `sync`-only) so a featureless build does not
 /// carry an unused production function.
 #[cfg(feature = "sync")]
 pub(crate) fn declared_for(db: SideDb, key: &[u8]) -> Option<&'static SideTableDecl> {
-    PARTS
-        .iter()
-        .flat_map(|part| part.iter())
-        .find(|decl| decl.db == db && key.starts_with(decl.prefix))
-        .copied()
+    declared().find(|decl| decl.db == db && key.starts_with(decl.prefix))
 }
 
 /// Whether `prefix` (in `db`) overlaps a declared table: either it extends a
@@ -249,12 +245,14 @@ pub(crate) fn declared_for(db: SideDb, key: &[u8]) -> Option<&'static SideTableD
 /// write doors need the one-directional check.
 #[cfg(feature = "sync")]
 pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
-    PARTS.iter().flat_map(|part| part.iter()).any(|decl| {
+    declared().any(|decl| {
         decl.db == db && (prefix.starts_with(decl.prefix) || decl.prefix.starts_with(prefix))
     })
 }
 
 /// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
+/// This was the catalogue's order before the build script wrote it; it is kept for one change, to
+/// pin that the written order is the same.
 static PARTS: [&[&SideTableDecl]; 9] = [
     SYNC_STATE,
     VAULT_META_A_B,
@@ -268,7 +266,11 @@ static PARTS: [&[&SideTableDecl]; 9] = [
 ];
 
 // A declaration list with an overlap does not compile.
-const _: () = assert_disjoint(&PARTS);
+const _: () = assert_disjoint(&CATALOGUE);
+
+// The written catalogue is the included files' list, entry for entry: a build script that drops,
+// adds or reorders a row does not compile.
+const _: () = assert_same_entries(&PARTS, &CATALOGUE);
 
 // The session overlay keeps these tables' rows outside a room's byte budget by
 // the prefixes in `oneiron_store::overlay_bookkeeping`. A lower prefix that
@@ -298,31 +300,56 @@ const _: () = {
 /// Within one database, the declared prefixes in list order must be strictly ascending and no
 /// prefix may be a byte prefix of its successor. In a sorted list a prefix of any later entry is
 /// a prefix of its immediate successor, so the adjacent check covers every pair.
-const fn assert_disjoint(parts: &[&[&SideTableDecl]]) {
+const fn assert_disjoint(catalogue: &[&SideTableDecl]) {
     let mut previous: Option<&SideTableDecl> = None;
+    let mut index = 0;
+    while index < catalogue.len() {
+        let current = catalogue[index];
+        assert!(!current.prefix.is_empty(), "a declared prefix is empty");
+        if let Some(before) = previous
+            && before.db as u8 == current.db as u8
+        {
+            assert!(
+                ascending(before.prefix, current.prefix),
+                "declared prefixes are out of order within one database"
+            );
+            assert!(
+                !starts_with(current.prefix, before.prefix),
+                "a declared prefix is a byte prefix of another"
+            );
+        }
+        previous = Some(current);
+        index += 1;
+    }
+}
+
+/// `parts`, flattened, names the same tables as `catalogue`, in the same order.
+const fn assert_same_entries(parts: &[&[&SideTableDecl]], catalogue: &[&SideTableDecl]) {
+    let mut at = 0;
     let mut part = 0;
     while part < parts.len() {
         let mut index = 0;
         while index < parts[part].len() {
-            let current = parts[part][index];
-            assert!(!current.prefix.is_empty(), "a declared prefix is empty");
-            if let Some(before) = previous
-                && before.db as u8 == current.db as u8
-            {
-                assert!(
-                    ascending(before.prefix, current.prefix),
-                    "declared prefixes are out of order within one database"
-                );
-                assert!(
-                    !starts_with(current.prefix, before.prefix),
-                    "a declared prefix is a byte prefix of another"
-                );
-            }
-            previous = Some(current);
+            assert!(
+                at < catalogue.len(),
+                "the catalogue has fewer tables than the declaration files"
+            );
+            let (listed, written) = (parts[part][index], catalogue[at]);
+            assert!(
+                same_bytes(listed.name.as_bytes(), written.name.as_bytes())
+                    && same_bytes(listed.prefix, written.prefix)
+                    && listed.db as u8 == written.db as u8,
+                "the catalogue's order differs from the declaration files'"
+            );
+            at += 1;
             index += 1;
         }
         part += 1;
     }
+    assert!(
+        at == catalogue.len(),
+        "the catalogue has more tables than the declaration files"
+    );
 }
 
 const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
