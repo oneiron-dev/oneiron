@@ -386,6 +386,28 @@ impl Lift<oneiron::task_verb::sdk::ConnectorSchemaReply> for crate::ConnectorSch
     }
 }
 
+impl Lift<oneiron::task_verb::sdk::ActAnswer<oneiron::code_run::ConnectorCallReply>>
+    for crate::ActAnswerConnectorCallReply
+{
+    fn lift(
+        value: oneiron::task_verb::sdk::ActAnswer<oneiron::code_run::ConnectorCallReply>,
+    ) -> Result<Self, OneironError> {
+        match value {
+            oneiron::task_verb::sdk::ActAnswer::DetailsOnDevice(details) => {
+                Ok(Self::DetailsOnDevice(crate::DetailsOnDevice {
+                    details_on_device: details.details_on_device,
+                }))
+            }
+            oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(questions) => Ok(
+                Self::QuestionsNarrowed(crate::NarrowedQuestions::lift(questions)?),
+            ),
+            oneiron::task_verb::sdk::ActAnswer::Done(outcome) => {
+                Ok(Self::Done(crate::ConnectorCallReply::lift(outcome)?))
+            }
+        }
+    }
+}
+
 impl Lift<oneiron::task_verb::sdk::ConnectorCallStatus> for crate::ConnectorCallStatus {
     fn lift(value: oneiron::task_verb::sdk::ConnectorCallStatus) -> Result<Self, OneironError> {
         match value {
@@ -428,7 +450,7 @@ impl Lift<oneiron::task_verb::sdk::ConnectorCallStatus> for crate::ConnectorCall
                 uncertain,
                 reply,
             } => {
-                let reply = crate::ConnectorCallReply::lift(reply)?;
+                let reply = crate::ActAnswerConnectorCallReply::lift(reply)?;
                 Ok(Self::AwaitingInput {
                     call_ref,
                     name,
