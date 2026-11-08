@@ -14,7 +14,7 @@ use oneiron::memory::MemoryResult;
 use oneiron::note::{
     FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan,
     FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
-    ImportedNoteStanding, NameOnlyFile,
+    ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
 };
 use oneiron::task_verb::sdk::{
     self, FilesLimitCrossed, FilesOriginalsUnkept, FilesRescanView, FilesSourceAttachAnswer,
@@ -240,6 +240,24 @@ pub(crate) fn rescan(
         )?;
         standings = standings_of(vault, &namespace, &notes)?;
     }
+    // A Files file is admitted as a whole, even when the reader split its
+    // text into parts. No clean sibling may land or retain its original.
+    let refused_files: HashSet<String> = if source.files.is_some() {
+        notes
+            .iter()
+            .zip(&standings)
+            .filter(|(_, standing)| **standing == ImportedNoteStanding::Refused)
+            .map(|(note, _)| note.file().to_owned())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    for (note, standing) in notes.iter_mut().zip(&mut standings) {
+        if refused_files.contains(note.file()) {
+            *standing = ImportedNoteStanding::Refused;
+            note.original = None;
+        }
+    }
     let mut warnings = crossed_rows(vault, &counts);
     let raw_hashes = notes
         .iter()
@@ -247,6 +265,9 @@ pub(crate) fn rescan(
         .collect::<HashMap<_, _>>();
     let seen = notes
         .iter()
+        // A refused file keeps only its physical name: any older live
+        // continuation retracts through the existing missing-part path.
+        .filter(|note| note.path == note.file() || !refused_files.contains(note.file()))
         .map(|note| note.path.as_str())
         .chain(name_only.iter().map(|file| file.path.as_str()))
         .collect::<HashSet<_>>();
@@ -307,8 +328,23 @@ pub(crate) fn rescan(
     let mut titles = TitleCounts::default();
     let mut new = Vec::new();
     let mut present = Vec::new();
+    // One name-only row per refused physical file, never per part.
+    let mut refused_held = HashSet::new();
     for (note, standing) in notes.iter_mut().zip(&standings) {
         let markdown = std::mem::take(&mut note.markdown);
+        if refused_files.contains(note.file()) {
+            if let Some(read) = facts.get(note.file())
+                && refused_held.insert(note.file().to_owned())
+            {
+                name_only.push(NameOnlyFile {
+                    path: note.file().to_owned(),
+                    why: NameOnlyReason::Refused,
+                    facts: *read,
+                    original: None,
+                });
+            }
+            continue;
+        }
         if *standing != ImportedNoteStanding::New {
             present.push(FolderFile {
                 path: note.path.clone(),
