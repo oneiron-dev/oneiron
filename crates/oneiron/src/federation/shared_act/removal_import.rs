@@ -157,7 +157,7 @@ impl Vault {
         if version.checked_add(REMOVAL_EXPORT_RETAIN_SECS) != Some(copy.expires_at) {
             return Err(refused("names a term no removal grants"));
         }
-        let held = self.removal_archive_holds(&copy.export.archive)?;
+        let held = self.removal_archive_holds(std::io::Cursor::new(&copy.export.archive[..]))?;
         let row = import_key(person, receipt, version);
         // An archive not kept here yet is written as its file before the
         // writer opens (FIX 3679); one kept here already keeps its file.
@@ -277,15 +277,16 @@ impl Vault {
     /// reader (FIX 2766, 3678): every member checked against its manifest
     /// and every row as it is read, into a scratch index that goes with the
     /// call. Refused unless its manifest names this vault's authority as its
-    /// source. Nothing of it is written.
-    fn removal_archive_holds(&self, archive: &[u8]) -> Result<Held> {
+    /// source. Nothing of it is written, and the archive is read where it
+    /// lies, never whole (FIX 21529).
+    fn removal_archive_holds(&self, archive: impl std::io::Read + std::io::Seek) -> Result<Held> {
         let ours = self
             .authority_vault_id()?
             .map(|id| crate::entity_id::bytes_to_hex_lower(&id));
         let scratch = self
             .store
             .archive_scratch_env(self.config.page_seal.as_ref())?;
-        let read = read_vault_archive_indexed(self, &scratch, std::io::Cursor::new(archive))?;
+        let read = read_vault_archive_indexed(self, &scratch, archive)?;
         let manifest = &read.manifest;
         let source = manifest
             .storage
