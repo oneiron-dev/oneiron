@@ -105,6 +105,25 @@ pub(crate) struct ProgramResumeCall {
     pub(crate) request_digest: [u8; 32],
     /// The wait whose delivered reply answers it, when one does.
     pub(crate) reply: Option<EntityId>,
+    /// Whether its row answers it whole, or it is a callable whose body was
+    /// still running when the entry parked (FIX 5878).
+    #[serde(default)]
+    pub(crate) kind: ProgramResumeKind,
+}
+
+/// How a later entry answers one listed call (FIX 5878).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProgramResumeKind {
+    /// Its row answers it whole: a call, or a callable whose body ended
+    /// before the entry parked. A callable's own calls are not listed: its
+    /// row's answer stands for them.
+    #[default]
+    Settled,
+    /// A callable whose body reached the wait the entry parked on: its own
+    /// calls follow it, up to that wait. Its row's answer is the body's
+    /// unwinding, not its result.
+    OpenCallable,
 }
 
 /// What one pinned entry commits beside its checkpoint: every call it
@@ -204,6 +223,7 @@ pub(crate) fn program_resume_call(
         row: row.seq,
         request_digest: row.request_identity()?,
         reply,
+        kind: ProgramResumeKind::Settled,
     })
 }
 

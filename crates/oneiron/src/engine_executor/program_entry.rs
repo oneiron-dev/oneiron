@@ -36,9 +36,9 @@ use super::types::{
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
-    ExecutorStorage, ProgramCheckpointTail, ProgramResumeCommit, ProgramResumeWait, SelfCall,
-    SelfDispatchOutcome, SelfDurableWait, SelfSkillCall, load_program_checkpoint_tail,
-    program_resume_call,
+    ExecutorStorage, ProgramCheckpointTail, ProgramResumeCommit, ProgramResumeKind,
+    ProgramResumeWait, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSkillCall,
+    load_program_checkpoint_tail, program_resume_call,
 };
 use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
@@ -48,7 +48,7 @@ use crate::{Error, Vault};
 mod injection;
 
 use self::injection::SettledCall;
-pub(super) use self::injection::{InjectedAnswer, ProgramInjection};
+pub(super) use self::injection::{InjectedAnswer, ProgramCallableSpan, ProgramInjection};
 
 /// What the guest of a call reads once its entry holds.
 pub(super) const PROGRAM_RESUME_HELD: &str = "program_resume_held";
@@ -486,21 +486,39 @@ impl<'a> EngineNativeExecutor<'a> {
             &host.bridge_calls,
         )?;
         // The settled calls in the source's order: those answered, then the
-        // entry's own, up to the call that parked.
+        // entry's own, up to the call that parked. A callable whose body
+        // ended is listed whole, its own calls not; one whose body was still
+        // running is listed open, its own calls after it (FIX 5878).
         let injected = u64::try_from(answered.len())
             .map_err(|_| Error::ArithmeticOverflow("pinned entry calls"))?;
         let mut calls = answered;
         let mut parked_row = None;
+        let mut inside_settled: Option<u64> = None;
         for row in host
             .bridge_calls
             .iter()
             .filter(|row| row.seq != entry_start)
         {
+            if inside_settled.is_some_and(|end| row.seq < end) {
+                continue;
+            }
             if row.program_durable_wait()?.is_some() {
                 parked_row = Some(row.seq);
                 break;
             }
-            calls.push(program_resume_call(row, None)?);
+            let mut call = program_resume_call(row, None)?;
+            if let Some(span) = host
+                .program_callables
+                .iter()
+                .find(|span| span.seq == row.seq)
+            {
+                if span.open {
+                    call.kind = ProgramResumeKind::OpenCallable;
+                } else {
+                    inside_settled = Some(span.end);
+                }
+            }
+            calls.push(call);
         }
         record.record_callable_rows(host.result_rows());
         record.bridge_calls.extend(host.bridge_calls);
