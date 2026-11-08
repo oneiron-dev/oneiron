@@ -59,6 +59,12 @@ pub(crate) const PACED_VERBS: [&str; 6] = [
     AgentVerb::VaultChannelIdentitiesRelease.as_str(),
     AgentVerb::VaultChannelIdentitiesRouteInbound.as_str(),
 ];
+/// Whether a budget window's pace holds `verb` in the line: a transport
+/// looks a retry up in the line only for these (FIX 19034).
+#[must_use]
+pub fn is_paced_verb(verb: &str) -> bool {
+    PACED_VERBS.contains(&verb)
+}
 /// How long a paced call waits for its turn when the host sets no wait.
 pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long a turn that failed on a passing fault waits before its next try.
@@ -286,6 +292,16 @@ pub(crate) fn hold_paced_verb_call(
 /// came to. `None` when nothing of it is held, or this thread runs its turn.
 /// Another caller naming the invocation is refused, never answered.
 pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<MemoryResult<Value>> {
+    paced_verb_reply_listed(memory, verb).map(|reply| reply.map(|(value, _)| value))
+}
+
+/// A paced call's answer to its caller's retry and the rows its saved result
+/// was derived from (FIX 22259): `None` beside it when its door listed none,
+/// so a door that releases the answer by them knows they are unknown.
+type ListedReply = MemoryResult<(Value, Option<Vec<EntityId>>)>;
+
+/// [`paced_verb_reply`] with the rows the saved result was derived from.
+pub(crate) fn paced_verb_reply_listed(memory: &Memory<'_>, verb: &str) -> Option<ListedReply> {
     if !PACED_VERBS.contains(&verb) {
         return None;
     }
@@ -316,7 +332,13 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
         )));
     }
     Some(match (row.state, row.outcome) {
-        (PacedState::Ended, Some(SavedOutcome::Ok { result, .. })) => serde_json::from_str(&result)
+        (
+            PacedState::Ended,
+            Some(SavedOutcome::Ok {
+                result, producers, ..
+            }),
+        ) => serde_json::from_str(&result)
+            .map(|value| (value, producers.map(|rows| rows.into_iter().collect())))
             .map_err(|_| Error::CorruptedIndex("paced verb call outcome").into()),
         (PacedState::Ended, Some(SavedOutcome::Err { code, message, .. })) => {
             Err(MemoryError::new(
@@ -331,6 +353,35 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
 }
 
 impl Memory<'_> {
+    /// What a retry of this handle's call of `verb` meets when a budget
+    /// window paced an earlier try of its invocation: still held, or what
+    /// the drain's turn came to (FIX 19034), beside the rows the saved
+    /// result was derived from, `None` when its door listed none (FIX
+    /// 22259). A door that runs its row without the verb boundary's own
+    /// lookup answers it before its hooks and its row run again, and
+    /// releases it by those rows. `None` when nothing of it is held, and on
+    /// the drain's own run of it.
+    #[must_use]
+    pub fn paced_verb_reply_listed(
+        &self,
+        verb: &str,
+    ) -> Option<MemoryResult<(Value, Option<Vec<EntityId>>)>> {
+        paced_verb_reply_listed(self, verb)
+    }
+
+    /// [`Self::ended_paced_verb_reply`] with the rows the saved result was
+    /// derived from, `None` beside it when its door listed none (FIX 22259).
+    #[must_use]
+    pub fn ended_paced_verb_reply_listed(
+        &self,
+        verb: &str,
+    ) -> Option<MemoryResult<(Value, Option<Vec<EntityId>>)>> {
+        match paced_verb_reply_listed(self, verb)? {
+            Err(error) if error.code == MEMORY_CODE_PACED_HOLD => None,
+            reply => Some(reply),
+        }
+    }
+
     /// What a retry of this handle's call of `verb` meets once a budget
     /// window held an earlier try of its invocation and the drain ran it to
     /// its end: the saved result, or the saved refusal (FIX 8753). A

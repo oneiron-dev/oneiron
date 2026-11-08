@@ -944,7 +944,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                 },
             ),
         Projection::Note => {
-            let note = crate::note::decode_note_body_using(body, NoteKind::wire).ok()?;
+            let note = crate::note::decode_note_core_using(body, NoteKind::wire).ok()?;
             Compared::Note {
                 kind: note.kind,
                 author: note.author_ref,

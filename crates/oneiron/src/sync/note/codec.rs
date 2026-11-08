@@ -88,7 +88,7 @@ impl State {
             documents.insert((*note, *head), text);
         }
         for raw in self.cores.values() {
-            crate::note::decode_note_body_using(
+            crate::note::decode_note_core_using(
                 &raw[ENTITY_METADATA_HEADER_LEN..],
                 crate::note::NoteKind::wire,
             )?;
