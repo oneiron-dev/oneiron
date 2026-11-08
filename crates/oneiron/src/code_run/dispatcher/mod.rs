@@ -57,6 +57,8 @@ use crate::{ClaimSource, Vault, WriteActor};
 
 use self::admission::gate_rejection;
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+pub(crate) use self::agent_verb::write_receipt_may_have_run;
+pub(crate) use self::coordination::agent_attempt_run_ref;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
@@ -150,6 +152,8 @@ pub struct HostSelfDispatcher<'a> {
     /// start the host reads through it on its route (FIX 2594, FIX 7507);
     /// `None` until a host binds one. No guest call reaches it.
     bound_run: Option<EntityId>,
+    /// Actual host-bound write placement, never a requested read-world set.
+    birth_world: Option<EntityId>,
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,

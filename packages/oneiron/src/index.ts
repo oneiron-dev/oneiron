@@ -716,9 +716,9 @@ export class Oneiron {
     claims: {
       /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
       upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
-      /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+      /** The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access. */
       review: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsReview(input) as Facade.ClaimProposalReview),
-      /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+      /** The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof. */
       settle: (input: Facade.ClaimSettleRequest): Facade.ClaimSettlement => this.#call(() => this.#client.vaultClaimsSettle(input) as Facade.ClaimSettlement),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
@@ -731,7 +731,7 @@ export class Oneiron {
       /** Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
       read_filtered: (input: Facade.ClaimFilteredReadRequest): Facade.ScopedReadResult<Facade.ClaimView | null> => this.#call(() => this.#client.vaultClaimsReadFiltered(input) as Facade.ScopedReadResult<Facade.ClaimView | null>),
       /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-      history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
+      history: (input: Facade.ClaimHistoryRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
       /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
@@ -762,8 +762,10 @@ export class Oneiron {
    * `pactEpoch`. This selection grants no read authority.
    * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the
    * window budget of `readerAgentRef`'s memory profile, else 4,000.
+   * `filter` only narrows the vault's floor for every stage of the recall;
+   * an unset field leaves the floor in force.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef, opts.filter)),
     retrieval: {
       aging: {
         /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
@@ -977,6 +979,10 @@ export class Oneiron {
         /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
         archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
       },
+      /** The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call. */
+      held: (input: Facade.EmptyRequest = {}): Facade.CampaignEnrollmentHeldCall[] => this.#call(() => this.#client.vaultCampaignHeld(input) as Facade.CampaignEnrollmentHeldCall[]),
+      /** The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks. */
+      approve_once: (input: Facade.CampaignEnrollmentApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultCampaignApproveOnce(input) as Facade.ConsentActReceipt),
     },
     turn_programs: {
       /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
@@ -1460,6 +1466,8 @@ export class Oneiron {
       propose_transfer: (input: Facade.SharedTransferRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as Facade.PendingAuthorityAct),
       /** Starts a shared vault's remove_owner act, with its export-first answer. */
       propose_remove_owner: (input: Facade.SharedRemoveOwnerRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as Facade.PendingAuthorityAct),
+      /** Starts a shared vault's add_owner act: a live Owner adds another person as Owner. */
+      propose_add_owner: (input: Facade.SharedAddOwnerRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeAddOwner(input) as Facade.PendingAuthorityAct),
       /** A live Owner runs a matured shared-vault act and gets its receipt. */
       execute: (input: Facade.SharedActRequest): Facade.ActAnswer<Facade.SharedActExecuted> => this.#call(() => this.#client.vaultSharedExecute(input) as Facade.ActAnswer<Facade.SharedActExecuted>),
       /** One shared-act or membership receipt its reader was told about, by id. */
@@ -1493,6 +1501,12 @@ export class Oneiron {
         change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
         /** A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale. */
         changes: (input: Facade.SharedVaultRequest): Facade.SharedActPolicyChange[] => this.#call(() => this.#client.vaultSharedPolicyChanges(input) as Facade.SharedActPolicyChange[]),
+      },
+      owner_change_wait: {
+        /** One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds. */
+        set: (input: Facade.SharedOwnerChangeWaitSetRequest): number | null => this.#call(() => this.#client.vaultSharedOwnerChangeWaitSet(input) as number | null),
+        /** The shared vault's common owner-change wait in seconds, if one is set. */
+        get: (input: Facade.EmptyRequest = {}): number | null => this.#call(() => this.#client.vaultSharedOwnerChangeWaitGet(input) as number | null),
       },
     },
     org_admin: {
@@ -1564,6 +1578,8 @@ export class Oneiron {
         /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
         replay: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstReplay(input) as Facade.FederationBurstReceipt),
       },
+      /** The owner reads this install's pact activation, consent epoch and local inactivity reason. */
+      status: (input: Facade.EmptyRequest): Facade.FederationStatus => this.#call(() => this.#client.vaultFederationStatus(input) as Facade.FederationStatus),
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
@@ -1601,6 +1617,14 @@ export class Oneiron {
       quarantine: {
         /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
         held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
+      },
+      documents: {
+        copy_edit: {
+          /** The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority. */
+          review: (input: Facade.RepoCopyEditReviewRequest): Facade.RepoCopyEditReviewView | null => this.#call(() => this.#client.vaultSyncDocumentsCopyEditReview(input) as Facade.RepoCopyEditReviewView | null),
+          /** The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery. */
+          settle: (input: Facade.RepoCopyEditSettleRequest): Facade.RepoCopyEditSettleView => this.#call(() => this.#client.vaultSyncDocumentsCopyEditSettle(input) as Facade.RepoCopyEditSettleView),
+        },
       },
       retained_work: {
         wait: {
@@ -1752,6 +1776,12 @@ export class Oneiron {
         erase: (input: Facade.OutboundCallRequestEraseRequest): Facade.OutboundCallRequestErased => this.#call(() => this.#client.vaultOutboundCallsRequestErase(input) as Facade.OutboundCallRequestErased),
       },
     },
+    outbound: {
+      uncertain_send: {
+        /** The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent. */
+        answer: (input: Facade.UncertainSendAnswer): Facade.UncertainSendAnswered => this.#call(() => this.#client.vaultOutboundUncertainSendAnswer(input) as Facade.UncertainSendAnswered),
+      },
+    },
     research: {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
       create_child: (input: Facade.ResearchChildWire): Facade.ResearchChildReceipt => this.#call(() => this.#client.vaultResearchCreateChild(input) as Facade.ResearchChildReceipt),
@@ -1889,6 +1919,14 @@ export class Oneiron {
         /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
         confirm: (input: Facade.ArchiveDeleteConfirmRequest): Facade.ArchiveDeleteBatchResult => this.#call(() => this.#client.vaultArchiveDeleteConfirm(input) as Facade.ArchiveDeleteBatchResult),
       },
+      attempt: {
+        delete: {
+          /** Previews one cleanup-archived completed attempt under the caller's delete authority. */
+          preview: (input: Facade.AttemptArchiveDeletePreviewRequest): Facade.AttemptArchiveDeletePreviewView => this.#call(() => this.#client.vaultArchiveAttemptDeletePreview(input) as Facade.AttemptArchiveDeletePreviewView),
+          /** Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt. */
+          confirm: (input: Facade.AttemptArchiveDeleteConfirmRequest): Facade.AttemptArchiveDeleteReceiptView => this.#call(() => this.#client.vaultArchiveAttemptDeleteConfirm(input) as Facade.AttemptArchiveDeleteReceiptView),
+        },
+      },
     },
     usage: {
       events: {
@@ -1985,6 +2023,8 @@ export class Oneiron {
       create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
       /** The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed. */
       create_auto_weave_grant: (input: Facade.AutoWeaveGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateAutoWeaveGrant(input) as Facade.ConsentActReceipt),
+      /** The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default. */
+      create_nightly_link_grant: (input: Facade.NightlyLinkGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateNightlyLinkGrant(input) as Facade.ConsentActReceipt),
       /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
       registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
       /** Read the carried failure-signal batch's exact content and approval digest as the owner. */
@@ -2348,15 +2388,21 @@ export class Oneiron {
         release: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolsReleased => this.#call(() => this.#client.vaultCodeSymbolsRelease(input) as Facade.CodeSymbolsReleased),
         /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
         definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
+        /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
+        neighbors: (input: Facade.CodeSnapshotNeighborsRequest): Facade.CodeSnapshotNeighborsView => this.#call(() => this.#client.vaultCodeSymbolsNeighbors(input) as Facade.CodeSnapshotNeighborsView),
       },
       /** Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed. */
       proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
+      /** Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands. */
+      proposal_rereview: (input: Facade.CodeProposalRereviewRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalRereview(input) as Facade.CodeProposalSubmitted),
       /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
       conflict_record: (input: Facade.CodeConflictRecordRequest): Facade.CodeConflictView => this.#call(() => this.#client.vaultCodeConflictRecord(input) as Facade.CodeConflictView),
       /** Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only. */
       conflict_view: (input: Facade.CodeConflictViewRequest): Facade.CodeConflictHistory => this.#call(() => this.#client.vaultCodeConflictView(input) as Facade.CodeConflictHistory),
       /** Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands. */
       proposal_resolve: (input: Facade.CodeProposalResolveRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalResolve(input) as Facade.CodeProposalSubmitted),
+      /** Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands. */
+      proposal_resolve_rereview: (input: Facade.CodeProposalResolveRereviewRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalResolveRereview(input) as Facade.CodeProposalSubmitted),
       /** Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt. */
       proposal_review: (input: Facade.CodeProposalReviewRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalReview(input) as Facade.CodeProposalSettlementView),
       /** Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it. */
@@ -2558,6 +2604,12 @@ export class Oneiron {
       /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
       slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
     },
+    devices: {
+      predecessor: {
+        /** Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately. */
+        name: (input: Facade.DevicePredecessor): Facade.DevicePredecessor => this.#call(() => this.#client.vaultDevicesPredecessorName(input) as Facade.DevicePredecessor),
+      },
+    },
     agents: {
       /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
@@ -2609,6 +2661,8 @@ export class Oneiron {
       symbols: {
         /** Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads. */
         definitions: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDefinitionsInput>): Facade.RepoSymbolsDefinitionsOutput => this.#call(() => this.#client.vaultRepoSymbolsDefinitions(input) as Facade.RepoSymbolsDefinitionsOutput),
+        /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
+        neighbors: (input: Facade.LiveRunRequest<Facade.RepoSymbolsNeighborsInput>): Facade.RepoSymbolsNeighborsOutput => this.#call(() => this.#client.vaultRepoSymbolsNeighbors(input) as Facade.RepoSymbolsNeighborsOutput),
         /** Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused. */
         declare: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDeclareInput>): Facade.RepoSymbolsDeclareOutput => this.#call(() => this.#client.vaultRepoSymbolsDeclare(input) as Facade.RepoSymbolsDeclareOutput),
         /** Extends the attached run's own symbol declaration by its declared lifetime. */
@@ -2901,7 +2955,7 @@ export class Oneiron {
       },
     },
     model_pack: {
-      /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+      /** Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing. */
       revert: (input: Facade.ModelPackRevertRequest): Facade.ModelPackRevert => this.#call(() => this.#client.vaultModelPackRevert(input) as Facade.ModelPackRevert),
     },
     voices: {
@@ -3293,6 +3347,8 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
+      /** Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot. */
+      read_indexed: (input: Facade.NoteIndexedReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesReadIndexed(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
       /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
@@ -3397,6 +3453,12 @@ export class Oneiron {
       },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+    },
+    dreamer: {
+      follower: {
+        /** The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed. */
+        keyframe: (input: Facade.EmptyRequest): Facade.DreamerFollowerKeyframeResult => this.#call(() => this.#client.vaultDreamerFollowerKeyframe(input) as Facade.DreamerFollowerKeyframeResult),
+      },
     },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
@@ -3581,6 +3643,8 @@ export class Oneiron {
       fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
       /** Every loadable callable helper skill and its call contract: what it takes and returns. */
       callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
+      /** Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible. */
+      graph: (input: Facade.GraphSkillRunRequest): Facade.GraphSkillRunOutcome => this.#call(() => this.#client.selfSkillsGraph(input) as Facade.GraphSkillRunOutcome),
       /** Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately. */
       call: (input: Facade.LiveRunRequest<Facade.SkillCallInput>): unknown => this.#call(() => this.#client.selfSkillsCall(input) as unknown),
     },

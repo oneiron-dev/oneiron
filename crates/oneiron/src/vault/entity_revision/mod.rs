@@ -4,6 +4,12 @@
 
 mod citations;
 pub(crate) use citations::resolve_room_pinned_alias_in_txn;
+mod document_mutation;
+#[cfg(feature = "sync")]
+pub(crate) use document_mutation::copy_lineage_revision;
+pub(crate) use document_mutation::{
+    advance_document_mutation_head_in_txn, document_mutation_head_in_txn,
+};
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
@@ -40,6 +46,9 @@ pub(crate) use storage::{
     publish_room_revision, read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
     remove_entity_revisions, revision_for_body_hash_in_txn, revision_for_mode_in_txn,
     storage_manages_text, vectors_embed_body,
+};
+pub(crate) use storage::{
+    capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,
