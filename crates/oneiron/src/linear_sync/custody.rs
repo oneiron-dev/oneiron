@@ -184,6 +184,7 @@ impl Vault {
         let body = OwnedBody {
             owner: task,
             occurrence,
+            mark_occurrence: occurrence,
             state: BodyState::Complete {
                 body: BodyRef {
                     blake3: facts.digest,

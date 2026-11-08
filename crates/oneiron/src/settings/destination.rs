@@ -46,7 +46,7 @@ use crate::error::{Error, RecordError, Result};
 /// It only narrows ([`Self::meet`]): once off this device a read never reads
 /// on it again, and a later on-device locality never erases a machine it
 /// carries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadDestination {
     /// Whether the rows leave this device.
     off_device: bool,
@@ -132,6 +132,11 @@ impl ReadDestination {
         if !self.proved.contains(&peer) {
             self.proved.push(peer);
         }
+    }
+
+    /// Connection peers retained even while the current locality is on-device.
+    pub(crate) fn all_peers(&self) -> &[PeerMachine] {
+        &self.proved
     }
 
     /// Every machine the judge reads the world settings for: none on this
