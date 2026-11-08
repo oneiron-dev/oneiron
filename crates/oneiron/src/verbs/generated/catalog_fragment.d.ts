@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1360 code-mode rows (1318 host rows, 42 run rows), 4790 declarations.
-// Replies: 1168 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1362 code-mode rows (1320 host rows, 42 run rows), 4796 declarations.
+// Replies: 1170 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -162,7 +162,8 @@ declare namespace Sdk {
   type RunTreeEvent = { sequence: number; at: number; actor: string; kind: RunTreeEventKind; note?: string | null };
   type RunTreeWireNode = { job_id: string; run_id?: string | null; parent_id?: string | null; worker_kind: string; worker?: string | null; agent_id?: string | null; status: RunTreeStatus; result_ref?: string | null; timestamps: RunTreeTimestamps; failure?: RunTreeFailure | null; events: RunTreeEvent[]; children: number[] };
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
-  type RunTreeWire = { nodes: RunTreeWireNode[]; roots: number[]; repairs: RunTreeRepair[] };
+  type RunTreeDeletion = { attempt_id: string; deleted_by?: string | null; deleted_at: number };
+  type RunTreeWire = { nodes: RunTreeWireNode[]; roots: number[]; repairs: RunTreeRepair[]; deletions: RunTreeDeletion[] };
   type RunTree = RunTreeWire;
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
   type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
@@ -2071,6 +2072,11 @@ declare namespace Sdk {
   type ArchiveDeleteConfirmOutcome = (ArchiveDeleteReceiptView & { outcome: "deleted" }) | { outcome: "refused"; error: ArchiveDeleteError };
   type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
   type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
+  type AttemptArchiveDeletePreviewRequest = { attempt: string };
+  type AttemptArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
+  type AttemptArchiveDeletePreviewView = { attempt: string; record_bytes: number; expected: AttemptArchiveDeleteExpectation };
+  type AttemptArchiveDeleteConfirmRequest = { attempt: string; expected: AttemptArchiveDeleteExpectation };
+  type AttemptArchiveDeleteReceiptView = { attempt: string; deleted_by: string; deleted_at: number; run_id?: string | null; receipt_ref: string; role: string; grant_ref?: string | null };
   type UsageRepairListRequest = Record<string, never>;
   type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
@@ -5438,6 +5444,14 @@ declare const vault: Sdk.VaultHost & {
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
   archive: {
+    attempt: {
+      delete: {
+        /** Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt. */
+        confirm(input: Sdk.AttemptArchiveDeleteConfirmRequest): Promise<Sdk.AttemptArchiveDeleteReceiptView | StoredResult>;
+        /** Previews one cleanup-archived completed attempt under the caller's delete authority. */
+        preview(input: Sdk.AttemptArchiveDeletePreviewRequest): Promise<Sdk.AttemptArchiveDeletePreviewView | StoredResult>;
+      };
+    };
     delete: {
       /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
       confirm(input: Sdk.ArchiveDeleteConfirmRequest): Promise<Sdk.ArchiveDeleteBatchResult | StoredResult>;

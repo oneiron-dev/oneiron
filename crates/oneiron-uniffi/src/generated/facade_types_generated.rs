@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1307 facade rows, 4725 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1259.
+// UniFFI census: 1309 facade rows, 4731 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1261.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -2438,6 +2438,21 @@ pub enum RunTreeRepair {
     },
 }
 
+/// `oneiron::attempt_queue::run_tree_view::RunTreeDeletion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunTreeDeletion {
+    #[serde(rename = "attempt_id")]
+    pub attempt_id: String,
+    #[serde(
+        rename = "deleted_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deleted_by: Option<String>,
+    #[serde(rename = "deleted_at")]
+    pub deleted_at: u64,
+}
+
 /// `oneiron::attempt_queue::run_tree_view::RunTreeWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RunTreeWire {
@@ -2447,6 +2462,8 @@ pub struct RunTreeWire {
     pub roots: Vec<u64>,
     #[serde(rename = "repairs")]
     pub repairs: Vec<RunTreeRepair>,
+    #[serde(rename = "deletions")]
+    pub deletions: Vec<RunTreeDeletion>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthRunTree`.
@@ -32515,6 +32532,64 @@ pub struct ArchiveDeleteConfirmEntry {
 pub struct ArchiveDeleteBatchResult {
     #[serde(rename = "entries")]
     pub entries: Vec<ArchiveDeleteConfirmEntry>,
+}
+
+/// `oneiron::vault_cleanup::attempt_delete_wire::AttemptArchiveDeletePreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptArchiveDeletePreviewRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+}
+
+/// `oneiron::vault_cleanup::attempt_delete_wire::AttemptArchiveDeleteExpectation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptArchiveDeleteExpectation {
+    #[serde(rename = "record_hash")]
+    pub record_hash: String,
+    #[serde(rename = "archive_marker")]
+    pub archive_marker: String,
+}
+
+/// `oneiron::vault_cleanup::attempt_delete_wire::AttemptArchiveDeletePreviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptArchiveDeletePreviewView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "record_bytes")]
+    pub record_bytes: u64,
+    #[serde(rename = "expected")]
+    pub expected: AttemptArchiveDeleteExpectation,
+}
+
+/// `oneiron::vault_cleanup::attempt_delete_wire::AttemptArchiveDeleteConfirmRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptArchiveDeleteConfirmRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "expected")]
+    pub expected: AttemptArchiveDeleteExpectation,
+}
+
+/// `oneiron::vault_cleanup::attempt_delete_wire::AttemptArchiveDeleteReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptArchiveDeleteReceiptView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "deleted_by")]
+    pub deleted_by: String,
+    #[serde(rename = "deleted_at")]
+    pub deleted_at: u64,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "role")]
+    pub role: String,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
 }
 
 /// `oneiron::memory::usage_repair::UndecodableUsageReason`.

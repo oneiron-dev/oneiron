@@ -2256,11 +2256,21 @@ class Oneiron:
     class _VaultArchiveVerbs:
         @property
         def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
+        @property
+        def attempt(self) -> "Oneiron._VaultArchiveAttemptVerbs": ...
     class _VaultArchiveDeleteVerbs:
         def preview(self, spec: Facade.ArchiveDeletePreviewRequest) -> Facade.ArchiveDeletePreviewView:
             """Previews explicit archived records under the caller's delete authority."""
         def confirm(self, spec: Facade.ArchiveDeleteConfirmRequest) -> Facade.ArchiveDeleteBatchResult:
             """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
+    class _VaultArchiveAttemptVerbs:
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveAttemptDeleteVerbs": ...
+    class _VaultArchiveAttemptDeleteVerbs:
+        def preview(self, spec: Facade.AttemptArchiveDeletePreviewRequest) -> Facade.AttemptArchiveDeletePreviewView:
+            """Previews one cleanup-archived completed attempt under the caller's delete authority."""
+        def confirm(self, spec: Facade.AttemptArchiveDeleteConfirmRequest) -> Facade.AttemptArchiveDeleteReceiptView:
+            """Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt."""
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
