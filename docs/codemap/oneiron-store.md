@@ -250,7 +250,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
 | `src/git_wire/operation.rs` | src | s | 2 enum · 6 fn · 1 const | GitWireEffectClass, GitWireOperation | Operation enum, effect classes, and the stable wire-name mapping |
 | `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an origin mirror's Git legs on a served host: an exact publish's and an… |
-| `src/git_wire/path_text.rs` | src | s | 5 fn · 1 const | — | The text form of a Git path (FIX 21326) |
+| `src/git_wire/path_text.rs` | src | s | 6 fn · 1 const | — | The text form of a Git path (FIX 21326) |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |
 | `src/git_wire/projected_object.rs` | src | m | 2 struct · 1 enum · 11 fn · 3 const | GitObjectEdge, GitProjectedPayload, RawTreeEntry | A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`) |
