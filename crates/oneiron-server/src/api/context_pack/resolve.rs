@@ -15,20 +15,25 @@ use super::response::{
 };
 use super::response_limits::ContextPackResponseLimits;
 use super::{
-    narrow_to_core_audience, narrow_to_reader, reader_optional_memory,
-    resolve_core_disclosure_with_once, resolve_core_interlocutor_set, resolve_core_room,
+    narrow_to_core_audience, narrow_to_reader, resolve_core_disclosure_with_once,
     spend_core_once_disclosures,
+};
+use crate::api::FacadeCall;
+use crate::api::native_read_hooks::{
+    NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
+use oneiron::code_run::vault_read::VaultReadMethod;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Assemble a context pack from existing retrieval and hydration APIs.
@@ -49,16 +54,100 @@ use std::sync::Arc;
 pub(crate) async fn core_context_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
-) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
+    headers: HeaderMap,
+    extensions: Extensions,
+    payload: Result<Json<Value>, JsonRejection>,
+) -> Result<Json<Value>, NativeReadError> {
     auth.require(CoreScope::Read)?;
     // A facet-narrowed credential reads a facet-narrowed pack (FIX 646): every
     // row, count and handle the pack echoes passes the admitted read, the
     // room's signed facets met in (FIX 643).
-    let req = json_payload(payload)?;
-    req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
-    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
-    Ok(Json(response))
+    let body = json_payload(payload)?;
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
+    let answer = core_context_pack_hooked(&server, &call, body).await?;
+    Ok(Json(answer.value))
+}
+
+/// The members of a context pack request that its route reads and the
+/// native `memory.context_pack` contract does not carry: its room, session,
+/// reaction signals, affect, assembly policy, time window, projection,
+/// interlocutors and reader.
+const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
+    "conversation_id",
+    "session_id",
+    "signals_since",
+    "signals_after",
+    "signals_limit",
+    "signals_deadline_ms",
+    "signals_person",
+    "query_affect",
+    "queryAffect",
+    "hydrate",
+    "include_edges",
+    "includeEdges",
+    "include_vectors",
+    "includeVectors",
+    "view",
+    "policy",
+    "time",
+    "interlocutors",
+    "reader",
+];
+
+/// `POST /v1/core/context-pack` on `body`, for `call`'s caller, through its
+/// verb-hook boundary as `memory.context_pack` (FIX 1435). The request's
+/// query bytes and the caller's read admission are checked first. The pre
+/// chain then runs, before any pack work. The pack's other request checks
+/// and its ref admissions run in [`run_context_pack`] on the request the
+/// chain left, under the caller's own credential; that pipeline runs no
+/// hook itself.
+pub(crate) async fn core_context_pack_hooked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    body: Value,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let auth = call.auth();
+    let admit = {
+        let (server, auth) = (Arc::clone(server), auth.clone());
+        move |body: &Value| admit_context_pack(&server, &auth, body)
+    };
+    let req = admit(&body)?;
+    // The caller's read admission, before any hook runs.
+    scoped_read_for_core_auth(&server.vault, auth)?;
+    let body = NativeReadBody::split(body, CONTEXT_PACK_ROUTE_CONTROLS);
+    native_read_hooked(
+        server,
+        call,
+        VaultReadMethod::ContextPack,
+        body,
+        req,
+        admit,
+        |req| read_context_pack(server, auth, req),
+    )
+    .await
+}
+
+/// The route's own admission of the context pack `body` for `auth`: decoded,
+/// and its query checked against `[limits].retrieval_query_bytes`.
+fn admit_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<CoreContextPackRequest, ApiError> {
+    let req: CoreContextPackRequest = decoded(body)?;
+    req.check_query_bytes(server, auth, QueryDoor::ContextPack, "query")?;
+    Ok(req)
+}
+
+/// An admitted context pack, assembled for `auth` through the shared
+/// pipeline, as the JSON the route answers.
+async fn read_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    req: CoreContextPackRequest,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let (response, _, _) = run_context_pack(server, auth, req, None).await?;
+    Ok(NativeReadAnswer::unlisted(encoded(&response)?))
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the
@@ -92,20 +181,19 @@ pub(crate) async fn run_context_pack(
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let optional_memory = reader_optional_memory(&scoped_read, req.reader.as_ref())?;
-    let room_id = req
-        .conversation_id
-        .as_deref()
-        .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
-        .transpose()?;
-    let (room_members, room) = resolve_core_room(&server.vault, auth, &scoped_read, room_id)?;
-    let interlocutors = resolve_core_interlocutor_set(
-        &server.vault,
-        auth,
-        &scoped_read,
-        req.interlocutors.as_ref(),
-        room.as_ref(),
-    )?;
+    let super::input_worker::ResolvedContextInputs {
+        read,
+        req: resolved_req,
+        optional_memory,
+        room_id,
+        room_members,
+        room,
+        interlocutors,
+    } = super::input_worker::resolve_context_inputs(server, auth, scoped_read, req).await?;
+    req = resolved_req;
+    let scoped_read = read
+        .into_borrowed(&server.vault)
+        .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
     // A media query seeds the pack on its own; a vector beside it is still
     // checked.
@@ -153,6 +241,13 @@ pub(crate) async fn run_context_pack(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
+    // The caller's own filter binds the pack's reader once its audience is
+    // set, before any candidate is read (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit)
         .map_err(|error| {
@@ -187,9 +282,15 @@ pub(crate) async fn run_context_pack(
         ),
     );
 
-    let mut builder = server
-        .vault
-        .context_pack()
+    // Every channel and neighbor takes the reader's row gate, its bound
+    // caller filter included, before its cut (FIX 3977); the pack is still
+    // filtered under the reader once it runs.
+    let plan = scoped_read.context_pack_plan().map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "core context-pack scoped plan failed");
+        core_engine_error("core context-pack scoped read setup failed", error)
+    })?;
+    let mut builder = plan
+        .admit(server.vault.context_pack())
         .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
@@ -616,12 +717,14 @@ fn read_reaction_signals(
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
-    // disclosure clamp as the pack. Paging follows the filter, so a cursor
-    // never names a signal this caller was not shown.
+    // disclosure clamp as the pack, and so is a read that names its own
+    // filter, which the pack's reader carries (FIX 3977). Paging follows the
+    // filter, so a cursor never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
-        || req.interlocutors.is_some();
+        || req.interlocutors.is_some()
+        || req.filter.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;

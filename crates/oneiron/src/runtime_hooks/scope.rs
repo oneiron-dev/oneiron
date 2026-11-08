@@ -186,7 +186,10 @@ fn room_project(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<
     }
     match crate::workspace_roster::room_project_in(vault, txn, room) {
         Ok(project) => Ok(project),
-        // The roster's refusal for a room its project does not vouch for.
+        // The roster's refusal for a room its project does not vouch for
+        // (FIX 2010, audited: on this path `InvalidConfig` is the room
+        // validation's own not-a-project-room answer; every storage or
+        // decode error keeps its own kind and propagates below).
         Err(Error::InvalidConfig(_)) => Ok(None),
         Err(error) => Err(error),
     }
@@ -194,21 +197,27 @@ fn room_project(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<
 
 /// Whether project `own` is `wanted`, or reaches it up the parents each
 /// project's effective authority serves (never a stored row's own list),
-/// within [`PROJECT_SCOPE_DEPTH`] steps. Each project is read once.
+/// within [`PROJECT_SCOPE_DEPTH`] steps. Each project is read once. `own`
+/// places nothing until it serves authority itself (FIX 2010): a claim's
+/// `scope_project` stamp is the claim's own text, and equality with
+/// `wanted` alone never vouches for it.
 fn project_within(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     own: EntityId,
     wanted: EntityId,
 ) -> Result<bool> {
-    if own == wanted {
-        return Ok(true);
-    }
     let Some(reader) =
         crate::workspace_roster::ProjectReader::new(&vault.store, txn, vault.privacy_posture())?
     else {
         return Ok(false);
     };
+    if reader.effective(own)?.is_none() {
+        return Ok(false);
+    }
+    if own == wanted {
+        return Ok(true);
+    }
     let mut seen = BTreeSet::from([own]);
     let mut ring = vec![own];
     for _ in 0..PROJECT_SCOPE_DEPTH {
@@ -238,7 +247,10 @@ fn project_within(
 }
 
 /// The one room the record `entity` was said in; `None` when it names none,
-/// names more than one, or points at a row that is gone.
+/// names more than one, or points at a row that is gone. The two mapped
+/// errors are exactly those answers from the ancestry walk (FIX 2010,
+/// audited: a gone ancestor, an ambiguous room); corrupted rows and
+/// storage errors propagate.
 fn record_room(vault: &Vault, txn: &heed::RoTxn<'_>, entity: EntityId) -> Result<Option<EntityId>> {
     match crate::conversation::room_for_record_in(vault, txn, entity) {
         Ok(room) => Ok(room),

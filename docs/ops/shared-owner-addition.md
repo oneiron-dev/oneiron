@@ -23,9 +23,11 @@ the actual starter as `from`, the new Owner as `to`, and `from_keeps: owner`.
 This is an audit record, not an independent source of Owner authority.
 An addition retires no existing Owner's own-device grants.
 
-This native slice does not add an HTTP, MCP or SDK proposal door. It does
-not implement the common "owner changes wait N days" setting, trusted-contact
-recovery, or property detachment. Transfer, removal, last-Owner protection,
-ordinary member invitations, and vault delete/erase policies are unchanged.
+A companion slice serves `vault.shared.propose_add_owner` over HTTP, MCP
+and the SDK with the same starter proof the native call takes. This native
+slice does not implement the common "owner changes wait N days" setting,
+trusted-contact recovery, or property detachment. Transfer, removal,
+last-Owner protection, ordinary member invitations, and vault delete/erase
+policies are unchanged.
 A matching engine must understand the new `addition` cause and `owner_added`
 receipt variant; no old-format reader or migration is provided.

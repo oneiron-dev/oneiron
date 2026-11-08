@@ -2,10 +2,12 @@
 //! the token feed, and sealing a window from the durable replay.
 
 mod check_evidence;
+mod flight;
 mod pending;
 mod self_steps;
 mod wait;
 
+use super::compaction;
 use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
@@ -25,6 +27,17 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
+    /// Keeps an unlanded pass's `host.compact` pre-chain records in its room
+    /// (REVIEW-4357 P1-2): a backend refusal or a pre-swap-gate rejection
+    /// ends the pass without landing, so its hooks never reach a post chain.
+    /// No post hooks run here. A canonical pass keeps its own.
+    fn keep_unlanded_compact_hooks(&self, hooks: CompactHooks) {
+        let crate::code_run::ExecutorStorage::Session(binding) = &self.storage else {
+            return;
+        };
+        crate::compaction::keep_compact_hooks_in_room(&binding.session, &binding.route, hooks);
+    }
+
     /// Lands a finished background flight: an accepted summary swaps in as
     /// this run's next epoch, and anything else holds for the turn and leaves
     /// the window whole; its fold batch lands at once, in one ledger write.
@@ -56,9 +69,13 @@ impl EngineNativeExecutor<'_> {
         let hooks = finished.hooks;
         let epoch_execution = finished.epoch_execution;
         let landed = match finished.epoch {
-            None => Ok(()),
+            None => {
+                self.keep_unlanded_compact_hooks(hooks);
+                Ok(())
+            }
             Some(Err(suppression)) => {
                 seat.hold(suppression);
+                self.keep_unlanded_compact_hooks(hooks);
                 Ok(())
             }
             Some(Ok(gated)) => {
@@ -82,10 +99,23 @@ impl EngineNativeExecutor<'_> {
                         ) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
-                                if let crate::code_run::ExecutorStorage::Canonical(vault) =
-                                    &self.storage
-                                {
-                                    vault.post_compact_hooks(hooks, &plan, first, last);
+                                // The post chain runs where its pre chain
+                                // did: the vault, or the run's room (FIX
+                                // 1594).
+                                match &self.storage {
+                                    crate::code_run::ExecutorStorage::Canonical(vault) => {
+                                        vault.post_compact_hooks(hooks, &plan, first, last);
+                                    }
+                                    crate::code_run::ExecutorStorage::Session(binding) => {
+                                        crate::compaction::post_compact_hooks_in_room(
+                                            &binding.session,
+                                            &binding.route,
+                                            hooks,
+                                            &plan,
+                                            first,
+                                            last,
+                                        );
+                                    }
                                 }
                                 Ok(())
                             }
@@ -98,6 +128,7 @@ impl EngineNativeExecutor<'_> {
                                 seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
                                     check: None,
                                 });
+                                self.keep_unlanded_compact_hooks(hooks);
                                 Ok(())
                             }
                         }
@@ -107,138 +138,6 @@ impl EngineNativeExecutor<'_> {
         };
         self.compaction = Some(seat);
         landed
-    }
-
-    /// The token feed: the assembled request's size reaches the run's
-    /// driver. A crossing, or the agent's `self.compact` ask, seals the steps
-    /// up to the watermark and every fold mark that applies, in one flight.
-    pub(super) fn feed_compaction(
-        &mut self,
-        config: &EngineExecutorConfig,
-        record: &CodeRunReplayRecord,
-        request: &LlmRequest,
-    ) -> EngineExecutorResult<
-        std::result::Result<Option<super::compaction::WindowFullReason>, VerbHookStop>,
-    > {
-        let completed = completed_step_count(record)?;
-        if self.compaction.is_none() {
-            return Ok(Ok(None));
-        }
-        let run_id = config.run_id;
-        let ledger = self.storage.code_run_folds(run_id)?;
-        let asked = ledger.compact.as_ref().map(|ask| ask.note.clone());
-        let marks = if ledger.marks.is_empty() {
-            Vec::new()
-        } else {
-            let prefix_end = self
-                .storage
-                .code_run_compaction_coverage(run_id)?
-                .iter()
-                .map(|row| row.last())
-                .max();
-            ledger.applicable(completed, prefix_end, asked.is_some())
-        };
-        // A mark by kind needs no backend pass: the batch writes it here.
-        let (kind_marks, marks): (Vec<FoldMark>, Vec<FoldMark>) =
-            marks.into_iter().partition(|mark| mark.kind.is_some());
-        let Some(seat) = self.compaction.take() else {
-            return Ok(Ok(None));
-        };
-        let byline = seat.swap_seat().map(|(_, byline, _)| byline);
-        // A run whose compaction is off folds nothing: its asks end with why,
-        // which `self.folds()` shows.
-        if !seat.is_live()
-            && (asked.is_some() || !marks.is_empty() || !kind_marks.is_empty())
-            && let Err(error) = self.storage.update_code_run_folds(run_id, |ledger| {
-                ledger.refuse_pending("compaction is off for this run")
-            })
-        {
-            self.compaction = Some(seat);
-            return Err(error.into());
-        }
-        let used = super::compaction::request_tokens(request);
-        let mut refused = None;
-        // A batch of folds by kind landed here, after `request` was built.
-        let mut kind_landed: Option<FoldBoundary> = None;
-        let reason = seat.feed(
-            used,
-            completed,
-            asked.is_some(),
-            !marks.is_empty() || !kind_marks.is_empty(),
-            |driver, watermark| {
-                if let Err(refusal) = self.admit_compaction_read() {
-                    refused = Some(refusal);
-                    return Ok(super::compaction::Flight::default());
-                }
-                let note = asked.clone().flatten();
-                // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
-                // FIX 9463: only with every row it was read from witnessed.
-                let prefix_sources = self.step_source_rows(config, record);
-                let (live, room) =
-                    super::compaction::live_fork::capture(driver, request, prefix_sources);
-                let (epoch, hooks) = match watermark {
-                    Some(at) => match self.seal_compaction_window(
-                        driver,
-                        config,
-                        record,
-                        at,
-                        note.clone(),
-                        room,
-                    )? {
-                        Ok(Some((request, hooks))) => (Some(request), hooks),
-                        Ok(None) => (None, CompactHooks::default()),
-                        Err(stop) => {
-                            return Ok(super::compaction::Flight {
-                                pending: Some(stop),
-                                ..super::compaction::Flight::default()
-                            });
-                        }
-                    },
-                    None => (None, CompactHooks::default()),
-                };
-                let folds =
-                    self.seal_folds(driver, config, record, &marks, note.as_deref(), room)?;
-                let mut kind_folds = match byline {
-                    Some(byline) => self.seal_kind_folds(record, run_id, &kind_marks, byline)?,
-                    None => None,
-                };
-                // A batch of folds by kind alone sends nothing to the
-                // backend: it lands now, in one ledger write. Otherwise it
-                // rides the flight and lands with its passes.
-                if epoch.is_none()
-                    && folds.is_empty()
-                    && let Some(batch) = kind_folds.take()
-                {
-                    let run = batch.run_id;
-                    match self.storage.land_code_run_folds(run, batch.records, &[]) {
-                        Ok(committed) => kind_landed = FoldBoundary::landed(run, committed),
-                        Err(_) => tracing::warn!("a fold batch did not land"),
-                    }
-                }
-                if asked.is_some() {
-                    self.storage
-                        .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
-                }
-                Ok(super::compaction::Flight {
-                    epoch,
-                    folds,
-                    kind_folds,
-                    hooks,
-                    live,
-                    pending: None,
-                })
-            },
-        );
-        self.compaction = Some(seat);
-        // FIX 17594 (Engine call B): the batch is a brief boundary; the run
-        // builds this turn's request again past it before sending it.
-        if let Some(landed) = kind_landed {
-            self.brief_fold_committed(landed);
-        }
-        match refused {
-            Some(refusal) => Err(refusal),
-            None => Ok(reason),
-        }
     }
 
     /// One fold job per mark (ARCH-0067 §2.2): the span's own retained
