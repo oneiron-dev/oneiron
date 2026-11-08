@@ -11,6 +11,7 @@ mod detector_corpus;
 mod embedder_runtime;
 mod export;
 mod promotion;
+pub(crate) mod tables;
 mod target;
 mod types;
 

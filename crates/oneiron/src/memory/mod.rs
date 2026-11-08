@@ -452,3 +452,4 @@ pub mod voice_actor;
 pub(crate) mod resolved_recall_scope;
 
 pub mod claim_cluster;
+pub(crate) mod tables;

@@ -229,6 +229,7 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
+pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,

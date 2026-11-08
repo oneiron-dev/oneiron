@@ -76,6 +76,7 @@ pub mod prep;
 pub mod query;
 pub use oneiron_base::calendar_body_screen as safeguard;
 pub mod series;
+pub(crate) mod tables;
 pub mod transcript;
 pub mod tz;
 pub(crate) mod windows_zones;

@@ -122,6 +122,7 @@ pub use self::webhook::{
     LinearWebhookStatus,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

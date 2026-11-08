@@ -47,6 +47,7 @@ mod erase;
 mod evidence;
 mod index;
 mod records;
+pub(crate) mod tables;
 pub(crate) use admission::admission_payload_actor;
 pub use admission::{
     AdmissionCaller, AdmissionSources, CallerUnavailable, PROGRAM_ADMISSION_KIND,

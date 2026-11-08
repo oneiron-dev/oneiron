@@ -191,6 +191,7 @@ pub(crate) use self::triage::{
     job_target, node_target, refuse_erased_in_txn,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

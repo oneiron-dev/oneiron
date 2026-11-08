@@ -36,6 +36,7 @@ mod run;
 mod seed;
 mod shared_setup;
 mod skill;
+pub(crate) mod tables;
 mod visibility;
 mod wire;
 mod world_facet;

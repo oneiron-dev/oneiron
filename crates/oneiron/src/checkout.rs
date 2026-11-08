@@ -8,6 +8,7 @@ pub use lease::*;
 mod tests;
 
 pub mod env_blueprint;
+pub(crate) mod tables;
 
 pub use env_blueprint::{
     CheckoutEnvPlan, EnvBlueprint, EnvBlueprintError, EnvBlueprintResult, EnvBlueprintStages,

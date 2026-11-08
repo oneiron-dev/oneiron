@@ -23,6 +23,7 @@ use rmpv::Value;
 
 mod owner_door;
 mod revoke;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

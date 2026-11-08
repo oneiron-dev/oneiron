@@ -31,6 +31,7 @@ pub mod solo;
 mod spawn_intent;
 pub mod spawn_override;
 pub mod stack;
+pub(crate) mod tables;
 pub mod task_exposure;
 
 pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};

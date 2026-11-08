@@ -42,6 +42,7 @@
 //! never writes a negative shortcut or survives into a later evaluation.
 
 mod indexes;
+pub(crate) mod tables;
 mod transaction_memo;
 
 use rmpv::Value;

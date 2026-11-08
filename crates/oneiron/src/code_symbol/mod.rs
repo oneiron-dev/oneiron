@@ -71,5 +71,6 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::pipeline::ScoredEntity;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

@@ -205,3 +205,4 @@ mod source_replication_tests;
 
 #[cfg(test)]
 mod source_custody_tests;
+pub(crate) mod tables;

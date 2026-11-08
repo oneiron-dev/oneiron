@@ -492,6 +492,7 @@ fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
     }
 }
 
+pub(crate) mod tables;
 mod validation;
 use self::validation::{
     invalid_critic_config, validate_catalog, validate_critique_artifact, validate_identifier,

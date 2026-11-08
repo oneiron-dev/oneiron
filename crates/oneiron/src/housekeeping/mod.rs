@@ -37,6 +37,7 @@ mod report;
 mod schedule;
 mod sweeps;
 mod sync_work;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 mod wake;

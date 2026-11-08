@@ -49,6 +49,7 @@ mod vault_doors;
 mod vault_key;
 mod wrap;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

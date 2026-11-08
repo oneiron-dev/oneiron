@@ -78,6 +78,7 @@ mod smtp_client;
 #[doc(hidden)]
 pub mod source;
 mod state;
+pub(crate) mod tables;
 mod tls_stream;
 mod wire;
 

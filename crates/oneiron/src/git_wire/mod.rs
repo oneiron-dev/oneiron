@@ -65,6 +65,7 @@ mod wire_stage;
 mod wire_store;
 mod wire_worktree;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

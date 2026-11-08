@@ -86,6 +86,7 @@ pub(crate) mod fixtures;
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod tables;
 #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
 pub mod test_support;
 

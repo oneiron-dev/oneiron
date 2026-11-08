@@ -116,5 +116,6 @@ pub enum CampaignError {
 /// Result alias for campaign operations.
 pub type CampaignResult<T> = std::result::Result<T, CampaignError>;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

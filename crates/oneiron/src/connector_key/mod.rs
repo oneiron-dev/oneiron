@@ -35,6 +35,7 @@ mod tool_effect;
 mod tool_remember;
 mod txn;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
