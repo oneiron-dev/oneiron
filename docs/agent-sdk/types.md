@@ -3930,7 +3930,7 @@ class Oneiron:
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
     class _VaultModelPackVerbs:
         def revert(self, spec: Facade.ModelPackRevertRequest) -> Facade.ModelPackRevert:
-            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
+            """Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
