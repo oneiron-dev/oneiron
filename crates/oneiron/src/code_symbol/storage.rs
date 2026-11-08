@@ -51,7 +51,13 @@ fn observe_manifest_rows(
 ) -> Result<()> {
     let scope = code_artifact_id.as_bytes();
     let mut rows = ScanCount::start(store, txn, EngineScan::SymbolManifestRows, scope)?;
-    rows.rows(manifest.chunks.len().max(manifest.symbols.len()));
+    rows.rows(
+        manifest
+            .chunks
+            .len()
+            .max(manifest.symbols.len())
+            .max(manifest.relations.len()),
+    );
     rows.defer(store);
     let longest = manifest
         .chunks
@@ -188,8 +194,6 @@ impl Vault {
         scan_code_symbol_manifest_metadata(manifest)?;
         validate_code_artifact_target(&self.store, wtxn, code_artifact_id, &manifest.repo_ref)?;
         validate_manifest_identity(self, wtxn, manifest)?;
-        observe_manifest_rows(&self.store, wtxn, code_artifact_id, manifest)?;
-
         let mut batch = self.batch_in();
         let mut symbol_ids = BTreeSet::new();
         for symbol in &manifest.symbols {
@@ -214,9 +218,17 @@ impl Vault {
         }
         batch.apply(wtxn)?;
         let mut pending = Vec::with_capacity(CODE_SYMBOL_EDGE_BATCH);
+        let mut relations = Vec::new();
         let mut sink = |edge: CodeSymbolGraphEdge| -> Result<()> {
             validate_code_symbol_graph_edge(&edge)?;
             if symbol_ids.contains(&edge.source) && symbol_ids.contains(&edge.target) {
+                if super::relations::is_relation_kind(edge.kind) {
+                    relations.push(super::relations::CodeSymbolRelation {
+                        source: edge.source,
+                        kind: edge.kind,
+                        target: edge.target,
+                    });
+                }
                 pending.push(edge);
             }
             if pending.len() < CODE_SYMBOL_EDGE_BATCH {
@@ -226,6 +238,11 @@ impl Vault {
         };
         edges(&mut sink)?;
         self.put_code_symbol_edges_in_txn(wtxn, &mut pending)?;
+        super::relations::normalize_relations(&mut relations);
+        let mut recorded = manifest.clone();
+        recorded.relations = relations;
+        let manifest = &recorded;
+        observe_manifest_rows(&self.store, wtxn, code_artifact_id, manifest)?;
         MANIFEST.encode_value(manifest)?;
         let kept = keep_erased_actors(&self.store, wtxn, code_artifact_id, manifest)?;
         delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
@@ -470,6 +487,17 @@ impl Vault {
             .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
             .transpose()
     }
+}
+
+/// Definitions of this already-loaded manifest, without resolving another revision.
+pub(crate) fn code_symbol_manifest_definitions(
+    manifest: &CodeSymbolManifest,
+) -> Result<Vec<CodeSymbolDefinition>> {
+    manifest
+        .symbols
+        .iter()
+        .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
+        .collect()
 }
 
 pub(super) fn code_symbol_definition(
