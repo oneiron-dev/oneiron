@@ -339,6 +339,7 @@ pub fn propose_organ_outputs(
                 Some(reader),
                 (actor, now),
                 &read_rows,
+                None,
             )
         })
         .collect()

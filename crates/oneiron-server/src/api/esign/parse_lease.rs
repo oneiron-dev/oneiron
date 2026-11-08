@@ -55,9 +55,9 @@ pub(super) fn inspected_in_memory(
     inspected(lease, deadline, pdf, stream_decode_bytes)
 }
 
-/// Geometry uses an installed inspection worker when available.
+/// Geometry and ceremony preview use an installed inspection worker when available.
 /// Hosts without that worker keep their existing native path; installation
-/// is not a new prerequisite for an already working geometry request.
+/// is not a new prerequisite for an already working inspection request.
 pub(super) fn inspected_with_worker(
     server: &crate::server::SyncServer,
     lease: MemoryLease,
