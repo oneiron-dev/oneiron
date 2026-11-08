@@ -400,6 +400,13 @@ impl Memory<'_> {
                 "a briefed create is a standard task",
             ));
         }
+        // FIX 4749: a post carries no due time; a watcher is a brief-less
+        // create.
+        if spec.due_at.is_some() {
+            return Err(MemoryError::bad_request(
+                "a briefed create carries no due time",
+            ));
+        }
         let via = match self.task_host() {
             Some(binding) => TaskVia::Host(binding.clone()),
             None => TaskVia::Wire,

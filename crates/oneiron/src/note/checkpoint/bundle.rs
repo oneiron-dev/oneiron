@@ -105,7 +105,7 @@ fn split(
         .iter()
         .filter_map(|fork| match fork.actor {
             NoteActor::Actor(opener) => Some((fork.fork, opener)),
-            NoteActor::Erased => None,
+            NoteActor::Erased | NoteActor::Imported(_) => None,
         })
         .collect();
     let held = ids(openers.iter().map(|(fork, _)| *fork));
@@ -160,13 +160,17 @@ fn split(
 
 fn take_actors(bundle: &mut NoteReviewBundle) -> Vec<(String, EntityId)> {
     let mut actors = Vec::new();
+    // A local actor moves out; an imported one is source provenance and
+    // stays in the bundle (FIX 7777).
     for fork in &mut bundle.waiting {
-        if let NoteActor::Actor(id) = std::mem::replace(&mut fork.actor, NoteActor::Erased) {
+        if let NoteActor::Actor(id) = fork.actor {
+            fork.actor = NoteActor::Erased;
             actors.push((format!("{WAITING}{}", fork.fork.to_hex()), id));
         }
     }
     for receipt in &mut bundle.landed {
-        if let NoteActor::Actor(id) = std::mem::replace(&mut receipt.actor, NoteActor::Erased) {
+        if let NoteActor::Actor(id) = receipt.actor {
+            receipt.actor = NoteActor::Erased;
             actors.push((format!("{LANDED}{}", receipt.id.to_hex()), id));
         }
     }

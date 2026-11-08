@@ -264,6 +264,11 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
+Approval-required inbox rows from held outbound receipts may carry
+`approval_digest`, the exact 64-lowercase-hex digest already on that receipt.
+Other inbox rows omit it. Gate decision receipts and the claim-only pending
+tray do not gain a digest through this projection; it adds no approval or
+release authority.
 Witness-read grants (`vault.connectors.read_grants.grant` and `.revoke`)
 keep earlier lifecycle generations. For kind `scoped_read`, `vault.receipts`
 projects a created receipt for each stored generation and a revoked receipt
@@ -400,7 +405,10 @@ No input chooses another actor, world, owner, entity ID, or erasure reason.
 Namespaces compare complete literal string segments. Search accepts exact
 field-equality filters, not operators or semantic queries. Results have lexical
 namespace/key order. Namespace rows are deduplicated after optional depth
-truncation. `limit` is 1–1000 and `offset` is 0–1000000. Pages are individual live
+truncation. `limit` is 1–1000 and `offset` is any nonnegative integer. Namespaces
+and keys may be any length; past the `[limits]` rows `keyed_namespace_segments`,
+`keyed_namespace_bytes` and `keyed_key_bytes` the engine asks whether everything is
+okay and serves them whole. Pages are individual live
 snapshots; concurrent mutations can shift subsequent offsets.
 
 Keyed bodies never appear in generic recall, context packs, scoped hydration,
