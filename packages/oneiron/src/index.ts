@@ -3313,6 +3313,8 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
+      /** Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot. */
+      read_indexed: (input: Facade.NoteIndexedReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesReadIndexed(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
       /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
