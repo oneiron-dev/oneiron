@@ -90,8 +90,7 @@ mod sealer;
 pub use sealer::{
     EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
     EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade,
-    SealDegradeReason,
-    SealProfile, SealProfileEvidence, SealVerdict,
+    SealDegradeReason, SealProfile, SealProfileEvidence, SealVerdict,
 };
 mod page_inspector;
 pub use page_inspector::EsignPageInspector;

@@ -21,7 +21,6 @@ use super::producer_input::{EsignInputBudget, InputBytes, PoolAdmission};
 #[path = "signature_revision_tests.rs"]
 mod tests;
 
-
 type Result<T> = std::result::Result<T, PdfPreparationError>;
 
 impl EsignSealInput {
