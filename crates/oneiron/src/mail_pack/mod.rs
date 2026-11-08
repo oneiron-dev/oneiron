@@ -76,11 +76,11 @@ mod wire;
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 pub(crate) use attachments::collect_after_delete;
 pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
+pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
-pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
@@ -102,17 +102,15 @@ pub use inbox::{
 pub use local_sync::MailSourceSyncRequest;
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
-pub use microsoft365_calendar::{
-    HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
-};
+pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
-pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
+pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};

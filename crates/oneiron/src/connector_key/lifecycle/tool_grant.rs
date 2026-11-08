@@ -416,19 +416,17 @@ impl Vault {
         tool: &str,
     ) -> Result<BTreeSet<String>> {
         let mut live = BTreeSet::new();
-        for id in standing_outbound_grant_ids_for_principal(&self.store, wtxn, principal_ref)? {
-            let Some(grant) = standing_outbound_grant_in_txn(&self.store, wtxn, &id)? else {
-                continue;
-            };
-            if grant.principal_ref != principal_ref
-                || grant.status != StandingOutboundGrantStatus::Active
-            {
+        for grant in
+            standing_outbound_grants_for_principal_in_txn(&self.store, wtxn, principal_ref)?
+        {
+            if !grant.is_active() {
                 continue;
             }
-            if let Some(scope) = grant.scope.scoped_mcp_grant() {
-                if scope.server == server && scope.tool == tool {
-                    live.extend(scope.endpoint_allowlist.iter().cloned());
-                }
+            if let Some(scope) = grant.scope.scoped_mcp_grant()
+                && scope.server == server
+                && scope.tool == tool
+            {
+                live.extend(scope.endpoint_allowlist.iter().cloned());
             }
         }
         Ok(live)
