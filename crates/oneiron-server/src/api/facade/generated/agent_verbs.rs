@@ -814,6 +814,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.corrections", post(facade_route))
         .route("/vault.code.step_evidence", post(facade_route))
         .route("/vault.code.type_diagnostics", post(facade_route))
+        .route("/vault.code.waits.rebind_prepare", post(facade_route))
+        .route("/vault.code.waits.rebind", post(facade_route))
         .route("/vault.code.waits.resolve", post(facade_route))
         .route("/vault.code.waits.receipt", post(facade_route))
         .route("/vault.results.status", post(facade_route))

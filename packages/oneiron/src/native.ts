@@ -763,6 +763,8 @@ vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
 vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
+vaultCodeWaitsRebindPrepare(input: unknown): unknown
+vaultCodeWaitsRebind(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown

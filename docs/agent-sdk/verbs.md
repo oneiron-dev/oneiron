@@ -734,6 +734,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.corrections`
 - `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
+- `vault.code.waits.rebind_prepare`
+- `vault.code.waits.rebind`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
 - `vault.results.status`
