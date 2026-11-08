@@ -2,6 +2,8 @@
 //! metadata and its bytes. A filed compaction step's response artifact
 //! (FIX 5977) is derived from every record its call read; its bytes leave
 //! only while it and each of those stand, at every direct version read.
+//! The exact-version read takes the write target it reads (FIX 4818), so a
+//! room step's response reads through the room's view by the same code.
 
 use heed::RoTxn;
 
@@ -12,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::file_secret_marks::SecretSight;
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
+use crate::store::ManifestDbs;
 use crate::store::file_key_masks::sighted_bytes_in_txn;
 use crate::write_envelope::claim_body::ClaimSubject;
 
@@ -147,7 +150,7 @@ impl Vault {
             return Ok(None);
         };
         if crate::store::asset_file_in_txn(&self.store, rtxn, &asset, &row.body)?.is_none()
-            || !compaction_response_readable_in(self, rtxn, artifact_id)?
+            || !compaction_response_readable_in(&self.store, rtxn, artifact_id)?
         {
             return Ok(None);
         }
@@ -172,9 +175,29 @@ impl Vault {
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<Option<Vec<u8>>> {
-        self.read_blob_artifact_version_in_txn_with(rtxn, artifact_id, version, |rtxn, hash| {
-            read_blob_asset_in_txn(self, rtxn, hash)
-        })
+        self.read_blob_artifact_version_in(&self.store, rtxn, artifact_id, version)
+    }
+
+    /// [`Self::read_blob_artifact_version_in_txn`] with the version record,
+    /// the compaction gate and the ASSET read as `dbs` reads them (FIX
+    /// 4818): base, or a room's view over base, where a room step's response
+    /// version is staged. It reads that exact version, never the head.
+    pub(crate) fn read_blob_artifact_version_in(
+        &self,
+        dbs: &impl ManifestDbs,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(record) = VERSIONS.get(dbs, rtxn, &(*artifact_id, version))? else {
+            return Ok(None);
+        };
+        if !compaction_response_readable_in(dbs, rtxn, artifact_id)? {
+            return Ok(None);
+        }
+        self.blob_get_in(dbs, rtxn, &record.content_hash)?
+            .ok_or(Error::EntityNotFound)
+            .map(Some)
     }
 
     /// [`Self::read_blob_artifact_version_in_txn`] with its bytes read by
@@ -216,7 +239,7 @@ impl Vault {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        if !compaction_response_readable_in(self, rtxn, artifact_id)? {
+        if !compaction_response_readable_in(&self.store, rtxn, artifact_id)? {
             return Ok(None);
         }
         read(rtxn, &record).map(Some)
@@ -274,7 +297,7 @@ impl Vault {
         rtxn: &RoTxn<'_>,
         artifact_id: &EntityId,
     ) -> Result<bool> {
-        compaction_response_readable_in(self, rtxn, artifact_id)
+        compaction_response_readable_in(&self.store, rtxn, artifact_id)
     }
 }
 
@@ -308,7 +331,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        if !compaction_response_readable_in(self, &rtxn, artifact_id)? {
+        if !compaction_response_readable_in(&self.store, &rtxn, artifact_id)? {
             return Ok(None);
         }
         if sight == SecretSight::Masked {
@@ -421,25 +444,18 @@ impl<'t> BlobBytes<'t> {
     }
 }
 
-fn read_blob_asset_in_txn(
-    vault: &Vault,
-    rtxn: &RoTxn<'_>,
-    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
-) -> Result<Vec<u8>> {
-    crate::ports::BlobStore::port_blob_get(vault, rtxn, content_hash)?.ok_or(Error::EntityNotFound)
-}
-
-/// Whether `artifact`'s version bytes may leave. A filed compaction step's
-/// response artifact releases them only while its own body and every
-/// record it was derived from stand ([`body_readable_in_txn`]); every other
-/// artifact, and one whose row is gone or does not decode, reads as it
-/// always has.
+/// Whether `artifact`'s version bytes may leave, as `dbs` reads its row: base,
+/// or a room's view over base for a room step's response (FIX 4818). A
+/// filed compaction step's response artifact releases them only while its
+/// own body and every record it was derived from stand
+/// ([`body_readable_in_txn`]); every other artifact, and one whose row is
+/// gone or does not decode, reads as it always has.
 pub(crate) fn compaction_response_readable_in(
-    vault: &Vault,
+    dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     artifact: &EntityId,
 ) -> Result<bool> {
-    let Some(record) = vault.store.port_entity_record(txn, artifact)? else {
+    let Some(record) = dbs.port_entity_record(txn, artifact)? else {
         return Ok(true);
     };
     if record.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
@@ -447,13 +463,7 @@ pub(crate) fn compaction_response_readable_in(
     }
     match decode_blob_artifact_body(&record.body) {
         Ok(body) if body.name == crate::compaction::COMPACTION_STEP_RESPONSE_NAME => {
-            body_readable_in_txn(
-                &vault.store,
-                txn,
-                artifact,
-                &record.body,
-                BodyStale::Withdrawn,
-            )
+            body_readable_in_txn(dbs, txn, artifact, &record.body, BodyStale::Withdrawn)
         }
         _ => Ok(true),
     }
