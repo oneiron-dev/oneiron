@@ -29,10 +29,11 @@
 //! connection's authority catch-up.
 //!
 //! While its home is down, a device with a mesh listener syncs with the
-//! vault's other machines over the mesh (FIX 4748): once the home's dials
-//! have failed unanswered for a minute, each connection goes to a machine
-//! marked mine, the standby home first, and confirms nothing there; a probe
-//! of the home ends it once the home answers, and the home's own connection
+//! vault's other machines over the mesh (FIX 4748): once the home has served
+//! this machine no sync for a minute (dials unanswered, refused, or ended
+//! before the home's root), each connection goes to a machine marked mine,
+//! the standby home first, and confirms nothing there; a probe of the home
+//! ends it once the home serves sync again, and the home's own connection
 //! then replays everything queued (`oneiron::sync::peer_route`). Without a
 //! listener here nothing of it runs.
 //!

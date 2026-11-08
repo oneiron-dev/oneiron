@@ -106,6 +106,8 @@ impl FederationGrant {
             kind: super::FederationGrantKind::Access,
             git_push_bounds: None,
             detach_on_member_leave,
+            verb_classes: std::collections::BTreeSet::new(),
+            wallet_ref: None,
         };
         grant.validate()?;
         Ok(grant)

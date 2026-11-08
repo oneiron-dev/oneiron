@@ -115,6 +115,8 @@ impl Vault {
                 kind: FederationGrantKind::GitPush,
                 git_push_bounds: Some(bounds.clone()),
                 detach_on_member_leave: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
@@ -131,6 +133,8 @@ impl Vault {
                     repo_bounds: None,
                     grant_kind: FederationGrantKind::GitPush,
                     git_push_bounds: Some(bounds.clone()),
+                    verb_classes: BTreeSet::new(),
+                    wallet_ref: None,
                 },
             )?;
             self.apply_grant_row_op_in_txn(
