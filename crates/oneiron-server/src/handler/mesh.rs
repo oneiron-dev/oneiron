@@ -83,7 +83,9 @@ impl MeshConfig {
 }
 
 /// Starts the mesh listener when `config` names a bind address, serving
-/// `app` for sync. `None` when it is off.
+/// `app` for sync. `None` when it is off; then the vault's rows of the
+/// models the owner's other nodes offered go stale, since no mesh catalog
+/// refresh keeps them current (FIX 22227).
 pub(crate) async fn start(
     server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
@@ -91,6 +93,8 @@ pub(crate) async fn start(
     limits: ConnectionLimits,
 ) -> anyhow::Result<Option<MeshHost>> {
     let Some(bind) = config.bind else {
+        #[cfg(feature = "mesh")]
+        crate::models::withdraw_discovered(server.vault());
         return Ok(None);
     };
     host::start(server, bind, &config.relays, app, limits).await
