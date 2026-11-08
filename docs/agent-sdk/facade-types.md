@@ -628,7 +628,7 @@ export type ShapeCard = { seed_id?: string | null; counts: Record<string, number
 /** `oneiron_store::attempt_id::AttemptId` */
 export type AttemptId = { bytes: number[] }
 /** `oneiron::task_verb::route_receipts::TaskRouteOutcome` */
-export type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } }
+export type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } } | { WatchTick: { due_at: number } }
 /** `oneiron::authority::task_ask_handle::TaskAskHandle` */
 export type TaskAskHandle = { group_ref: EntityId }
 /** `oneiron::task_verb::highway_types::TaskPhase` */
@@ -790,7 +790,7 @@ export type QueueTaskBrief = { schema: number; type_ref: TypeRef; objective: str
 /** `oneiron::task_verb::verb_kind::TaskTtl` */
 export type TaskTtl = { deadline_at: number }
 /** `oneiron::verbs::TaskCreateRequest` */
-export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null; due_at?: number | null }
+export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null; due_at?: number | null; watch?: boolean }
 /** `oneiron::task_verb::route_receipts::TaskCreateReceipt` */
 export type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null }
 /** `oneiron::verbs::TaskWaveRequest` */

@@ -1151,7 +1151,8 @@
         "brief": "brief",
         "ttl": "ttl",
         "parent_ref": "parent_ref",
-        "due_at": "due_at"
+        "due_at": "due_at",
+        "watch": "watch"
       },
       "mcp_required_fields": [
         "spec"
