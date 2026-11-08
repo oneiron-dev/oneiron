@@ -150,7 +150,6 @@ impl SessionBinding<'_> {
     /// `expected` is the replay record's own generation protocol, a separate
     /// concern from the mode-flip route: the number says "no one else
     /// appended", the route says "the room is still the room you bound".
-    #[cfg(test)]
     fn put_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -646,7 +645,7 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    #[cfg(test)]
+    /// Compare-and-puts a replay append on the run's route, with no heal tally.
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,

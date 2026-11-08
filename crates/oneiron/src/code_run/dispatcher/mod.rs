@@ -55,7 +55,7 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
-use self::admission::gate_rejection;
+use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 pub(crate) use self::agent_verb::write_receipt_may_have_run;
 pub(crate) use self::coordination::agent_attempt_run_ref;
