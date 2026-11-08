@@ -27,6 +27,11 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
     if let Some(commit_hash) = &manifest.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
     }
+    if matches!(manifest.repo_ref, RepoRef::LocalCapture { .. }) && manifest.commit_hash.is_some() {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "a local capture has no commit witness",
+        )));
+    }
     if let Some(repo_commit) = manifest.repo_ref.commit_hash()
         && manifest.commit_hash.as_deref() != Some(repo_commit)
     {
