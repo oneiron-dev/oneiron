@@ -79,6 +79,18 @@ pub enum GraphDecision {
 /// its own model locality and egress policy; this callback cannot grant reads or
 /// writes. `None` means missing input or refusal, never a negative prediction.
 pub trait GraphAnswerer {
+    /// Configure the actual immutable saved definition before its media or
+    /// decision call. Custom answerers retain their own configuration.
+    fn prepare_saved_question(&mut self, _record: &super::QuestionRecord) -> Result<()> {
+        Ok(())
+    }
+
+    /// Explicit saved-question criteria, if this run overrides the definition.
+    /// Such answers have their own dedup identity, including for an empty triple.
+    fn saved_criteria_override(&self) -> Option<&QuestionCriteria> {
+        None
+    }
+
     fn answer(
         &mut self,
         question: &DecisionQuestion,

@@ -83,6 +83,7 @@ pub struct ChatBrainBindings {
     /// The call's credential, as the owner door admitted it at hello. Each
     /// turn's memories are read under it; it is never bound again.
     pub(crate) auth: CoreAuth,
+    pub(crate) phone: Option<Arc<super::phone::PhoneCallRead>>,
     /// The room the call is heard in, as the host proved the caller reads
     /// it at hello: the host's own binding, never a claim a request makes.
     /// Each turn proves it again under `auth`. `None` for no room.
@@ -113,6 +114,7 @@ pub struct ChatBrain {
     /// The room's live speakers `history` was heard under, for a call heard
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
+    history_phone_scope: Option<oneiron::federation::Scope>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
@@ -190,12 +192,18 @@ impl ChatBrain {
             .chat_seat()
             .cloned()
             .ok_or_else(|| refused("no [models] rung serves generative_reasoner"))?;
+        let history_phone_scope = bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()?;
         Ok(Self {
             bindings,
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
             history_live: None,
+            history_phone_scope,
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
@@ -242,6 +250,7 @@ impl ChatBrain {
         request: &BrainRequest,
         memories: Option<Memories>,
         heard: Option<TurnMemories>,
+        phone_scope: Option<&oneiron::federation::Scope>,
     ) -> oneiron::Result<OpenedTurn> {
         let ChatBrainBindings {
             ai,
@@ -297,9 +306,25 @@ impl ChatBrain {
         } else {
             oneiron::prompt::place_context_for_layout(&mut messages, layout, context.as_slice());
         }
-        let admitted = ai
+        if let Some(phone) = &self.bindings.phone {
+            let scope =
+                phone_scope.ok_or_else(|| refused("phone context has no captured scope"))?;
+            phone
+                .prepare_generation(
+                    request.generation,
+                    scope.clone(),
+                    said_from.clone(),
+                    request.interlocutors.clone(),
+                )
+                .map_err(refused)?;
+        }
+        let mut admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
             .map_err(refused)?;
+        if let Some(phone) = &self.bindings.phone {
+            phone.admitted_media_agent(vault).map_err(refused)?;
+            admitted.ladder = Arc::new(admitted.ladder.for_model_list(phone.models())?);
+        }
         let line = format!(
             "voice:{}:{}",
             request.session_ref,
@@ -318,6 +343,21 @@ impl ChatBrain {
         // read from (FIX 6935).
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = match &self.bindings.phone {
+            Some(phone) => {
+                let phone = Arc::clone(phone);
+                let generation = request.generation;
+                run.initiated_by(Some(phone.agent()))
+                    .within_text_dispatch_release(Arc::new(move || {
+                        if phone.accepts_output(generation) {
+                            Ok(())
+                        } else {
+                            Err(oneiron::llm::FatalLlmError::InvalidRequest.into())
+                        }
+                    }))
+            }
+            None => run,
+        };
         let (stream, binding) = admitted
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)
@@ -381,8 +421,11 @@ impl ChatBrain {
         let (read, members, room) = match in_room {
             Some((read, members, room)) => (read, Some(members), Some(room)),
             None => {
-                let read = crate::api::scoped_read_for_core_auth(vault, auth)
-                    .map_err(|error| refused(format!("{error:?}")))?;
+                let read = match &self.bindings.phone {
+                    Some(phone) => phone.read(),
+                    None => crate::api::scoped_read_for_core_auth(vault, auth)
+                        .map_err(|error| refused(format!("{error:?}")))?,
+                };
                 (read, None, None)
             }
         };
@@ -390,18 +433,24 @@ impl ChatBrain {
             Some(room) => room.live.merged_into(request.interlocutors.clone()),
             None => request.interlocutors.clone(),
         };
-        let read = crate::api::narrow_to_core_audience(
-            vault,
-            auth,
-            read,
-            members.as_deref(),
-            room.as_ref(),
-            Some(&set),
-        )
-        .map_err(|error| refused(format!("{error:?}")))?;
-        // With no room (or no proven reader) this is `resolve`'s context.
-        let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
-        let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+        let (read, disclosure) = if self.bindings.phone.is_some() && room.is_none() {
+            let disclosure = read.phone_line_disclosure(set)?;
+            (read, disclosure)
+        } else {
+            let read = crate::api::narrow_to_core_audience(
+                vault,
+                auth,
+                read,
+                members.as_deref(),
+                room.as_ref(),
+                Some(&set),
+            )
+            .map_err(|error| refused(format!("{error:?}")))?;
+            // With no room (or no proven reader) this is `resolve`'s context.
+            let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
+            let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+            (read, disclosure)
+        };
         let mut section = MemoriesSection::pins_only(Some(disclosure.assembly(0)));
         let receipts =
             section.include_pinned_ids_with_disclosure(&read, &ids, Some(&disclosure))?;
@@ -548,10 +597,24 @@ fn room_audience<'a>(
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
+        let phone_scope = self
+            .bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()
+            .map_err(refused)?;
+        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+            // An aborted task may still own the old Arc on another executor.
+            self.history = Arc::new(Mutex::new(Vec::new()));
+            self.foreign.clear();
+            self.said_by.clear();
+        }
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
         let (stream, tainted, memories, said_from, capture) =
-            self.open(request, memories, heard)?;
+            self.open(request, memories, heard, phone_scope.as_ref())?;
+        self.history_phone_scope = phone_scope;
         let generation = request.generation;
         // The person's words: no stored row.
         self.history
@@ -625,6 +688,14 @@ impl Brain for ChatBrain {
         generation: GenerationEpoch,
         notice: &GateSystemNoticeRecord,
     ) -> oneiron::Result<()> {
+        if self
+            .bindings
+            .phone
+            .as_ref()
+            .is_some_and(|phone| !phone.accepts_notice(generation, notice))
+        {
+            return Ok(());
+        }
         let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
         rows.extend(notice_rows(notice));
         self.history

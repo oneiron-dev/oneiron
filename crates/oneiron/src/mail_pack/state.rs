@@ -80,7 +80,17 @@ pub(super) struct MailSyncState {
     /// provider meanwhile (fix list row 17937).
     #[serde(default)]
     pub(super) relist: Option<MailRelist>,
+    /// When the provider last answered for the mailbox's own addresses
+    /// (fix list row 20400); they are read again
+    /// [`OWN_ADDRESSES_REFRESH_SECS`] after it.
+    #[serde(default)]
+    pub(super) own_addresses_read_at: Option<u64>,
 }
+
+/// How long a provider's answer for a mailbox's own addresses stands before
+/// a sync step reads them again: an alias changes rarely, and a step runs
+/// often.
+pub(super) const OWN_ADDRESSES_REFRESH_SECS: u64 = 6 * 60 * 60;
 
 /// A listing that settles the copies an expired anchor lost track of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,9 +207,22 @@ pub(super) struct MailReplyHeaders {
     pub(super) references: Vec<String>,
     pub(super) from: Option<String>,
     pub(super) reply_to: Vec<String>,
+    /// Its whole `To` and `Cc` lists, a reply to all answers (fix list row
+    /// 17645); `None` for a message landed before they were kept, which
+    /// lands them again when its mailbox syncs it.
+    #[serde(default)]
+    pub(super) recipients: Option<MailReplyRecipients>,
     pub(super) subject: Option<String>,
     /// Whether this mailbox sent it: a reply answers someone else's.
     pub(super) sent_by_mailbox: bool,
+}
+
+/// One message's `To` and `Cc` lists, each entry one mailbox as its header
+/// named it, in order, never cut (fix list row 17645).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailReplyRecipients {
+    pub(super) to: Vec<String>,
+    pub(super) cc: Vec<String>,
 }
 
 impl MailReplyHeaders {
@@ -210,6 +233,10 @@ impl MailReplyHeaders {
             references: headers.references.clone(),
             from: headers.from.clone(),
             reply_to: headers.reply_to.clone(),
+            recipients: Some(MailReplyRecipients {
+                to: headers.to.clone(),
+                cc: headers.cc.clone(),
+            }),
             subject: headers.subject.clone(),
             sent_by_mailbox: headers.sent_by_mailbox,
         }

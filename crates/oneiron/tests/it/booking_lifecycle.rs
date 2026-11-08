@@ -1124,6 +1124,7 @@ fn reschedule_uses_same_solver_rules_and_increments_sequence_once() {
         &fixture.vault,
         &oneiron::CalendarReadRequest {
             event_ref: revision.calendar.event_ref.to_hex(),
+            filter: None,
         },
     )
     .expect("read event")
@@ -1335,6 +1336,7 @@ fn reschedule_back_to_an_earlier_slot_is_a_new_move() {
         &fixture.vault,
         &oneiron::CalendarReadRequest {
             event_ref: confirmed.calendar.event_ref.to_hex(),
+            filter: None,
         },
     )
     .expect("read event")
