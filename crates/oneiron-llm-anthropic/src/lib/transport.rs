@@ -62,6 +62,8 @@ pub trait AnthropicMessagesTransport: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AnthropicMessagesTransportError {
+    #[error(transparent)]
+    DispatchRelease(LlmError),
     #[error("Anthropic Messages transport timed out")]
     Timeout,
     #[error("Anthropic Messages transport stream was cut")]
@@ -77,6 +79,7 @@ impl From<AnthropicMessagesTransportError> for LlmError {
     /// were, now carrying their cause, so a result row or receipt names it.
     fn from(error: AnthropicMessagesTransportError) -> Self {
         match error {
+            AnthropicMessagesTransportError::DispatchRelease(error) => error,
             AnthropicMessagesTransportError::Timeout => RetryableLlmError::Timeout.into(),
             AnthropicMessagesTransportError::Connection => {
                 RetryableLlmError::not_sent("connect", "connection failed").into()

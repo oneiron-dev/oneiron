@@ -376,5 +376,10 @@ pub(super) fn complete(
         None,
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+    // FIX 11532: the solo run's team receipt, after its own close; a
+    // receipt failure logs and the run stays completed.
+    if let Err(error) = oneiron::team::record_solo_receipt(vault, attempt.id, now) {
+        tracing::warn!(%error, attempt = ?attempt.id, "a solo run's team receipt was not recorded");
+    }
     Ok(())
 }

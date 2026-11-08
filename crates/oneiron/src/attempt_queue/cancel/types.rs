@@ -152,17 +152,19 @@ impl ForceCancelAuthority {
     pub(crate) fn erase_actor_payloads_in_txn(
         erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    ) -> Result<crate::deletion::ErasureEffects> {
         let (vault, wtxn, actor) = erase.parts();
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
             &crate::secret_custody::CustodyWrite::of(vault),
             wtxn,
             &std::collections::BTreeSet::from([actor]),
         )?;
-        let mut cancelled = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
+        let mut effects = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
         let (vault, wtxn, _) = erase.parts();
-        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
-        Ok(cancelled)
+        effects
+            .cancelled
+            .extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(effects)
     }
 
     /// Scrubs and cancels the authenticated image writer's owned BYOA

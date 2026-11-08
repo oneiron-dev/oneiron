@@ -203,7 +203,19 @@ pub(crate) async fn execute_mcp_generated_verb(
                     }) => {
                         let stop = *stop;
                         let rows = stop_release_rows(server, actor, &stop, &mut served);
-                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                        let owner_whole_vault_export =
+                            super::device_release::owner_whole_vault_export_call(
+                                server,
+                                actor,
+                                args.tool.name,
+                            );
+                        if super::served_rows::drained_rows_lapsed(
+                            server,
+                            actor,
+                            &stop,
+                            rows,
+                            owner_whole_vault_export,
+                        ) {
                             return Ok(super::claimed_release::details_on_device_result());
                         }
                         return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
@@ -286,7 +298,19 @@ pub(crate) async fn execute_mcp_generated_verb(
     )
     .await;
     let rows = snapshot.rows.as_deref();
-    let result = mcp_release_listed(server, actor, rows, continued, result).map(|result| {
+    // The owner's own whole-vault export, as this call's route and his fresh
+    // proof name it, is released as his will (owner ruling 1-EXPORT = B).
+    let owner_whole_vault_export =
+        super::device_release::owner_whole_vault_export_call(server, actor, args.tool.name);
+    let result = mcp_release_listed(
+        server,
+        actor,
+        rows,
+        continued,
+        result,
+        owner_whole_vault_export,
+    )
+    .map(|result| {
         super::type_feedback_release::attach_verb_feedback(server, actor, rows, feedback, result)
     });
     if result.is_ok()
@@ -568,7 +592,7 @@ fn mcp_hook_stop_result(
         "structuredContent": structured,
         "isError": true,
     });
-    mcp_release_listed(server, actor, served.as_deref(), false, result)
+    mcp_release_listed(server, actor, served.as_deref(), false, result, false)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -805,7 +829,8 @@ async fn mcp_task_row<T: Send + 'static>(
 
 /// Runs blocking row `tool` by `row` on a blocking thread, on the caller's
 /// surface rebuilt there (FIX 9609): an organ call may wait out its whole
-/// deadline, which must never hold an async runtime worker. The row's hooks
+/// deadline, and a provider read over blocking HTTP panics on a debug
+/// runtime worker (fix list row 20520); neither may hold one. The row's hooks
 /// stay with its caller. The rows its reads listed come back beside its
 /// result, a refusal's too. The rebuilt surface keeps the row's credential
 /// and write context. Rows needing direct authorship must not take this

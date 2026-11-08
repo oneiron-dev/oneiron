@@ -22,8 +22,8 @@
 use std::collections::BTreeSet;
 
 use super::*;
-use crate::federation::AgentGrantStanding;
 use crate::federation::repo_access::RepoMembership;
+use crate::federation::{AgentGrantStanding, AgentVerbClasses};
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};
 use crate::memory::repo_doors::refusal_error;
 use crate::origin::export_preview::{
@@ -299,8 +299,11 @@ impl Memory<'_> {
             paths,
         };
         let verb = PREVIEW_GRANT_VERB.to_owned();
-        let covers = |standing: &AgentGrantStanding| {
-            standing.grant.authority_scope.verbs.contains(&verb)
+        // A verb class the Grant names that admits the preview verb covers
+        // it too (FIX 8735).
+        let covers = |standing: &AgentGrantStanding, classes: &AgentVerbClasses| {
+            (standing.grant.authority_scope.verbs.contains(&verb)
+                || standing.grant.class_admits_verb(&verb, classes))
                 && bound.is_none_or(|id| id == standing.id)
         };
         Ok(self.vault.admit_repo_read_passing_in_txn(
