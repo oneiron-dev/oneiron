@@ -462,7 +462,20 @@ fn check_claim_policy_for_write_with_record_inner(
         // it keeps its floor.
         let declared_critical = policy.declares_predicate_critical(&body.predicate);
         let attach_critical_confirm = critical_floor_only && !owner_authored && declared_critical;
-        let fallback_floor_only = critical_floor_only && !owner_authored && !declared_critical;
+        // A verified close changes only its row's lifecycle, so a stored
+        // Approved there is history, not a request: the fallback floor does
+        // not stop that close either, as it does not stop an Auto one (an
+        // owner's correction closing a settled prior, FIX 22041).
+        let approved_close_floor_only = verified_close
+            && body.approval == ClaimApprovalStatus::Approved
+            && critical_claim_can_land_auto_with_confirm(
+                &input,
+                decision.reason_codes(),
+                &body.predicate,
+            );
+        let fallback_floor_only = (critical_floor_only || approved_close_floor_only)
+            && !owner_authored
+            && !declared_critical;
         if owner_authored {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);

@@ -2,10 +2,70 @@
 
 The core meeting-audio producer can use `CommandMeetingAudioHost` to drive an
 operator-provisioned, offline Python runtime. It does not install packages,
-download models, or import recording bytes into a vault by itself. There is not
-yet a server configuration section or production ingest command that builds
-this host and its admission seats. The host API still needs an authenticated
-OF-133 ASR route receipt; a model name or evidence reference is not that receipt.
+download models, or import recording bytes into a vault by itself. The owner
+CLI builds this host and its admission seats; there is no server configuration
+section for it. The host API still needs an authenticated OF-133 ASR route
+receipt; a model name or evidence reference is not that receipt.
+
+## Owner command
+
+`oneiron meeting-transcript <recording> --native-config <host-json> --language <language>` produces the
+native meeting-transcript artifact. It reads the ordinary `serve` configuration
+and accepts the same flattened configuration flags, including `--config` and
+`--vault-path`. The vault must already exist and be stopped. The existing owner
+command writer lease admits this local host act; a remote bearer credential does
+not supply this configuration.
+
+Output is JSON on stdout, or an owner-only new file with `--out`. An existing
+output file is never overwritten. `--capture-started-at` supplies the recording's
+start in Unix milliseconds when known. `--language` is required: it supplies the
+recording's language for both native ASR and forced alignment. The configured
+runtime must support that language; the command chooses no language default.
+No recording is imported, no voiceprint is enrolled, and no claims are admitted.
+A later import still needs the existing complete-artifact bulk consent.
+
+The host JSON has these fields:
+
+- `runtime`: the absolute `python`, `bridge`, `ffmpeg`, `workspace`, and
+  `model_snapshot` paths from `CommandAudioConfig`. The interpreter, scripts,
+  packages, model files, and prompts must already be provisioned.
+- `runtime_profile`: an optional object with the absolute profile `path` and its
+  `sha256`. Full artifact production needs the existing configured native ports.
+- `asr_tier`: the tier this actual native ASR binding serves.
+- `asr_override`: an optional explicit purpose row with `tier` and `locality`.
+  Selection reads the current vault ASR-batch row and its existing
+  `voice_precedence`. This native command only offers `on_device`; it never
+  silently relabels an `own_server` or `third_party` selection. Configure the
+  vault row or an allowed explicit override for the actual native binding.
+- `budget`: the run's `limit_units`, `reserve_units`, and named `unit`.
+- `call_class`: the ordinary call class supplied by the host.
+- `rates`: a `NativeRate` for each of `vad`, `diarization`, `asr`,
+  `alignment_window`, and `cleanup_group`. Each rate supplies `unit`, `per`, and
+  `tokens`; the four audio kinds count `audio_second`, and cleanup counts
+  `token`. A denominator must be positive. The command chooses no prices.
+- `line_rates`: token-to-budget-unit `UnitRate` rows (`unit`, `per`, `cost`), or
+  an empty list for a token-denominated line.
+- `glossary`: optional immutable terms, empty when omitted.
+- `cleanup_policy`: an optional existing acoustic correction policy.
+
+Every seat is built from the inspected actual model-file identity. All native
+alignment bindings are retained. The same owner-initiated `RunAdmission` serves
+the VAD, ASR, full-file diarization, alignment windows, and cleanup groups. Each
+unit still starts and settles its own `WireSeat` permit. These are genuine
+keyless local offers; existing on-device admission is unmetered, not a fabricated
+zero price or a host allocation.
+
+`producer.route_receipt` carries the full host selection record: the actual
+owner and local vault, optional rooted vault identity, run instance, live vault
+policy and precedence, explicit override, selected backend, native route, and
+checked model-file bindings. `producer.route.route_receipt_ref` is `sha256:` plus
+the SHA-256 of that record's `canonical_json_bytes` encoding (recursively sorted
+JSON object keys). The hash names the carried record, not an absent lookup row.
+`producer.run_receipts` carries the actual admission, dispatch, and settlement
+records collected during successful production. Selection and usage records are
+host reports, not signatures, durable vault records, physical execution
+attestations, E1 evidence, or import permission. The batch default remains
+provisional; the command does not claim a bake-off ran.
 
 ## Admission protocol
 
