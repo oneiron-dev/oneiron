@@ -114,6 +114,148 @@ The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
 
+The empty header/footer expect change (2026-11-05, FIX 594) touches
+`src/edit_v4.rs` only. The `edit_header` / `edit_footer` schema arms admit a
+blank `expect` when the existing `semantic_hash` is supplied. Native `expect`
+matching is substring-based, so an unguarded blank retains its prior refusal;
+the projection sends the actual story paragraph's current guard. All previously
+admitted nonblank expectations, required string fields, part-name checks and
+apply-time guard/expect checks stay unchanged. No wire shape, error code or
+default changes.
+
+The header/footer exact-run change (2026-11-05, FIX 14300 / FIX 594) touches
+`src/edit_v4.rs`, `src/edit/mod.rs` and `src/edit/verbs/headers_footers.rs`.
+The opt-in `exact_marks` edit mode treats replacement text's six marks as a set,
+including empty sets and same-text replacements. The shared segment materializer
+is unchanged: after it builds the tracked replacement, only its new Inserted
+text nodes receive exact bold/italic/underline/subscript/superscript/strike and
+explicit authored OFF values for absent marks. Deleted source runs, opaque
+anchors, unrelated run properties and revision metadata remain as built. Direct
+mode resolves the same tracked replacement after applying these marks. Ordinary
+header/footer edits without the mode retain their current inheritance, identity
+checks and word-diff dispatch. No new serializer, format reader, version constant,
+refusal, default or cap is added.
+
+The complex-script exact-run correction (2026-11-05, FIX 14300 R2) touches
+`src/edit/verbs/headers_footers.rs` only. The same new Inserted text nodes now
+set `bold_cs` / `italic_cs` and their authored flags to the requested bold /
+italic values, with explicit OFF for absence. Word uses these complex-script
+slots instead of `b` / `i` when `cs` or `rtl` is enabled. Those script selectors,
+fonts and deleted source history remain unchanged; the shared materializer and
+all ordinary edits remain unchanged.
+
+The exact-run parser registration correction (2026-11-05, FIX 14300) adds
+`exact_marks` to both header/footer entries in `src/edit_v4.rs::OP_FIELDS`.
+`deserialize_ops` checks that allowlist before deserializing the typed operation,
+so the setting must be registered there as well as on the enum. Other fields,
+tags, unknown-field checks and schema validation stay unchanged.
+
+The marked note-runs change (2026-11-05, FIX 594) adds the native
+`edit_note_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/footnotes.rs`) and opens the wrapper
+`SetStoryRuns` footnote/endnote arms (`docx_body/projection.rs`). The new op
+edits one paragraph within the actual footnote/endnote `w:id` story as a
+whole-paragraph tracked redline with the exact six marks, paragraph-scoped
+across multi-paragraph notes. It reuses the shared segment builder, the exact
+post-pass (moved whole from `headers_footers.rs` to a parent-private helper
+with no visibility change), the header/footer guard/expect/opaque law, and the
+shared structural-marker offset law for bookmarks, comment ranges, and foreign
+markers; the auto-number glyph stays a leading Normal run. Existing `EditNote`
+plaintext behavior is byte-unchanged. No contract schema bump, no new error,
+format, default, cap, or Loro change.
+
+The marked comment-runs change (2026-11-05, FIX 594) adds the native
+`edit_comment_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/comments.rs`) and opens the wrapper
+`SetStoryText`/`SetStoryRuns` comment arms (`docx_body/projection.rs`,
+`docx_body.rs`). The new op edits one paragraph within the actual comment `w:id`
+story with the exact six marks, paragraph-scoped across multi-paragraph comments,
+one op serving both plain-text and marked content. It reuses the shared segment
+builder, the parent-private exact-marks post-pass, the header/footer
+guard/expect/opaque law, and the shared structural-marker offset law (opaque
+`CommentReference` atoms excluded, already preserved); comments carry no
+auto-number glyph. The fresh tracked pair settles to Normal annotation text in
+both outer modes via a text-only settle that flips the fresh `Inserted` segment
+and drops the `Deleted` tombstone, leaving paragraph formatting/change metadata,
+`para_id`, author/date, threading/resolve sidecar, all other blocks, and body
+anchors verbatim; no `w:ins`/`w:del` is authored into comments.xml, and the
+edited comment's full content hash is recomputed. An empty replacement retains
+its Normal structural markers while removing the old text. Existing
+create/reply/delete behavior, the shared builder, and the exact-marks helper are
+byte-unchanged. No contract schema bump, no new error, format, default, cap, or
+Loro change. No Word-runtime comparison is claimed.
+
+The shared-Loro story paragraph change (2026-11-05, FIX 594) adds the engine-side
+story slice (`crates/oneiron/src/office_body/docx/stories.rs`, schema 2): scoped
+story paragraph import, three story ops, typed read, fork review entries and
+export of every changed paragraph as its full `SetStoryRuns`, reusing the native
+story verbs above with no native change. It works once this chain integrates;
+story structure/table ops and story ask pinning remain unbuilt.
+
+The story table-cell change (2026-11-05, FIX 594) adds the native
+`edit_story_cell` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, new `src/edit/verbs/story_cells.rs`) and opens the wrapper
+`DocxChange::SetStoryCell` arm (`docx_body.rs`, `docx_body/projection.rs`). One
+strict wire op with a tagged scope object (the same shape as `DocxStoryScope`)
+serves all five story families; the existing body cell core is factored onto
+`&mut BlockNode` unchanged and reused, so the logical-grid, vMerge, effective
+structural status with same-transaction own-insert, opaque, no-op, revision and
+Direct law is identical for body and story cells. The op rewrites the cell's
+FIRST paragraph only (the body law, `apply_set_cell_text_in_place`); any later
+cell paragraphs are untouched, and a shared import caller must not treat the
+read view's joined multi-paragraph cell text as that first paragraph. Header,
+footer, and note cells land tracked; comment cells land as Normal annotation
+text in both outer modes via a text-only settle of the target paragraph only,
+with the note/comment whole-story hash recomputed. Story structure
+insert/delete stays unbuilt; no whole-594 claim. The native contract moves
+from 4 to 5 because `set_story_cell` extends the typed `docx.project` arguments;
+it serves only the current version, with no old reader or migration. Nested
+transaction and Loro versions stay unchanged. No new error, default, cap or
+Word-runtime comparison is claimed.
+
+The story cell-paragraph extension (2026-11-05, FIX 594) adds required ordered
+`DocxCell.paragraphs` from the canonical cell blocks: ids, guards, accepted inline
+text and exact target locks. It does not split the joined redline read or reuse
+lossy render segments. `edit_story_cell` and `SetStoryCell` accept an optional
+exact paragraph id inside the selected cell; absent retains FIRST-paragraph
+intent, including every body cell call. Scope and transaction-base table guards
+are unchanged. The common cell core narrows Direct settlement to the edited
+paragraph, so sibling history stays pending, and distinguishes a joined redline
+identity from a genuine edit of the accepted text. It does not change the shared
+materializer. The private cell projection helpers move whole into
+`docx_body/projection/story_cells.rs` before the parent crosses 800 lines.
+
+The same still-pending schema-2 Loro body now imports story tables as independent
+plain cell paragraphs, with scoped set/splice operations, typed reads, masked
+public views, table-level fork review and exact-selector native export. No rich
+cell marks, nested-table structure or story live-unit pinning is claimed. Native
+contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
+is not an old-format reader, default or migration. A later change after they
+land requires fresh current versions. No numeric ceiling, default, dependency,
+error kind, test or runtime/Word proof is added by this extension.
+
+The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
+`src/tracked_model.rs`. Eligible destination clones reconstruct their original
+moved text using actual revision identities. When it equals the full paired
+source text, inner deletions retain their character ranges instead of searching
+for unique substrings. Repeated text maps to its own occurrence; empty material
+ranges leave the source unchanged. Hard breaks and opaque inlines retain their
+nodes and receive the deletion status when their one-character span is selected.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
+
+The table-cell fallback change (2026-11-06, FIX 17480) touches
+`src/native_patch/table.rs`. When retained text mapping and the field-aware cut
+cannot apply, the existing rebuild keeps the first paragraph's terminal run
+properties and the namespace bindings of copied paragraph and run properties.
+If no ordinary run exists, it carries the first field's explicit run properties.
+The outcome names the actual typed fields removed by that rebuild. Expected-text
+checks, grid/merge checks, first-match table selection and the retained/cut paths
+are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
+
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
 Decoration or comment range/reference marker in one carrier at its original
@@ -125,6 +267,38 @@ inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
+The note/comment run marker correction (2026-11-07) repositions each retained
+Normal marker once between the old and replacement text readings, using the
+existing offset-placement helper only to plan the target positions. The planning
+copies are discarded, so accepted, rejected and unresolved output retain one
+marker identity rather than emitting both originals and replacement copies.
+The exact-marks pass still runs before any replacement text is split; the shared
+segment builder, marker offset law and note auto-number behavior are unchanged.
+The comment-cell text settle also retains structural markers from a deleted
+text segment as Normal markers, including when the replacement is empty. It
+adds no refusal and does not change any other paragraph or cell.
+
+## Native deck transaction graphic ceilings (FIX 10653)
+
+A deck transaction may carry `graphics` with the existing `svg_bytes`,
+`raster_bytes`, and `raster_pixels` ceilings. Every `set_picture` step uses that
+same setting through `Picture.limits`. An absent setting uses the unchanged
+`GraphicLimits::default()` values and is omitted from canonical serialization.
+An explicit setting stays in the canonical transaction and therefore the existing
+handoff hash and settlement replay. The asset identity/hash checks, factual-use
+and provenance rules, resource admission, capacity errors, candidate part-diff
+checks, and reports are unchanged. Native deck creation and live export retain
+their existing defaults; this is only the transaction slice of FIX 10653.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+The live deck export profile accepts optional `GraphicLimits`. The projector resolves
+those settings once and passes them to both new-picture creation and bound-picture
+replacement. Existing held-media paths do not re-admit their bytes. Omitting the
+settings keeps the existing numeric defaults and the old profile/key serialization.
+An explicit setting is part of `ExportKey`, so a memo for another setting cannot
+stand in for it. The projector signature and export gate remain unchanged.
 The ideographic-space estimate change (2026-11-06, FIX 16557) touches
 `src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
 U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,

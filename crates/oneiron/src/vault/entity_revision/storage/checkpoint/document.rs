@@ -7,7 +7,9 @@
 //! names no one. Any other kind, an unregistered one, a NOTE pointer or a
 //! spelling the core does not give back, two kinds in one history, a commit
 //! message and an operation outside the document's record and text fields
-//! keep the whole document under the vault-wide seal, its reason named.
+//! keep the whole document under the vault-wide seal, its reason named. An
+//! author carrier's document is not split here at all: the getter places it
+//! whole as its actor's actor-keyed row ([`check_carrier`], FIX 17143).
 //!
 //! No public revision ref changes (lead pick (b)). A ref hashed over its
 //! retained frontier stays, as the split keeps every operation. A ref hashed
@@ -35,6 +37,7 @@ use super::super::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, short_id_content_hash};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{join_core_row, split_core_row};
 use crate::note::decode_note_body_in_txn;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
@@ -80,9 +83,10 @@ const MIXED_KINDS: &str = "a revision document whose rows are of two kinds";
 /// row, or a ref no retained frontier binds.
 const BINDING_UNPROVED: &str = "a revision binding whose origin does not prove";
 /// A raw-derived ref an actor's erase would change (lead pick (b)).
-const RAW_REF_CHANGES: &str = "a raw-derived revision ref an actor's erase would change";
+pub(super) const RAW_REF_CHANGES: &str = "a raw-derived revision ref an actor's erase would change";
 /// A revision whose short-reference hash byte an actor's erase would change.
-const SHORT_REF_CHANGES: &str = "a revision short-reference hash an actor's erase would change";
+pub(super) const SHORT_REF_CHANGES: &str =
+    "a revision short-reference hash an actor's erase would change";
 
 /// A projection's outcome: the value, or why its row stays under the
 /// vault-wide seal.
@@ -248,6 +252,9 @@ struct History {
 /// A history read so far.
 #[derive(Default)]
 struct Reading {
+    /// Whether each raw row must be an author carrier, read whole and never
+    /// split ([`check_carrier`]), instead of a row the allowlist splits.
+    carriers: bool,
     kind: Option<u8>,
     raws: Vec<Vec<u8>>,
     /// The text fields the recorded rows' bodies hold.
@@ -300,7 +307,13 @@ impl Reading {
         if entity_type_registry_entry(kind).is_none() {
             return Err(Unresolved::UnknownKind);
         }
-        split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        if self.carriers {
+            if author_carrier_actor(raw).is_none() {
+                return Err(Unresolved::ActorSplit(UNSUPPORTED_KIND));
+            }
+        } else {
+            split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        }
         if *self.kind.get_or_insert(kind) != kind {
             return Err(Unresolved::ActorSplit(MIXED_KINDS));
         }
@@ -327,9 +340,13 @@ impl Reading {
 /// Reads every operation of `doc`'s history, not only the values that stand
 /// now. A commit message refuses: the ledger commits with none.
 fn read_history(doc: &LoroDoc) -> Admission<History> {
+    read_history_of(doc, Reading::default())
+}
+
+/// [`read_history`], each raw row read as `reading` reads it.
+fn read_history_of(doc: &LoroDoc, mut reading: Reading) -> Admission<History> {
     let start = VersionVector::default();
     let all = doc.export_json_updates_without_peer_compression(&start, &doc.oplog_vv());
-    let mut reading = Reading::default();
     for change in &all.changes {
         if change.msg.is_some() {
             return Err(Unresolved::ActorSplit(COMMIT_MESSAGE));
@@ -358,6 +375,10 @@ fn binding_origin(
     revision: RevisionRef,
     encoded: &[u8],
 ) -> Option<(Origin, Vec<u8>)> {
+    let encoded = super::super::frontier::FrontierEntry::decode(encoded)
+        .ok()?
+        .document()
+        .ok()?;
     let frontier = Frontiers::decode(encoded).ok()?;
     let raw = doc_raw(&doc.fork_at(&frontier).ok()?).ok()?;
     if reference(id, encoded) == revision {
@@ -425,6 +446,9 @@ impl Bindings {
             entities.insert(row.key, Bound::default());
         }
         for row in states {
+            if row.value.has_doc {
+                entities.entry(row.key).or_insert_with(Bound::default);
+            }
             if let Some(bound) = entities.get_mut(&row.key) {
                 let state = &row.value;
                 bound.state = state.has_doc.then_some([state.live, state.indexed]);
@@ -444,12 +468,35 @@ impl Bindings {
         Self { entities }
     }
 
+    /// Native metadata still proves when no generic document was materialized.
+    pub(super) fn check_native_without_doc(
+        &self,
+        dbs: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+    ) -> Result<()> {
+        for (id, bound) in &self.entities {
+            let staged = staged_revisions(dbs, txn, id)?;
+            super::native::check_without_doc(
+                dbs,
+                txn,
+                id,
+                bound.state.as_ref(),
+                &bound.frontiers,
+                &bound.identities,
+                &staged,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Refuses `id`'s document `doc` unless each binding the view holds for
     /// it stays as it is under every opening of the document's actors, and
     /// each ref its state, its reverse rows and its `staged` inputs name is
     /// one of its retained frontiers.
     fn keeps(
         &self,
+        dbs: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
         id: &EntityId,
         doc: &LoroDoc,
         common: Option<&crate::entity_doc::EntityDoc>,
@@ -464,13 +511,20 @@ impl Bindings {
         };
         let mut retained = BTreeSet::new();
         for (revision, encoded) in &bound.frontiers {
-            if binding_origin(id, doc, *revision, encoded).is_some() {
+            if let Some(selected) = super::native::binding(dbs, txn, id, *revision, encoded)? {
+                if let Err(reason) = super::native::keeps_projected_binding(&selected, encoded) {
+                    return Ok(Err(reason));
+                }
+            } else if binding_origin(id, doc, *revision, encoded).is_some() {
                 if let Err(reason) = keeps_binding(id, doc, *revision, encoded) {
                     return Ok(Err(reason));
                 }
             } else {
                 // An invalid generic encoding keeps its original unclassified outcome.
-                if Frontiers::decode(encoded).is_err() {
+                if super::super::frontier::FrontierEntry::decode(encoded)
+                    .and_then(|entry| entry.document())
+                    .is_err()
+                {
                     return Ok(Err(unproved));
                 }
                 let Some(common) = common else {
@@ -528,7 +582,7 @@ fn project(
     let staged = staged_revisions(dbs, txn, &row.key)?;
     let common = crate::entity_doc::record_document(dbs, txn, &row.key, None)?;
     Ok(bindings
-        .keeps(&row.key, &doc, common.as_ref(), &staged)?
+        .keeps(dbs, txn, &row.key, &doc, common.as_ref(), &staged)?
         .map(|()| split))
 }
 
@@ -585,6 +639,22 @@ fn staged_revisions(
 pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     rows::check_row(DOC, at, value)?;
     match full_doc(value).and_then(|doc| read_history(&doc)) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(rows::bad_part()),
+    }
+}
+
+/// Refuses `value` at `at` unless it is an author carrier's revision
+/// document (FIX 17143): its key an entity, its bytes a full history whose
+/// every raw row is a carrier. Such a document is an actor's actor-keyed
+/// row, restored whole, never split.
+pub(super) fn check_carrier(at: &RowLocator, value: &[u8]) -> Result<()> {
+    rows::check_row(DOC, at, value)?;
+    let carriers = Reading {
+        carriers: true,
+        ..Reading::default()
+    };
+    match full_doc(value).and_then(|doc| read_history_of(&doc, carriers)) {
         Ok(_) => Ok(()),
         Err(_) => Err(rows::bad_part()),
     }
@@ -653,10 +723,37 @@ pub(super) fn preflight(
 /// owner's own, and only one.
 fn staged_document(opened: &OpenedOwnerRows) -> Result<Option<EntityId>> {
     let mut entity = None;
+    let mut document = false;
     for part in &opened.rows {
+        // An author carrier's document is an actor-keyed row: its slot
+        // names no entity, and no binding of it is checked (FIX 17143).
+        if matches!(part, RowPart::ActorKeyed { .. }) {
+            continue;
+        }
         let at = part.at();
-        if at.in_table(DOC.decl()) && entity.replace(table_key(DOC, at)?).is_some() {
-            return Err(rows::bad_part());
+        let candidate = if at.in_table(DOC.decl()) {
+            if document {
+                return Err(rows::bad_part());
+            }
+            document = true;
+            Some(table_key(DOC, at)?)
+        } else if let RowPart::Exact { value, .. } = part
+            && at.in_table(FRONTIER.decl())
+        {
+            match super::super::frontier::FrontierEntry::decode(value)
+                .map_err(|_| rows::bad_part())?
+            {
+                super::super::frontier::FrontierEntry::Document(_) => None,
+                _ => Some(table_key(FRONTIER, at)?.0),
+            }
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            if entity.is_some_and(|held| held != candidate) {
+                return Err(rows::bad_part());
+            }
+            entity = Some(candidate);
         }
     }
     let owner = OwnerRef {
@@ -692,8 +789,10 @@ pub(super) fn finish_restore_in_txn(
     staged: &Staged,
 ) -> Result<()> {
     let id = &staged.entity;
-    let bytes = DOC.get(dbs, txn, id)?.ok_or_else(rows::bad_part)?;
-    let doc = full_doc(&bytes).map_err(|_| rows::bad_part())?;
+    let doc = DOC
+        .get(dbs, txn, id)?
+        .map(|bytes| full_doc(&bytes).map_err(|_| rows::bad_part()))
+        .transpose()?;
     let state = STATE.get(dbs, txn, id)?.filter(|state| state.has_doc);
     let state = state.ok_or_else(rows::bad_part)?;
     let common = crate::entity_doc::record_document(dbs, txn, id, None)?;
@@ -701,10 +800,18 @@ pub(super) fn finish_restore_in_txn(
     for ((_, revision), encoded) in FRONTIER.scan_from(dbs, txn, id.as_bytes())? {
         let reverse = IDENTITY.get(dbs, txn, &revision)?;
         let revision = RevisionRef(revision);
-        let bound = if binding_origin(id, &doc, revision, &encoded).is_some() {
+        let bound = if super::native::binding(dbs, txn, id, revision, &encoded)?.is_some() {
+            true
+        } else if doc
+            .as_ref()
+            .is_some_and(|doc| binding_origin(id, doc, revision, &encoded).is_some())
+        {
             true
         } else {
-            if Frontiers::decode(&encoded).is_err() {
+            if super::super::frontier::FrontierEntry::decode(&encoded)
+                .and_then(|entry| entry.document())
+                .is_err()
+            {
                 return Err(rows::bad_part());
             }
             match common.as_ref() {

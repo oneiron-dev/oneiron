@@ -342,6 +342,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 tool_calls.push(json!({
                     "id": call_id,
@@ -443,10 +444,15 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 
-pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an OpenAI chat reply's `usage` object reports: prompt tokens,
+/// of them the cached, and completion tokens, of them the reasoning. A
+/// relayed reply's own body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let prompt_tokens = u64_field(usage, "prompt_tokens");
     let completion_tokens = u64_field(usage, "completion_tokens");
     let cached_tokens = usage
@@ -506,6 +512,14 @@ pub fn classify_openai_status(
         408 | 504 => RetryableLlmError::Timeout.into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
+        400 if body.pointer("/error/code").and_then(JsonValue::as_str)
+            == Some("context_length_exceeded") =>
+        {
+            FatalLlmError::ContextWindowExceeded {
+                message: refusal_message(body).unwrap_or_default(),
+            }
+            .into()
+        }
         400 => refusal_message(body).map_or_else(
             || FatalLlmError::InvalidRequest.into(),
             |message| {

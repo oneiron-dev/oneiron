@@ -21,7 +21,8 @@ use axum::http::HeaderMap;
 use serde::de::DeserializeOwned;
 
 use crate::api::body_spool::{
-    self, Base64FileSink, BulkMember, SinkRefusal, SpoolPolicy, SpooledField, Unspooled,
+    self, Base64FileSink, BulkMember, HeadFail, SinkRefusal, SpoolPolicy, SpooledField,
+    TextFileSink, Unspooled,
 };
 use crate::error::ApiError;
 use crate::machine::DiskClaim;
@@ -67,16 +68,46 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
             let file = vault
                 .archive_spool_file()
                 .map_err(|error| refusal(body_spool::create_failed(error)))?;
-            let mut input = Base64FileSink::new(file);
-            let head = spool
-                .object::<H>(&mut [BulkMember::required(INPUT_MEMBER, &mut input)])
-                .map_err(body_spool::reader_memory_refused)?;
-            Ok::<_, ApiError>((head, input.into_field(), spool.into_room()))
+            let head_file = vault
+                .archive_spool_file()
+                .map_err(|error| refusal(body_spool::create_failed(error)))?;
+            let (syntax, head, input) = {
+                let mut memory = spool
+                    .admit_sealed_decode_buffers()
+                    .map_err(body_spool::sealed_decode_memory_refused)?;
+                let mut input = Base64FileSink::new_admitted(file, &mut memory);
+                let mut head = TextFileSink::new_admitted(head_file, &mut memory);
+                let syntax = spool.object_head_admitted(
+                    &mut [BulkMember::required(INPUT_MEMBER, &mut input)],
+                    &mut head,
+                    &mut memory,
+                );
+                (syntax, head.into_field(), input.into_field())
+            };
+            // No working buffer or lease survives into the next admission.
+            // Known syntax or head-file failures never wait for another reader.
+            syntax.map_err(|error| match error {
+                HeadFail::Invalid => body_spool::invalid_json(),
+                HeadFail::Failed => refusal(Unspooled::Failed),
+            })?;
+            let head = {
+                let head_file = head.map_err(refusal)?;
+                let mut memory = spool
+                    .admit_reader()
+                    .map_err(body_spool::sealed_decode_memory_refused)?;
+                head_file.json_admitted::<H>(&mut memory).map_err(|error| {
+                    if error.is_io() {
+                        refusal(Unspooled::Failed)
+                    } else {
+                        body_spool::invalid_json()
+                    }
+                })?
+            };
+            Ok::<_, ApiError>((head, input, spool.into_room()))
         },
     )
     .await;
     let (head, input, room) = read.map_err(refusal)??;
-    let head = head.map_err(|_| body_spool::invalid_json())?;
     let input = match input {
         Ok(field) => Some(field),
         Err(SinkRefusal::NotBase64) => None,

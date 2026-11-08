@@ -2,6 +2,7 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::deletion::TombstoneReason;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -224,7 +225,7 @@ fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
     let raw: [u8; 18] = raw
         .try_into()
         .map_err(|_| Error::CorruptedIndex("deletion gate required marker"))?;
-    if raw[0] != PENDING_DELETION_GATE_DECISION_VERSION || !matches!(raw[1], 1..=4) {
+    if raw[0] != PENDING_DELETION_GATE_DECISION_VERSION || !known_tombstone_reason(raw[1]) {
         return Err(Error::CorruptedIndex("deletion gate required marker"));
     }
     let mut target = [0_u8; 16];
@@ -232,12 +233,20 @@ fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
     Ok((target, raw[1]))
 }
 
+/// Whether `byte` is a tombstone reason the wire table names (FIX 21827):
+/// an owner's erase stages wire byte 6 ([`TombstoneReason::OwnerErase`]), and
+/// a cleanup archive byte 5. The reserved byte 0 and every byte above the
+/// table stay refused, as the tombstone decoder refuses them.
+fn known_tombstone_reason(byte: u8) -> bool {
+    TombstoneReason::from_wire_byte(byte).is_some()
+}
+
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn vet_pending_deletion_gate_decision_record(
     record: &PendingDeletionGateDecisionRecord,
 ) -> Result<()> {
     if record.version != PENDING_DELETION_GATE_DECISION_VERSION
-        || !matches!(record.tombstone_reason, 1..=4)
+        || !known_tombstone_reason(record.tombstone_reason)
         || record.decision.content_kind != "deletion"
     {
         return Err(Error::CorruptedIndex("pending deletion gate decision"));

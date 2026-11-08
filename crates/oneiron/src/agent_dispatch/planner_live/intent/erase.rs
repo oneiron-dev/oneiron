@@ -25,7 +25,7 @@ use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{DeletionMarker, TombstoneStoreRead, names_no_actor_in_txn as names_no_actor};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::team::{ErasedPackSpan, PlannedIntentView, SpawnErasure};
@@ -385,21 +385,4 @@ fn asker_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, selector: Option<[u
             tracing::warn!("planned intent fence: an erased-asker selector could not be read");
             false
         })
-}
-
-/// Whether `id` is a stored row of a type no actor has: no person, machine
-/// or AGENT_DEF. A missing row may have been one.
-fn names_no_actor(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(store
-        .port_entity_raw(txn, id)?
-        .as_deref()
-        .and_then(crate::batch::EntityMetadataHeader::parse)
-        .is_some_and(|header| {
-            !matches!(
-                header.entity_type,
-                crate::registry::ENTITY_TYPE_PERSON
-                    | crate::registry::ENTITY_TYPE_MACHINE
-                    | crate::registry::ENTITY_TYPE_AGENT_DEF
-            )
-        }))
 }

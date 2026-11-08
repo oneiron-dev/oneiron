@@ -60,6 +60,20 @@ impl EngineNativeExecutor<'_> {
         }
     }
 
+    /// `result`, with the step's feedback `check` kept first where it is an
+    /// error: a step that fails after its program is set and before it runs
+    /// still leaves its check, counted (FIX 9046).
+    pub(super) fn kept<T, E>(
+        &self,
+        check: &StepCheck,
+        result: std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        if result.is_err() {
+            self.keep_step_feedback(check);
+        }
+        result
+    }
+
     /// Keeps the step's feedback as the step ends, before any way out of it:
     /// the run's rows on its own route get it, landed or pending, and every
     /// later turn of this attempt reads it. A feedback write that fails is

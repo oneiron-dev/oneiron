@@ -66,6 +66,15 @@ impl Vault {
             header.learned_at,
             TopologyDeletePhase::Committed,
         )?;
+        // A user delete of an actor releases its code runs' replies before
+        // the body is truncated, each owner row and membership kept Deleted
+        // for a later erase (FIX 15532, FIX 6591); an archive keeps them. A
+        // hold refuses first, as the scrub below would.
+        if reason == DeleteReason::UserDelete {
+            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            #[cfg(unix)]
+            crate::code_run::soft_delete_actor_responses_in_txn(self, &mut wtxn, id)?;
+        }
         // A deleted world keeps its keys, pads and sealed copies, so it
         // restores from old bundles until they age out (DEC-0006); only
         // an erase destroys them (the hard arm's purge). Its delete time

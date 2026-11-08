@@ -56,7 +56,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_HISTORY_FREE_WINDOW, LIVE),
     (&t::HTTP_IDEMPOTENCY_REPLY, CONTENT),
     (&t::INVOCATION_CLAIM, CONTENT),
-    (&t::IDENTITY_TOPOLOGY_AUTHORED_HERE, LIVE),
     (&t::DELETION_IDENTITY_SOFT_DELETE_MARKER, CONTENT),
     (&t::IDENTITY_TOPOLOGY_MINE_SIGNERS, CONTENT),
     (&t::IDENTITY_TOPOLOGY_SEALED_HERE, CONTENT),
@@ -91,6 +90,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_NC_E, CONTENT),
     (&t::SYNC_NOTE_INBOX, CONTENT),
     (&t::NOTE_PROPOSAL_DOC, CONTENT),
+    (&t::NOTE_FORK_AUTHORITY, CONTENT),
     (&t::NOTE_RECEIPT_BY_REQUEST, CONTENT),
     (&t::PEER_AUTHORITY_ENTRY, LIVE),
     (&t::OFF_RECORD_PROMOTE_PICKUP_MARKER, CONTENT),
@@ -103,7 +103,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_REASSERT_MARKER, CONTENT),
     // The sealed bundle's custody and cursors follow the live vault. So do
     // the late joiners' pad grants the home keeps with its generations, and
-    // the admissions queued for it (FIX 4271).
+    // the admissions queued for it (FIX 4271). Request-bound publication
+    // pairs in the same table also stay LIVE, sealed and generation-bound.
     (&t::SYNC_RESIDENCE_BUNDLE_ACCESS, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
@@ -125,6 +126,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_SEALED_UPDATE_QUEUE, LIVE),
     (&t::SYNC_SEALED_UPDATE_OUTBOX, LIVE),
     (&t::SYNC_SEALED_UPDATE_OUTBOX_ID, LIVE),
+    // A window's ready generation is this vault's own record of the
+    // exchanges its live connections owe, so it follows the live vault: a
+    // restore neither drops one owed nor brings back an image's (FIX 19634).
+    (&t::WINDOW_READY_GENERATION, LIVE),
     (&t::SYNC_RETAINED_WORK_CARRIER, CONTENT),
     (&t::SYNC_RETAINED_WORK_CURSOR, CONTENT),
     (&t::SYNC_MAINTENANCE_RETAINED_WORK, CONTENT),
@@ -133,6 +138,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_ITEM_BLOB, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_CONTENT_WORLD, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_DOCUMENT, CONTENT),
+    (&t::SYNC_RESIDENCE_ITEM_SOURCES, CONTENT),
     (&t::SYNC_RESIDENCE_INDEX, CONTENT),
     (&t::SYNC_REMAT_MARKER, CONTENT),
     (&t::SYNC_REPLAY_REMAT_MARKER_PROVENANCE, CONTENT),
@@ -157,9 +163,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::USAGE_METER_ROLLUP, LIVE),
     (&t::USAGE_METER, LIVE),
     (&t::USAGE_REPAIR_RECEIPT, LIVE),
+    (&t::VAULT_IMPORT_BODY_WORK, LIVE),
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
+    (&t::SYNC_DISCARDED_WORLD_ROW, CONTENT),
+    (&t::SYNC_BASE_WINDOW_DISCARD, CONTENT),
     (&t::DELETION_WITHDRAWN_GENERATION_FENCE, CONTENT),
     (&t::WIRE_HEALTH_CHECK, CONTENT),
     (&t::WIRE_LIMIT_QUESTION, CONTENT),

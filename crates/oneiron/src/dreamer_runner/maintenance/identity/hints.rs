@@ -196,6 +196,39 @@ pub(crate) fn hinted_mention_in_txn(
     Ok(pick(&hints, candidates, &context))
 }
 
+/// Picks a held witness's hint through its original caller's read. A
+/// writer with no read grant keeps its candidates unresolved.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hinted_mention_scoped_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: Option<&crate::claim::ScopedRead<'_>>,
+    kind: u8,
+    name: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    candidates: &[EntityId],
+) -> Result<Option<EntityId>> {
+    let Some(read) = read else {
+        return Ok(None);
+    };
+    let admit = Admit::in_txn(read, txn)?;
+    let mut hints = BTreeMap::new();
+    for (entity, hint, _) in hints_in_txn(&vault.store, txn, (kind, name), Some(&admit))? {
+        if candidates.contains(&entity)
+            && super::admission::candidate_in_txn(vault, &admit, txn, &entity)?
+        {
+            hints.insert(entity, hint);
+        }
+    }
+    Ok(pick(
+        &hints,
+        candidates,
+        &context_terms(text, start, end, name),
+    ))
+}
+
 /// Saves the words an answer was given in for its name and entity as the
 /// answered mention's own contribution, beside every other mention's (Rule
 /// 5: none is cut); an earlier answer on the same mention is replaced.

@@ -7,9 +7,11 @@
 //! each retrievable for its 90-day term. It grants no other read: no proof
 //! is minted and no scope is consulted. Every notice is signed by the host
 //! root key (FIX 2053); there is no unsigned answer. Beside the notices
-//! rides the handoff from where the person's env stands to that key, and the
-//! rows it stands on, so a device whose env never folded a re-root or a host
-//! root rotation folds them as this vault did and verifies the notices.
+//! rides their continuity, and no authority row (FIX 7932): the leave-notice
+//! delegations each root signed at the handoff that made its successor root,
+//! on the chain to the key that signed them, so a device whose env never
+//! folded a re-root verifies the notices from a root it trusts, and learns
+//! no grant, machine, setting or other row of the log it no longer reads.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -21,21 +23,6 @@ use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
 // The host's delivery of those archives to their removed holder, beside
 // these pull doors (FIX 3215, 3396).
 mod delivery;
-
-/// What rides beside a removed person's notices as the handoff to the root
-/// that signed them.
-enum HandoffEvidence {
-    /// The settled root edges that hand the root on ([`root_edge`]), and
-    /// every row they stand on that the person's env did not fold, so it
-    /// folds them as this vault did (FIX 3797). Those rows name grants,
-    /// machines and settings: only a removed person's own notices carry them,
-    /// and courtesy ([`Vault::root_handoff_to`]) takes the edges alone.
-    RootEdgesAndParents,
-}
-
-/// Which signed rows ride beside a removed person's notices (FIX 2053, FIX
-/// 3797, FIX 3798, a call; canon is silent on that delivery).
-const LEAVE_NOTICE_HANDOFF_EVIDENCE: HandoffEvidence = HandoffEvidence::RootEdgesAndParents;
 
 /// The key `entry` hands the host root on to, when it is a root edge: a
 /// ReRoot, or a RotateKey its own old key signed naming a distinct Owner
@@ -121,11 +108,13 @@ impl Vault {
     /// Answers the slip holder's own MemberLeft, MemberRemoved and
     /// role-losing Owner notices, and the vault's deletion, each signed in
     /// this snapshot by `issuer`, which must stand as this vault's live host
-    /// root. Beside them, the signed handoff to `issuer` from where the
+    /// root. Beside them, their continuity to `issuer` from where the
     /// holder's chain stands, `member_heads` being the heads its env folded
-    /// (FIX 2053): the root edges and the rows they stand on, parents first,
-    /// it did not fold ([`LEAVE_NOTICE_HANDOFF_EVIDENCE`]). The nonce is
-    /// spent once, only when every notice is signed.
+    /// (FIX 7932, [`Self::leave_notice_continuity_in_txn`]): saved
+    /// delegations only, never an authority row. The heads only spare
+    /// delegations that env already folded; a head this vault does not hold
+    /// sends the whole chain, which is never more. The nonce is spent once,
+    /// only when every notice is signed.
     pub fn removed_member_notices_signed(
         &self,
         issuer: &HostSlipIssuer,
@@ -134,7 +123,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
         member_heads: &BTreeSet<AuthorityEntryHash>,
-    ) -> Result<(Vec<SignedSharedActOutcome>, Vec<Vec<u8>>)> {
+    ) -> Result<(Vec<SignedSharedActOutcome>, LeaveNoticeContinuity)> {
         let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
@@ -147,14 +136,16 @@ impl Vault {
             .iter()
             .map(|outcome| issuer.sign_shared_act_outcome(authority_vault_id, outcome))
             .collect::<Result<Vec<_>>>()?;
-        let signer = issuer.public_key();
-        let handoff = match LEAVE_NOTICE_HANDOFF_EVIDENCE {
-            HandoffEvidence::RootEdgesAndParents => {
-                self.leave_notice_closure_in_txn(&txn, &fold, &signer, member_heads)?
-            }
-        };
+        let delegations =
+            self.leave_notice_continuity_in_txn(&txn, &fold, &issuer.public_key(), member_heads)?;
         txn.commit()?;
-        Ok((notices, handoff))
+        Ok((
+            notices,
+            LeaveNoticeContinuity {
+                authority_vault_id,
+                delegations,
+            },
+        ))
     }
 
     /// The signed root edges `fold` settled that hand the root on to
@@ -178,12 +169,15 @@ impl Vault {
             .collect())
     }
 
-    /// The handoff a removed person's notices ride with (FIX 3797): the root
-    /// edges to `signer` the person's env did not fold, each after every row
-    /// it stands on that the env did not fold either, parents first, so the
-    /// env folds them with its own rows as this vault folded them. A row this
-    /// vault does not hold is not sent; the env then judges the edges alone.
-    fn leave_notice_closure_in_txn(
+    /// The continuity a removed person's notices ride with (FIX 7932): the
+    /// canonical bytes of the stored leave-notice delegations on the chain
+    /// to `signer`, walked through the certificates themselves
+    /// (`delegation_chain_to_in_txn`), less the handoffs the person's env
+    /// folded, in chain order. An edge with no saved delegation (a RotateKey, a ReRoot
+    /// settled with none or before delegations were signed) sends nothing,
+    /// and the env cannot bridge it. Unknown heads never widen what is read:
+    /// only the delegations on this chain ever ride.
+    fn leave_notice_continuity_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
@@ -191,26 +185,23 @@ impl Vault {
         member_heads: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<Vec<Vec<u8>>> {
         let history = super::history_transfer::history_in_txn(self, txn)?;
-        let mut sent = member_folded(&history, member_heads);
-        let mut rows = Vec::new();
-        for edge in root_chain(&history, fold, signer)? {
-            // A row goes once its parents have: `Some` marks one whose
-            // parents were pushed above it.
-            let mut stack = vec![(edge, None)];
-            while let Some((hash, bytes)) = stack.pop() {
-                if let Some(bytes) = bytes {
-                    if sent.insert(hash) {
-                        rows.push(Vec::clone(bytes));
-                    }
-                } else if !sent.contains(&hash)
-                    && let Some((bytes, entry)) = history.get(&hash)
-                {
-                    stack.push((hash, Some(bytes)));
-                    stack.extend(entry.parent_hashes.iter().map(|parent| (*parent, None)));
-                }
+        let folded = member_folded(&history, member_heads);
+        let mut delegations = Vec::new();
+        // The chain is read from the stored certificates, not the resident
+        // rows: a home that adopted a checkpoint image holds no raw ReRoot
+        // row for a handoff the image covers (FIX 7932, review round 2). A
+        // handoff held here as a row this fold does not count rides nothing.
+        for (edge, bytes) in
+            super::leave_notice_continuity::delegation_chain_to_in_txn(&self.store, txn, signer)?
+        {
+            if folded.contains(&edge)
+                || (history.contains_key(&edge) && !fold.valid_entries.contains(&edge))
+            {
+                continue;
             }
+            delegations.push(bytes);
         }
-        Ok(rows)
+        Ok(delegations)
     }
 
     /// The signed root edges ([`root_edge`]) that hand this vault's root on
@@ -246,7 +237,7 @@ impl Vault {
 
     /// The heads this vault's authority fold stands at: what a removed
     /// member's leave-notice request names, so its home sends only the
-    /// handoff past them (FIX 2053).
+    /// leave-notice delegations past them (FIX 2053, FIX 7932).
     ///
     /// # Errors
     ///
@@ -266,9 +257,13 @@ impl Vault {
     /// The removed Owner proving the mint's own key takes each as stored; a
     /// holder the slip was transferred to takes each cut down to what its
     /// caveats admit, and none they admit nothing of (FIX-LIST 8224), all
-    /// before the nonce commits.
+    /// before the nonce commits. `issuer`, this host's root key when it
+    /// holds one, signs a one-shot transfer's spend into the authority log
+    /// in that writer (FIX 11862); with none, the archive rows alone keep
+    /// the spend, as before.
     pub fn removed_owner_exports(
         &self,
+        issuer: Option<&HostSlipIssuer>,
         slip: &CapabilitySlip,
         request_timestamp: u64,
         signature: &[u8],
@@ -280,10 +275,18 @@ impl Vault {
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
         let now = self.store.clock.now_recorded_at();
         let copies = match slip.transferred_bounds() {
-            None => self.removal_exports_in_txn(&txn, person, now)?,
-            Some(bounds) => {
-                self.transferred_exports_in_txn(&mut txn, slip, person, None, now, bounds)?
+            None => {
+                let kept = self.removal_exports_in_txn(&txn, person, now)?;
+                self.removal_export_copies_in_txn(&txn, kept)?
             }
+            Some(bounds) => self.transferred_exports_in_txn(
+                &mut txn,
+                issuer,
+                slip,
+                (person, None),
+                now,
+                bounds,
+            )?,
         };
         txn.commit()?;
         Ok(copies)
@@ -297,9 +300,12 @@ impl Vault {
     /// person none. Only the removed person reaches it; the nonce is spent
     /// once, and a malformed `receipt_id` is refused before it is. A holder
     /// the slip was transferred to takes it cut down to what its caveats
-    /// admit, `None` when they admit nothing of it (FIX-LIST 8224).
+    /// admit, `None` when they admit nothing of it (FIX-LIST 8224). `issuer`
+    /// signs a one-shot transfer's spend as [`Self::removed_owner_exports`]
+    /// does.
     pub fn removed_owner_archive(
         &self,
+        issuer: Option<&HostSlipIssuer>,
         slip: &CapabilitySlip,
         request_timestamp: u64,
         signature: &[u8],
@@ -313,9 +319,19 @@ impl Vault {
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
         let now = self.store.clock.now_recorded_at();
         let copy = match slip.transferred_bounds() {
-            None => self.removal_export_in_txn(&txn, person, receipt_id, now)?,
+            None => match self.removal_export_in_txn(&txn, person, receipt_id, now)? {
+                Some(stored) => self.removal_export_copy_in_txn(&txn, stored, None)?,
+                None => None,
+            },
             Some(bounds) => self
-                .transferred_exports_in_txn(&mut txn, slip, person, Some(receipt_id), now, bounds)?
+                .transferred_exports_in_txn(
+                    &mut txn,
+                    issuer,
+                    slip,
+                    (person, Some(receipt_id)),
+                    now,
+                    bounds,
+                )?
                 .pop(),
         };
         txn.commit()?;
@@ -325,18 +341,29 @@ impl Vault {
     /// The copies a transferred holder's `bounds` take at `now` of
     /// `person`'s archives (the one `receipt_id` names, else every one),
     /// each cut down to what they admit. A one-shot transfer is served once
-    /// (FIX-LIST 10773): a slip any door already consumed, or one an archive
-    /// door already served, takes nothing, and the first answer that takes
-    /// anything spends it on every archive of `person`, in this writer. A
+    /// (FIX-LIST 10773): a slip the authority fold already counts consumed,
+    /// by any door's spend this replica folded, or one this store's archive
+    /// rows record spent, takes nothing. The first answer that takes
+    /// anything spends it on every archive of `person`, and, in the same
+    /// writer, before the answer leaves, `issuer` signs and folds its
+    /// `RemovalArchiveConsume` (FIX 11862,
+    /// [`Self::fold_removal_archive_consume_in_txn`]). The spend is keyed by
+    /// this vault's authority and the underlying slip id, as both checks
+    /// read it. That entry travels with the authority log, so a replica
+    /// that does not share this store's archive rows refuses the slip once
+    /// it folds the entry. Two replicas that have not met can each serve the
+    /// first spend once (Engine 13:13 call A); their folds hold the slip
+    /// consumed once they meet. With no signer here, the archive rows'
+    /// spend stands alone, as before, and nothing more is refused. A
     /// pact-bound transfer takes only what its pact still leaves it, read in
     /// this writer, and each answer that takes anything is logged under that
     /// pact on the archives it served (FIX 11860).
     fn transferred_exports_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        issuer: Option<&HostSlipIssuer>,
         slip: &CapabilitySlip,
-        person: EntityId,
-        receipt_id: Option<EntityId>,
+        (person, receipt_id): (EntityId, Option<EntityId>),
         now: u64,
         bounds: Result<super::slip::TransferredBounds>,
     ) -> Result<Vec<RemovalExportCopy>> {
@@ -374,11 +401,44 @@ impl Vault {
         };
         if single_use && !copies.is_empty() {
             self.spend_removal_archive_slip_in_txn(txn, person, slip_id)?;
+            self.fold_removal_archive_consume_in_txn(txn, issuer, slip_id, person)?;
         }
         if let Some(grant) = pact_grant {
             self.log_removal_archive_pact_serve_in_txn(txn, &copies, grant, slip_id, now)?;
         }
         Ok(copies)
+    }
+
+    /// Signs and folds, in the caller's writer, the archive door's spend of
+    /// the one-shot transferred slip `slip_id`, served from `person`'s
+    /// archives (FIX 11862): a `RemovalArchiveConsume` that `issuer`, a live
+    /// host of this vault, signs, and which puts the slip in the fold's
+    /// consumed set on every replica that folds it. With no issuer, or one
+    /// this writer's fold does not admit as a live host, no signer is
+    /// available at the door: nothing is logged, nothing is refused, and the
+    /// archive rows' own spend is the only one.
+    fn fold_removal_archive_consume_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: Option<&HostSlipIssuer>,
+        slip_id: [u8; 32],
+        person: EntityId,
+    ) -> Result<()> {
+        let Some(issuer) = issuer else {
+            return Ok(());
+        };
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if super::slip_vault::require_host(&fold, issuer).is_err() {
+            return Ok(());
+        }
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::RemovalArchiveConsume {
+                slip_id,
+                member: person,
+            },
+        )
     }
 
     /// The person whose slip, minted here whatever its standing since, the

@@ -90,6 +90,15 @@ pub struct CodeProposalSubmitRequest {
     pub catalog: Option<LensCatalog>,
 }
 
+/// A fresh review of an approved ordinary file proposal. The nested change
+/// supplies current attribution and policy; its content is filled by the engine.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalRereviewRequest {
+    pub original: EntityId,
+    pub change: CodeProposalSubmitRequest,
+}
+
 /// The staged proposal, as the engine stored it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeProposalSubmitted {

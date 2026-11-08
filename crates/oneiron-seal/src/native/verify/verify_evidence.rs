@@ -2,7 +2,10 @@
 use super::super::pdf::RevisionBoundary;
 use super::timestamp_evidence::TimestampResult;
 use super::verify_dss_core::EmbeddedCert;
-use crate::api::{ByteRangeEvidence, Coverage, SignatureKind, SignedRangeDigest, VerifyCheck};
+use crate::api::{
+    ByteRangeEvidence, Coverage, RevisionCoverage, SignatureKind, SignedRangeDigest,
+    UncoveredByteRange, VerifyCheck,
+};
 use crate::memory::{Held, SealMemoryRefusal};
 
 /// A timestamp already passed token integrity, trusted TSA path, and clock
@@ -47,6 +50,7 @@ pub(super) struct EnvelopeEvidence {
     pub kind: SignatureKind,
     pub byte_range: ByteRangeEvidence,
     pub coverage: Coverage,
+    pub revision_coverage: Option<RevisionCoverage>,
     pub digest: Option<SignedRangeDigest>,
     pub revision: Option<RevisionBoundary>,
     pub checks: Vec<VerifyCheck>,
@@ -77,6 +81,26 @@ pub(super) fn evaluate_envelope(
     let end = entry.byte_range[2].checked_add(entry.byte_range[3]);
     let covers_to = end.filter(|_| br_ok);
     let revision = covers_to.and_then(|end| pdf::bind_range(bytes, ends, end));
+    let revision_coverage = if let Some(revision) = revision {
+        Some(RevisionCoverage::WholeRevision {
+            revision: revision.index,
+            byte_end: revision.eof_end as u64,
+        })
+    } else {
+        covers_to.and_then(|end| {
+            ends?.iter().enumerate().find_map(|(revision, eof_end)| {
+                let byte_end = *eof_end as u64;
+                (end < byte_end).then_some(RevisionCoverage::Partial {
+                    revision,
+                    byte_end,
+                    uncovered: [UncoveredByteRange {
+                        start: end,
+                        end: byte_end,
+                    }],
+                })
+            })
+        })
+    };
     let kind = if entry.is_doc_ts {
         SignatureKind::DocumentTimestamp
     } else {
@@ -163,6 +187,7 @@ pub(super) fn evaluate_envelope(
             file_len: bytes.len() as u64,
         },
         coverage,
+        revision_coverage,
         digest,
         revision,
         checks: checks.list,
