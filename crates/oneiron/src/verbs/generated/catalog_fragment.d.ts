@@ -2560,7 +2560,9 @@ declare namespace Sdk {
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[]; claim: RecordRef };
   type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
   type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null; path?: string | null };
-  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number } | { format: "code"; commit: string; path: string; file_hash: string; char_start: number; char_end: number };
+  type DocxHeaderFooterBand = "default" | "first" | "even";
+  type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "docx_story"; scope: DocxStoryScope; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number } | { format: "code"; commit: string; path: string; file_hash: string; char_start: number; char_end: number };
   type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
   type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
   type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
@@ -3144,7 +3146,7 @@ declare namespace Sdk {
   type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null; judged_live?: LivePin | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
-  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
+  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; scope?: DocxStoryScope | null; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null };
   type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null };
@@ -3261,7 +3263,7 @@ declare namespace Sdk {
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null; read_rows?: string[]; delta_receipt?: string | null };
   type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView };
-  type ParagraphJudgment = { block: string; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null };
+  type ParagraphJudgment = { block: string; scope?: DocxStoryScope | null; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null };
   type PptxReviewIdentity = { thread_id: EntityId; asked_by: EntityId; answered_by: EntityId; export_author_guid: string; export_author_name: string };
   type SettledReview = { slide_judgments: SlideJudgment[]; paragraph_judgments: ParagraphJudgment[]; review_identities: PptxReviewIdentity[] };
   type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord; reconciliation?: VersionReconciliation | null; review?: SettledReview };
@@ -4139,8 +4141,6 @@ declare namespace Sdk {
   type DocxRun = { text: string; marks?: DocxMark[] };
   type DocxCellView = { row: number; col: number; text: string };
   type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; runs: DocxRun[]; cells: DocxCellView[] };
-  type DocxHeaderFooterBand = "default" | "first" | "even";
-  type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string };
   type DocxStoryParagraphView = { id: string; locked: boolean; text: string; runs: DocxRun[] };
   type DocxStoryCellParagraphView = { id: string; locked: boolean; text: string };
   type DocxStoryCellView = { row: number; col: number; paragraphs: DocxStoryCellParagraphView[] };

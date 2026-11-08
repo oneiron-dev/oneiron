@@ -12633,12 +12633,37 @@ class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     path: NotRequired[str | None]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
     range: str
 class AnnotationLocatorDocx(TypedDict):
     format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorDocxStory(TypedDict):
+    format: Literal["docx_story"]
+    scope: DocxStoryScope
     para_path: str
     char_start: int
     char_end: int
@@ -12662,7 +12687,7 @@ class AnnotationLocatorCode(TypedDict):
     file_hash: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorDocxStory | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -15687,6 +15712,7 @@ class ArtifactAskUnitsSheetRows(TypedDict):
 class ArtifactAskUnitsParagraphs(TypedDict):
     kind: Literal["paragraphs"]
     blocks: list[str]
+    scope: NotRequired[DocxStoryScope | None]
     author: str
     labels: SlideReviewLabels
 class ArtifactAskUnitsFolderItems(TypedDict):
@@ -16511,6 +16537,7 @@ class VersionReconciliation(TypedDict):
     kept_head: ArtifactVersionView
 class ParagraphJudgment(TypedDict):
     block: str
+    scope: NotRequired[DocxStoryScope | None]
     text_hash: str
     decision: TypedDecision
     answer_contract: AnswerContract
@@ -20616,25 +20643,6 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
-DocxHeaderFooterBand = Literal["default", "first", "even"]
-class DocxStoryScopeHeader(TypedDict):
-    kind: Literal["header"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFooter(TypedDict):
-    kind: Literal["footer"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFootnote(TypedDict):
-    kind: Literal["footnote"]
-    id: str
-class DocxStoryScopeEndnote(TypedDict):
-    kind: Literal["endnote"]
-    id: str
-class DocxStoryScopeComment(TypedDict):
-    kind: Literal["comment"]
-    id: str
-DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class DocxStoryParagraphView(TypedDict):
     id: str
     locked: bool

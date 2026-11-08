@@ -39934,6 +39934,53 @@ pub struct ArtifactUnitsRequest {
     pub path: Option<String>,
 }
 
+/// `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocxHeaderFooterBand {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "first")]
+    First,
+    #[serde(rename = "even")]
+    Even,
+}
+
+/// `oneiron_docedit::docx_body::stories::DocxStoryScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum DocxStoryScope {
+    #[serde(rename = "header")]
+    Header {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footer")]
+    Footer {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footnote")]
+    Footnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "endnote")]
+    Endnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "comment")]
+    Comment {
+        #[serde(rename = "id")]
+        id: String,
+    },
+}
+
 /// `oneiron::anchored_annotation::wire::AnnotationLocator`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "format")]
@@ -39948,6 +39995,17 @@ pub enum AnnotationLocator {
     },
     #[serde(rename = "docx")]
     Docx {
+        #[serde(rename = "para_path")]
+        para_path: String,
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
+    #[serde(rename = "docx_story")]
+    DocxStory {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
         #[serde(rename = "para_path")]
         para_path: String,
         #[serde(rename = "char_start")]
@@ -49817,6 +49875,8 @@ pub enum ArtifactAskUnits {
     Paragraphs {
         #[serde(rename = "blocks")]
         blocks: Vec<String>,
+        #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+        scope: Option<DocxStoryScope>,
         #[serde(rename = "author")]
         author: String,
         #[serde(rename = "labels")]
@@ -52007,6 +52067,8 @@ pub struct VersionReconciliation {
 pub struct ParagraphJudgment {
     #[serde(rename = "block")]
     pub block: String,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
     #[serde(rename = "text_hash")]
     pub text_hash: String,
     #[serde(rename = "decision")]
@@ -64693,53 +64755,6 @@ pub struct DocxBlockView {
     pub runs: Vec<DocxRun>,
     #[serde(rename = "cells")]
     pub cells: Vec<DocxCellView>,
-}
-
-/// `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DocxHeaderFooterBand {
-    #[serde(rename = "default")]
-    Default,
-    #[serde(rename = "first")]
-    First,
-    #[serde(rename = "even")]
-    Even,
-}
-
-/// `oneiron_docedit::docx_body::stories::DocxStoryScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum DocxStoryScope {
-    #[serde(rename = "header")]
-    Header {
-        #[serde(rename = "part_name")]
-        part_name: String,
-        #[serde(rename = "band")]
-        band: DocxHeaderFooterBand,
-    },
-    #[serde(rename = "footer")]
-    Footer {
-        #[serde(rename = "part_name")]
-        part_name: String,
-        #[serde(rename = "band")]
-        band: DocxHeaderFooterBand,
-    },
-    #[serde(rename = "footnote")]
-    Footnote {
-        #[serde(rename = "id")]
-        id: String,
-    },
-    #[serde(rename = "endnote")]
-    Endnote {
-        #[serde(rename = "id")]
-        id: String,
-    },
-    #[serde(rename = "comment")]
-    Comment {
-        #[serde(rename = "id")]
-        id: String,
-    },
 }
 
 /// `oneiron::office_body::verbs::DocxStoryParagraphView`.
