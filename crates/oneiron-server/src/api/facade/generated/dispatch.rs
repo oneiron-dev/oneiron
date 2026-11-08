@@ -1870,16 +1870,20 @@ async fn vault_proactivity_digest_get(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_personas_preview(
@@ -23544,16 +23548,20 @@ async fn vault_hooks_regen_history(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_revert(
@@ -23578,16 +23586,20 @@ async fn vault_hooks_regen_revert(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_run(
@@ -23609,16 +23621,20 @@ async fn vault_hooks_regen_run(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_hooks_regen_adopt(
@@ -23681,16 +23697,20 @@ async fn vault_hooks_regen_cancel(
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
     let (output, listed) = match ran {
         Ok(ran) => ran,
         Err(error) => {
             row_hooks_abort(server, hooks).await;
-            return Err(error);
+            return Err(error.with_hook_notice(hook_notice));
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
         rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
     })
 }
 async fn vault_artifacts_publish_approval(
@@ -43285,7 +43305,7 @@ async fn self_hooks_regen_adopt(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -43294,7 +43314,7 @@ async fn self_hooks_regen_adopt(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn self_hooks_regen_get(
     server: &Arc<SyncServer>,
@@ -43307,7 +43327,7 @@ async fn self_hooks_regen_get(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let (output, hook_notice) = facade_invoke_with_notice(
         server,
         call,
         actor,
@@ -43316,7 +43336,7 @@ async fn self_hooks_regen_get(
         value,
         &producers,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
 async fn vault_runs_review(
     server: &Arc<SyncServer>,
