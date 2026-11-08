@@ -104,6 +104,9 @@ impl Vault {
                     true,
                 ),
             };
+            // An answer from the lineage that opened the row is refused, a
+            // reused row's too (FIX 9741).
+            self.refuse_opener_answer_in_txn(&*txn, owner, credential, &*row)?;
             let proposal = &row.proposal;
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()

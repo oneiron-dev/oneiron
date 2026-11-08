@@ -609,6 +609,37 @@ impl Vault {
         self.accept_widen_matching_reusing(owner, credential, reference, None, matches_delta)
     }
 
+    /// Refuses an accept answered from the lineage that opened `row`, or a
+    /// fork of it (DEC-0006, FIX 5064, 9741), as every proposal door does:
+    /// the proposer itself, the proof's carried credential chains, or the
+    /// holder credential the route passed. A proposal frozen with no
+    /// lineage shares none.
+    fn refuse_opener_answer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        row: &StoredProposal,
+    ) -> Result<()> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let holder_meets = match credential {
+            Some(credential) => {
+                let lineage = self.slip_lineage_in_txn(txn, credential)?;
+                self.frozen_lineages_meet_in_txn(txn, &lineage, &row.opener_lineage)?
+            }
+            None => false,
+        };
+        if row.proposal.proposer == actor.to_hex()
+            || holder_meets
+            || owner.answers_from_slip_lineage_in_txn(self, txn, &row.opener_lineage)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the lineage that opened a proposal cannot settle it",
+            )));
+        }
+        Ok(())
+    }
+
     /// The open contact-disclosure offer `reference` names, checked in the
     /// settling transaction: this owner's, unexpired, unsettled,
     /// byte-identical to what the owner saw, and not answered from the
