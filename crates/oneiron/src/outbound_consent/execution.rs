@@ -216,6 +216,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         suppression_receipt: None,
         admission_ceiling: None,
         co_actor: None,
+        exclusive_route: None,
     };
     // FIX 4747 slices 5, 7: a call an agent run makes goes only while the
     // run's machine holds the run.

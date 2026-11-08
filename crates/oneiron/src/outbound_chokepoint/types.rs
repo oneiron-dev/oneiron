@@ -144,6 +144,11 @@ pub(crate) struct PreparedEffect {
     /// A second actor the same mutation speaks for, admitted beside the
     /// primary under the same writer (OF-427).
     pub(crate) co_actor: Option<CoActorAdmission>,
+    /// The sibling route this send must not go beside (FIX 11029: an
+    /// interrupt and its ambient alternative): its logical attempt. A first
+    /// admission is refused under the writer while the sibling's call may
+    /// have gone.
+    pub(crate) exclusive_route: Option<AttemptId>,
 }
 
 /// A second actor one external mutation speaks for (OF-427): the verified

@@ -139,12 +139,12 @@ impl AgentDispatcher<'_> {
                     .store
                     .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
+                let occurrence =
+                    EntityId::derive(RUN_RESULT_BODY, &[result_ref.as_bytes().as_slice()])?;
                 Some(OwnedBody {
                     owner: result_ref,
-                    occurrence: EntityId::derive(
-                        RUN_RESULT_BODY,
-                        &[result_ref.as_bytes().as_slice()],
-                    )?,
+                    occurrence,
+                    mark_occurrence: occurrence,
                     state: BodyState::Complete {
                         body: BodyRef {
                             blake3: output.raw_blake3,
