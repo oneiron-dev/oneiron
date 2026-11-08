@@ -13,8 +13,9 @@
 //!   send the seed or the head, written before the send. Its id is the
 //!   import and the step, so one send per step can ever be dispatched.
 //! - `repo.external_import_observation`, about the source claim: one
-//!   attempt's observed fact, with a safe reason code and the receive
-//!   links it proved. Never a live status.
+//!   attempt's observed fact, with a safe reason code, the receive links
+//!   it proved, and for its Git-LFS step what the credential broker did.
+//!   Never a live status.
 //! - `repo.external_import_ref`, about the served CODE anchor: the source
 //!   tuple the first import onto one imported ref fixed. Its id is the
 //!   anchor and the ref, so a later import reads it by key, never by a
@@ -32,6 +33,7 @@ use crate::claim::{
 };
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::BrokerIsolation;
 use crate::{EntityId, TimeRange, Vault};
 
 /// The import's immutable source claim.
@@ -93,11 +95,26 @@ pub(crate) enum ImportOutcome {
     Rejected,
     /// The send's outcome is unknown.
     Unknown,
-    /// This vault's own process fetches the source's Git-LFS objects, with
-    /// the import's binding when it names one: a labelled daemon residual
-    /// of the credential broker (OSH-3, FIX 19084), recorded before any LFS
-    /// request goes out. It says nothing of whether the objects arrived.
-    DaemonResidual,
+    /// The source's Git-LFS objects go through the host's credential broker,
+    /// every batch call and object action, which alone installs the
+    /// import's binding when it names one (OSH-3, FIX 19876): recorded
+    /// before the first LFS request goes out, and again with what the
+    /// broker did once they ended. It says nothing of whether the objects
+    /// arrived.
+    Brokered,
+}
+
+/// What the credential broker did for an `Lfs` step once its exchanges
+/// ended: no actor, no value, no diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LfsTransferRecord {
+    /// How the broker is kept apart from this process; `None` when no
+    /// exchange reached it.
+    pub(crate) broker_isolation: Option<BrokerIsolation>,
+    /// How many action header values of the batch replies the broker
+    /// rewrote to its placeholder: a count, never a value.
+    pub(crate) credential_rewrites: u64,
 }
 
 /// The source claim's record. `actor_id` is spelled as every origin claim
@@ -146,6 +163,10 @@ pub(crate) struct ObservationRecord {
     pub(crate) reason: Option<String>,
     pub(crate) receive_provenance: Option<String>,
     pub(crate) publication: Option<String>,
+    /// What the broker did for an `Lfs` step, on the fact written once its
+    /// exchanges ended (FIX 19876); absent on every other fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lfs_transfer: Option<LfsTransferRecord>,
 }
 
 /// The source tuple one imported ref is bound to: no actor, no commits.
@@ -519,11 +540,18 @@ impl ObservationRecord {
             reason: None,
             receive_provenance: None,
             publication: None,
+            lfs_transfer: None,
         }
     }
 
     pub(crate) fn because(mut self, reason: &str) -> Self {
         self.reason = Some(reason.to_owned());
+        self
+    }
+
+    /// This fact, carrying what the broker did for an `Lfs` step.
+    pub(crate) fn with_lfs_transfer(mut self, transfer: LfsTransferRecord) -> Self {
+        self.lfs_transfer = Some(transfer);
         self
     }
 }
