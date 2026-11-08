@@ -130,6 +130,8 @@ pub(super) fn import_delivered_send_receipts(vault: &Vault, max_imports: usize) 
                     thread_ref: None,
                     occurred_at: send.occurred_at,
                     projected: false,
+                    original_head: None,
+                    source_position: None,
                 },
             )
         });

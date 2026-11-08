@@ -821,6 +821,14 @@ pub(crate) fn body_covers_through_in(
         }
         return Ok(Some(word_sources(&summary).copied().collect()));
     }
+    if entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::federation::record_scope::{ScopedCommRead, read_scoped_comm_in_txn};
+        return match read_scoped_comm_in_txn(dbs, txn, *record, bytes)? {
+            ScopedCommRead::Ordinary => Ok(None),
+            ScopedCommRead::Unavailable => Ok(Some(Vec::new())),
+            ScopedCommRead::Claim { original, .. } => Ok(Some(vec![original])),
+        };
+    }
     Ok(None)
 }
 
