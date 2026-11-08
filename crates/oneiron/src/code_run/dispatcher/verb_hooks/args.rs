@@ -54,7 +54,12 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
         }),
         SelfCall::ConsultResult(request) => to_json(request)?,
         SelfCall::SkillsCall(skill) => json!({"skill": skill.skill.to_hex(), "args": skill.args}),
-        SelfCall::MemorySearch(search) => json!({"query": search.query, "limit": search.limit}),
+        SelfCall::MemorySearch(search) => match &search.filter {
+            Some(filter) => {
+                json!({"query": search.query, "limit": search.limit, "filter": to_json(filter)?})
+            }
+            None => json!({"query": search.query, "limit": search.limit}),
+        },
         SelfCall::MemoryWriteFixture(write) => claim_args(
             call,
             write.id,

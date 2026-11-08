@@ -82,6 +82,8 @@ struct BlockedArgs {
 struct SearchArgs {
     query: String,
     limit: usize,
+    #[serde(default)]
+    filter: Option<crate::memory::ReadFilterInput>,
 }
 
 #[derive(Deserialize)]
@@ -268,9 +270,15 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
             next.detail = args.detail;
             SelfCall::ReportBlocked(next)
         }
-        SelfCall::MemorySearch(_) => {
+        SelfCall::MemorySearch(search) => {
             let args: SearchArgs = decode(args)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(args.query, args.limit))
+            // A rewrite keeps the caller's own filter: it may narrow it,
+            // never drop it (FIX 3977).
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(args.query, args.limit)
+                    .with_read_filter(search.filter.clone())
+                    .with_read_filter(args.filter),
+            )
         }
         SelfCall::MemoryWriteFixture(write) => {
             let (id, candidate, occurred, learned_at) =
