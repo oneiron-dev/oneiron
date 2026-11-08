@@ -1155,11 +1155,16 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     expect((await engine.client.call("vault.retrieval.weights.get", {})).weights).toEqual(zero);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const at = utc("2026-08-01T00:00:00Z");
+    // Every row's words share one length and carry no label (FIX 22309, R50):
+    // text BM25 follows text length, so "calm" vs "intense" alone gave calm a
+    // 2.16x baseline that the priors under test then had to overcome.
+    const rowText = (index: number) => `retrievalpriors row${index}`;
+    const privateIndex = fixture.rows.findIndex(row => row.label === "private-community");
     const allowed = [engine.pairedActor.principalRef, scope.world_id, scope.scope_facet_id, scope.scope_project_id];
     for (const [index, row] of fixture.rows.entries()) {
       let evidence: string[] = [];
       if (row.vad) {
-        const turn = await witnessedText(engine, `retrievalpriors ${row.label} self-report`, at);
+        const turn = await witnessedText(engine, `${rowText(index)} self-report`, at);
         const annotation = await engine.client.call("vault.affect.annotations.put", {
           turn_ref: turn.witnessed.turn_short_id, vad: row.vad,
           source: "user_self_report", annotated_at: at, scope,
@@ -1172,7 +1177,7 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
         allowed.push(turn.conversation.id, turn.message.id_hex, ...hydrated.value.map(entity => entity.id_hex));
       }
       const saved = await claim(engine, scope, {
-        predicate: `profile.retrieval_priors_${index}`, value: `retrievalpriors ${row.label}`,
+        predicate: `profile.retrieval_priors_${index}`, value: rowText(index),
         confidence: row.confidence, evidence_turn_refs: evidence, occurred_at: at, learned_at: at,
       });
       records.set(row.label, saved);
@@ -1219,7 +1224,7 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
         expect(pack.items.some(item => item.short_id === records.get(label)!.ref)).toBe(true);
       }
       expect(pack.items.some(item => item.short_id === privateRow.ref)).toBe(false);
-      expect(JSON.stringify(pack.items)).not.toContain("private-community");
+      expect(JSON.stringify(pack.items)).not.toContain(rowText(privateIndex));
       expect(pack.retrieval_run_id).toBeTruthy();
       expect(evidence).not.toBeNull();
       expect(evidence!.run.trace).toBeTruthy();
