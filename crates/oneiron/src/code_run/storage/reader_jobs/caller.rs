@@ -110,11 +110,7 @@ pub(crate) fn erase_reader_caller_actor_in_txn(
     Ok(())
 }
 
-fn retire_reader_caller_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    run: EntityId,
-) -> Result<()> {
+fn retire_reader_caller_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, run: EntityId) -> Result<()> {
     let place = format!("side:{}", CALLERS.decl().name);
     let origin = crate::batch::secret_scan::side_row_origin(&place, &CALLERS.key_bytes(&run))?;
     crate::secret_custody::revoke_side_row_custody_in_txn(vault, txn, &origin, None)?;
