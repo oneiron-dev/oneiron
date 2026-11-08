@@ -93,7 +93,8 @@ pub struct EnqueuedTask {
     pub body: String,
     #[serde(default)]
     pub assignee: Option<String>,
-    /// Unix seconds.
+    /// When the TASK falls due, Unix seconds: it lands as the TASK's own
+    /// due time and ticks on `schedule.tick` (FIX 4749).
     #[serde(default)]
     pub due_at: Option<u64>,
 }

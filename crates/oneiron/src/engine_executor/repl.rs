@@ -51,7 +51,7 @@ use crate::{
     LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 impl EngineNativeExecutor<'_> {
     pub async fn run(
@@ -524,14 +524,15 @@ impl EngineNativeExecutor<'_> {
             )?;
             // A finished step's console lines are evidence, not its result,
             // so they stay out of the step's result digests.
-            if let Some(console) = bodies.console {
-                publish_output(
+            let console = match bodies.console {
+                Some(console) => Some(publish_output(
                     &self.storage,
                     &mut record,
                     console_output_path(completed_steps),
                     console,
-                )?;
-            }
+                )?),
+                None => None,
+            };
             let mut outputs = Vec::with_capacity(bodies.files.len());
             let mut file_outputs = Vec::with_capacity(bodies.files.len());
             for ((path, sink), stored_path) in bodies.files.into_iter().zip(runtime_output_paths) {
@@ -543,6 +544,10 @@ impl EngineNativeExecutor<'_> {
             for output in &file_outputs {
                 bind_published_output(&mut record, &mut bindings, output);
             }
+            let printed = std::iter::once(&observation)
+                .chain(&console)
+                .chain(&file_outputs);
+            self.record_step_fold_dependents(&record, &printed.collect::<Vec<_>>())?;
             let step_result = StepResultDigests {
                 observation: observation.raw_blake3,
                 done: step_outcome.done,

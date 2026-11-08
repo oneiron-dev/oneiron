@@ -52,7 +52,14 @@ pub(super) fn check_ask_work(
     let watch = &store.limit_watch;
     let what = &requested.what;
     watch.measure(EngineLimit::AskOptions, measured(what.options.len()));
-    if let Some(longest) = what.options.values().map(String::len).max() {
+    if let Some(longest) = what
+        .options
+        .values()
+        .flat_map(|option| {
+            std::iter::once(option.label.len()).chain(option.then.as_deref().map(str::len))
+        })
+        .max()
+    {
         watch.measure(EngineLimit::AskOptionTextBytes, measured(longest));
     }
     watch.measure(
