@@ -74,6 +74,17 @@ pub(super) struct PendingAuthorization {
     pub(super) decision: AuthorizationDecision,
 }
 
+impl PendingAuthorization {
+    /// The grant the owner's allow minted, while the request still waits for its page to collect
+    /// it: no code was minted from it, so no token stands on it.
+    pub(super) fn uncollected_grant(&self) -> Option<AuthorizedGrant> {
+        match &self.decision {
+            AuthorizationDecision::Allowed(grant) => Some(*grant),
+            AuthorizationDecision::Pending | AuthorizationDecision::Denied => None,
+        }
+    }
+}
+
 /// One authorization code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +97,13 @@ pub(super) struct IssuedCode {
     pub(super) expires_at: u64,
     /// The family its redemption minted; `None` until it is redeemed.
     pub(super) redeemed_family: Option<EntityId>,
+}
+
+impl IssuedCode {
+    /// The grant of a code no exchange redeemed: no token stands on it.
+    pub(super) fn unredeemed_grant(&self) -> Option<AuthorizedGrant> {
+        self.redeemed_family.is_none().then_some(self.grant)
+    }
 }
 
 /// Which kind of token a token row is.
