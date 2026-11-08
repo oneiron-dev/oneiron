@@ -25,11 +25,15 @@ pub(super) use cursor::{
     enabled_before_tick_in_txn, put_cursor_in_txn, unpaused_cursor_bindings_in_txn,
 };
 pub(super) use erase::{
-    dependencies_erased_in_txn, erased_dependency_ids_in_txn, rows_named_by_call,
-    scrub_erased_actor_in_txn, scrub_erased_verb_run_in_txn, scrub_intent_payload,
-    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload, source_erased_in_txn,
+    ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
+    retire_kept_runs_in_txn, rows_named_by_call, scrub_erased_memo_in_txn,
+    scrub_erased_verb_run_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
+    scrub_verb_payload, source_erased_in_txn,
 };
-pub(crate) use erase::{scrub_erased_hook_sources, scrub_hook_source_in_txn};
+pub(crate) use erase::{
+    forget_scrubbed_source_in_txn, scrub_erased_hook_sources, scrub_erased_in_session_stores,
+    scrub_hook_source_in_txn,
+};
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
 pub(super) type RunKey = [u8; 32];

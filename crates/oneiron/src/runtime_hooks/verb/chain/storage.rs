@@ -17,6 +17,10 @@ use super::super::record::{self, HookVerbRunRecord};
 use super::super::storage::VerbHookStorage;
 use super::{Chain, RunRecord, hook_name, phase_token};
 
+/// One run as a write lands it ([`Chain::landed_in_txn`]): its receipt, its
+/// saved copy, and whether its payload retired.
+pub(super) type Landed = (ReceiptRecord, HookVerbRunRecord, bool);
+
 impl Chain<'_> {
     /// Commits the chain's rows. A resumed chain commits even with no run
     /// after the asking hook: its write uses the answer up. A session-only
@@ -24,7 +28,8 @@ impl Chain<'_> {
     /// ([`Self::hold_in_session`]), a resumed one after using its answer up
     /// in the keep ([`Self::take_session_answer`], L13 PR-D); a call with no
     /// room overlay writes its blocks and intents in the vault
-    /// ([`Self::write_consequences`]), and a room has none.
+    /// ([`Self::write_consequences`]), and a room has none. The runs are
+    /// held as that write landed them, so the hold reads none again.
     pub(super) fn commit(&self) -> Result<()> {
         if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
@@ -35,8 +40,12 @@ impl Chain<'_> {
                 .with_write_txn_grouped(|txn| self.write_in_txn(txn)),
             VerbHookStorage::Session(hooks) => {
                 self.take_session_answer(hooks)?;
-                self.hold_in_session(hooks);
-                self.write_consequences()
+                let (landed, written) = match self.write_consequences() {
+                    Ok(landed) => (landed, Ok(())),
+                    Err(error) => (None, Err(error)),
+                };
+                self.hold_in_session(hooks, landed);
+                written
             }
         }
     }
@@ -46,19 +55,28 @@ impl Chain<'_> {
     /// blocks with their lineage and its intents, each written once in the
     /// vault as [`Self::write_in_txn`] writes them. Its receipts and saved
     /// runs stay in the keep. A room's chain, and a call whose consequences
-    /// do not run, holds none.
-    pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    /// do not run, holds none. Each run as this write lands it, in run
+    /// order, for the hold ([`Self::hold_in_session`]); `None` when there
+    /// was nothing to write.
+    pub(super) fn consequences_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<Vec<Landed>>> {
         if self.blocks.is_empty() && self.intents.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let at = self.vault.store.clock.now_recorded_at();
+        let mut landed = Vec::with_capacity(self.runs.len());
         let mut retired = BTreeSet::new();
         for run in &self.runs {
-            if self.landed_in_txn(txn, run, at.saturating_mul(1_000))?.2 {
+            let run_landed = self.landed_in_txn(txn, run, at.saturating_mul(1_000))?;
+            if run_landed.2 {
                 retired.insert(run.key);
             }
+            landed.push(run_landed);
         }
-        self.consequences_at_in_txn(txn, at, &retired)
+        self.consequences_at_in_txn(txn, at, &retired)?;
+        Ok(Some(landed))
     }
 
     /// The chain's blocks with their lineage and its intents, each written
@@ -120,9 +138,9 @@ impl Chain<'_> {
 
     /// [`Self::consequences_in_txn`] in a vault write of its own, when the
     /// chain holds any.
-    fn write_consequences(&self) -> Result<()> {
+    fn write_consequences(&self) -> Result<Option<Vec<Landed>>> {
         if self.blocks.is_empty() && self.intents.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         self.vault
             .with_write_txn_grouped(|txn| self.consequences_in_txn(txn))
@@ -164,28 +182,18 @@ impl Chain<'_> {
     /// marker (FIX 22178); a run across a source's erase keeps none of its
     /// bytes, nor one whose caller's own args or result name an erased row
     /// (FIX 22191). So each lands as the erase's own scrub would have left it
-    /// had the chain committed first, and no later sweep scrubs it again.
+    /// had the chain committed first, and no later sweep scrubs it again
+    /// ([`store::scrub_erased_verb_run_in_txn`]).
     pub(super) fn landed_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         run: &RunRecord<'_>,
         at: u64,
-    ) -> Result<(ReceiptRecord, HookVerbRunRecord, bool)> {
-        let vault = self.vault;
+    ) -> Result<Landed> {
         let mut receipt = self.receipt(run);
         let mut saved = self.saved(run, at);
-        let mut retired = store::scrub_erased_verb_run_in_txn(
-            vault,
-            txn,
-            &mut saved,
-            &mut receipt,
-            self.call.actor,
-        )?;
-        if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?.is_empty() {
-            store::scrub_receipt_payload(&mut receipt);
-            store::scrub_verb_payload(&mut saved);
-            retired = true;
-        }
+        let retired =
+            store::scrub_erased_verb_run_in_txn(self.vault, txn, &mut saved, &mut receipt)?;
         Ok((receipt, saved, retired))
     }
 
