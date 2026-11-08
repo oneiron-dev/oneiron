@@ -104,6 +104,8 @@ pub(crate) struct RemoteClient {
     /// The call receipt the last verb's reply stated, success or refusal
     /// (OF-538). Per handle: a clone starts with none.
     last_receipt_ref: std::sync::Mutex<Option<String>>,
+    /// Content-free hook notice beside the last facade reply; never a receipt.
+    last_hook_notice: std::sync::Mutex<Option<String>>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -129,6 +131,7 @@ impl Clone for RemoteClient {
             room_turn: self.room_turn,
             off_record_session: self.off_record_session.clone(),
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         }
     }
 }
@@ -174,6 +177,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -195,6 +199,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -275,6 +280,32 @@ impl RemoteClient {
             .clone()
     }
 
+    pub(crate) fn last_hook_notice(&self) -> Option<String> {
+        self.last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn note_hook_notice(&self, notice: Option<String>) {
+        *self
+            .last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = notice;
+    }
+
+    fn note_reply_hook_notice(&self, headers: &HeaderMap) {
+        use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+
+        self.note_hook_notice(
+            headers
+                .get(CALLER_NOTICE_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| *value == CALLER_NOTICE_SUMMARY)
+                .map(str::to_owned),
+        );
+    }
+
     fn note_receipt_ref(&self, receipt_ref: Option<String>) {
         *self
             .last_receipt_ref
@@ -313,6 +344,7 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
+        self.note_hook_notice(None);
         let body = if verb == custody_submit::CUSTODY_SUBMIT_VERB {
             let body = serialize_whole(request)?;
             // The owner route spools sealed custody changes past the ceiling.
@@ -353,6 +385,7 @@ impl RemoteClient {
                 .map(str::to_owned),
         );
 
+        self.note_reply_hook_notice(&reply.headers);
         let status = reply.status;
         // A 202 is a verb hook's pending ask: the verb did not run, and the
         // body is the refusal naming the ask and this call's invocation
@@ -479,23 +512,26 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .timeout(REQUEST_TIMEOUT)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     pub(crate) async fn llm_stream(
@@ -513,22 +549,25 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/x-ndjson")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     /// The streaming agent the own-server LLM transport posts on. A served

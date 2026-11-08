@@ -7,6 +7,7 @@ mod fold_answers;
 mod folds;
 mod lift;
 mod model_seat;
+mod overlay_erase;
 mod program_resume;
 mod read_worlds;
 mod reader_folds;
@@ -23,6 +24,7 @@ pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 mod session_checkpoint;
+mod session_heal_count;
 pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
 // FIX 5426: the caller's view a room write's receipt keeps.
@@ -42,6 +44,7 @@ pub(crate) use self::continuation::{
 pub(crate) use self::fold_answers::{
     WithdrawnFoldAnswer, fold_answer_withdrawn, redact_fold_answers, retire_fold_answers_in_txn,
 };
+pub(crate) use self::overlay_erase::erase_gone_actors_in_live_overlays;
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
@@ -80,17 +83,19 @@ pub(crate) use self::replay_capsule::{
     store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
+    StrippedPieces, drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
+    release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
+    republish_step_start_lengths_in_rows, settle_start_bodies_in_rows,
+    start_piece_held_apart_in_txn, step_capsule_row, step_start_body_row,
+    step_start_content_pieces, step_start_owners_in_txn,
+};
+pub(crate) use self::replay_capsule::{
     accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
     judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
-pub(crate) use self::replay_capsule::{
-    drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
-    release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    settle_start_bodies_in_rows, start_piece_held_apart_in_txn, step_capsule_row,
-    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
-};
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn,
 };
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
@@ -100,6 +105,8 @@ pub use self::secret_lift::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+// FIX 4415: a live session's model heal tally, base plus its own delta.
+pub(crate) use self::session_heal_count::session_model_heal_count;
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
@@ -129,12 +136,13 @@ pub(crate) use self::wait_delivery::{
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
-    program_resume_calls_in_txn, program_resume_head_in_txn,
+    ProgramResumeKind, ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail,
+    program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_delivery_owners, wait_reply_in_txn,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, release_settled_for_caller_in_txn,
+    wait_delivery_owners, wait_reply_in_txn,
 };
 
 // The lift sweep's typed acceptance for this module's authored side

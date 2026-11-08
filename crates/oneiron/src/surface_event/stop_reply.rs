@@ -1,21 +1,29 @@
 //! A STOP written as a message (FIX 12101). A Slack or LINE counterparty
-//! opts out by writing a stop keyword as their whole message. The connector
-//! bridge reads the message's words before it wakes anyone, and a STOP
-//! becomes the typed OptOut interaction an adapter or `/v1/core` admits,
-//! through the same admission: it holds sends to the sender on the channel
-//! from that write, and the comm projector makes it their standing opt-out.
-//! The message itself still wakes its actor as any other message does.
+//! opts out by writing a stop keyword as their whole message; a Slack
+//! message may lead with a mention of its receiving bot (`<@UBOT> stop`)
+//! when the archived callback identifies that bot. An email sender
+//! opts out with a stop keyword as the reply's whole subject, after its
+//! `Re:`/`Fwd:` prefixes, or as its whole own text above the quoted block
+//! (FIX 12240). The surface-event drain reads the message's words before
+//! any dispatcher wakes anyone on it, and a STOP becomes the typed OptOut
+//! interaction an adapter or `/v1/core` admits, through the same admission:
+//! it holds sends to the sender on the channel from that write, and the comm
+//! projector makes it their standing opt-out. The message itself still
+//! wakes its actor as any other message does.
 
 use unicode_normalization::UnicodeNormalization;
 
 use crate::Vault;
 use crate::channel_identity_provider::{
-    LINE_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
+    EMAIL_CHANNEL, LINE_CHANNEL, SLACK_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::handoff::admit_surface_event_once_in_txn;
-use super::{SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
+use super::{
+    SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceEventDispatchDisposition,
+    SurfaceInteractionKind,
+};
 
 /// The words that opt a sender out of a channel when they are the whole
 /// message: trimmed, NFKC-folded (full-width letters read as ASCII) and
@@ -32,11 +40,19 @@ pub const STOP_REPLY_KEYWORDS: &[&str] = &[
 ];
 
 /// What the OptOut a STOP message becomes adds to the message's correlation
-/// id: one OptOut per message, however often the bridge reads it.
+/// id: one OptOut per message, however often the drain reads it.
 const STOP_REPLY_CORRELATION_SUFFIX: &str = ":stop_reply";
 
 /// Where an archived LINE event names the member who wrote it.
 const LINE_SOURCE_USER_POINTER: &str = "/event/source/userId";
+
+/// How long a STOP message's dispatch waits before it retries, after a
+/// transient failure to admit its OptOut.
+const STOP_REPLY_RETRY_BACKOFF_SECS: u64 = 30;
+
+/// The reply and forward prefixes an email subject may lead with, compared
+/// ignoring ASCII case.
+const EMAIL_SUBJECT_REPLY_PREFIXES: &[&str] = &["Re:", "Fwd:", "Fw:"];
 
 /// Whether `text` is one of [`STOP_REPLY_KEYWORDS`] and nothing else.
 #[must_use]
@@ -48,26 +64,150 @@ pub fn is_stop_reply(text: &str) -> bool {
         .any(|keyword| folded.eq_ignore_ascii_case(keyword))
 }
 
+/// A leading mention counts only when this callback names the same bot
+/// installation. Missing bot evidence leaves ordinary message handling intact.
+fn slack_bot_addressed_stop(vault: &Vault, payload_ref: &str, text: &str) -> Result<bool> {
+    let Some((user, rest)) = text
+        .trim_start()
+        .strip_prefix("<@")
+        .and_then(|text| text.split_once('>'))
+    else {
+        return Ok(false);
+    };
+    if user.is_empty()
+        || !user.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        || !is_stop_reply(rest)
+    {
+        return Ok(false);
+    }
+    let Some(body) = vault.read_provider_event(payload_ref)? else {
+        return Ok(false);
+    };
+    let Ok(delivery) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return Ok(false);
+    };
+    if delivery.get("type").and_then(serde_json::Value::as_str) != Some("event_callback") {
+        return Ok(false);
+    }
+    let kind = delivery
+        .pointer("/event/type")
+        .and_then(serde_json::Value::as_str);
+    let direct = kind == Some("message")
+        && delivery
+            .pointer("/event/channel_type")
+            .and_then(serde_json::Value::as_str)
+            == Some("im");
+    if kind != Some("app_mention") && !direct {
+        return Ok(false);
+    }
+    let Some(team) = delivery
+        .get("team_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|team| !team.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Some(authorizations) = delivery
+        .get("authorizations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(false);
+    };
+    Ok(authorizations.iter().any(|authorization| {
+        authorization
+            .get("is_bot")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+            && authorization
+                .get("team_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(team)
+            && authorization
+                .get("user_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(user)
+    }))
+}
+
+/// An email's subject without the reply and forward prefixes that lead it,
+/// NFKC-folded, so `Re: Fwd: STOP` reads as `STOP`.
+fn email_subject_for_stop(subject: &str) -> String {
+    let folded: String = subject.nfkc().collect();
+    let mut rest = folded.trim_start();
+    while let Some(prefix) = EMAIL_SUBJECT_REPLY_PREFIXES.iter().find(|prefix| {
+        rest.get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    }) {
+        rest = rest[prefix.len()..].trim_start();
+    }
+    rest.to_owned()
+}
+
+/// Whether the message `payload_ref` archives is a STOP, each text compared
+/// whole with [`is_stop_reply`]: a Slack message's text after an evidenced
+/// receiving-bot mention, a LINE message's text, and an email's subject after its reply
+/// prefixes or its reply top text
+/// ([`crate::channel_identity_provider::EmailProviderInbound::reply_top_text`]).
+fn message_is_stop_reply(vault: &Vault, channel: &str, payload_ref: &str) -> Result<bool> {
+    if channel == EMAIL_CHANNEL {
+        let Some(email) = vault.read_provider_email(payload_ref)? else {
+            return Ok(false);
+        };
+        let subject = email
+            .subject
+            .as_deref()
+            .is_some_and(|subject| is_stop_reply(&email_subject_for_stop(subject)));
+        let top_text = email.reply_top_text.as_deref().is_some_and(is_stop_reply);
+        return Ok(subject || top_text);
+    }
+    let Some(text) = vault.read_provider_event_text(channel, payload_ref)? else {
+        return Ok(false);
+    };
+    if is_stop_reply(&text) {
+        return Ok(true);
+    }
+    if channel == SLACK_CHANNEL {
+        return slack_bot_addressed_stop(vault, payload_ref, &text);
+    }
+    Ok(false)
+}
+
+/// Admits `event`'s STOP as its sender's OptOut ahead of its dispatch
+/// (FIX 12240), whatever dispatcher is installed, so a reply the message
+/// wakes is already held. `None` lets the dispatch go on: the message wakes
+/// its actor either way, and an opt-out the admission refuses is logged.
+/// `Some` is the retry a transient failure to admit it settles on.
+pub(super) fn admit_stop_reply_before_dispatch(
+    vault: &Vault,
+    event: &SurfaceEvent,
+    now: u64,
+) -> Option<SurfaceEventDispatchDisposition> {
+    match admit_stop_reply_opt_out(vault, event, now) {
+        Ok(_) => None,
+        Err(Error::InvalidConfig(reason)) => {
+            tracing::warn!(%reason, "a STOP message's opt-out was refused; the message goes on");
+            None
+        }
+        Err(err) => Some(SurfaceEventDispatchDisposition::Retry {
+            backoff_until: now.saturating_add(STOP_REPLY_RETRY_BACKOFF_SECS),
+            reason: err.to_string(),
+        }),
+    }
+}
+
 /// Admits the OptOut interaction a STOP message becomes, for `event`'s
 /// sender on its channel, beside the message. `false` when `event` is not a
 /// message, carries no words the vault holds, is not a STOP, or is a chat
 /// message that names no member. A second call for the same message replays
 /// the first admission.
-pub(super) fn admit_stop_reply_opt_out(
-    vault: &Vault,
-    event: &SurfaceEvent,
-    now: u64,
-) -> Result<bool> {
+fn admit_stop_reply_opt_out(vault: &Vault, event: &SurfaceEvent, now: u64) -> Result<bool> {
     if !matches!(event.action, SurfaceEventAction::Message) {
         return Ok(false);
     }
     let Some(payload_ref) = event.payload_ref.as_deref() else {
         return Ok(false);
     };
-    let Some(text) = vault.read_provider_event_text(&event.channel, payload_ref)? else {
-        return Ok(false);
-    };
-    if !is_stop_reply(&text) {
+    if !message_is_stop_reply(vault, &event.channel, payload_ref)? {
         return Ok(false);
     }
     let Some(sender) = stop_reply_sender(vault, event, payload_ref)? else {

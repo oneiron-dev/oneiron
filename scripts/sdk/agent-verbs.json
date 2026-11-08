@@ -931,6 +931,22 @@
       "section": false
     },
     {
+      "name": "vault.proactivity.digest.get",
+      "description": "Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant.",
+      "input": "crate::dreamer_runner::maintenance::digest::DigestReadRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.proactivity.digest.get\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.personas.preview",
       "description": "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.",
       "input": "crate::task_verb::sdk::PersonaSnapshotPreviewRequest",
@@ -1151,7 +1167,8 @@
         "brief": "brief",
         "ttl": "ttl",
         "parent_ref": "parent_ref",
-        "due_at": "due_at"
+        "due_at": "due_at",
+        "watch": "watch"
       },
       "mcp_required_fields": [
         "spec"
@@ -1260,7 +1277,7 @@
     },
     {
       "name": "vault.budgets.lease.open",
-      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
+      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on.",
       "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",
       "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
       "call": "crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.open\")?, &input).map_err(crate::memory::MemoryError::from)?",
@@ -1882,12 +1899,16 @@
           {
             "name": "reader_agent_ref",
             "kind": "ref"
+          },
+          {
+            "name": "filter",
+            "kind": "read_filter"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry\n    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the\n    /// terminal reason and pact epoch. This selection grants no read authority.\n    /// `token_budget` (0: uncut) sizes the rendered `format`; omitted, the\n    /// window budget of `reader_agent_ref`'s memory profile, else 4,000.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   * Explicit `scope.worldRef` recalls of retained foreign worlds carry\n   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and\n   * `pactEpoch`. This selection grants no read authority.\n   * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the\n   * window budget of `readerAgentRef`'s memory profile, else 4,000.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        \n        Explicit ``scope.world_ref`` recalls of retained foreign worlds carry\n        ``item[\"stale\"]``: ``stale_since`` and ``age_secs`` (when known),\n        ``reason`` and ``pact_epoch``. This selection grants no read authority.\n        ``token_budget`` (0: uncut) sizes the rendered ``format``; omitted,\n        the window budget of ``reader_agent_ref``'s memory profile, else 4,000.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry\n    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the\n    /// terminal reason and pact epoch. This selection grants no read authority.\n    /// `token_budget` (0: uncut) sizes the rendered `format`; omitted, the\n    /// window budget of `reader_agent_ref`'s memory profile, else 4,000.\n    /// `filter` (FIX 3977) only narrows the vault's floor for every stage of\n    /// the recall; an unset field leaves the floor in force.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   * Explicit `scope.worldRef` recalls of retained foreign worlds carry\n   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and\n   * `pactEpoch`. This selection grants no read authority.\n   * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the\n   * window budget of `readerAgentRef`'s memory profile, else 4,000.\n   * `filter` only narrows the vault's floor for every stage of the recall;\n   * an unset field leaves the floor in force.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        \n        Explicit ``scope.world_ref`` recalls of retained foreign worlds carry\n        ``item[\"stale\"]``: ``stale_since`` and ``age_secs`` (when known),\n        ``reason`` and ``pact_epoch``. This selection grants no read authority.\n        ``token_budget`` (0: uncut) sizes the rendered ``format``; omitted,\n        the window budget of ``reader_agent_ref``'s memory profile, else 4,000.\n        ``filter`` only narrows the vault's floor for every stage of the\n        recall; an unset field leaves the floor in force.\n        "
         },
         "defaults": true
       },
@@ -1903,7 +1924,8 @@
           "media": "Option<RecallMedia>",
           "query_affect": "Option<QueryAffect>",
           "token_budget": "Option<u64>",
-          "reader_agent_ref": "Option<String>"
+          "reader_agent_ref": "Option<String>",
+          "filter": "Option<ReadFilterInput>"
         },
         "output": "MemoryPack"
       },
@@ -2598,9 +2620,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
-          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
-          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n    /// It carries every world wherever it goes; `notices` names each world\n    /// the owner's recipient choice would keep from there, and why.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
         }
       }
     },
@@ -5047,7 +5069,7 @@
     },
     {
       "name": "vault.connectors.subscriptions.put",
-      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
       "output": "crate::connector_key::ChannelMessageSubscription",
       "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
@@ -5477,6 +5499,21 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_add_owner",
+      "description": "Starts a shared vault's add_owner act: a live Owner adds another person as Owner.",
+      "input": "crate::task_verb::sdk::SharedAddOwnerRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_add_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_add_owner\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -5943,6 +5980,38 @@
       "openapi": true
     },
     {
+      "name": "vault.shared.owner_change_wait.set",
+      "description": "One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds.",
+      "input": "crate::task_verb::sdk::SharedOwnerChangeWaitSetRequest",
+      "output": "Option<u64>",
+      "call": "crate::task_verb::sdk::set_shared_owner_change_wait(memory.vault(), &memory.embedded_owner(\"vault.shared.owner_change_wait.set\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shared.owner_change_wait.get",
+      "description": "The shared vault's common owner-change wait in seconds, if one is set.",
+      "input": "EmptyRequest",
+      "output": "Option<u64>",
+      "call": "crate::task_verb::sdk::read_shared_owner_change_wait(memory.vault(), &memory.embedded_owner(\"vault.shared.owner_change_wait.get\")?)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.coreference.link",
       "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
       "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
@@ -6215,6 +6284,22 @@
       },
       "section": false,
       "openapi": true
+    },
+    {
+      "name": "vault.federation.status",
+      "description": "The owner reads this install's pact activation, consent epoch and local inactivity reason.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::FederationStatus",
+      "call": "crate::task_verb::sdk::federation_status(memory)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "mcp_fields": {}
     },
     {
       "name": "vault.federation.connect.identity",
@@ -7237,6 +7322,21 @@
       "openapi": true
     },
     {
+      "name": "vault.outbound.uncertain_send.answer",
+      "description": "The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent.",
+      "input": "crate::task_verb::sdk::UncertainSendAnswer",
+      "output": "crate::task_verb::sdk::UncertainSendAnswered",
+      "call": "crate::task_verb::sdk::answer_uncertain_send_as(memory.vault(), &memory.embedded_owner(\"vault.outbound.uncertain_send.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.create_child",
       "description": "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.",
       "input": "crate::task_verb::sdk::ResearchChildWire",
@@ -8221,6 +8321,39 @@
       "input": "crate::memory::ArchiveDeleteConfirmRequest",
       "output": "crate::memory::ArchiveDeleteBatchResult",
       "call": "crate::memory::confirm_archive_delete_wire(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.attempt.delete.preview",
+      "description": "Previews one cleanup-archived completed attempt under the caller's delete authority.",
+      "input": "crate::vault_cleanup::AttemptArchiveDeletePreviewRequest",
+      "output": "crate::vault_cleanup::AttemptArchiveDeletePreviewView",
+      "call": "crate::vault_cleanup::preview_attempt_archive_delete_wire(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.attempt.delete.confirm",
+      "description": "Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt.",
+      "input": "crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest",
+      "output": "crate::vault_cleanup::AttemptArchiveDeleteReceiptView",
+      "call": "crate::vault_cleanup::confirm_attempt_archive_delete_wire(memory, &input)?",
       "scope": "Write",
       "admission": {
         "lane_record_scope": true,
@@ -10008,6 +10141,22 @@
       "section": false
     },
     {
+      "name": "vault.shares.issue_view_link",
+      "description": "Issues a holder-bound view-only pairing link for one admitted share's recipient.",
+      "input": "crate::task_verb::sdk::ShareViewLinkRequest",
+      "output": "crate::authority::PairingLink",
+      "call": "crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.shares.revoke",
       "input": "crate::task_verb::sdk::ShareRevokeRequest",
       "output": "crate::receipt::ShareRevokeReceipt",
@@ -10151,11 +10300,71 @@
       "openapi": true
     },
     {
+      "name": "vault.hooks.regen.history",
+      "description": "Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenHistoryRequest",
+      "output": "Vec<crate::runtime_hooks::HookRegenReceipt>",
+      "call": "memory.hooks_regen_history_as(&memory.embedded_owner(\"vault.hooks.regen.history\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.revert",
+      "description": "Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt.",
+      "input": "crate::memory::hook_regen_doors::HookRegenRevertRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.hooks_regen_revert_as(&memory.embedded_owner(\"vault.hooks.regen.revert\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.run",
+      "description": "Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.hooks_regen_run_unhosted(&memory.embedded_owner(\"vault.hooks.regen.run\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.regen.adopt",
       "description": "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.",
       "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "memory.hooks_regen_adopt_as(&memory.embedded_owner(\"vault.hooks.regen.adopt\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.cancel",
+      "description": "Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again.",
+      "input": "crate::memory::hook_regen_doors::HookRegenCancelRequest",
+      "output": "crate::runtime_hooks::HookRegenCancel",
+      "call": "memory.hooks_regen_cancel_as(&memory.embedded_owner(\"vault.hooks.regen.cancel\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -10798,7 +11007,7 @@
     },
     {
       "name": "vault.code.symbols.release",
-      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.",
+      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver.",
       "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
       "output": "crate::memory::code_doors::CodeSymbolsReleased",
       "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
@@ -11022,11 +11231,41 @@
       "openapi": true
     },
     {
+      "name": "vault.code.session_model_heal_count",
+      "description": "Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused.",
+      "input": "crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest",
+      "output": "crate::memory::code_run_doors::CodeRunSessionModelHealCountView",
+      "call": "memory.code_run_session_model_heal_count_as(&memory.embedded_owner(\"vault.code.session_model_heal_count\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.corrections",
       "description": "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only.",
       "input": "crate::memory::code_run_doors::CodeRunCorrectionsRequest",
       "output": "crate::memory::code_run_doors::CodeRunCorrectionsView",
       "call": "memory.code_run_corrections_as(&memory.embedded_owner(\"vault.code.corrections\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.step_evidence",
+      "description": "Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records.",
+      "input": "crate::memory::code_run_doors::CodeRunStepEvidenceRequest",
+      "output": "Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>",
+      "call": "memory.code_run_step_evidence_as(&memory.embedded_owner(\"vault.code.step_evidence\")?, input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -11870,7 +12109,7 @@
     },
     {
       "name": "vault.code.snapshots.ingest",
-      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
+      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
       "output": "crate::memory::codebase_doors::CodeSnapshotView",
       "call": "memory.code_snapshot_ingest_as(&memory.embedded_owner(\"vault.code.snapshots.ingest\")?, input)?",
@@ -11881,6 +12120,22 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.snapshots.capture",
+      "description": "Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque.",
+      "input": "crate::memory::codebase_doors::CodeSnapshotCaptureRequest",
+      "output": "crate::memory::codebase_doors::CodeSnapshotView",
+      "call": "memory.code_snapshot_capture_as(&memory.embedded_owner(\"vault.code.snapshots.capture\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
       "openapi": true
     },
     {
@@ -11929,6 +12184,22 @@
       "openapi": true
     },
     {
+      "name": "vault.code.symbols.neighbors",
+      "description": "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes.",
+      "input": "crate::memory::codebase_doors::CodeSnapshotNeighborsRequest",
+      "output": "crate::memory::codebase_doors::CodeSnapshotNeighborsView",
+      "call": "memory.code_snapshot_neighbors_as(&memory.embedded_owner(\"vault.code.symbols.neighbors\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "host_door_precheck": false
+    },
+    {
       "name": "vault.code.merge_queue.enqueue",
       "description": "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
       "input": "crate::memory::merge_queue_doors::MergeQueueEnqueueRequest",
@@ -11972,7 +12243,7 @@
     },
     {
       "name": "vault.code.merge_queue.requeue_survivors",
-      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written.",
+      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch.",
       "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueRequeueView",
       "call": "memory.merge_queue_requeue_survivors_as(&memory.embedded_owner(\"vault.code.merge_queue.requeue_survivors\")?, input)?",
@@ -12249,7 +12520,7 @@
     },
     {
       "name": "vault.agents.grants.mint",
-      "description": "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door.",
+      "description": "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it.",
       "input": "crate::task_verb::sdk::AgentGrantMintRequest",
       "output": "crate::task_verb::sdk::AgentGrantMinted",
       "call": "crate::task_verb::sdk::mint_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",
@@ -12269,6 +12540,52 @@
       "input": "crate::task_verb::sdk::AgentGrantRevokeRequest",
       "output": "crate::task_verb::sdk::AgentGrantRevoked",
       "call": "crate::task_verb::sdk::revoke_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.verb_classes.get",
+      "description": "The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::AgentVerbClassesView",
+      "call": "crate::policy_manifest_doors::agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.verb_classes.configure",
+      "description": "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once.",
+      "input": "crate::policy_manifest_doors::AgentVerbClassesConfigureRequest",
+      "output": "crate::policy_manifest_doors::AgentVerbClassesReceipt",
+      "call": "crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.oauth.authorization.answer",
+      "description": "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint.",
+      "input": "crate::task_verb::sdk::OAuthAuthorizationAnswer",
+      "output": "crate::task_verb::sdk::OAuthAuthorizationAnswered",
+      "call": "crate::task_verb::sdk::answer_oauth_authorization_as(memory.vault(), &memory.embedded_owner(\"vault.oauth.authorization.answer\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_surface": true,
@@ -12347,7 +12664,7 @@
     },
     {
       "name": "vault.repo.anchor.bind",
-      "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
+      "description": "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
       "output": "crate::task_verb::sdk::RepoAnchorBindOutput",
       "call": "crate::task_verb::sdk::bind_repo_anchor_as(memory.vault(), &memory.embedded_owner(\"vault.repo.anchor.bind\")?, input)?",
@@ -12404,6 +12721,25 @@
       "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsDefinitionsInput>",
       "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.definitions\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.repo.symbols.neighbors",
+      "description": "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsNeighborsInput>",
+      "output": "crate::memory::repo_doors::RepoSymbolsNeighborsOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.neighbors\", &input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -14676,6 +15012,38 @@
       "section": false
     },
     {
+      "name": "vault.settings.models.responses_store.read",
+      "description": "Reads the owner's Responses store switch from the serving vault.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.read\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.set",
+      "description": "Sets the owner's Responses store switch, persisting it before updating this server's live providers.",
+      "input": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.set\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.models.manifest.read",
       "description": "Reads the owner-pinned v2 model manifest, or none when no manifest is configured.",
       "input": "crate::task_verb::sdk::EmptyRequest",
@@ -14771,7 +15139,7 @@
     },
     {
       "name": "vault.model_pack.revert",
-      "description": "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing.",
+      "description": "Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing.",
       "input": "crate::llm::model_pack::ModelPackRevertRequest",
       "output": "crate::llm::model_pack::ModelPackRevert",
       "call": "crate::task_verb::sdk::revert_model_pack(memory, input)?",
@@ -15791,6 +16159,24 @@
       "input": "crate::receipt::GraphAskRequest",
       "output": "crate::receipt::GraphAskOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false
+    },
+    {
+      "name": "self.skills.graph",
+      "description": "Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible.",
+      "input": "crate::receipt::GraphSkillRunRequest",
+      "output": "crate::receipt::GraphSkillRunOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.skills.graph\", &input)?",
       "host_door": true,
       "host_door_precheck": false,
       "host_door_lists": true,
@@ -17551,9 +17937,9 @@
         },
         "output": "ClaimViews"
       },
-      "input": "ClaimRefRequest",
+      "input": "ClaimHistoryRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
-      "call": "memory.claim_history(&input.claim_ref)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).claim_history(&input.claim_ref)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -17687,7 +18073,7 @@
       },
       "input": "HydrateRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
-      "call": "memory.hydrate(&input.refs)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).hydrate(&input.refs)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -17710,7 +18096,7 @@
       },
       "input": "EntityRequest",
       "output": "crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>",
-      "call": "memory.get_entity(&input.entity_ref)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).get_entity(&input.entity_ref)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -17853,7 +18239,7 @@
       },
       "input": "NeighborsRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>",
-      "call": "memory.neighbors(&input.entity_ref, &input.opts)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).neighbors(&input.entity_ref, &input.opts)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
@@ -21120,6 +21506,14 @@
       "effect": "RepoSymbolsDefinitions"
     },
     {
+      "name": "self.code.symbols.neighbors",
+      "input": "crate::memory::repo_doors::RepoSymbolsNeighborsInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsNeighborsOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSymbolsNeighbors"
+    },
+    {
       "name": "self.code.views.get",
       "input": "crate::memory::repo_doors::RepoViewsGetInput",
       "output": "crate::memory::repo_doors::RepoViewsGetOutput",
@@ -21371,6 +21765,32 @@
       },
       "section": false,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "self.hooks.regen.adopt",
+      "description": "Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner.",
+      "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.own_hook_regen_adopt(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.hooks.regen.get",
+      "description": "Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.own_hook_regen_record(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
       "openapi": true
     },
     {
@@ -21654,7 +22074,7 @@
     },
     {
       "name": "vault.mail.pack.install",
-      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.",
+      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
@@ -21662,11 +22082,12 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door": true
     },
     {
       "name": "vault.mail.sources.connect",
-      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members.",
       "input": "crate::mail_pack::MailSourceConnectRequest",
       "output": "crate::mail_pack::MailSourceConnectReceipt",
       "call": "memory.mail_sources_connect(&input)?",
@@ -21755,6 +22176,59 @@
       "section": false
     },
     {
+      "name": "vault.mail.reply.draft",
+      "description": "Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves.",
+      "input": "crate::mail_pack::MailReplyDraftRequest",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_draft(&input)?",
+      "mcp_off_runtime": true,
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.drafts",
+      "description": "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state.",
+      "input": "crate::mail_pack::MailReplyDraftsRequest",
+      "output": "crate::mail_pack::MailReplyDraftPage",
+      "call": "memory.mail_reply_drafts(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.discard",
+      "description": "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends.",
+      "input": "crate::mail_pack::MailReplyDraftRef",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_discard(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.approve",
+      "description": "The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice.",
+      "input": "crate::mail_pack::MailReplyApproveRequest",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_approve(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
       "name": "vault.mail.compliance.setting",
       "description": "Whether org compliance search across mailboxes is on; off by default.",
       "input": "EmptyRequest",
@@ -21805,6 +22279,44 @@
       "section": false
     },
     {
+      "name": "vault.mail.sources.import_mbox",
+      "description": "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place.",
+      "input": "crate::mail_pack::MailMboxImportRequest",
+      "output": "crate::mail_pack::MailMboxImportReport",
+      "call": "memory.mail_sources_import_mbox(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.sync",
+      "description": "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner.",
+      "input": "crate::mail_pack::MailSourceSyncRequest",
+      "output": "crate::mail_pack::MailSyncReport",
+      "call": "memory.mail_sources_sync(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
+      "name": "vault.mail.sources.search",
+      "description": "The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience.",
+      "input": "crate::mail_pack::MailSourceSearchRequest",
+      "output": "crate::mail_pack::MailSearchReport",
+      "call": "memory.mail_sources_search(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
       "name": "vault.mail.inbox",
       "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
       "input": "crate::mail_pack::MailInboxRequest",
@@ -21824,6 +22336,19 @@
       "output": "crate::mail_pack::MailThreadView",
       "call": "memory.mail_thread(&input)?",
       "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.attachments.open",
+      "description": "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers.",
+      "input": "crate::mail_pack::MailAttachmentOpenRequest",
+      "output": "crate::mail_pack::MailAttachmentView",
+      "call": "memory.mail_attachments_open(&input)?",
+      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },

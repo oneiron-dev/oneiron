@@ -1,7 +1,6 @@
 //! CODE_ARTIFACT entitlement and snapshot metadata share the serving txn.
 
 use super::*;
-use crate::claim::scoped_read::access_gate::HeldAuthority;
 use crate::codebase::{CodebaseSnapshot, RepoRef};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 
@@ -47,7 +46,7 @@ impl NativeRawRead<'_> {
         let lane = &self.lane;
         let txn = lane.grant_read_txn()?;
         let (filter, policy) = lane.resolve_retrieval_filter_in(&txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = lane.held_for(None);
         let mut kept = Vec::new();
         let mut suppressed = 0;
         for id in select(&txn)? {

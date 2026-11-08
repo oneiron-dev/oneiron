@@ -3,6 +3,7 @@
 //! Entry: `Vault::connector_consent_view`. The consent transaction stays in `tool_grant`.
 
 use super::*;
+use crate::connector_key::credential_binding::open_issuer_halt_for_connector_in_txn;
 
 impl Vault {
     /// The owner consents to `consent.rows` of one catalog connector for one
@@ -35,6 +36,7 @@ impl Vault {
         let Some((_, record)) = catalog_key_in_txn(&self.store, &txn, connector)? else {
             return Ok(None);
         };
+        let issuer_halt = open_issuer_halt_for_connector_in_txn(&self.store, &txn, connector)?;
         let ready = admitted_catalog_in_txn(self, &txn, connector).is_ok();
         let slate = match record.slate_ref {
             Some(id) => read_connector_slate_in_txn(self, &txn, id)?,
@@ -47,17 +49,16 @@ impl Vault {
         let floor =
             crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
         let mut live = Vec::new();
-        for id in standing_outbound_grant_ids_for_principal(&self.store, &txn, &principal_ref)? {
-            let Some(grant) = standing_outbound_grant_in_txn(&self.store, &txn, &id)? else {
-                continue;
-            };
-            if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&floor) {
+        for grant in
+            standing_outbound_grants_for_principal_in_txn(&self.store, &txn, &principal_ref)?
+        {
+            if !grant.is_active_under_policy(&floor) {
                 continue;
             }
             if let Some(scope) = grant.scope.scoped_mcp_grant()
                 && server.as_deref() == Some(scope.server)
             {
-                live.push((scope.tool.to_owned(), id, scope.data_class_ceiling));
+                live.push((scope.tool.to_owned(), grant.id, scope.data_class_ceiling));
             }
         }
         let rows = slate
@@ -84,6 +85,7 @@ impl Vault {
             connector: record.connector,
             actor: principal_ref,
             status: record.status.as_str().to_owned(),
+            issuer_halt,
             protocol_revision: record.protocol_revision,
             ready,
             rows,

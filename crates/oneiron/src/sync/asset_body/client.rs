@@ -56,7 +56,9 @@ impl SyncClient {
     /// # Errors
     ///
     /// [`TransportError::UnknownTag`] while the file plane is off; a frame
-    /// that does not decode.
+    /// that does not decode, the home's; [`TransportError::Storage`] for a
+    /// reply of this machine's own that does not encode (FIX 22179). A body
+    /// that does not land, and a poll that fails, are no error here.
     pub(crate) fn handle_asset_body_frame(
         &mut self,
         tag: u8,

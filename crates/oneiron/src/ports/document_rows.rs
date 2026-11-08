@@ -77,6 +77,13 @@ pub(crate) struct PendingUpdate {
     pub(crate) bytes: Vec<u8>,
 }
 
+/// A pending update whose encoded bytes may borrow the caller's transaction.
+#[derive(Debug)]
+pub(crate) struct BorrowedPendingUpdate<'txn> {
+    pub(crate) seq: Option<UpdateSeq>,
+    pub(crate) bytes: std::borrow::Cow<'txn, [u8]>,
+}
+
 pub(crate) trait DocumentRowStore: Transactions {
     /// Appends one update at the slot's next sequence, advances the counter and marks the state
     /// vector stale. Returns the sequence the update took.
@@ -140,11 +147,25 @@ pub(crate) trait DocumentRowStore: Transactions {
         slot: DocumentSlot,
         row: DocumentRow,
     ) -> Result<Option<Vec<u8>>>;
+    /// The stored bytes of one row, lent by the transaction where the backend
+    /// can lend them. An overlay-owned row keeps its existing owned backing.
+    fn port_document_row_borrowed<'txn>(
+        &self,
+        txn: &'txn Self::Read<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+    ) -> Result<Option<std::borrow::Cow<'txn, [u8]>>>;
     fn port_document_updates(
         &self,
         txn: &Self::Read<'_>,
         slot: DocumentSlot,
     ) -> Result<Vec<PendingUpdate>>;
+    /// Collects every update before replay; base bytes borrow the same transaction.
+    fn port_document_updates_borrowed<'txn>(
+        &self,
+        txn: &'txn Self::Read<'_>,
+        slot: DocumentSlot,
+    ) -> Result<Vec<BorrowedPendingUpdate<'txn>>>;
     /// Whether the slot holds a snapshot or at least one pending update. Reads
     /// no further than the first update.
     fn port_document_present(&self, txn: &Self::Read<'_>, slot: DocumentSlot) -> Result<bool>;
