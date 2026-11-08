@@ -264,6 +264,11 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
+Approval-required inbox rows from held outbound receipts may carry
+`approval_digest`, the exact 64-lowercase-hex digest already on that receipt.
+Other inbox rows omit it. Gate decision receipts and the claim-only pending
+tray do not gain a digest through this projection; it adds no approval or
+release authority.
 Witness-read grants (`vault.connectors.read_grants.grant` and `.revoke`)
 keep earlier lifecycle generations. For kind `scoped_read`, `vault.receipts`
 projects a created receipt for each stored generation and a revoked receipt
