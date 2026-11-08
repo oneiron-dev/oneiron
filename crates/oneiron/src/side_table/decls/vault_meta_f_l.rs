@@ -286,9 +286,10 @@ side_tables! {
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
-    /// The settlement feed fact hooks follow: one row per settled proposal; an erase leaves a row
-    /// naming the erased proposal or settler as an empty erased row, and the runner prunes the
-    /// rows every binding passed. Key: u64be (sequence).
+    /// The settlement feed fact hooks follow: one row per settled proposal while a fact binding
+    /// reads the feed; an erase leaves a row naming the erased proposal or settler as an empty
+    /// erased row, and the runner prunes the rows every binding passed, every row while no fact
+    /// binding is enabled. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
