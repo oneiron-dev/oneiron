@@ -368,15 +368,17 @@ pub struct VerbAskSavedCall {
 /// What the host's check did with a saved call.
 #[derive(Debug)]
 pub enum VerbAskResumed {
-    /// The door ran the call: what it returned, or its error.
-    Ran(MemoryResult<Value>),
+    /// The door ran the call: what it returned, or its error, and any
+    /// actual notice metadata (FIX 12517).
+    Ran((MemoryResult<Value>, Option<bool>)),
     /// The door ran the call and listed the rows its answer was derived
     /// from, as an MCP door does (FIX 1435, FIX 21054). They are saved with
     /// the answer, and the door that answers the caller's retry releases it
-    /// by them.
+    /// by them. `hook_notice` is as on [`Self::Ran`].
     RanWithProducers {
         result: MemoryResult<Value>,
         producers: Vec<EntityId>,
+        hook_notice: Option<bool>,
     },
     /// The call was refused before it ran.
     Refused(VerbAskRefusal),
@@ -384,12 +386,18 @@ pub enum VerbAskResumed {
 
 impl VerbAskResumed {
     /// What the call returned, or its refusal as its error, beside the rows
-    /// its answer was derived from when its door listed them (FIX 1435).
-    pub(super) fn into_outcome(self) -> (MemoryResult<Value>, Option<Vec<EntityId>>) {
+    /// its answer was derived from when its door listed them (FIX 1435) and
+    /// the notice metadata its door supplied (FIX 12517). A refusal supplies
+    /// none.
+    pub(super) fn into_outcome(self) -> (MemoryResult<Value>, Option<Vec<EntityId>>, Option<bool>) {
         match self {
-            Self::Ran(ran) => (ran, None),
-            Self::RanWithProducers { result, producers } => (result, Some(producers)),
-            Self::Refused(refusal) => (Err(refusal.error()), None),
+            Self::Ran((ran, hook_notice)) => (ran, None, hook_notice),
+            Self::RanWithProducers {
+                result,
+                producers,
+                hook_notice,
+            } => (result, Some(producers), hook_notice),
+            Self::Refused(refusal) => (Err(refusal.error()), None, None),
         }
     }
 }

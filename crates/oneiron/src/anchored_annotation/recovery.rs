@@ -38,6 +38,7 @@ use crate::write_envelope::WriteActor;
 
 mod code;
 mod scoped;
+mod stories;
 
 /// Key: artifact + thread + the version the sweep moved the thread onto.
 const PRIOR: SideTable<(EntityId, EntityId, u64), PriorAnchor, Named> =
@@ -120,6 +121,7 @@ pub(super) struct DocxReanchor {
     /// Whether the versions share any paraId: a producer that mints new ids
     /// on save leaves none to follow.
     shares_ids: bool,
+    stories: Option<stories::StoryReanchor>,
 }
 
 /// One version's body paragraphs, and which of them carry each paraId.
@@ -157,12 +159,18 @@ impl DocxReanchor {
         to: u64,
         threads: &[AnnotationThread],
     ) -> Result<Option<Self>> {
+        let stories = stories::StoryReanchor::load(vault, txn, artifact, from, to, threads)?;
         if !threads.iter().any(|t| {
             t.anchor.version == from
                 && !t.is_drifted()
                 && matches!(t.anchor.locator, Locator::Docx { .. })
         }) {
-            return Ok(None);
+            return Ok(stories.map(|stories| Self {
+                before: None,
+                after: None,
+                shares_ids: false,
+                stories: Some(stories),
+            }));
         }
         let limits = vault.text_limits_in_txn(txn)?;
         // Both DOCX reads run in the host's memory (FIX 10651); a resource
@@ -196,6 +204,7 @@ impl DocxReanchor {
             before,
             after,
             shares_ids,
+            stories,
         }))
     }
 
@@ -206,6 +215,12 @@ impl DocxReanchor {
     /// by position when the count held, else by its exact unique text. A
     /// deleted paragraph, or a span deleted whole, detaches.
     pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
+        if matches!(locator, Locator::DocxStory { .. }) {
+            return self
+                .stories
+                .as_ref()
+                .map_or(ReanchorOutcome::Drifted, |stories| stories.rebind(locator));
+        }
         let Locator::Docx {
             para_path,
             char_start,
