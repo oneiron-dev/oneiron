@@ -718,18 +718,27 @@ fn transition_record_with_outcome_and(
         match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
             transition::Transitioned::Moved(record) => record,
             transition::Transitioned::Replayed(mut record) => {
-                open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
+                // No state write to keep: the replay only re-reads, so the
+                // open runs on a snapshot past the dropped writer (FIX 12497),
+                // as in `record_possible_delivery`'s no-op arm.
+                let rtxn = vault.store.custody_snapshot()?;
+                open_payload_in_txn(vault, &rtxn, &mut record)?;
                 return Ok(record);
             }
         };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    // `also` runs on the unopened record: the bridge reads header fields
+    // only, and the open below must not fail the commit (FIX 12497).
     also(&mut wtxn, &record);
-
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 12497), as in
+    // `record_possible_delivery`: a sealed row whose key will not open must
+    // not lose the transition.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }
@@ -768,6 +777,7 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
+    super::late_recipient::forget_intent_party_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

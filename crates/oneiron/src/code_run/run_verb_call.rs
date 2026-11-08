@@ -195,6 +195,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 group: args.group,
                 defer: args.defer.unwrap_or(false),
                 bound: None,
+                recipe: None,
             }))
         }
         RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
@@ -248,12 +249,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeSymbolsRenew
         | RunVerb::SelfCodeSymbolsRelease
         | RunVerb::SelfCodeProposalSubmit
+        | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(
+        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
-        ),
+        )),
     })
 }
 
