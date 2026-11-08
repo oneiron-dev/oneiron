@@ -31,6 +31,7 @@ pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_p
 pub(crate) use self::evaluate::{evaluate_external_effect_policy, judge_external_effect_in_txn};
 pub(crate) use self::preflight::{
     ExternalEffectPreflight, PreflightBudget, PreflightVerdict, preflight_answer_in_txn,
+    preflight_words,
 };
 pub(crate) use self::record::{
     check_external_effect_policy, record_external_effect_policy, record_held_external_effect_policy,

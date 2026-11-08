@@ -16,6 +16,7 @@ use super::people::{People, PeoplePrefix};
 use std::collections::BTreeSet;
 
 mod ceilings;
+mod class_verdicts;
 mod grants;
 mod working_set;
 pub use ceilings::{
@@ -23,6 +24,10 @@ pub use ceilings::{
     BriefClassPrecedence, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
     BriefParentBound, BriefParentCeiling, BriefRunCeiling, brief_credential_ceiling,
     brief_run_ceiling,
+};
+pub use class_verdicts::{
+    BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule,
+    BriefOutboundScope, BriefPerActCheck,
 };
 pub use grants::{BriefGrant, BriefGrants};
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
@@ -64,6 +69,7 @@ pub struct SelfBriefInput<'a> {
     pub parent_ceiling: Option<&'a BriefParentCeiling>,
     pub communication: CommunicationLimits,
     pub ceilings: Option<&'a [BriefCeiling]>,
+    pub class_verdicts: Option<&'a BriefClassVerdicts>,
     pub budget_lease_id: Option<&'a str>,
     pub budget: Option<&'a BudgetRead>,
     pub clock_ms: u64,
@@ -110,10 +116,13 @@ pub struct SelfBrief {
     pub parent_ceiling: Option<BriefParentCeiling>,
     #[serde(skip_serializing_if = "CommunicationLimits::is_unavailable")]
     pub communication: CommunicationLimits,
-    /// The policy's concrete class ceilings, dated. Class verdicts have no
-    /// producer: the unavailable line always names them.
+    /// The policy's concrete class ceilings, dated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ceilings: Option<Vec<BriefCeiling>>,
+    /// The per-class verdicts, each with its bound, dated as the ceilings
+    /// beside them are (FIX 20734).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_verdicts: Option<BriefClassVerdicts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_lease_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +185,7 @@ impl SelfBrief {
             parent_ceiling: input.parent_ceiling.cloned(),
             communication: input.communication,
             ceilings: input.ceilings.map(<[BriefCeiling]>::to_vec),
+            class_verdicts: input.class_verdicts.cloned(),
             budget_lease_id: input.budget_lease_id.map(str::to_owned),
             budget: input.budget.cloned(),
             clock_ms: input.clock_ms,
@@ -187,8 +197,7 @@ impl SelfBrief {
     }
 
     /// The name the unavailable line gives each value no host produced, in
-    /// the line's one order: identity's field order. Class verdicts have no
-    /// producer until FIX 20734 builds them, so the line always names them.
+    /// the line's one order: identity's field order.
     fn unavailable(&self) -> Vec<&'static str> {
         let grants = self.grants.as_ref();
         let owner_grants = grants.and_then(|grants| grants.owner_agent_grants.as_deref());
@@ -219,7 +228,7 @@ impl SelfBrief {
                 "communication credential ceiling",
             ),
             (self.ceilings.is_none(), "class ceilings"),
-            (true, "class verdicts"),
+            (self.class_verdicts.is_none(), "class verdicts"),
             (self.budget_lease_id.is_none(), "budget lease"),
             (self.budget.is_none(), "budget"),
             (self.working_set.scratchpad.is_none(), "scratchpad note"),
@@ -360,6 +369,7 @@ pub struct SelfBriefState {
     pub parent_ceiling: Option<BriefParentCeiling>,
     pub communication: CommunicationLimits,
     pub ceilings: Option<Vec<BriefCeiling>>,
+    pub class_verdicts: Option<BriefClassVerdicts>,
     pub budget_lease_id: Option<String>,
     pub budget: Option<BudgetRead>,
     pub clock_ms: u64,
@@ -415,6 +425,7 @@ impl SelfBriefState {
                 parent_ceiling: self.parent_ceiling.as_ref(),
                 communication: self.communication,
                 ceilings: self.ceilings.as_deref(),
+                class_verdicts: self.class_verdicts.as_ref(),
                 budget_lease_id: self.budget_lease_id.as_deref(),
                 budget: self.budget.as_ref(),
                 clock_ms: self.clock_ms,

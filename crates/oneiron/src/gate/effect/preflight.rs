@@ -119,22 +119,34 @@ const fn preflight_reason(code: GateReasonCode) -> PreflightReason {
     }
 }
 
-/// The preflight answer `judgment` carries: Deny and Allow as the Gate
-/// decided them, and a Pending outcome `Held` when any of its reasons is an
-/// administrative hold, else `WouldAsk`. Its holds are named either way.
-fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPreflight {
+/// The words reason codes `codes` give, classed by [`preflight_reason`]:
+/// each code's token without `gate.allow`, and each administrative hold
+/// named. Missing external-effect authority is an owner decision when
+/// `press_supplies_authority`, else a hold. The verdict is the codes' own:
+/// `Deny` when any code is a Deny, else `Held` when any is an administrative
+/// hold, else `WouldAsk` when any is an owner decision, else `Allow`. It
+/// reads no envelope window and no budget.
+pub(crate) fn preflight_words(
+    codes: &[GateReasonCode],
+    press_supplies_authority: bool,
+) -> ExternalEffectPreflight {
     let mut reasons = Vec::new();
     let mut holds = Vec::new();
-    for &code in judgment.decision().reason_codes() {
+    let mut denies = false;
+    let mut asks = false;
+    for &code in codes {
         let class = match preflight_reason(code) {
-            PreflightReason::MissingAuthority if judgment.press_supplies_authority() => {
+            PreflightReason::MissingAuthority if press_supplies_authority => {
                 PreflightReason::OwnerDecision
             }
             PreflightReason::MissingAuthority => PreflightReason::AdministrativeHold,
             class => class,
         };
-        if class == PreflightReason::Allow {
-            continue;
+        match class {
+            PreflightReason::Allow => continue,
+            PreflightReason::Deny => denies = true,
+            PreflightReason::OwnerDecision => asks = true,
+            PreflightReason::AdministrativeHold | PreflightReason::MissingAuthority => {}
         }
         let token = code.as_str();
         reasons.push(token);
@@ -145,18 +157,43 @@ fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPrefligh
             }
         }
     }
-    let verdict = match judgment.outcome() {
-        GateOutcome::Allow => PreflightVerdict::Allow,
-        GateOutcome::Deny => PreflightVerdict::Deny,
-        GateOutcome::Pending if holds.is_empty() => PreflightVerdict::WouldAsk,
-        GateOutcome::Pending => PreflightVerdict::Held,
+    let verdict = if denies {
+        PreflightVerdict::Deny
+    } else if !holds.is_empty() {
+        PreflightVerdict::Held
+    } else if asks {
+        PreflightVerdict::WouldAsk
+    } else {
+        PreflightVerdict::Allow
     };
     ExternalEffectPreflight {
         verdict,
         reasons,
         holds,
-        waits_for_envelope_window: judgment.waits_for_envelope_window(),
+        waits_for_envelope_window: false,
         rate_window_opens_at: None,
+    }
+}
+
+/// The preflight answer `judgment` carries: its reasons and holds as
+/// [`preflight_words`] classes them, Deny and Allow as the Gate decided
+/// them, and a Pending outcome `Held` when any of its reasons is an
+/// administrative hold, else `WouldAsk`. Its holds are named either way.
+fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPreflight {
+    let words = preflight_words(
+        judgment.decision().reason_codes(),
+        judgment.press_supplies_authority(),
+    );
+    let verdict = match judgment.outcome() {
+        GateOutcome::Allow => PreflightVerdict::Allow,
+        GateOutcome::Deny => PreflightVerdict::Deny,
+        GateOutcome::Pending if words.holds.is_empty() => PreflightVerdict::WouldAsk,
+        GateOutcome::Pending => PreflightVerdict::Held,
+    };
+    ExternalEffectPreflight {
+        verdict,
+        waits_for_envelope_window: judgment.waits_for_envelope_window(),
+        ..words
     }
 }
 
