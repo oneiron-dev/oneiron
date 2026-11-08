@@ -344,7 +344,17 @@ impl Vault {
         if let Some(world) = world {
             scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(world)]));
         }
-        let minted = self.mint_agent_grant(owner, surface, agent, scope, None, None)?;
+        // No repo bounds, verb classes or wallet: the tier's exact verbs.
+        let minted = self.mint_agent_grant(
+            owner,
+            surface,
+            agent,
+            scope,
+            None,
+            None,
+            BTreeSet::new(),
+            None,
+        )?;
         let grant = AuthorizedGrant {
             agent,
             grant_ref: minted.standing.id,
