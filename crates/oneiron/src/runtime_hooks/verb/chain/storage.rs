@@ -136,6 +136,15 @@ impl Chain<'_> {
         for run in &self.runs {
             let mut receipt = self.receipt(run);
             let mut saved = self.saved(run, at);
+            // A run across its caller's permanent erase keeps no caller id
+            // (FIX 22178), and one across a source's erase none of its bytes.
+            store::scrub_erased_verb_actor_in_txn(
+                vault,
+                txn,
+                &mut saved,
+                &mut receipt,
+                self.call.actor,
+            )?;
             if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?
                 .is_empty()
             {
