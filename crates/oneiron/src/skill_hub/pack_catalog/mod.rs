@@ -26,7 +26,7 @@ mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
 pub use agent_facets::AgentPackFacets;
-pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
+pub(crate) use codec::{decode as decode_source_body, names_pack_source, validate_pack_source_put};
 pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
     FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookGoldenExpect, HookGoldenInput,

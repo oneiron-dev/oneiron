@@ -472,6 +472,9 @@ impl Vault {
         &self,
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillMergeReceipt>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let mut receipt = match self.latest_refinement_receipt_in_txn(&txn, *candidate)? {
             Some(RefinementReceipt::Skill(receipt)) => Some(receipt),

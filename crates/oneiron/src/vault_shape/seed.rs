@@ -51,15 +51,14 @@ pub(super) fn seed_digest(seed: &ShapeSeed) -> Result<[u8; 32]> {
         .as_bytes())
 }
 
-/// Whether the body `read` yields is what [`decode`] reads as a seed
-/// revision, valid or not: its marker names the seed's format, in any
-/// field-name form the decoder takes (FIX 22091).
-pub(crate) fn names_shape_seed(read: impl std::io::Read) -> bool {
+/// Whether `body` is what [`decode`] reads as a seed revision, valid or
+/// not: its marker names the seed's format (FIX 22091).
+pub(crate) fn names_shape_seed(body: &[u8]) -> bool {
     #[derive(Deserialize)]
     struct Marker {
         format: String,
     }
-    rmp_serde::from_read::<_, Marker>(read).is_ok_and(|marker| marker.format == FORMAT)
+    rmp_serde::from_slice::<Marker>(body).is_ok_and(|marker| marker.format == FORMAT)
 }
 
 fn decode(id: EntityId, body: &[u8]) -> Result<Option<StoredShapeSeed>> {
@@ -92,6 +91,9 @@ impl Vault {
     ///
     /// A read failure, or a seed row that no longer decodes.
     pub fn shape_seed(&self) -> Result<Option<StoredShapeSeed>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.shape_seed_in_txn(&txn)
     }

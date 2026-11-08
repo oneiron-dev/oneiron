@@ -28,8 +28,10 @@ use crate::store::Store;
 /// the row.
 ///
 /// The caller holds what a file read needs: a writer, whose snapshot keeps
-/// the file, or a read transaction opened under the custody guard after
-/// the result bodies were pinned ([`crate::Vault::pin_all_result_bodies`]).
+/// the file, or a read transaction opened after every result body was
+/// pinned ([`crate::Vault::pin_all_result_bodies`]), so the collector
+/// leaves the file the snapshot names, under the custody guard where the
+/// caller holds none already.
 ///
 /// # Errors
 ///

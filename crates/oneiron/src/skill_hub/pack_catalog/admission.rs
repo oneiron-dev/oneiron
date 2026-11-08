@@ -522,6 +522,9 @@ impl Vault {
     /// Active installations only, verified against their still-live exact source.
     /// A Candidate never enters the section/board projection.
     pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for entry in PACK_INSTALL.iter_from(&self.store, &txn, &[])? {
