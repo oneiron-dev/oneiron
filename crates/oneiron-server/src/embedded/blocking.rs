@@ -250,13 +250,11 @@ impl<A: AppHost + Clone + 'static> Drop for BlockingEngine<A> {
         // Dropped inside a runtime, where nothing may block: the ordered
         // stop finishes on a thread of its own.
         let (hand_over, handed) = std::sync::mpsc::channel::<Running<A>>();
-        let closer = std::thread::Builder::new()
-            .name("oneiron-engine-close".to_owned())
-            .spawn(move || {
-                if let Ok(running) = handed.recv() {
-                    close_logged(running);
-                }
-            });
+        let closer = crate::engine_thread("oneiron-engine-close".to_owned()).spawn(move || {
+            if let Ok(running) = handed.recv() {
+                close_logged(running);
+            }
+        });
         match closer {
             Ok(_) => {
                 let _ = hand_over.send(running);

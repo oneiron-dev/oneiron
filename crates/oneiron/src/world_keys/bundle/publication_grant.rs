@@ -79,6 +79,18 @@ pub(super) fn publication_grantees(
     out
 }
 
+/// The exact native publication grantees, for the home's issuer pickup.
+#[cfg(feature = "sync")]
+pub(crate) fn publication_grant_requests(
+    fold: &AuthorityFold,
+    holder: Destination,
+) -> Vec<(AuthorityEntryHash, EntityId)> {
+    publication_grantees(fold, holder)
+        .into_iter()
+        .map(|grantee| (grantee.request, grantee.executor))
+        .collect()
+}
+
 /// The creator's own pending publication request, using the same recipient
 /// and key selection as a publisher mine here. No other request is granted.
 pub(super) fn own_publication_grantee(

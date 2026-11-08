@@ -4,7 +4,8 @@
 pub(crate) use oneiron_store::batch::secret_scan::container::retained_iterative::*;
 
 use super::{
-    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
+    Budget, Kind, ReadProgress, Stop, Walked, archive, classify_with_pacing, gzip, over_budget,
+    pdf, sevenz, tar, writes_handles, xz,
 };
 use crate::error::Error;
 use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
@@ -38,6 +39,7 @@ fn walk_frames(
     while let Some(frame) = frames.pop() {
         match frame {
             Frame::Member(step, member) => {
+                budget.pacing.checkpoint(ReadProgress::Member)?;
                 path.push(step);
                 visit(path.as_slice(), member.as_slice())?;
                 if !enter(&member, &mut path, budget, visit, frames)? {
@@ -66,15 +68,16 @@ fn enter(
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
     frames: &mut Vec<Frame>,
 ) -> Walked<bool> {
-    let Some(container) = classify(bytes) else {
+    let Some(container) = classify_with_pacing(bytes, &budget.pacing) else {
         return Ok(false);
     };
     budget.enter_container(bytes)?;
     frames.push(Frame::Leave);
     let mut held: Vec<Frame> = Vec::new();
     let mut visitor_stopped = false;
-    let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
-        if !held.is_empty() || classify(member).is_some() {
+    let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
+        if !held.is_empty() || classify_with_pacing(member, &budget.pacing).is_some() {
             held.push(Frame::Member(step, member.to_vec()));
             return Ok(());
         }
@@ -129,6 +132,7 @@ pub(super) fn rebuild(
         places,
         handles,
         met: 0,
+        pacing: budget.pacing.clone(),
     };
     let rebuilt = rebuild_with(bytes, &mut fill, budget);
     *met += fill.met;
@@ -164,6 +168,7 @@ fn rebuild_open(
         Opened::Open(file) => open.push(file),
     }
     while let Some(top) = open.last_mut() {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         if let Some((step, member)) = top.pending.pop() {
             path.push(step);
             match start(&member, &mut path, leaf, budget)? {
@@ -208,11 +213,12 @@ fn start(
     if !leaf.descends(path.as_slice()) {
         return Ok(Opened::Built(copy));
     }
-    let container =
-        classify(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
+    let container = classify_with_pacing(bytes, &budget.pacing)
+        .ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
     budget.enter_container(bytes)?;
     let mut pending: Vec<(MemberStep, Vec<u8>)> = Vec::new();
-    let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
+    let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         path.push(step);
         if leaf.reaches(path.as_slice()) {
             pending.push((step, member.to_vec()));
@@ -266,6 +272,8 @@ fn reader_rebuilt(
         // FIX 2471: a tar or xz container is rebuilt around its masked members.
         Kind::Tar => tar::rebuilt(bytes, budget, each),
         Kind::Xz => xz::rebuilt(bytes, budget, each),
+        // FIX 11575: a 7z archive is rebuilt around its masked members.
+        Kind::SevenZip => sevenz::rebuilt(bytes, budget, each),
         Kind::Pdf => pdf::rebuilt(bytes, budget, each),
     }
 }
@@ -279,7 +287,11 @@ fn reader_rebuilt(
 /// and unrebuilt nested bytes are never in it: a member the walk did not
 /// build is in no copy at all, the walk having stopped instead.
 pub(super) fn rebuild_tree(bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
-    rebuild_with(bytes, &mut RebuildAll::default(), budget)
+    let mut leaf = RebuildAll {
+        pacing: budget.pacing.clone(),
+        ..RebuildAll::default()
+    };
+    rebuild_with(bytes, &mut leaf, budget)
 }
 
 /// Hands each member `container`'s reader reads in `bytes` to `each`.
@@ -295,6 +307,8 @@ fn members(
         // FIX 2471: a tar's files and an xz payload are members.
         Kind::Tar => tar::members(bytes, budget, each),
         Kind::Xz => xz::members(bytes, budget, each),
+        // FIX 11575: a 7z archive's entries with data are members.
+        Kind::SevenZip => sevenz::members(bytes, budget, each),
         Kind::Pdf => pdf::members(bytes, budget, each),
     }
 }

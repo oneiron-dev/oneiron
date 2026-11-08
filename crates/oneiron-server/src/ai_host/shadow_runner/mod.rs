@@ -31,6 +31,19 @@
 //! loaded or waited on for the arm (FIX 10389, fork d): under the arm's own
 //! identity, its check run only while the arm's lease holds the arm, its
 //! feedback read under that lease alone ([`ServerShadowRunner::read_feedback`]).
+//!
+//! A model reads an arm's body only through the runner's model release
+//! ([`ServerShadowRunner::read_body_for_model`], FIX 9468): beside the raw
+//! read of the lease holder, it reads again the arm's mark on the body, its
+//! source, the reader's Grant and the taint of each source occurrence the
+//! arm was seeded with.
+//!
+//! An arm its caller runs with its own admission to the step
+//! ([`ServerShadowRunner::run_witnessed`], FIX 9446) has its source
+//! prepared again under that witness: asked before the capsule is read,
+//! before each raw read of the step's source and before the route prompt
+//! is read at the model call, and withheld once it lapses or names another
+//! step. An arm run without one is prepared as before.
 
 mod arm_store;
 mod model;
@@ -41,12 +54,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use oneiron::code_run::shadow_runner::{
-    PreparedShadowStep, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowIsolationRequired,
-    ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest, ShadowRunResult, ShadowRunner,
-    ShadowSandboxBinding, ShadowScope, ShadowSource, ShadowSourceHold, ShadowStatus,
-    ShadowStepIdentity, ShadowStepRun, ShadowTarget, ShadowUnavailable,
-    ShadowUnavailableReason as Reason, admit_published_inline, prepare_shadow_step_source,
-    shadow_source_gone,
+    PreparedShadowStep, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowBodyRef,
+    ShadowIsolationRequired, ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest,
+    ShadowRunResult, ShadowRunner, ShadowSandboxBinding, ShadowScope, ShadowSource,
+    ShadowSourceAdmission, ShadowSourceHold, ShadowSourceWitness, ShadowStatus, ShadowStepIdentity,
+    ShadowStepRun, ShadowTarget, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    admit_published_inline, prepare_shadow_step_source, prepare_witnessed_shadow_step_source,
+    read_for_model, shadow_source_gone,
 };
 use oneiron::code_run::{ExecutorStepStart, ProgramStepFeedback, step_replay_capsules};
 use oneiron::compaction::output::OutputRef;
@@ -56,7 +70,7 @@ use oneiron::engine_executor::{
 use oneiron::{EntityId, Error, LlmResponse, Result, Vault};
 
 use self::arm_store::ArmEntry;
-pub(crate) use self::arm_store::ArmRegistry;
+pub(crate) use self::arm_store::{ArmRegistry, sweep_stopped_runners};
 use self::model::Gateway;
 pub(crate) use self::runtimes::{CheckedInRuntimes, checked_in_runtimes};
 use crate::server::SyncServer;
@@ -117,9 +131,10 @@ impl ServerShadowRunner {
     }
 
     /// The whole body `body` of the arm `lease` holds, while it holds it:
-    /// how a caller adopts an arm's evidence before it releases the lease.
-    /// Unavailable once the lease holds no arm or the arm no such body
-    /// (`SourceMissing`), and once an erase or actor scrub of the arm's
+    /// the raw read of the lease holder, which checks no mark and no taint.
+    /// A model reads a body through [`Self::read_body_for_model`] (FIX
+    /// 9468). Unavailable once the lease holds no arm or the arm no such
+    /// body (`SourceMissing`), and once an erase or actor scrub of the arm's
     /// source actor took its content (`SourceWithheld`, FIX 5718), which
     /// releases the arm.
     ///
@@ -138,6 +153,39 @@ impl ServerShadowRunner {
             .store()
             .read(body)?
             .ok_or_else(|| ShadowUnavailable::new(Reason::SourceMissing, "body")))
+    }
+
+    /// The whole body `body` of the arm `lease` holds, released to a model
+    /// (FIX 9468): how a caller adopts an arm's evidence for a model before
+    /// it releases the lease. Unavailable as [`Self::read_body`] is, and
+    /// withheld (`SourceWithheld`) while the arm marked the body, once
+    /// `admission` no longer admits its reader to the step's capture, and
+    /// while a source occurrence the arm was seeded with reads tainted now
+    /// ([`read_for_model`]). The bytes are the arm's, as written.
+    ///
+    /// # Errors
+    ///
+    /// The arm's store failing, a body that is not its digest, a server that
+    /// stopped, and the release's storage errors.
+    pub fn read_body_for_model(
+        &self,
+        lease: &ShadowArmLease,
+        body: &ShadowBodyRef,
+        admission: &dyn ShadowSourceAdmission,
+    ) -> Result<Outcome<Vec<u8>>> {
+        let Some(arm) = self.arms.get(lease) else {
+            return Ok(Err(ShadowUnavailable::new(Reason::SourceMissing, "lease")));
+        };
+        if let Some(withheld) = arm.store().source_withheld() {
+            self.arms.release(lease);
+            return Ok(Err(withheld));
+        }
+        let server = self
+            .server
+            .upgrade()
+            .ok_or_else(|| Error::InvalidConfig("shadow runner: the server stopped".to_owned()))?;
+        let vault = server.vault();
+        read_for_model(vault, arm.store(), arm.release_source(), body, admission)
     }
 
     /// The type feedback of the program the arm `lease` holds ran, as its
@@ -183,10 +231,29 @@ impl ServerShadowRunner {
             None => false,
         }
     }
-}
 
-impl ShadowRunner for ServerShadowRunner {
-    fn run<'a>(&'a self, request: ShadowRunRequest) -> ShadowRunFuture<'a> {
+    /// Runs one arm of `request` as [`ShadowRunner::run`] does, its source
+    /// prepared again under `witness`, its caller's own admission to the
+    /// step (FIX 9446): asked before the capsule is read, before each raw
+    /// read of the step's source and before the route prompt is read at the
+    /// model call. Once it no longer admits its reader, or admits another
+    /// step than `request` names, the arm is unavailable (`SourceWithheld`).
+    /// No grant id `request` names stands in for it.
+    pub fn run_witnessed(
+        &self,
+        request: ShadowRunRequest,
+        witness: ShadowSourceWitness,
+    ) -> ShadowRunFuture<'_> {
+        self.spawn_arm(request, Some(witness))
+    }
+
+    /// One arm of `request` on the server's runtime, to its result, its
+    /// source prepared under `witness` when the caller holds one.
+    fn spawn_arm(
+        &self,
+        request: ShadowRunRequest,
+        witness: Option<ShadowSourceWitness>,
+    ) -> ShadowRunFuture<'_> {
         let cancel = StepCancellation::new();
         lock(&self.cancels).insert(request.arm_id, cancel.clone());
         let running = Running {
@@ -199,6 +266,7 @@ impl ShadowRunner for ServerShadowRunner {
             runtimes: Arc::clone(&self.runtimes),
             arms: Arc::clone(&self.arms),
             cancel,
+            witness,
         };
         let task = self.handle.spawn(arm.run(request));
         Box::pin(async move {
@@ -208,6 +276,12 @@ impl ShadowRunner for ServerShadowRunner {
                 Err(error) => Err(Error::InvalidConfig(format!("shadow arm task: {error}"))),
             }
         })
+    }
+}
+
+impl ShadowRunner for ServerShadowRunner {
+    fn run<'a>(&'a self, request: ShadowRunRequest) -> ShadowRunFuture<'a> {
+        self.spawn_arm(request, None)
     }
 }
 
@@ -233,6 +307,10 @@ struct Arm {
     runtimes: ShadowRuntimes,
     arms: Arc<ArmRegistry>,
     cancel: StepCancellation,
+    /// The caller's own admission to the arm's step, when it holds one (FIX
+    /// 9446): the arm's source is prepared again under it, and its route
+    /// prompt read under it.
+    witness: Option<ShadowSourceWitness>,
 }
 
 impl Arm {
@@ -287,7 +365,8 @@ impl Arm {
             .upgrade()
             .ok_or_else(|| Error::InvalidConfig("shadow runner: the server stopped".to_owned()))?;
         let vault = Arc::clone(server.vault());
-        let prepared = match prepare_on_worker(Arc::clone(&vault), *step).await? {
+        let witness = self.witness.clone();
+        let prepared = match prepare_on_worker(Arc::clone(&vault), *step, witness).await? {
             Ok(prepared) => prepared,
             Err(unavailable) => return Ok(ShadowStatus::Unavailable { unavailable }),
         };
@@ -303,13 +382,15 @@ impl Arm {
         let source_actor = prepared.source_actor();
         let source = (source_actor, prepared.step().run);
         let hold = source_hold(&vault, source_actor);
-        let arm = self.arms.open_arm(lease, source, hold, &vault)?;
+        let release = prepared.release_source();
+        let arm = self.arms.open_arm(lease, source, hold, release, &vault)?;
         result.lease = Some(lease);
         let gateway = Gateway {
             server: &server,
             vault: &vault,
             store: arm.store(),
             cancel: &self.cancel,
+            witness: self.witness.as_ref(),
         };
         let called = gateway
             .call(0, &prepared, &request.model_pin, &request.meter)
@@ -477,18 +558,32 @@ fn matches_request(
     prepared.check_refs(&request.body_refs)
 }
 
-/// `step`'s capsule, read and frozen on a blocking worker.
+/// `step`'s capsule, read and frozen on a blocking worker, under `witness`
+/// when the caller holds one (FIX 9446).
 async fn prepare_on_worker(
     vault: Arc<Vault>,
     step: ShadowStepIdentity,
+    witness: Option<ShadowSourceWitness>,
 ) -> Result<Outcome<PreparedShadowStep>> {
-    let prepared = tokio::task::spawn_blocking(move || prepare_step(&vault, step)).await;
+    let prepared =
+        tokio::task::spawn_blocking(move || prepare_step(&vault, step, witness.as_ref())).await;
     prepared.map_err(|error| Error::InvalidConfig(format!("shadow source worker: {error}")))?
 }
 
 /// The capsule `step` names, read and frozen; unavailable when there is no
-/// such capsule.
-fn prepare_step(vault: &Vault, step: ShadowStepIdentity) -> Result<Outcome<PreparedShadowStep>> {
+/// such capsule. Under `witness` (FIX 9446) the caller's admission is asked
+/// before the capsule is read, then before each raw read of its source, and
+/// the source is withheld once it lapses or names another step.
+fn prepare_step(
+    vault: &Vault,
+    step: ShadowStepIdentity,
+    witness: Option<&ShadowSourceWitness>,
+) -> Result<Outcome<PreparedShadowStep>> {
+    if let Some(witness) = witness
+        && let Err(withheld) = witness.check(vault, step)?
+    {
+        return Ok(Err(withheld));
+    }
     let capsule = step_replay_capsules(vault, step.attempt)?
         .into_iter()
         .find(|capsule| {
@@ -502,7 +597,10 @@ fn prepare_step(vault: &Vault, step: ShadowStepIdentity) -> Result<Outcome<Prepa
             "capsule",
         )));
     };
-    prepare_shadow_step_source(vault, &capsule)
+    match witness {
+        Some(witness) => prepare_witnessed_shadow_step_source(vault, &capsule, witness),
+        None => prepare_shadow_step_source(vault, &capsule),
+    }
 }
 
 /// What an arm of a step `actor`'s source run is for asks at each read and

@@ -51,8 +51,8 @@ pub(crate) use self::fork_erase::{
     contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
 };
 pub(crate) use self::owner_pair::{
-    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
@@ -436,18 +436,20 @@ pub(crate) fn put_unavailable(
     })
 }
 
-/// A fork's stored answer; `None` when its body is released (its capsule's
-/// actor was erased), gone or withheld.
+/// A fork's stored answer, read while `admits` holds in the read's own
+/// snapshot (FIX 20607); `None` when its body is released (its capsule's
+/// actor was erased), gone or withheld, or `admits` does not hold.
 pub(crate) fn fork_response(
     vault: &Vault,
     run: EntityId,
     receipt: &ContributionForkReceipt,
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Option<LlmResponse>> {
     if receipt.response_erased {
         return Ok(None);
     }
     let path = receipt.response_path.as_str();
-    let Some(bytes) = held_body(vault, run, path, receipt.response, |_| Ok(true))? else {
+    let Some(bytes) = held_body(vault, run, path, receipt.response, admits)? else {
         return Ok(None);
     };
     Ok(serde_json::from_slice(&bytes).ok())

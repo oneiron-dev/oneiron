@@ -6,7 +6,8 @@ use oneiron_contracts::error::{Error, Result};
 
 use super::super::journal::JournalEntry;
 use super::super::keyspace::{
-    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayValue, project_mutation, unbudgeted_row,
+    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayState, OverlayValue, project_mutation,
+    unbudgeted_row,
 };
 use super::super::snapshot::OverlaySnapshot;
 use super::ACTIVE_SEGMENT;
@@ -14,7 +15,115 @@ use super::lifecycle::SessionOverlay;
 use super::retained::{mutation_heap, staged_entry_heap};
 use oneiron_contracts::error::OffRecordError;
 
+pub(super) struct NetBudgetCheckpoint {
+    pub(super) preview: Arc<OverlayState>,
+    mutations_len: usize,
+    journal_len: usize,
+    journal_bytes: usize,
+}
+
+struct NetBudgetGuard {
+    overlay: Arc<SessionOverlay>,
+    nonce: u64,
+    finished: bool,
+}
+
+impl Drop for NetBudgetGuard {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let _ = ACTIVE_SEGMENT.try_with(|slot| {
+            let Ok(mut slot) = slot.try_borrow_mut() else {
+                return;
+            };
+            let Some(segment) = slot.as_mut().filter(|segment| {
+                Arc::ptr_eq(&segment.overlay, &self.overlay) && segment.nonce == self.nonce
+            }) else {
+                return;
+            };
+            if let Some(checkpoint) = segment.net_budget.take() {
+                segment.preview = checkpoint.preview;
+                segment.mutations.truncate(checkpoint.mutations_len);
+                segment.journal.truncate(checkpoint.journal_len);
+                segment.journal_bytes = checkpoint.journal_bytes;
+                self.overlay
+                    .charge_to(self.overlay.retained_with(Some(segment), 0));
+            }
+        });
+    }
+}
+
 impl SessionOverlay {
+    /// Stages one room operation against its final net row and journal growth.
+    /// Reads still see every preceding mutation. An error or unwind restores
+    /// the segment's prior rows and journal; success validates the same byte
+    /// budget before the caller can commit its base transaction.
+    pub fn with_net_budget<T>(self: &Arc<Self>, stage: impl FnOnce() -> Result<T>) -> Result<T> {
+        let nonce = ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot
+                .as_mut()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self))
+            else {
+                return Err(Error::InvariantViolation(
+                    "room net-budget staging requires its active txn segment",
+                ));
+            };
+            if segment.net_budget.is_some() {
+                return Err(Error::InvariantViolation(
+                    "a room net-budget operation is already active",
+                ));
+            }
+            segment.net_budget = Some(NetBudgetCheckpoint {
+                preview: segment.preview.clone(),
+                mutations_len: segment.mutations.len(),
+                journal_len: segment.journal.len(),
+                journal_bytes: segment.journal_bytes,
+            });
+            Ok(segment.nonce)
+        })?;
+        let mut guard = NetBudgetGuard {
+            overlay: self.clone(),
+            nonce,
+            finished: false,
+        };
+        let result = stage()?;
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot
+                .as_mut()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self) && segment.nonce == nonce)
+            else {
+                return Err(Error::InvariantViolation(
+                    "room net-budget staging lost its txn segment",
+                ));
+            };
+            let checkpoint = segment
+                .net_budget
+                .as_ref()
+                .ok_or(Error::InvariantViolation(
+                    "room net-budget staging lost its checkpoint",
+                ))?;
+            let before = checkpoint
+                .preview
+                .bytes_used
+                .checked_add(checkpoint.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            let after = segment
+                .preview
+                .bytes_used
+                .checked_add(segment.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            self.ensure_mutation_budget(before, before, after)?;
+            drop(segment.net_budget.take());
+            self.charge_to(self.retained_with(Some(segment), 0));
+            Ok(())
+        })?;
+        guard.finished = true;
+        Ok(result)
+    }
+
     // Budget failures belong exclusively to preflight, before the base commit.
     // This apply helper deliberately has no budget input or budget-error branch.
     pub fn put(
@@ -156,11 +265,13 @@ impl SessionOverlay {
             for mutation in &mutations {
                 projected = project_mutation(&projected, mutation)?;
             }
-            self.ensure_mutation_budget(
-                current_bytes,
-                segment.preview.bytes_used,
-                projected.bytes_used,
-            )?;
+            if segment.net_budget.is_none() {
+                self.ensure_mutation_budget(
+                    current_bytes,
+                    segment.preview.bytes_used,
+                    projected.bytes_used,
+                )?;
+            }
             let incoming = mutations.iter().map(mutation_heap).sum::<usize>();
             self.charge_to(self.retained_with(Some(segment), incoming));
             Ok(())
@@ -218,7 +329,9 @@ impl SessionOverlay {
                 .bytes_used
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
-            self.ensure_budget(current_bytes, incoming_bytes)?;
+            if segment.net_budget.is_none() {
+                self.ensure_budget(current_bytes, incoming_bytes)?;
+            }
             // Charged at what the room retains before the entry is kept,
             // never refused or waited on (FIX 5991, 10104).
             self.charge_to(self.retained_with(Some(&*segment), staged_entry_heap(&entry)));
@@ -272,11 +385,13 @@ impl SessionOverlay {
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
             let projected = project_mutation(&segment.preview, mutation)?;
-            self.ensure_mutation_budget(
-                current_bytes,
-                segment.preview.bytes_used,
-                projected.bytes_used,
-            )?;
+            if segment.net_budget.is_none() {
+                self.ensure_mutation_budget(
+                    current_bytes,
+                    segment.preview.bytes_used,
+                    projected.bytes_used,
+                )?;
+            }
             // Charged at what the room retains before the copy is made, never
             // refused or waited on; the publish settles it to what the
             // overlay retains then (FIX 5991, 10104).
