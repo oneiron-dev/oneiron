@@ -534,6 +534,10 @@ side_tables! {
     /// range and the host's record of what wrote it, conversation evidence included; no words.
     /// Key: id16(summary).
     COMPACTION_CONVERSATION_RECEIPT: VaultMeta b"compaction:conversation_receipt:v1:" Named Engine;
+    /// Each landing receipt under its conversation (FIX 5032), written with the receipt in its
+    /// mint's own writer. Ids only: the receipt is the evidence, and this row names it and grants
+    /// nothing. Key: id16(conversation) + id16(summary).
+    COMPACTION_CONVERSATION_RECEIPT_BY_CONVERSATION: VaultMeta b"compaction:conversation_receipt_by_conversation:v1:" Raw Engine;
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
