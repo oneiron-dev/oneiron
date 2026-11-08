@@ -10,12 +10,12 @@ mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
+mod campaign_enrollment;
 mod campaign_split;
 mod catalog_fragment;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
-mod campaign_enrollment;
 mod connector_call;
 mod connector_pack;
 mod connector_reply_retry;
@@ -458,6 +458,7 @@ pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
+pub use self::campaign_enrollment::*;
 pub use self::campaign_split::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -465,7 +466,6 @@ pub use self::catalog_fragment::{
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;
-pub use self::campaign_enrollment::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
 pub use self::connector_reply_retry::*;
