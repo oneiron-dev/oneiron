@@ -107,6 +107,10 @@ pub struct CodeWaitAnswerView {
     /// The consent act's receipt, `gate:<hex>`.
     pub decision_ref: String,
     pub answered_at_ms: u64,
+    /// The actual native standing grant, not the one-shot approval.
+    pub standing_grant_ref: Option<String>,
+    /// The standing grant's separate creation receipt, `gate:<hex>`.
+    pub standing_receipt_ref: Option<String>,
 }
 
 /// A receipt's joins as the consent Gate ledger holds them.
@@ -177,6 +181,8 @@ pub struct CodeWaitReceiptView {
     /// The exact target an answer names.
     pub target: CodeWaitTarget,
     pub state: CodeWaitState,
+    /// The current control revision used by the explicit rebind doors.
+    pub revision: u64,
     /// The verb row the held effect is.
     pub verb: String,
     /// The catalog name and tool of the held connector call; empty for a
@@ -191,9 +197,65 @@ pub struct CodeWaitReceiptView {
     pub ask_ref: Option<EntityId>,
     /// The answers this wait offers.
     pub allowed_answers: Vec<CodeWaitChoice>,
+    /// The exact server-wide actor/action/selectors/target offered to the owner.
+    /// An offer alone is not a standing grant.
+    pub standing_offer: Option<crate::code_run::CodeConsentStandingOffer>,
     pub answer: Option<CodeWaitAnswerView>,
     pub settlement: Option<CodeWaitSettlementView>,
     pub consumption: Option<CodeWaitConsumptionView>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
+    pub rebind_proposal: Option<CodeWaitRebindPrepared>,
+    pub rebinds: Vec<CodeWaitRebindReceipt>,
+}
+
+/// Proposes the original holder's real request-bound successor for one admitted wait.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitRebindPrepareRequest {
+    pub target: CodeWaitTarget,
+    pub revision: u64,
+}
+
+/// The holder's own proposal, without the owner's answer or word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeWaitRebindPrepared {
+    pub target: CodeWaitTarget,
+    pub proposal_ref: EntityId,
+    pub revision: u64,
+    /// Slip ids, 64 lowercase hex.
+    pub predecessor: String,
+    pub successor: String,
+}
+
+/// The independent owner's explicit act confirming one exact prepared proposal.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitRebindRequest {
+    pub target: CodeWaitTarget,
+    pub revision: u64,
+    pub proposal_ref: EntityId,
+}
+
+/// Succession authority for the same admission, separate from its first approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeWaitRebindReceipt {
+    pub target: CodeWaitTarget,
+    pub proposal_ref: EntityId,
+    pub prepared_revision: u64,
+    pub predecessor: String,
+    pub successor: String,
+    pub binding_digest: String,
+    pub effect_digest: String,
+    pub previous_effect_digest: String,
+    pub intent_id: String,
+    pub original_approval_ref: String,
+    pub previous_marker_ref: String,
+    pub prior_rebind_ref: Option<String>,
+    pub owner_ref: EntityId,
+    pub authentication_ref: String,
+    pub receipt_ref: String,
+    pub confirmed_at_ms: u64,
+    /// This request read the previously committed act; it authorized nothing new.
+    pub already_rebound: bool,
 }

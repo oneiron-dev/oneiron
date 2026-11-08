@@ -17,13 +17,13 @@
 use std::collections::BTreeSet;
 
 use base64::Engine as _;
-use reqwest::header::AUTHORIZATION;
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
 use super::credential::WireReads;
 use super::rest::{
-    self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
-    text_of,
+    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
+    refused, text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
@@ -63,6 +63,9 @@ pub struct HttpGmailMailWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for (fix list row 16311).
+    tokens: FreshGoogleTokens,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -76,6 +79,7 @@ impl<'v> HttpGmailMailWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshGoogleTokens::new(),
         })
     }
 
@@ -87,18 +91,44 @@ impl<'v> HttpGmailMailWire<'v> {
         url: &str,
         query: &[(&str, String)],
     ) -> Result<Option<Value>> {
+        self.with_verified_bearer(source, |auth, profile| match profile {
+            // The profile just read is the one asked for.
+            Some(profile) if url == GMAIL_PROFILE_URL && query.is_empty() => {
+                Ok(RestAnswer::Found(profile))
+            }
+            _ => rest::send(
+                self.client
+                    .get(url)
+                    .query(query)
+                    .header(AUTHORIZATION, auth),
+            ),
+        })?
+        .found_or_gone("gmail_mail")
+    }
+
+    /// The answer of `read`, run at the door of the source's credential
+    /// with its Bearer header, once the credential presented there is
+    /// checked to read the mailbox the source names; with the Gmail profile
+    /// that check read, when it ran in this call.
+    fn with_verified_bearer<A>(
+        &self,
+        source: &MailSyncSource,
+        mut read: impl FnMut(HeaderValue, Option<Value>) -> Result<A>,
+    ) -> Result<A> {
         if !reads_google_mail(source.provider) {
             return Err(refused("gmail_mail_wire_reads_google_mailboxes_only"));
         }
-        let mut answer: Option<RestAnswer> = None;
+        let mut answer: Option<A> = None;
         let _receipt = self.vault.with_source_token_at_door(
             source,
             WireReads::Mailbox,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked.
-                if !self.verified.holds(source.source_ref, token) {
+                let profile = if self.verified.holds(source.source_ref, token) {
+                    None
+                } else {
                     let request = self
                         .client
                         .get(GMAIL_PROFILE_URL)
@@ -108,24 +138,13 @@ impl<'v> HttpGmailMailWire<'v> {
                         .ok_or_else(|| refused("gmail_mail_profile_not_found"))?;
                     reads_mailbox(&profile, source)?;
                     self.verified.insert(source.source_ref, token);
-                    if url == GMAIL_PROFILE_URL && query.is_empty() {
-                        // The profile just read is the one asked for.
-                        answer = Some(RestAnswer::Found(profile));
-                        return Ok(());
-                    }
-                }
-                let request = self
-                    .client
-                    .get(url)
-                    .query(query)
-                    .header(AUTHORIZATION, auth);
-                answer = Some(rest::send(request)?);
+                    Some(profile)
+                };
+                answer = Some(read(auth, profile)?);
                 Ok(())
             },
         )?;
-        answer
-            .ok_or_else(|| refused("gmail_mail_credential_door_refused"))?
-            .found_or_gone("gmail_mail")
+        answer.ok_or_else(|| refused("gmail_mail_credential_door_refused"))
     }
 
     /// The mailbox's Gmail profile: its address and current history id.
@@ -137,6 +156,36 @@ impl<'v> HttpGmailMailWire<'v> {
     fn message_url(provider_id: &str) -> Result<String> {
         require_plain_id(provider_id)?;
         Ok(format!("{GMAIL_USER_URL}/messages/{provider_id}"))
+    }
+}
+
+impl HttpGmailMailWire<'_> {
+    /// One page of the ids `search` (Gmail's `q`) finds, at most `limit`.
+    fn listed_ids(
+        &self,
+        source: &MailSyncSource,
+        search: String,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        let mut params = vec![("maxResults", limit.to_string()), ("q", search)];
+        if let Some(page) = page {
+            params.push(("pageToken", page.to_owned()));
+        }
+        let listed = self
+            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
+            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
+        let mut messages = Vec::new();
+        for entry in array(&listed, "messages") {
+            messages.push(MailMessageRef {
+                provider_id: plain_id(entry.get("id"))?,
+                thread_id: text_of(entry.get("threadId")),
+            });
+        }
+        Ok(MailIdPage {
+            messages,
+            next_page: text_of(listed.get("nextPageToken")),
+        })
     }
 }
 
@@ -159,27 +208,21 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             Some(newer_than) => format!("-in:drafts after:{newer_than}"),
             None => "-in:drafts".to_owned(),
         };
-        let mut params = vec![
-            ("maxResults", GMAIL_LIST_PAGE_SIZE.to_string()),
-            ("q", search),
-        ];
-        if let Some(page) = page {
-            params.push(("pageToken", page.to_owned()));
-        }
-        let listed = self
-            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
-            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
-        let mut messages = Vec::new();
-        for entry in array(&listed, "messages") {
-            messages.push(MailMessageRef {
-                provider_id: plain_id(entry.get("id"))?,
-                thread_id: text_of(entry.get("threadId")),
-            });
-        }
-        Ok(MailIdPage {
-            messages,
-            next_page: text_of(listed.get("nextPageToken")),
-        })
+        self.listed_ids(source, search, GMAIL_LIST_PAGE_SIZE, page)
+    }
+
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        // The caller's own operators, grouped, beside the listing's: trash
+        // and spam are left out by Gmail's default, drafts by the query. The
+        // search door takes only a query whose parentheses balance, so no
+        // `)` of the caller's closes this group.
+        self.listed_ids(source, format!("-in:drafts ({query})"), limit, page)
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
@@ -238,19 +281,24 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         // Gmail's `metadata` and `full` headers come with their encoded
         // words decoded, so an encoded comma or address would split a
         // mailbox; only `raw` keeps each one's bounds as the sender wrote
-        // them (fix list row 20520).
-        let params = [("format", "raw".to_owned())];
-        let answer = self
-            .get(source, &Self::message_url(provider_id)?, &params)?
+        // them (fix list row 20520). The raw message is the whole message,
+        // attachments included: only its `raw` field is asked for, and it is
+        // read as it arrives up to the end of its header block, so a message
+        // of any size is answered (fix list row 20738).
+        let url = Self::message_url(provider_id)?;
+        let params = [("format", "raw".to_owned()), ("fields", "raw".to_owned())];
+        let header_block = self
+            .with_verified_bearer(source, |auth, _profile| {
+                let request = self
+                    .client
+                    .get(url.as_str())
+                    .query(&params)
+                    .header(AUTHORIZATION, auth);
+                rest::send_raw_header_block(request)
+            })?
+            .found_or_gone("gmail_mail")?
             .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
-        let raw = answer
-            .get("raw")
-            .and_then(Value::as_str)
-            .ok_or_else(|| refused("gmail_mail_raw_message_missing"))?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(raw.trim_end_matches('='))
-            .map_err(|_| refused("gmail_mail_raw_message_unreadable"))?;
-        Ok(Some(super::mime::raw_address_headers(&bytes)))
+        Ok(Some(super::mime::raw_address_headers(&header_block)))
     }
 
     fn own_addresses(&self, source: &MailSyncSource) -> Result<Option<Vec<String>>> {

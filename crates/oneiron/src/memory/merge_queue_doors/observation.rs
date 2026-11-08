@@ -38,7 +38,10 @@ impl Memory<'_> {
             head_commit: pointers.head_commit,
             green_commit: pointers.green_commit,
             pending_slow_batch_refs: pointers.pending_slow_batch_refs,
-            batches: batches.into_iter().map(batch_view).collect(),
+            batches: batches
+                .into_iter()
+                .map(|batch| self.merge_queue_batch_view(&queue, batch))
+                .collect::<MemoryResult<Vec<_>>>()?,
             verdicts,
             drive,
             green_export: queue.green_export_view(),
