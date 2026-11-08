@@ -116,6 +116,17 @@ impl Vault {
         self.pack_hook_bindings_in_txn(&txn)
     }
 
+    /// Every hook binding in the caller's snapshot, held back or not: the
+    /// live checks of [`Self::pack_hook_bindings_in_txn`] are not applied,
+    /// so the hook feed prune counts a binding they hold back for now (FIX
+    /// 22121).
+    pub(crate) fn pack_hook_binding_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, PackHookBinding)>> {
+        bindings_in_txn(&self.store, txn)
+    }
+
     /// Live bindings in the caller's snapshot, including publisher Grant checks.
     pub(crate) fn pack_hook_bindings_in_txn(
         &self,
