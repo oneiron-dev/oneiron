@@ -135,6 +135,35 @@ fn hex_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
     }
 }
 
+/// The rows a verb run's caller named in its own args and result, and in
+/// the args its landing was judged on ([`named_ids`]), read from the whole
+/// input before the pin bound drops any of it (review #6817): a row named
+/// there can carry its bytes into the run's outcome. Text that does not
+/// decode names every id it spells.
+pub(in crate::runtime_hooks) fn rows_named_by_call(
+    input: &str,
+    landing_original: Option<&str>,
+) -> Vec<EntityId> {
+    let mut rows = BTreeSet::new();
+    match serde_json::from_str::<Value>(input) {
+        Ok(value) => {
+            for field in ["args", "result"] {
+                if let Some(part) = value.get(field) {
+                    named_ids(part, &mut rows);
+                }
+            }
+        }
+        Err(_) => spelled_ids_in(input, &mut rows),
+    }
+    if let Some(args) = landing_original {
+        match serde_json::from_str::<Value>(args) {
+            Ok(value) => named_ids(&value, &mut rows),
+            Err(_) => spelled_ids_in(args, &mut rows),
+        }
+    }
+    rows.into_iter().collect()
+}
+
 /// Adds to `ids` each id the JSON `text` can spell in a string or key once
 /// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
 /// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a
@@ -231,6 +260,9 @@ enum VerbRunErase {
 /// actor is no row the run stood on, so only its id leaves, and the run's
 /// reads, outcome and digests stay.
 fn erase_verb_run(record: &mut HookVerbRunRecord, erased: &ErasedIds) -> VerbRunErase {
+    if record.named_rows.iter().any(|row| erased.holds(row)) {
+        return VerbRunErase::Depends;
+    }
     if record
         .landing_original
         .as_deref()
@@ -325,6 +357,7 @@ pub(in crate::runtime_hooks) fn scrub_erased_verb_run_in_txn(
     actor: EntityId,
 ) -> Result<bool> {
     let mut named = BTreeSet::from([actor]);
+    named.extend(record.named_rows.iter().copied());
     for text in [
         record.input_json.as_deref(),
         record.landing_original.as_deref(),
