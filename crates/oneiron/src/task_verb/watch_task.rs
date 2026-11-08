@@ -70,16 +70,20 @@ pub(super) fn decode_due_at(
         .transpose()
 }
 
-/// The due time `task_ref` was open at, for a hook offered its tick: an
-/// open TASK's due time, and a watch TASK's once it settled at or after
-/// that time, as the release of its tick settles it. `None` when the row is
-/// gone, settled otherwise, cancelled (review #6784) or carries no due time;
-/// a body no reader can decode reads as none, as
+/// The due time `task_ref` was open at, for a hook offered its tick. An
+/// open TASK's due time, to any hook: one bound after it ticked is still
+/// offered that tick. A watch TASK's, once it settled at or after that
+/// time as the release of its tick settles it, only to a hook
+/// `bound_at_release`, enabled before that release: one bound after it
+/// finds the watch's work done (review #6784). `None` when the row is
+/// gone, settled otherwise, cancelled (review #6784) or carries no due
+/// time; a body no reader can decode reads as none, as
 /// [`super::open_task_due_at_in_txn`] reads it.
 pub(crate) fn tick_due_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
+    bound_at_release: bool,
 ) -> Result<Option<u64>> {
     let body = match task_verb_body_in(vault, txn, task_ref) {
         Ok(body) => body,
@@ -88,6 +92,7 @@ pub(crate) fn tick_due_at_in_txn(
     };
     let due_at = body.and_then(|body| match body.terminal() {
         None => body.due_at,
+        Some(_) if !bound_at_release => None,
         Some(terminal) => body
             .watch_due_at()
             .filter(|due_at| terminal.finished_at >= *due_at),

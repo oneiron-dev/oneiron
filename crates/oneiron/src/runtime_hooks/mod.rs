@@ -55,6 +55,7 @@ pub use replay::{
     HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,
     HookReplayResult,
 };
+pub(crate) use runner::prune_hook_feeds;
 pub use runner::{
     FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassAdmission, HookPassReport,
 };
@@ -69,7 +70,9 @@ pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SchedulePosition,
     SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
 };
-pub(crate) use source::{index_task_due_in_txn, record_surface_inbound_in_txn};
+pub(crate) use source::{
+    index_task_due_in_txn, next_tick_release_at, record_surface_inbound_in_txn, release_due_ticks,
+};
 pub(crate) use store::{
     hook_receipts, hook_run_read_rows, scrub_erased_hook_sources, scrub_hook_source_in_txn,
     sync_binding_cursor_in_txn,
