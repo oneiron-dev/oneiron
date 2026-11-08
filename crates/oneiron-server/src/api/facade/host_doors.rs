@@ -111,6 +111,7 @@ pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
 // The owner's Files world source doors (FIX 6942), likewise.
 pub(crate) use super::files_doors::*;
+pub(crate) use super::follower_keyframe_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
@@ -199,6 +200,7 @@ pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
+pub(crate) use super::device_succession_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;

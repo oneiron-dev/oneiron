@@ -76,6 +76,23 @@ impl Vault {
         expected: &[u8; 32],
         sight: SecretSight,
     ) -> Result<Option<Vec<u8>>> {
+        self.sighted_body_file_in_txn_with_reader(
+            txn,
+            id,
+            expected,
+            sight,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn sighted_body_file_in_txn_with_reader(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        expected: &[u8; 32],
+        sight: SecretSight,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Option<Vec<u8>>> {
         let Some(row) = self.store.port_entity_record(txn, id)? else {
             return Ok(None);
         };
@@ -126,7 +143,7 @@ impl Vault {
             return Ok(None);
         };
         if spans.is_some() {
-            if let Some(reason) = crate::batch::secret_scan::write_tree_hit(&copy, None) {
+            if let Some(reason) = reader.write_tree_hit(&copy, None) {
                 return Err(masked_copy_withheld(reason));
             }
             return Ok(Some(copy));
@@ -134,7 +151,15 @@ impl Vault {
         if sight == SecretSight::Masked {
             // The checked reader read `copy` to its end against the
             // manifest's BLAKE3, which is `expected` (speed).
-            return sighted_bytes_in_txn(&self.store, txn, copy, Some(expected), sight).map(Some);
+            return crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
+                &self.store,
+                txn,
+                copy,
+                Some(expected),
+                sight,
+                reader,
+            )
+            .map(Some);
         }
         Ok(Some(copy))
     }
