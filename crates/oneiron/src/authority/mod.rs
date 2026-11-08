@@ -238,6 +238,10 @@ pub use oneiron_authority::authority::{
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
+mod federation_status;
+pub use federation_status::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
 
 // Re-exports reproduce the pre-split `crate::authority::` surface exactly: each
 // glob carries every item of its file at that item's own visibility, so `pub`

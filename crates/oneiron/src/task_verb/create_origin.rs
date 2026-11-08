@@ -13,10 +13,9 @@
 //! lease: a creator whose row is gone, whose project moved or whose spend
 //! scope has settled refuses, rather than landing as free work.
 //!
-//! A root create keeps a witness too when the host stamped the conversation
-//! whose request started it (OF-221, [`Memory::with_origin_conversation`]):
-//! no creator, only that conversation, so an approval or a wave cut that
-//! lands after the chat has moved on still links the work back to it.
+//! A root create keeps its caller-origin witness too (FIX 4973), with the
+//! conversation the host stamped when one exists (OF-221). An approval or
+//! wave cut carries that first provenance rather than the later approver's.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,12 +44,12 @@ const ORIGINS: SideTable<[u8; 16], TaskCreateOrigin, Named> =
 /// The creator one TASK create runs under: the creator's attempt, the
 /// project its frozen dispatch input holds, its queue run tag, the
 /// conversation its work started from and the team run it works in. Built
-/// only from a verified host binding, or, for a root, from the host's
-/// conversation stamp alone; no caller writes any field.
+/// only from a verified host binding or the root host's admission facts;
+/// no caller writes any field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskCreateOrigin {
-    /// `None`: a root create the host stamped with its conversation.
+    /// `None`: a root create, with its caller origin and optional conversation.
     parent_attempt: Option<AttemptId>,
     project_ref: Option<EntityId>,
     run_id: Option<String>,
@@ -59,9 +58,61 @@ pub(crate) struct TaskCreateOrigin {
     origin_conversation: Option<EntityId>,
     /// OF-540: the team run the creator's dispatch froze; `None` is no team.
     team: Option<TeamRunStamp>,
+    /// The caller origin captured with this create, never the later approver.
+    caller_origin: crate::agent_dispatch::CallerOrigin,
+}
+
+/// The creator fields that affect an ask's identity. Caller provenance is
+/// recorded separately; a caller-only root witness has no creator identity.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(super) struct TaskCreateOriginIdentity<'a> {
+    parent_attempt: Option<AttemptId>,
+    project_ref: Option<EntityId>,
+    run_id: Option<&'a str>,
+    origin_conversation: Option<EntityId>,
+    team: Option<&'a TeamRunStamp>,
 }
 
 impl TaskCreateOrigin {
+    /// A root create's witness: no creator, but the surface's caller origin
+    /// and optional conversation, frozen at first admission (FIX 4973).
+    pub(super) fn root(memory: &Memory) -> Self {
+        Self {
+            parent_attempt: None,
+            project_ref: None,
+            run_id: None,
+            origin_conversation: memory.origin_conversation(),
+            team: None,
+            caller_origin: memory.caller_origin(),
+        }
+    }
+
+    /// The unchanged creator identity used by proposal and wave dedupe.
+    /// A new caller-only root witness stays the same unstamped root ask.
+    pub(super) fn intent_identity(&self) -> Option<TaskCreateOriginIdentity<'_>> {
+        let identity = TaskCreateOriginIdentity {
+            parent_attempt: self.parent_attempt,
+            project_ref: self.project_ref,
+            run_id: self.run_id.as_deref(),
+            origin_conversation: self.origin_conversation,
+            team: self.team.as_ref(),
+        };
+        if identity.parent_attempt.is_none()
+            && identity.project_ref.is_none()
+            && identity.run_id.is_none()
+            && identity.origin_conversation.is_none()
+            && identity.team.is_none()
+        {
+            None
+        } else {
+            Some(identity)
+        }
+    }
+
+    pub(super) const fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin
+    }
+
     pub(crate) const fn parent_attempt(&self) -> Option<AttemptId> {
         self.parent_attempt
     }
@@ -119,23 +170,15 @@ fn require_creator_actor(memory: &Memory<'_>, input: &AgentDispatchInput) -> Mem
 /// transaction. A live host binding's: the bound attempt must still be
 /// leased by the binding's owner at its generation, be an agent dispatch,
 /// and be run by this surface's actor; a lost lease refuses, it never falls
-/// back to a root. With no binding the create is a root, witnessed only when
-/// the host stamped its conversation; `None` otherwise.
+/// back to a root. With no binding the create is a root whose caller origin
+/// and optional conversation are frozen, including an explicit Unknown.
 pub(crate) fn task_create_origin_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     binding: Option<&HostBinding>,
 ) -> MemoryResult<Option<TaskCreateOrigin>> {
     let Some(binding) = binding else {
-        return Ok(memory
-            .origin_conversation()
-            .map(|conversation| TaskCreateOrigin {
-                parent_attempt: None,
-                project_ref: None,
-                run_id: None,
-                origin_conversation: Some(conversation),
-                team: None,
-            }));
+        return Ok(Some(TaskCreateOrigin::root(memory)));
     };
     let (record, input) = creator_run_in(memory.vault(), txn, binding.parent())?;
     if !record.state.is_running()
@@ -158,6 +201,7 @@ pub(crate) fn task_create_origin_in_txn(
         run_id: record.run_id.clone(),
         origin_conversation,
         team: input.team,
+        caller_origin: input.caller_origin,
     };
     require_creator_in_txn(memory, txn, &origin)?;
     Ok(Some(origin))
@@ -281,24 +325,26 @@ pub(super) fn proposal_origin_in(
     Ok(ORIGINS.get(&vault.store, txn, proposal_ref.as_bytes())?)
 }
 
-fn wave_plan_key(attempt: AttemptId) -> MemoryResult<[u8; 16]> {
+fn wave_plan_key(attempt: AttemptId) -> crate::Result<[u8; 16]> {
     Ok(*EntityId::derive(WAVE_PLAN_ORIGIN_DOMAIN, &[attempt.as_bytes()])?.as_bytes())
 }
 
 /// Witnesses the creator a wave planning attempt's cut lands under, in the
-/// enqueue's transaction.
+/// enqueue's transaction. First admission freezes: only the enqueue that
+/// mints the attempt writes; a retry keeps the first witness.
 pub(super) fn put_wave_plan_origin_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
     origin: &TaskCreateOrigin,
-) -> MemoryResult<()> {
+) -> crate::Result<()> {
     ORIGINS.put(&vault.store, wtxn, &wave_plan_key(attempt)?, origin)?;
     Ok(())
 }
 
-/// The creator a wave planning attempt was queued under; `None`: a
-/// host-created plan, whose TASKs stay roots.
+/// The creator a wave planning attempt was queued under; `None`: a native
+/// vault plan with no witness, whose TASKs stay roots. A root witness
+/// carries its caller origin and optional conversation (FIX 4973).
 pub(super) fn wave_plan_origin_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
