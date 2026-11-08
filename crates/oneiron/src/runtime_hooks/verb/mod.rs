@@ -45,7 +45,7 @@ pub use credential::{
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
     VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
-pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
+pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
     hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, paced_verb_reply,
     runs_paced_turn,
