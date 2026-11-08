@@ -31,7 +31,7 @@ impl<'vault> ScopedRead<'vault> {
             policy,
             filter,
             txn,
-            held: HeldAuthority::for_request(requested),
+            held: self.held_for(requested),
         })
     }
 

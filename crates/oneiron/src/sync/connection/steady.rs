@@ -54,6 +54,9 @@ impl SyncConnection {
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
         let mut publication_slot = None;
+        // Where this connection stands in the windows a policy wake readied
+        // (FIX 19634): a new connection asks again for every one.
+        let mut ready_windows = crate::sync::manager::ReadyProgress::default();
         let mut debounce_deadline = (!debounce_buffer.is_empty())
             .then(|| Instant::now() + Duration::from_millis(debounce_ms));
         let mut ephemeral_housekeeping =
@@ -91,10 +94,14 @@ impl SyncConnection {
         // FIX 4748: a peer session takes none of the home's upkeep (residence
         // directives, home handoff rounds, machine history, authority
         // catch-up, leaf-key requests, publications), and it probes the home
-        // on its cadence, ending once the home answers.
+        // on its cadence, with this session's own hello, ending once the
+        // home serves this machine's sync.
         let peer_session = client.peer_session;
-        let mut home_probe =
-            super::peer_session::HomeProbe::new(peer_session.is_some(), &self.config.client_config);
+        let mut home_probe = super::peer_session::HomeProbe::new(
+            peer_session.is_some(),
+            self.manager.vault(),
+            &client.config,
+        );
 
         // Every `break` is the run's shutdown; any other exit returns, and
         // its upkeep rounds run on beside the next connection.
@@ -549,7 +556,16 @@ impl SyncConnection {
                             if peer_session.is_none() {
                                 crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
                             }
-                            crate::sync::client::send_sealed_updates(client, &mut write).await
+                            crate::sync::client::send_sealed_updates(client, &mut write).await?;
+                            // The windows a policy wake readied since this
+                            // connection last asked, on this tick (FIX 19634).
+                            // They are owed the home: a peer session (FIX 4748)
+                            // asks none, and the home's next session asks again
+                            // for every one.
+                            if peer_session.is_none() {
+                                send_ready_window_requests(client, &mut write, &mut ready_windows).await?;
+                            }
+                            Ok::<(), String>(())
                         } => result,
                     };
                     if let Err(e) = send_result {
@@ -610,10 +626,10 @@ impl SyncConnection {
                 // The host thawed: what the pause held goes first (FIX 12036).
                 () = gate.thawed(), if gate.paused() => {}
 
-                // FIX 4748: the home answers a peer session's probe: this
+                // FIX 4748: the home serves a peer session's probe: this
                 // session ends, what it buffered queued, and the next
                 // connect is the home's.
-                () = home_probe.answered() => {
+                () = home_probe.served() => {
                     self.queue_on_exit(&mut gate, debounce_buffer).await;
                     let mut send_left = self.left.subscribe();
                     tokio::select! {
@@ -752,4 +768,42 @@ impl SyncConnection {
             }
         }));
     }
+}
+
+/// Sends the version requests `client` owes the home for ready windows (fix
+/// list row 19634), up to [`crate::sync::manager::READY_WINDOWS_PER_PASS`] a
+/// tick, and stamps each window's generation once its request is on the
+/// socket. Requests that cannot be read now stay owed for the next tick; a
+/// failed send ends the connection, and the next one asks again from the
+/// start.
+async fn send_ready_window_requests<S>(
+    client: &mut SyncClient,
+    write: &mut S,
+    progress: &mut crate::sync::manager::ReadyProgress,
+) -> Result<(), String>
+where
+    S: futures_util::Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    // A window whose answer could not be judged whole is asked again.
+    for key in client.take_ready_retries() {
+        progress.retry(&key);
+    }
+    let requests = match client
+        .ready_window_requests(progress, crate::sync::manager::READY_WINDOWS_PER_PASS)
+    {
+        Ok(requests) => requests,
+        Err(error) => {
+            tracing::warn!(%error, "ready window requests not made");
+            return Ok(());
+        }
+    };
+    for (key, generation, frame) in requests {
+        write
+            .send(Message::Binary(frame.into()))
+            .await
+            .map_err(|error| format!("Send failed: {error}"))?;
+        progress.stamp(key, generation);
+    }
+    Ok(())
 }
