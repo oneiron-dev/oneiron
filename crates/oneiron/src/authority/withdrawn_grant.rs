@@ -19,9 +19,12 @@
 //! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
 //! Grant re-put at its id gives no read or principal standing either. Beside
 //! an owner's signed mint, the marker is also what the consent registry's
-//! revoked view and the agent grant revoke door read for a withdrawal no act
-//! signed: a lapsed OAuth sign-in's grant with no live host to sign (FIX
-//! 22188).
+//! revoked views, the agent and GitPush revoke doors, the authority audit and
+//! a checkpoint restore's classes read for a withdrawal no counted entry
+//! names: an ended OAuth sign-in's grant with no live host to sign (FIX
+//! 22188, 22193). There, on a replica that never held the row, the row's
+//! permanent hard-delete marker its peer's erasure left stands in for it
+//! (`federation::agent_grant::withdrawal`).
 //!
 //! A membership change that deletes a Grant an owner's signed mint made also
 //! logs the host's signed withdrawal of it
