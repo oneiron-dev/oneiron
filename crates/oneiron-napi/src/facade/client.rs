@@ -273,6 +273,12 @@ impl NativeClient {
         self.inner.last_receipt_ref()
     }
 
+    /// The content-free hook notice beside the last facade reply.
+    #[napi]
+    pub fn last_hook_notice(&self) -> Option<String> {
+        self.inner.last_hook_notice()
+    }
+
     /// The engine `[limits]` rows this client's own vault crossed, as the
     /// host kept them: one entry per row that asked, the row's key plus what
     /// it stood at and what the work measured, both exact `u64` (BigInt).

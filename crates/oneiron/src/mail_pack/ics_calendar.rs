@@ -83,7 +83,10 @@ impl<'v> HttpIcsCalendarWire<'v> {
         if ics.len() as u64 > MAX_ICS_FEED_BYTES {
             return Err(refused("ics_calendar_feed_too_large"));
         }
-        Ok(MailCalendarRead::Feed(MailCalendarFeed { ics, next_cursor }))
+        Ok(MailCalendarRead::Feed(MailCalendarFeed {
+            ics,
+            next_cursor,
+        }))
     }
 }
 
