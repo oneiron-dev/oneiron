@@ -242,6 +242,8 @@ impl EngineNativeExecutor<'_> {
                 .cloned()
             {
                 bind_published_output(record, &mut bindings, &output);
+                // FIX 18924: its console may print the run's fold answers.
+                self.record_step_fold_dependents(record, &[&output])?;
             }
         }
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
@@ -381,6 +383,7 @@ impl EngineNativeExecutor<'_> {
             .into());
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        record.birth_world = self.gated_write.birth_world();
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
         // The run's clock and config are durable from its start: a process
         // that stops after the first step's writes and before its checkpoint

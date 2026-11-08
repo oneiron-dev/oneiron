@@ -113,8 +113,8 @@ pub(super) fn settle_post(
         return Ok(());
     }
     // The approved value is what lands: an approver's amendment to the
-    // assignee, spec, label, TTL, parent or due time rides through the same
-    // keys it was parked under, and the brief through the stamp.
+    // assignee, spec, label, TTL, parent, due time or watch rides through the
+    // same keys it was parked under, and the brief through the stamp.
     let assignee = match task_body_optional(entries, "assignee")? {
         Some(value) => decode_task_assignee(value)?,
         None => TaskAssignee::Dreamer,
@@ -150,6 +150,7 @@ pub(super) fn settle_post(
                 )))
         })
         .transpose()?;
+    let watch = crate::task_verb::watch_task::decode_watch(entries, "tasks.proposal.watch")?;
     let spec = task_body_field(entries, "spec")?.clone();
     let copied = stamp.redo_of.is_some();
     let post = TaskPost {
@@ -161,6 +162,7 @@ pub(super) fn settle_post(
         label,
         parent_ref,
         due_at,
+        watch,
     };
     let memory = vault
         .memory(proposer, class)
