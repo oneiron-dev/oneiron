@@ -2,7 +2,7 @@ use crate::entity_id::ENTITY_ID_LEN;
 
 pub(super) const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 /// Schema 1.2 stores six-axis Scope; schema 1.1 is migration input only.
-pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.2";
+pub(crate) use crate::store::policy_record::POLICY_SCHEMA_VERSION;
 pub(super) const LEGACY_POLICY_SCOPE_SCHEMA_VERSION: &str = "1.1";
 pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
@@ -47,6 +47,10 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// Optional table of shared-vault act-policy rows, keyed by act name. Only a
 /// trusted manifest contributes rows; two differing tables fail closed.
 pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
+/// Optional top-level manifest scalar naming the vault's common
+/// owner-change wait in seconds. Only a trusted manifest contributes it;
+/// two differing scalars fail closed.
+pub(crate) const POLICY_OWNER_CHANGE_WAIT_SECS_KEY: &str = "owner_change_wait_secs";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` built-in name, or any other non-empty
@@ -207,7 +211,7 @@ pub(super) const GRANT_SCOPE_KEY: &str = "scope";
 pub(super) const GRANT_SELECTORS_KEY: &str = "selectors";
 pub(super) const GRANT_BUDGET_KEY: &str = "budget";
 pub(super) const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
-pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";
+pub(crate) use crate::store::policy_record::SCOPED_READ_EFFECTOR_CORE_READ;
 pub(super) const SCOPED_READ_EFFECTOR_ONEIRON_READ: &str = "oneiron.read";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_PREFIX: &str = "external:";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX: &str = "external_effect:";

@@ -21,9 +21,8 @@ use oneiron::dreamer_runner::maintenance::digest::DIGEST_ASSESS_UNLENT_PARK_REAS
 use oneiron::llm::decision::{DecisionRung, Reversibility};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, Vault, WakeAttemptContext};
-use tokio::sync::watch;
 
-use super::{PassAdmission, admit, now_ms, pause, paused};
+use super::{PassAdmission, admit, now_ms, pause, pause_lifted, paused};
 use crate::decision_host::DecisionHost;
 
 /// The harm question's shipped wording: prompt data beside this host, never
@@ -113,16 +112,6 @@ fn queue_round(
     Ok(())
 }
 
-/// Resolves once the pause `epoch` held lifts; pends while it holds none.
-async fn pause_lifted(epoch: Option<watch::Receiver<bool>>) {
-    match epoch {
-        Some(mut epoch) if paused(Some(&epoch)) => {
-            let _ = epoch.wait_for(|held| !*held).await;
-        }
-        _ => std::future::pending::<()>().await,
-    }
-}
-
 /// Answers one queued harm question on the server's shared ladder and hands
 /// the answer, receipt and all, to the engine's witnessed request. The
 /// ladder's model rungs block on the server's runtime, so the call runs on a
@@ -148,7 +137,7 @@ pub(super) async fn assess_waiting_harm(
         );
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     let budget = Duration::from_millis(ctx.deadline.remaining_ms());
@@ -171,6 +160,6 @@ pub(super) async fn assess_waiting_harm(
         .request_urgent_proactivity_digest(attempt, decision, now)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }

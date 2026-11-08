@@ -25,14 +25,14 @@ impl Vault {
         reason: DeleteReason,
         gated: bool,
     ) -> Result<()> {
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         self.require_room_delete_gate(txn, id, None, false)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, txn, id)?;
         if reason != DeleteReason::GdprDelete {
             self.store
                 .delete_guards
@@ -56,7 +56,7 @@ impl Vault {
         }
         if matches!(
             reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) && !crate::share::active_brief_shares_for(
             &self.store,
             txn,

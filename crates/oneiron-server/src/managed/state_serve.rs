@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
@@ -46,9 +46,8 @@ use refusal::writes_frozen_body;
 mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
-/// A vault VM's live look at its outbox companion and the escrow
-/// recipients its carrier delivers (FIX 6683, FIX 6684).
-#[cfg(target_os = "linux")]
+/// Live looks at a vault VM's outbox companion and carrier recipients, and
+/// at a process host's argv recipients (FIX 6683, FIX 6684, FIX 11852).
 mod carrier_watch;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
@@ -69,9 +68,11 @@ mod reap;
 mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
+/// Generic original-usage export over ctl (LC191311).
+mod usage_export;
 
 #[cfg(target_os = "linux")]
-pub(super) use self::carrier_watch::carrier_recipient;
+pub(super) use self::carrier_watch::carrier_recipients_snapshot;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
@@ -203,10 +204,11 @@ pub struct ManagedState {
     /// row (b)): set once at boot, before ctl serves. `None` until set, which
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
-    /// The vault VM outbox carrier's revision, as every `Ping` reports it
-    /// (FIX 5235): set at boot, then as its companion answers each look
-    /// (FIX 6683); 0 for none, on a node or while no companion answers.
-    vm_outbox_revision: AtomicU32,
+    /// The vault VM outbox carrier's one-word observation, as every `Ping`
+    /// reports it (FIX 5235, FIX 11073): its revision plus whether a probe
+    /// completed, set at boot, then as its companion answers each look (FIX
+    /// 6683); unobserved until one does.
+    vm_outbox_revision: AtomicU64,
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
@@ -224,6 +226,11 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 /// request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// A registered MCP lifecycle call, classified from the verified held body.
+/// This carries only a wake hint, never caller authority or body bytes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct McpLifecycleObservation;
 
 /// The person a supervisor-signed `ManagedPersonAction` names for one
 /// request at a member door (FIX 1302), verified at ingress; never the
@@ -243,9 +250,10 @@ pub(crate) struct ManagedIngress;
 /// as anyone's authority. The upgrade's own admission ends with its
 /// handshake, so the socket holds none while it idles. Each call it carries
 /// is admitted as the served request it becomes ([`Self::admit_requests`]),
-/// and each receipt it writes outside a call alone
-/// ([`Self::admit_receipt`]), on the one count of served writes in flight a
-/// reap waits for.
+/// each call a socket answers itself on its own ([`Self::admit_call`], a
+/// stale owner sign-in's app-tier booking socket, FIX 11712), and each
+/// receipt it writes outside a call alone ([`Self::admit_receipt`]), on the
+/// one count of served writes in flight a reap waits for.
 #[derive(Clone)]
 pub(crate) struct ManagedCarrierContext(Arc<ManagedState>);
 
@@ -268,6 +276,15 @@ impl CarrierPaused {
     pub(crate) fn body(&self) -> serde_json::Value {
         writes_frozen_body(&self.0)
     }
+}
+
+/// The reap admission one call a held socket answers itself ran under
+/// ([`ManagedCarrierContext::admit_call`], FIX 11712), handed back beside its
+/// answer: the socket keeps it while it judges that answer at its send door,
+/// and the place it holds among served writes in flight is released as it
+/// drops.
+pub(crate) struct CarrierAdmission {
+    _admitted: admission::Admitted,
 }
 
 /// The vault owner a held MCP socket serves (FIX 5128): the person his
@@ -438,7 +455,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
-            vm_outbox_revision: AtomicU32::new(0),
+            vm_outbox_revision: AtomicU64::new(0),
             restore: None,
             idle_backup: Arc::default(),
             relay_delete: Arc::default(),
@@ -585,7 +602,10 @@ impl ManagedState {
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.
 pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
-    let ledger = state.ledger();
+    final_ledger_push_from(state.ledger(), server).await;
+}
+
+pub(super) async fn final_ledger_push_from(ledger: &WakeLedger, server: &SyncServer) {
     match ledger.push_if_changed(server).await {
         Ok(accepted) => {
             tracing::info!(

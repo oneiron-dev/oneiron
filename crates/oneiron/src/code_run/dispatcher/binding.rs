@@ -100,11 +100,15 @@ impl<'a> HostSelfDispatcher<'a> {
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
             hook_view: RefCell::new(None),
+            task_refusal_output: RefCell::new(None),
+            skill_bodies: RefCell::new(None),
+            pre_hooked_fold: None,
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,
             scoped_ports: None,
             bound_run: None,
+            birth_world: None,
             planner: None,
             slip_issuer: None,
             replay_exposures: Vec::new(),
@@ -114,9 +118,11 @@ impl<'a> HostSelfDispatcher<'a> {
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
             read_worlds: Cell::default(),
-            caller_task: false,
+            caller_task: None,
             repo_review_policy: None,
+            git_door_base: None,
             spawn_capture: spawn_capture::SpawnCapture::default(),
+            code_consent_origin: None,
         })
     }
 
@@ -170,7 +176,7 @@ impl<'a> HostSelfDispatcher<'a> {
     pub(crate) fn run_write_token(&self) -> Option<crate::skill_attribution::RunWriteToken> {
         self.agent_lease
             .as_ref()
-            .map(crate::skill_attribution::RunWriteToken::from_lease)
+            .map(crate::skill_attribution::run_write_token_from_lease)
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -207,6 +213,37 @@ impl<'a> HostSelfDispatcher<'a> {
         self
     }
 
+    /// Binds the admitted MCP caller this run serves (FIX 4606): its handle,
+    /// the exact instrument and door it was admitted on, and where it sat,
+    /// as the host admitted its request. A code consent wait the run mints
+    /// keeps it, so its host can enter the parked run again for that caller
+    /// once the reply is delivered, after a restart too. It is no authority:
+    /// the host verifies the instrument again first. `None` binds none.
+    #[must_use]
+    pub fn with_code_consent_origin(
+        mut self,
+        origin: Option<crate::code_run::CodeConsentRunOrigin>,
+    ) -> Self {
+        self.code_consent_origin = origin;
+        self
+    }
+
+    /// Binds the accepted write placement from this run's host entry. An
+    /// explicitly bound default position is base reality; an entry that never
+    /// calls this method keeps its birth unknown. No guest payload reaches it.
+    #[must_use]
+    pub fn with_birth_position(
+        mut self,
+        position: crate::federation::record_scope::BirthPosition,
+    ) -> Self {
+        self.birth_world = Some(position.world.unwrap_or_else(crate::claim::base_world_id));
+        self
+    }
+
+    pub(crate) fn birth_world(&self) -> Option<EntityId> {
+        self.birth_world
+    }
+
     /// Records what this run's effect history already contains.
     ///
     /// The HOST calls this with the run's recorded bridge calls — the durable
@@ -222,6 +259,20 @@ impl<'a> HostSelfDispatcher<'a> {
             self.external_effect_seen.set(true);
         }
         self.observe_parked_hooks(bridge_calls);
+    }
+
+    /// Restores lineage only from a canonical wait's committed reply
+    /// consumption. A room's replay does not consume canonical consent rows.
+    pub(crate) fn observe_consumed_code_replies(
+        &self,
+        record: &crate::code_run::CodeRunReplayRecord,
+    ) -> Result<()> {
+        if let ExecutorStorage::Canonical(vault) = &self.storage
+            && super::super::consent_wait::consumed_external_code_reply(vault, record)?
+        {
+            self.external_effect_seen.set(true);
+        }
+        Ok(())
     }
 
     /// The HOST calls this with each turn's answer before its program runs:

@@ -1,15 +1,17 @@
 //! LMDB audit, dependency, content-addressed blob and queue adapters.
 use super::*;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
-    FailAttempt, FailOutcome,
+    AttemptQueue, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
 };
 use crate::blob_artifact::{blob_artifact_asset_entity_id, blob_artifact_asset_ref_key};
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
 use crate::side_table::{Named, SideTable};
+use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::{EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 impl DependencyIndex for Vault {
@@ -48,8 +50,8 @@ impl DependencyIndex for Vault {
 }
 pub(crate) const CHANGE_LOG_KEY_PREFIX: &[u8] = b"ports:change:v1:";
 const CHANGE: &[u8] = CHANGE_LOG_KEY_PREFIX;
-const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
-const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
+pub(super) const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
+pub(super) const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
 impl ChangeLogStore for Vault {
     fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
         self.store.port_changelog_append(txn, record)
@@ -73,31 +75,7 @@ impl ChangeLogStore for Vault {
 }
 impl ChangeLogStore for crate::store::Store {
     fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
-        recorded_at_in_txn(self, txn)?;
-        let key = [CHANGE, &record.id].concat();
-        let bytes = rmp_serde::to_vec_named(record)
-            .map_err(|_| Error::InvariantViolation("changelog encode"))?;
-        if let Some(prior) = self.vault_meta.get(txn, &key)? {
-            if prior.as_ref() != bytes.as_slice() {
-                return Err(Error::InvariantViolation("changelog rows are immutable"));
-            }
-            return Ok(());
-        }
-        self.vault_meta.put(txn, &key, &bytes)?;
-        for (family, owner) in [
-            (BY_ENTITY, record.entity),
-            (BY_ACTOR, record.actor_principal),
-        ] {
-            let index = [
-                family,
-                owner.as_bytes(),
-                &record.recorded_at.to_be_bytes(),
-                &record.id,
-            ]
-            .concat();
-            self.vault_meta.put(txn, &index, &record.id)?;
-        }
-        Ok(())
+        super::mutation::append_changelog_in_txn(self, txn, record)
     }
     fn port_changelog_list_by_entity(
         &self,
@@ -193,6 +171,63 @@ fn list_changes(
     }
     Ok(result)
 }
+
+impl Vault {
+    /// [`BlobStore::port_blob_get`] with file-plane and plain inline ASSET
+    /// bytes admitted before their output allocation. UTF-8 record-head output
+    /// admits its final text conversion; native loading and other projections
+    /// keep their read path. The guard rides through the same type/hash checks.
+    pub(crate) fn blob_get_with_body_admission<G, E>(
+        &self,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(Vec<u8>, Option<G>)>, super::BodyReadError<E>> {
+        self.blob_get_with_body_admission_in(&self.store, txn, hash, admit)
+    }
+
+    /// [`Self::blob_get_with_body_admission`] with the ASSET row read as
+    /// `dbs` reads it (FIX 4818): base, or a room's view over base, where a
+    /// room step's response body is staged.
+    pub(crate) fn blob_get_with_body_admission_in<G, E>(
+        &self,
+        dbs: &impl crate::store::ManifestDbs,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(Vec<u8>, Option<G>)>, super::BodyReadError<E>> {
+        let id = blob_artifact_asset_entity_id(hash)?;
+        let Some(pair) = self.live_entity_in_txn_with_body_admission(dbs, txn, &id, admit)? else {
+            return Ok(None);
+        };
+        if pair.0.entity_type != crate::registry::ENTITY_TYPE_ASSET
+            || blake3::hash(&pair.0.body).as_bytes() != hash
+        {
+            return Err(super::BodyReadError::Store(Error::CorruptedIndex(
+                "blob content hash",
+            )));
+        }
+        let (row, guard) = pair;
+        Ok(Some((row.body, guard)))
+    }
+
+    /// [`BlobStore::port_blob_get`] with the ASSET row read as `dbs` reads
+    /// it (FIX 4818): base, or a room's view over base.
+    pub(crate) fn blob_get_in(
+        &self,
+        dbs: &impl crate::store::ManifestDbs,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+    ) -> Result<Option<Vec<u8>>> {
+        match self.blob_get_with_body_admission_in(dbs, txn, hash, |_| Ok::<(), Error>(())) {
+            Ok(Some((bytes, _guard))) => Ok(Some(bytes)),
+            Ok(None) => Ok(None),
+            Err(super::BodyReadError::Store(error)) => Err(error),
+            Err(super::BodyReadError::Admission(error)) => Err(error),
+        }
+    }
+}
+
 impl BlobStore for Vault {
     fn port_blob_put(
         &self,
@@ -214,6 +249,7 @@ impl BlobStore for Vault {
                 entity_type: crate::registry::ENTITY_TYPE_ASSET,
                 occurred,
                 learned_at,
+                row_version: 0,
                 body: bytes.to_vec(),
             },
         )?;
@@ -223,16 +259,7 @@ impl BlobStore for Vault {
         Ok(hash)
     }
     fn port_blob_get(&self, txn: &RoTxn<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
-        let id = blob_artifact_asset_entity_id(hash)?;
-        let Some(row) = self.port_entity_get(txn, &id)? else {
-            return Ok(None);
-        };
-        if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
-            || blake3::hash(&row.body).as_bytes() != hash
-        {
-            return Err(Error::CorruptedIndex("blob content hash"));
-        }
-        Ok(Some(row.body))
+        self.blob_get_in(&self.store, txn, hash)
     }
     /// FIX 3677: the body streams into the body directory, and a long one
     /// the asset plane files is bound as its ASSET's body file, under an
@@ -344,7 +371,7 @@ impl JobQueue for Vault {
     fn port_job_claim_id(
         &self,
         txn: &mut RwTxn<'_>,
-        id: crate::attempt_queue::AttemptId,
+        id: crate::store::attempt_id::AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
         AttemptQueue::new(self).port_job_claim_id(txn, id, input)

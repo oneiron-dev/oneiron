@@ -12,7 +12,7 @@ use oneiron::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
-use oneiron::skill_attribution::RunWriteToken;
+use oneiron::skill_attribution::{RunWriteToken, run_write_token_of_origin};
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
@@ -72,14 +72,58 @@ pub(super) async fn rendered(
     sources: Option<Vec<EntityId>>,
     replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
+    rendered_in_step(
+        server, operation, request, voices, run, sources, replay, None,
+    )
+    .await
+}
+
+pub(super) async fn rendered_in_step(
+    server: &SyncServer,
+    operation: AiOperation,
+    request: MediaRequest,
+    voices: Option<RungVoices>,
+    run: Option<&RunAdmission>,
+    sources: Option<Vec<EntityId>>,
+    replay: Option<MediaReplayKey>,
+    media_step: Option<&crate::server::RunMediaStep>,
+) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match run {
-        Some(run) => {
-            media
-                .run_admitted(run, request, voices.as_ref(), replay)
+        Some(run) => match media_step {
+            Some(step) => {
+                let ctx = step.context();
+                let admitted = std::sync::atomic::AtomicBool::new(false);
+                match oneiron::llm::call_media_as_step(&ctx, request, &admitted, |request| {
+                    media.run_admitted_for_step(run, request, voices.as_ref(), replay, &admitted)
+                })
                 .await
-        }
+                {
+                    Ok(oneiron::llm::MediaStepOutcome::Finished(response)) => Ok(response),
+                    Ok(oneiron::llm::MediaStepOutcome::Trapped { .. }) => {
+                        step.mark_trapped();
+                        return Err(MemoryError::from(oneiron::Error::DurableStepTrapped));
+                    }
+                    Err(oneiron::llm::DurableStepError::Llm(error)) => Err(error),
+                    Err(oneiron::llm::DurableStepError::Engine(error)) => {
+                        return Err(MemoryError::from(error));
+                    }
+                    Err(_) => {
+                        return Err(MemoryError::new(
+                            MEMORY_CODE_INTERNAL,
+                            "the durable media step could not be recorded",
+                            &[],
+                        ));
+                    }
+                }
+            }
+            None => {
+                media
+                    .run_admitted(run, request, voices.as_ref(), replay)
+                    .await
+            }
+        },
         None => {
             media
                 .run_replayed(request, voices.as_ref(), None, sources, None, replay)
@@ -136,15 +180,16 @@ pub(super) fn unavailable(
     refusal
 }
 
-/// The principal a diary query reads as.
+/// The principal a diary or sealed-pad host door reads as.
 pub(super) fn diary_reader(
     server: &SyncServer,
     auth: &CoreAuth,
+    verb: &str,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
     crate::api::facade::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            "self.memory.diary.query reads as the credential's own principal",
+            format!("{verb} reads as the credential's own principal"),
             &["Present a slip paired with a principal ref and an actor class."],
         )
     })
@@ -286,6 +331,10 @@ tokio::task_local! {
     /// ([`clock_ingress::run_blocking`]), so the DerivedFrom edges its
     /// writes leave are witnessed as that run's.
     static CALLING_RUN_WRITES: Option<RunWriteToken>;
+    /// An action program's verb row in flight (OF-181): it lends its handles
+    /// no origin ([`with_calling_run_writes`]), yet a code run calls it, as
+    /// [`in_code_run`] reads it.
+    static CALLING_ACTION_PROGRAM: ();
 }
 
 /// Runs `call` as the code run `origin` binds: every handle
@@ -295,10 +344,28 @@ pub(crate) async fn with_calling_origin<F: std::future::Future>(
     origin: oneiron::memory::HostWriteOrigin,
     call: F,
 ) -> F::Output {
-    let run_writes = RunWriteToken::of_origin(&origin);
+    let run_writes = run_write_token_of_origin(&origin);
     CALLING_ORIGIN
         .scope(origin, CALLING_RUN_WRITES.scope(run_writes, call))
         .await
+}
+
+/// Whether a code run is calling the door in flight: [`with_calling_origin`]
+/// bound its host origin, as a code run's own dispatch does for each of its
+/// verb calls, or [`with_calling_action_program`] marked an action
+/// program's verb row; never a request. A whole-vault export a code run
+/// calls follows the world settings as before owner ruling 1-EXPORT = B
+/// (FIX 9591).
+pub(crate) fn in_code_run() -> bool {
+    CALLING_ORIGIN.try_with(|_| ()).is_ok() || CALLING_ACTION_PROGRAM.try_with(|_| ()).is_ok()
+}
+
+/// Runs `call` as an action program's verb row (OF-181): [`in_code_run`]
+/// holds inside it, and its handles still carry no origin.
+pub(in crate::api::facade) async fn with_calling_action_program<F: std::future::Future>(
+    call: F,
+) -> F::Output {
+    CALLING_ACTION_PROGRAM.scope((), call).await
 }
 
 /// Runs `call` with its writes made for the leased run `run_writes` names,
@@ -317,17 +384,25 @@ pub(in crate::api::facade) fn calling_run_writes() -> Option<RunWriteToken> {
     CALLING_RUN_WRITES.try_with(Clone::clone).ok().flatten()
 }
 
-/// `call`, which the call in flight spawns, under that call's calling origin
-/// and run writes: no task-local crosses a spawn.
+/// `call`, which the call in flight spawns, under that call's calling origin,
+/// run writes and action program mark: no task-local crosses a spawn.
 pub(in crate::api::facade) fn carrying_calling_run<F: std::future::Future>(
     call: F,
 ) -> impl std::future::Future<Output = F::Output> {
     let origin = CALLING_ORIGIN.try_with(Clone::clone).ok();
+    let action_program = CALLING_ACTION_PROGRAM.try_with(|_| ()).is_ok();
     let call = CALLING_RUN_WRITES.scope(calling_run_writes(), call);
-    async move {
+    let call = async move {
         match origin {
             Some(origin) => CALLING_ORIGIN.scope(origin, call).await,
             None => call.await,
+        }
+    };
+    async move {
+        if action_program {
+            CALLING_ACTION_PROGRAM.scope((), call).await
+        } else {
+            call.await
         }
     }
 }

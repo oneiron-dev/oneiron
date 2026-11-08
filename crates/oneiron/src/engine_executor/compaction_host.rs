@@ -2,24 +2,42 @@
 //! the token feed, and sealing a window from the durable replay.
 
 mod check_evidence;
+mod flight;
 mod pending;
 mod self_steps;
+mod wait;
 
-use super::compaction::{FoldJob, RunFrames};
+use super::compaction;
+use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
+use super::self_brief::FoldBoundary;
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
-    load_observation_window, observation_output_path, recoverable_chunk_path, script_output_path,
+    load_observation_window, load_script_context, observation_output_path, recoverable_chunk_path,
+    scan_output_windows, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
-use crate::compaction::{CompactHooks, FoldMark, FoldRecord, GatedCompaction, fold_handle};
+use crate::compaction::{
+    CompactHooks, FoldKind, FoldMark, FoldRecord, FoldedOutput, GatedCompaction, fold_handle,
+};
 use crate::runtime_hooks::VerbHookStop;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
+    /// Keeps an unlanded pass's `host.compact` pre-chain records in its room
+    /// (REVIEW-4357 P1-2): a backend refusal or a pre-swap-gate rejection
+    /// ends the pass without landing, so its hooks never reach a post chain.
+    /// No post hooks run here. A canonical pass keeps its own.
+    fn keep_unlanded_compact_hooks(&self, hooks: CompactHooks) {
+        let crate::code_run::ExecutorStorage::Session(binding) = &self.storage else {
+            return;
+        };
+        crate::compaction::keep_compact_hooks_in_room(&binding.session, &binding.route, hooks);
+    }
+
     /// Lands a finished background flight: an accepted summary swaps in as
     /// this run's next epoch, and anything else holds for the turn and leaves
     /// the window whole; its fold batch lands at once, in one ledger write.
@@ -41,15 +59,24 @@ impl EngineNativeExecutor<'_> {
         // FIX 4465 B: every paid call of a self-written pass is filed before
         // anything lands, so a landing that is refused keeps its steps too.
         self.file_self_passes(&mut finished);
-        if let Some((_, byline, _)) = seat.swap_seat() {
-            self.land_folds(byline, finished.folds);
+        self.mark_self_written_summaries(&finished);
+        // FIX 17594 (Engine call B): a fold batch that committed is a brief
+        // boundary, before the epoch the flight may swap in after it.
+        if let Some((_, byline, _)) = seat.swap_seat()
+            && let Some(landed) = self.land_folds(byline, finished.folds, finished.kind_folds)
+        {
+            self.brief_fold_committed(landed);
         }
         let hooks = finished.hooks;
         let epoch_execution = finished.epoch_execution;
         let landed = match finished.epoch {
-            None => Ok(()),
+            None => {
+                self.keep_unlanded_compact_hooks(hooks);
+                Ok(())
+            }
             Some(Err(suppression)) => {
                 seat.hold(suppression);
+                self.keep_unlanded_compact_hooks(hooks);
                 Ok(())
             }
             Some(Ok(gated)) => {
@@ -73,10 +100,23 @@ impl EngineNativeExecutor<'_> {
                         ) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
-                                if let crate::code_run::ExecutorStorage::Canonical(vault) =
-                                    &self.storage
-                                {
-                                    vault.post_compact_hooks(hooks, &plan, first, last);
+                                // The post chain runs where its pre chain
+                                // did: the vault, or the run's room (FIX
+                                // 1594).
+                                match &self.storage {
+                                    crate::code_run::ExecutorStorage::Canonical(vault) => {
+                                        vault.post_compact_hooks(hooks, &plan, first, last);
+                                    }
+                                    crate::code_run::ExecutorStorage::Session(binding) => {
+                                        crate::compaction::post_compact_hooks_in_room(
+                                            &binding.session,
+                                            &binding.route,
+                                            hooks,
+                                            &plan,
+                                            first,
+                                            last,
+                                        );
+                                    }
                                 }
                                 Ok(())
                             }
@@ -89,6 +129,7 @@ impl EngineNativeExecutor<'_> {
                                 seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
                                     check: None,
                                 });
+                                self.keep_unlanded_compact_hooks(hooks);
                                 Ok(())
                             }
                         }
@@ -98,106 +139,6 @@ impl EngineNativeExecutor<'_> {
         };
         self.compaction = Some(seat);
         landed
-    }
-
-    /// The token feed: the assembled request's size reaches the run's
-    /// driver. A crossing, or the agent's `self.compact` ask, seals the steps
-    /// up to the watermark and every fold mark that applies, in one flight.
-    pub(super) fn feed_compaction(
-        &mut self,
-        config: &EngineExecutorConfig,
-        record: &CodeRunReplayRecord,
-        request: &LlmRequest,
-    ) -> EngineExecutorResult<
-        std::result::Result<Option<super::compaction::WindowFullReason>, VerbHookStop>,
-    > {
-        let completed = completed_step_count(record)?;
-        if self.compaction.is_none() {
-            return Ok(Ok(None));
-        }
-        let run_id = config.run_id;
-        let ledger = self.storage.code_run_folds(run_id)?;
-        let asked = ledger.compact.as_ref().map(|ask| ask.note.clone());
-        let marks = if ledger.marks.is_empty() {
-            Vec::new()
-        } else {
-            let prefix_end = self
-                .storage
-                .code_run_compaction_coverage(run_id)?
-                .iter()
-                .map(|row| row.last())
-                .max();
-            ledger.applicable(completed, prefix_end, asked.is_some())
-        };
-        let Some(seat) = self.compaction.take() else {
-            return Ok(Ok(None));
-        };
-        // A run whose compaction is off folds nothing: its asks end with why,
-        // which `self.folds()` shows.
-        if !seat.is_live()
-            && (asked.is_some() || !marks.is_empty())
-            && let Err(error) = self.storage.update_code_run_folds(run_id, |ledger| {
-                ledger.refuse_pending("compaction is off for this run")
-            })
-        {
-            self.compaction = Some(seat);
-            return Err(error.into());
-        }
-        let used = super::compaction::request_tokens(request);
-        let mut refused = None;
-        let reason = seat.feed(
-            used,
-            completed,
-            asked.is_some(),
-            !marks.is_empty(),
-            |driver, watermark| {
-                if let Err(refusal) = self.admit_compaction_read() {
-                    refused = Some(refusal);
-                    return Ok(super::compaction::Flight::default());
-                }
-                let note = asked.clone().flatten();
-                // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
-                let (live, room) = super::compaction::live_fork::capture(driver, request);
-                let (epoch, hooks) = match watermark {
-                    Some(at) => match self.seal_compaction_window(
-                        driver,
-                        config,
-                        record,
-                        at,
-                        note.clone(),
-                        room,
-                    )? {
-                        Ok(Some((request, hooks))) => (Some(request), hooks),
-                        Ok(None) => (None, CompactHooks::default()),
-                        Err(stop) => {
-                            return Ok(super::compaction::Flight {
-                                pending: Some(stop),
-                                ..super::compaction::Flight::default()
-                            });
-                        }
-                    },
-                    None => (None, CompactHooks::default()),
-                };
-                let folds =
-                    self.seal_folds(driver, config, record, &marks, note.as_deref(), room)?;
-                if asked.is_some() {
-                    self.storage
-                        .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
-                }
-                Ok(super::compaction::Flight {
-                    epoch,
-                    folds,
-                    hooks,
-                    live,
-                    pending: None,
-                })
-            },
-        );
-        self.compaction = Some(seat);
-        match refused {
-            Some(refusal) => Err(refusal),
-            None => Ok(reason),
-        }
     }
 
     /// One fold job per mark (ARCH-0067 §2.2): the span's own retained
@@ -232,6 +173,81 @@ impl EngineNativeExecutor<'_> {
         Ok(jobs)
     }
 
+    /// One batch's folds by kind (ARCH-0067 §2.2, fold by kind): for a
+    /// `repl_output` mark, each step of its span keeps in its stub its
+    /// output's handle, every stored result the output names and every id
+    /// it names. The engine writes them from the steps' typed outputs, with
+    /// no model call; the program text and its say() messages stay.
+    fn seal_kind_folds(
+        &self,
+        record: &CodeRunReplayRecord,
+        run_id: crate::EntityId,
+        marks: &[FoldMark],
+        byline: crate::WriteActor,
+    ) -> EngineExecutorResult<Option<KindFolds>> {
+        let mut records = Vec::new();
+        for mark in marks {
+            let Some(kind) = mark.kind else {
+                continue;
+            };
+            let mut outputs = Vec::new();
+            for seq in mark.from..=mark.through {
+                match kind {
+                    FoldKind::ReplOutput => {
+                        let path = observation_output_path(seq);
+                        let Some(output) = record.outputs.iter().find(|output| output.path == path)
+                        else {
+                            continue;
+                        };
+                        let mut handles = vec![serde_json::to_string(&serde_json::json!({
+                            "step": seq,
+                            "sandbox.fs.read_file": recoverable_chunk_path(seq, output.output_ref(), 0),
+                            "byte_len": output.raw_len,
+                            "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                        }))?];
+                        // The whole output, by range: a ref past the first
+                        // window stays in the stub too.
+                        let mut reads = std::collections::BTreeSet::new();
+                        let mut ids = std::collections::BTreeSet::new();
+                        scan_output_windows(&self.storage, record, output, |window| {
+                            super::compaction::result_reads(window, &mut reads);
+                            ids.extend(super::compaction::text_ids(window));
+                        })?;
+                        for read in reads {
+                            handles.push(super::compaction::result_read_affordance(&read)?);
+                        }
+                        outputs.push(FoldedOutput {
+                            step: seq,
+                            handles,
+                            ids: ids.into_iter().collect(),
+                            said: Vec::new(),
+                        });
+                    }
+                    FoldKind::Program => {
+                        let path = script_output_path(seq);
+                        if !record.outputs.iter().any(|output| output.path == path) {
+                            continue;
+                        }
+                        let program = load_script_context(&self.storage, record, &path, None)?;
+                        outputs.push(FoldedOutput {
+                            step: seq,
+                            handles: Vec::new(),
+                            ids: super::compaction::text_ids(&program),
+                            said: step_speech(record, seq),
+                        });
+                    }
+                }
+            }
+            records.push(FoldRecord::of_kind(
+                mark,
+                kind,
+                byline.entity_ref(),
+                outputs,
+            ));
+        }
+        Ok((!records.is_empty()).then_some(KindFolds { run_id, records }))
+    }
+
     fn seal_fold(
         &self,
         driver: &crate::compaction::CompactionDriver,
@@ -251,16 +267,16 @@ impl EngineNativeExecutor<'_> {
         let mut reads = std::collections::BTreeSet::new();
         for seq in mark.from..=mark.through {
             let message = super::compaction::window_message(
-                super::compaction::step_message_id(run_id, seq),
+                super::compaction::step_message_id(run_id, seq)?,
                 turn_id,
                 seq,
                 // A step's program, as its observation, is carried up to the
                 // window's bytes, read by range (FIX 311).
-                load_observation_window(
+                load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq),
-                    COMPACTION_OBSERVATION_WINDOW_BYTES,
+                    Some(COMPACTION_OBSERVATION_WINDOW_BYTES),
                 )?,
                 load_observation_window(
                     &self.storage,
@@ -293,33 +309,17 @@ impl EngineNativeExecutor<'_> {
             }
         }
         for read in reads {
-            handles.push(serde_json::to_string(
-                &serde_json::json!({ "sandbox.fs.read_file": read }),
-            )?);
+            handles.push(super::compaction::result_read_affordance(&read)?);
         }
-        let mut pins = super::compaction::window_pins(&window);
+        // The span's failure lines and the agent's own profile pins it holds
+        // are mandatory alike (FIX 9837): a span whose pins do not fit one
+        // summary, or the backend's input, is refused, never kept without them.
+        let pins = super::compaction::window_pins(&window, &driver.memory_profile().verbatim_pins);
         if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
             return Ok(Err(
-                "its failure lines do not fit one summary; fold a shorter span".to_owned(),
+                "its pinned lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
-        super::compaction::add_profile_pins(
-            &mut pins,
-            &window,
-            &driver.memory_profile().verbatim_pins,
-            |pins| {
-                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
-                    && room.is_none_or(|room| {
-                        crate::compaction::compaction_input_tokens(
-                            mark.from,
-                            &window,
-                            pins,
-                            note.as_deref(),
-                            budget,
-                        ) <= room
-                    })
-            },
-        );
         if let Some(room) = room
             && crate::compaction::compaction_input_tokens(
                 mark.from,
@@ -360,7 +360,7 @@ impl EngineNativeExecutor<'_> {
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         let request = driver.fold_request(
-            super::compaction::fold_request_id(run_id, mark.fold),
+            super::compaction::fold_request_id(run_id, mark.fold)?,
             &session,
             window,
             pins,
@@ -377,6 +377,7 @@ impl EngineNativeExecutor<'_> {
             ids,
             handles,
             execution: None,
+            marked_at: mark.marked_at,
         }))
     }
 
@@ -385,16 +386,21 @@ impl EngineNativeExecutor<'_> {
     /// stamped Generated under the host's `byline`, with the sources its
     /// request was sealed with (Docs Q24), and a self-written one with each
     /// home part it wore too (FIX 4465 B). A batch that cannot be written
-    /// leaves its marks pending for the next pass.
+    /// leaves its marks pending for the next pass. Returns what the batch
+    /// committed, as its brief boundary (FIX 17594): `None` when it wrote no
+    /// fold, or was not written.
     fn land_folds(
         &self,
         byline: crate::WriteActor,
         folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
-    ) {
-        let Some(run_id) = folds.first().map(|(job, _)| job.run_id) else {
-            return;
-        };
-        let mut landed = Vec::new();
+        kind_folds: Option<KindFolds>,
+    ) -> Option<FoldBoundary> {
+        let run_id = folds
+            .first()
+            .map(|(job, _)| job.run_id)
+            .or(kind_folds.as_ref().map(|batch| batch.run_id))?;
+        // The batch's folds by kind land in the same write as its passes.
+        let mut landed = kind_folds.map_or_else(Vec::new, |batch| batch.records);
         let mut failed = Vec::new();
         for (job, answer) in folds {
             match answer {
@@ -410,18 +416,23 @@ impl EngineNativeExecutor<'_> {
                         ids: job.ids,
                         handles: job.handles,
                         execution,
+                        kind: None,
+                        note: None,
+                        outputs: Vec::new(),
+                        marked_at: job.marked_at,
                     }),
                     Err(why) => failed.push((job.fold, why)),
                 },
                 Err(why) => failed.push((job.fold, why)),
             }
         }
-        if self
-            .storage
-            .land_code_run_folds(run_id, landed, &failed)
-            .is_err()
-        {
-            tracing::warn!("a fold batch did not land");
+        landed.sort_by_key(|record| record.fold);
+        match self.storage.land_code_run_folds(run_id, landed, &failed) {
+            Ok(committed) => FoldBoundary::landed(run_id, committed),
+            Err(_) => {
+                tracing::warn!("a fold batch did not land");
+                None
+            }
         }
     }
 
@@ -496,8 +507,7 @@ impl EngineNativeExecutor<'_> {
     /// room's overlay over base. A canonical run's window, keep list and
     /// ceiling then pass `host.compact`'s pre-hooks, which may pin more.
     /// This run's swapped epochs with their summaries' prose, and its fold
-    /// ledger, where the run's rows are: base, or its room's overlay over
-    /// base.
+    /// ledger, where the run's rows are: base, or its room's overlay over base.
     pub(super) fn compaction_epochs(
         &self,
         run_id: crate::EntityId,
@@ -538,6 +548,48 @@ impl EngineNativeExecutor<'_> {
                 let Some(fold) = frames.folds.fold(append.fold) else {
                     continue;
                 };
+                // A fold by kind brings back only the content it folded,
+                // each step's labelled with its step; the programs never left.
+                if let Some(kind) = fold.kind {
+                    let mut unfolded = format!(
+                        "unfolded {} from t{}–t{} ({}):",
+                        kind.as_str(),
+                        fold.from,
+                        fold.through,
+                        fold_handle(fold.fold)
+                    );
+                    for output in &fold.outputs {
+                        match kind {
+                            FoldKind::Program => {
+                                let turn = CodeRunHistoryTurn {
+                                    code: load_script_context(
+                                        &self.storage,
+                                        record,
+                                        &script_output_path(output.step),
+                                        None,
+                                    )?,
+                                    console: String::new(),
+                                };
+                                unfolded.push_str(&format!("\nt{}:\n", output.step));
+                                unfolded.push_str(&turn.assistant_exec());
+                            }
+                            FoldKind::ReplOutput => {
+                                let turn = CodeRunHistoryTurn {
+                                    code: String::new(),
+                                    console: load_context_output(
+                                        &self.storage,
+                                        record,
+                                        &observation_output_path(output.step),
+                                    )?,
+                                };
+                                unfolded.push('\n');
+                                unfolded.push_str(&turn.user_console(output.step));
+                            }
+                        }
+                    }
+                    messages.push(text(unfolded));
+                    continue;
+                }
                 let mut unfolded = format!(
                     "unfolded from t{}–t{} ({}):",
                     fold.from,
@@ -553,10 +605,11 @@ impl EngineNativeExecutor<'_> {
                 }
                 for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
                     let turn = CodeRunHistoryTurn {
-                        code: load_context_output(
+                        code: load_script_context(
                             &self.storage,
                             record,
                             &script_output_path(step),
+                            None,
                         )?,
                         console: load_context_output(
                             &self.storage,
@@ -598,9 +651,36 @@ impl EngineNativeExecutor<'_> {
     }
 }
 
+/// Each speech call step `seq` made, in order, by its bridge call: read from
+/// the step's own bridge calls, as its checkpoint records them. No text is
+/// kept; the stub reads it, masked, when it renders. A step whose checkpoint
+/// keeps no range, or a call that did not emit, gives none.
+fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction::FoldedSpeech> {
+    let Some(range) = record
+        .step_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.seq == seq)
+        .and_then(crate::code_run::CodeRunStepCheckpoint::bridge_range)
+    else {
+        return Vec::new();
+    };
+    record
+        .bridge_calls
+        .get(range)
+        .unwrap_or_default()
+        .iter()
+        .filter(|call| call.emitted_speech() && super::compaction::speech_call_text(call).is_some())
+        .map(|call| crate::compaction::FoldedSpeech {
+            verb: call.effect.as_str().to_owned(),
+            call: call.seq,
+        })
+        .collect()
+}
+
 /// What a fold's summary is derived from: every record its request was
 /// sealed with, and for a self-written one each home part its call wore
-/// whole (FIX 4465 B, Engine 10-19), so withdrawing one withdraws the words.
+/// whole (FIX 4465 B, Engine 10-19) and each row its live fork's prefix was
+/// read from (FIX 9463), so withdrawing one withdraws the words.
 fn fold_sources(
     gated: &GatedCompaction,
     execution: Option<&crate::compaction::CompactionExecution>,
@@ -608,7 +688,7 @@ fn fold_sources(
     let mut sources = gated.request().sources.clone();
     for row in execution
         .into_iter()
-        .flat_map(crate::compaction::CompactionExecution::home_dependencies)
+        .flat_map(crate::compaction::CompactionExecution::input_dependencies)
     {
         if !sources.contains(&row) {
             sources.push(row);

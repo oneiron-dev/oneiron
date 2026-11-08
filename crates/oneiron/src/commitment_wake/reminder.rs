@@ -33,7 +33,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
-use super::reminder_wording::{CommitmentReminderVoice, queue_commitment_reminder_wording};
+use super::reminder_wording::{
+    CommitmentReminderVoice, queue_commitment_reminder_wording, split_wording_pin,
+};
 use super::wake_event::{CommitmentWakeEvent, CommitmentWakePhase, validate_wake_string};
 use super::wake_proposal::{CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner};
 
@@ -61,7 +63,7 @@ const MAX_QUOTED_PROMISE_CHARS: usize = 400;
 /// `voice`, when set, has the host's model word each reminder, the owner's
 /// own and a third party's nudge alike (FIX 12000); unset, reminders keep
 /// the fixed wording.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderRoute {
     pub channel: String,
@@ -139,21 +141,24 @@ impl CommitmentReminderRoute {
 
 /// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
 /// for a zone the embedded database does not know.
-fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
-    let wall = crate::calendar::tz::utc_to_wall(at, zone).ok()?;
-    let local = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
-        .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?
-        .and_utc()
-        .timestamp();
-    let seconds = local.checked_sub(i64::try_from(at).ok()?)?;
-    i16::try_from(seconds / 60).ok()
+pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
+    crate::calendar::tz::ResolvedTimeZone::new(zone)
+        .ok()?
+        .offset_minutes_at(at)
 }
 
 impl Vault {
     /// The owner's reminder route, when one is set.
     pub fn commitment_reminder_route(&self) -> Result<Option<CommitmentReminderRoute>> {
         let txn = self.store.env.read_txn()?;
-        REMINDER_ROUTE.get(&self.store, &txn, &())
+        self.commitment_reminder_route_in_txn(&txn)
+    }
+
+    pub(crate) fn commitment_reminder_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<CommitmentReminderRoute>> {
+        REMINDER_ROUTE.get(&self.store, txn, &())
     }
 
     /// Sets (or, with `None`, clears) where the owner's reminders go. Only the
@@ -176,10 +181,13 @@ impl Vault {
     }
 
     /// The text a channel sends for a reminder content ref, `Ok(None)` when
-    /// the ref is not a reminder's: the wording a worder filed for it, else
-    /// the fixed wording. The promise must still be open: a reminder for a
-    /// kept or released promise is refused, not sent.
+    /// the ref is not a reminder's. An approved send's ref names the words
+    /// its approval pinned, and reads them while the vault holds them; a ref
+    /// with no pin reads the wording a worder filed for it last. Else the
+    /// fixed wording. The promise must still be open: a reminder for a kept
+    /// or released promise is refused, not sent.
     pub fn commitment_reminder_text(&self, content_ref: &str) -> Result<Option<String>> {
+        let (content_ref, pin) = split_wording_pin(content_ref);
         let Some(reminder) = ReminderRef::parse(content_ref) else {
             return Ok(None);
         };
@@ -191,7 +199,11 @@ impl Vault {
                 "reminder's commitment is no longer open",
             ));
         }
-        if let Some(worded) = self.filed_commitment_reminder_wording(content_ref)? {
+        let worded = match pin {
+            Some(pin) => self.pinned_commitment_reminder_wording(content_ref, pin)?,
+            None => self.filed_commitment_reminder_wording(content_ref)?,
+        };
+        if let Some(worded) = worded {
             return Ok(Some(worded));
         }
         let offset = self
@@ -419,6 +431,7 @@ pub(super) fn dispatch_obligor_agent_turn(
             now,
         },
         AgentSpawnContext {
+            caller_origin: Some(crate::agent_dispatch::CallerOrigin::NativeHost),
             context_spec: Some(ContextSpec {
                 briefing: Some(briefing),
                 ..ContextSpec::default()

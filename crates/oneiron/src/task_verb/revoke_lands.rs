@@ -30,6 +30,7 @@
 //! stays the hooks' to change.
 
 mod payload;
+mod pins;
 
 use std::fmt;
 
@@ -172,7 +173,7 @@ const ROWS: &[Row] = &[
     ),
     always!(
         "vault.notes.history_purge_execute",
-        [pin(&["act_id"], typed)],
+        [pin(&["act_id"], entity)],
     ),
     // A hook's reason code or review date that breaks the answer's shape
     // (one on a delete choice, or a bad one on any other) is ignored, not a
@@ -193,7 +194,10 @@ const ROWS: &[Row] = &[
     },
     always!(
         "vault.skill_hubs.publishers.revoke",
-        [pin(&["hub"], typed), pin(&["identity"], typed)],
+        [
+            pin(&["hub"], typed),
+            pin(&["identity"], pins::publisher_identity)
+        ],
     ),
     always!("vault.packs.remove", [pin(&["pack"], typed)]),
     Row {
@@ -215,7 +219,7 @@ const ROWS: &[Row] = &[
         [
             pin(&["vault_id"], typed),
             pin(&["member"], entity),
-            pin(&["invitation"], typed),
+            pin(&["invitation"], entity),
         ],
     ),
     always!(
@@ -232,17 +236,23 @@ const ROWS: &[Row] = &[
     ),
     always!(
         "self.secrets.teardown",
-        [pin(&["live_run"], typed), pin(&["spec", "grant"], entity)],
+        [
+            pin(&["live_run"], pins::live_run_handle),
+            pin(&["spec", "grant"], entity)
+        ],
     ),
     Row {
         verb: "vault.voices.render_consent",
         when: When::Holds(&["state"], withdrawn),
-        pins: &[pin(&["voice_id"], typed), pin(&["state"], typed)],
+        pins: &[pin(&["voice_id"], pins::voice_ref), pin(&["state"], typed)],
         check: None,
     },
     always!(
         "vault.voices.targets.evict",
-        [pin(&["voice_id"], typed), pin(&["target"], typed)],
+        [
+            pin(&["voice_id"], pins::voice_ref),
+            pin(&["target"], pins::voice_ref)
+        ],
     ),
     always!("vault.consent.graduation.demote", [pin(&["scope"], typed)]),
     always!("self.consent.graduation.demote", [pin(&["scope"], typed)]),
@@ -250,7 +260,7 @@ const ROWS: &[Row] = &[
         "self.focus.unsubscribe",
         [
             pin(&["scopes"], typed),
-            pin(&["live_run"], typed),
+            pin(&["live_run"], pins::live_run_handle),
             pin(&["spec", "scopes"], typed),
         ],
     ),
@@ -280,7 +290,10 @@ const ROWS: &[Row] = &[
     always!("vault.code.symbols.release", [pin(&["task"], typed)]),
     always!(
         "vault.artifacts.unpublish",
-        [pin(&["artifact"], typed), pin(&["channel"], typed)],
+        [
+            pin(&["artifact"], pins::artifact_id),
+            pin(&["channel"], typed)
+        ],
     ),
     always!(
         "calendar.connector.kill",
@@ -515,6 +528,49 @@ impl Landing {
         (self.verb, &self.original, &self.notes)
     }
 
+    /// The landing the live chain judged on the caller's own `original`
+    /// args, rebuilt without a vault (FIX 2393): held-call rows as
+    /// [`Landing::from_snapshot`] rebuilds them, and the vault-free
+    /// polymorphic rows — a `vault.batch`'s kept withdrawals and a
+    /// `vault.packs.connector.accept`'s pins — from the same pure parts the
+    /// live chain judged. `None` when the call had no landing, or only a
+    /// vault-read one (`vault.shared.execute`) has, which replay cannot
+    /// rebuild: the run's `had_landing` tells those apart.
+    pub(crate) fn from_recorded(verb: &str, original: Value) -> Option<Self> {
+        if restrictive(verb, &original).is_some() {
+            return Self::from_snapshot(verb, original, Vec::new());
+        }
+        if verb == "vault.batch" {
+            let puts = payload::batch_puts(&original);
+            if puts.is_empty() {
+                return None;
+            }
+            return Some(Self {
+                verb: "vault.batch",
+                pins: Vec::new(),
+                check: None,
+                puts,
+                original,
+                notes: Vec::new(),
+            });
+        }
+        if verb == "vault.packs.connector.accept" {
+            let pins = payload::connector_accept_pins(&original);
+            if pins.len() <= 1 {
+                return None;
+            }
+            return Some(Self {
+                verb: "vault.packs.connector.accept",
+                pins,
+                check: None,
+                puts: Vec::new(),
+                original,
+                notes: Vec::new(),
+            });
+        }
+        None
+    }
+
     /// The landing a kept snapshot rebuilds on the answered pass (FIX
     /// 11497), as [`Landing::of`] judges it but for the polymorphic rows,
     /// which no held call carries; its batch withdrawals rebuild empty.
@@ -666,6 +722,27 @@ pub fn settle(pre: &mut VerbHookPre, decodes: &dyn Fn(&Value) -> bool) {
 #[must_use]
 pub fn decodes<T: DeserializeOwned>(value: &Value) -> bool {
     <T as serde::Deserialize>::deserialize(value).is_ok()
+}
+
+/// The content-free notice carried beside an HTTP verb's typed result.
+pub const CALLER_NOTICE_HEADER: &str = "x-oneiron-hook-notice";
+/// A notice of the change itself, with no target, argument or caller detail.
+pub const CALLER_NOTICE_SUMMARY: &str =
+    "A hook changed this take-away call's arguments, or the engine ignored a proposed change.";
+
+/// A call-scoped notice of the restrictive target changes its hooks made or
+/// ignored. Transports can return it beside the typed result, including when
+/// a post hook refuses that result. It carries no invocation or caller id.
+#[must_use]
+pub fn caller_notice(pre: &VerbHookPre) -> Option<String> {
+    let landing = pre
+        .landing
+        .as_ref()
+        .filter(|landing| !landing.notes.is_empty())?;
+    Some(clip(
+        &format!("{}: {}", pre.call().verb, landing.notes.join("; ")),
+        NOTICE_DETAIL_MAX,
+    ))
 }
 
 /// Tells the vault's owners, in their inbox, what hooks changed or what was

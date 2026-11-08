@@ -21,7 +21,10 @@
 //! class apart from what its answers and outputs hold, until the call ends.
 //! That growth waits within the call's deadline, and a revocation ends it.
 //! The process's kernel limits grow with what its buffers were granted, and
-//! shrink back when the call ends (FIX 6194).
+//! shrink back when the call ends (FIX 6194). The organ's read of each call
+//! and answer the host sends it is held the same way, but its frames' bytes
+//! go back as soon as the organ asks again, which it does only once it has
+//! decoded them (FIX 12437).
 //!
 //! Calls of one class take their turns in the order they came (FIX 8025):
 //! a newer call never passes an older one of its class, however small. A
@@ -339,6 +342,9 @@ pub(crate) struct CallRoom {
     /// The machine floor the organ's own buffers lease from; none on a host
     /// built without one, which reserves them nothing.
     floor: Option<SharedFloor>,
+    /// The room's one machine-floor lease for native memory, behind its own
+    /// lock so the floor wait never holds the room's accounting lock.
+    leases: Mutex<Leases>,
     /// Its waits for room: time the call's deadline does not count.
     waits: WaitClock,
     /// The kernel's limits on the process the call runs in, which grow
@@ -361,22 +367,34 @@ struct RoomState {
     /// Of the permit's memory, what answers lent and outputs kept hold.
     held: u64,
     /// Of the permit's memory, what the organ's own buffers hold
-    /// (`memory.grow`). No answer's arithmetic reads it or gives it back: it
-    /// stays until the room drops with the call.
+    /// (`memory.grow`), and its reads of what the host sent it. No answer's
+    /// arithmetic reads it or gives it back: it stays until the room drops
+    /// with the call, but for the reads' frames (`reading`).
     native: u64,
-    /// The machine's leases behind `native`, given back as the room drops.
-    leases: Leases,
+    /// Of `native`, the frames' bytes and descriptors' room of each call or
+    /// answer the host sent the organ that it is not yet seen to have
+    /// decoded ([`CallRoom::grow_read`]): given back when it next asks
+    /// ([`CallRoom::reads_decoded`], FIX 12437).
+    reading: u64,
     overcommit: u64,
     peak: u64,
 }
 
-/// The machine's leases one room holds for the organ's own buffers.
+/// The machine's lease behind one room's native memory for the organ's own
+/// buffers: one cumulative handle, grown as the buffers take shape, shrunk
+/// as the organ's reads are decoded (FIX 12437), and given back as the room
+/// drops (FIX 12440). Earlier unallocated grants remain charged as pending
+/// memory.
 #[derive(Default)]
-struct Leases(Vec<Box<dyn FloorLease>>);
+struct Leases(Option<Box<dyn FloorLease>>);
 
 impl fmt::Debug for Leases {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Leases({})", self.0.len())
+        f.write_str(if self.0.is_some() {
+            "Leases(leased)"
+        } else {
+            "Leases(empty)"
+        })
     }
 }
 
@@ -400,11 +418,12 @@ impl CallRoom {
                 permit,
                 held: 0,
                 native: 0,
-                leases: Leases::default(),
+                reading: 0,
                 overcommit: 0,
                 peak: 0,
             }),
             floor,
+            leases: Mutex::new(Leases::default()),
             waits: WaitClock::default(),
             limits: OnceLock::new(),
         }
@@ -450,11 +469,12 @@ impl CallRoom {
     }
 
     /// Holds `bytes` more for the organ's own buffers (`memory.grow`): leased
-    /// from the machine's floor first, with no lock of the room held while
-    /// that waits, then held in the room, its booking grown when they pass
-    /// it. The machine is asked even when the booking already covers them.
-    /// Both stay until the room drops. Waits no later than `deadline`, and
-    /// no longer than `stopped` allows; refused, nothing is held.
+    /// from the machine's floor first, with no lock of the room's accounting
+    /// held while that waits (only its lease slot), then held in the room,
+    /// its booking grown when they pass it. The machine is asked even when
+    /// the booking already covers them. Both stay until the room drops. Waits
+    /// no later than `deadline`, and no longer than `stopped` allows;
+    /// refused, nothing is held.
     pub(crate) fn grow_native(
         &self,
         bytes: u64,
@@ -468,15 +488,30 @@ impl CallRoom {
         if ended() {
             return Err(NativeRefusal::Deadline);
         }
-        let lease = floor
-            .0
-            .lease(bytes, deadline, &ended)
-            .map_err(|refused| match refused {
-                FloorRefusal::Floor { needed, available } => {
-                    NativeRefusal::Floor { needed, available }
-                }
-                FloorRefusal::Deadline => NativeRefusal::Deadline,
-            })?;
+        // One cumulative native reservation (FIX 12440). Earlier grants
+        // remain pending until their allocation is established: growing a
+        // handle must not treat them as already allocated. A refused growth
+        // leaves the lease unchanged. Only the slot's lock spans the floor
+        // wait, not the accounting lock.
+        let mut slot = lock_leases(&self.leases);
+        if let Some(held) = slot.0.as_mut() {
+            held.grow(bytes, deadline, &ended)
+                .map_err(|refused| match refused {
+                    FloorRefusal::Floor { needed, available } => {
+                        NativeRefusal::Floor { needed, available }
+                    }
+                    FloorRefusal::Deadline => NativeRefusal::Deadline,
+                })?;
+        } else {
+            slot.0 = Some(floor.0.lease(bytes, deadline, &ended).map_err(
+                |refused| match refused {
+                    FloorRefusal::Floor { needed, available } => {
+                        NativeRefusal::Floor { needed, available }
+                    }
+                    FloorRefusal::Deadline => NativeRefusal::Deadline,
+                },
+            )?);
+        }
         let mut state = self.lock();
         let need = state
             .held
@@ -485,8 +520,10 @@ impl CallRoom {
         if need > state.permit.memory {
             let delta = need - state.permit.memory;
             let shared = Arc::clone(&state.permit.shared);
-            // Refused here, the machine's lease drops with it: nothing held.
             let Some(grown) = self.waits.timing(|| shared.grow(delta, &ended)) else {
+                if let Some(held) = slot.0.as_mut() {
+                    held.shrink(bytes);
+                }
                 return Err(NativeRefusal::Deadline);
             };
             state.permit.memory += delta;
@@ -494,12 +531,58 @@ impl CallRoom {
             state.peak = state.peak.max(grown.peak);
         }
         state.native = state.native.saturating_add(bytes);
-        state.leases.0.push(lease);
         drop(state);
+        drop(slot);
         if let Some(limits) = self.limits.get() {
             limits.grant(bytes);
         }
         Ok(())
+    }
+
+    /// Holds the organ's read of a call or answer the host is about to send
+    /// it, as [`Self::grow_native`] holds its own buffers: `bytes` at the
+    /// read's peak, of which `frames` (the message's encoded bytes and its
+    /// descriptors' room) are the read's alone, gone once the organ has
+    /// decoded the message. Those go back at [`Self::reads_decoded`]; what
+    /// the message decodes into stays until the room drops (FIX 12437).
+    pub(crate) fn grow_read(
+        &self,
+        bytes: u64,
+        frames: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), NativeRefusal> {
+        self.grow_native(bytes, deadline, stopped)?;
+        let mut state = self.lock();
+        state.reading = state.reading.saturating_add(frames.min(bytes));
+        Ok(())
+    }
+
+    /// The organ asked again for the call. Its runtime decodes each message
+    /// and frees the message's frames and descriptor list before the call's
+    /// verb holds it, and a call asks again only once it holds the answer to
+    /// its last ask: so every message the host sent it for the call before
+    /// is decoded, and their reads' frames are gone (FIX 12437). That room
+    /// goes back: the machine's lease shrinks by it, and the room's native
+    /// memory and the kernel's limits with it. The booking keeps its size.
+    /// What the messages decoded into stays until the room drops, since the
+    /// organ may keep it.
+    pub(crate) fn reads_decoded(&self) {
+        let mut slot = lock_leases(&self.leases);
+        let mut state = self.lock();
+        let bytes = std::mem::take(&mut state.reading);
+        if bytes == 0 {
+            return;
+        }
+        state.native = state.native.saturating_sub(bytes);
+        drop(state);
+        if let Some(held) = slot.0.as_mut() {
+            held.shrink(bytes);
+        }
+        drop(slot);
+        if let Some(limits) = self.limits.get() {
+            limits.give_back(bytes);
+        }
     }
 
     /// Gives back `bytes` held for an answer the organ was never sent. The

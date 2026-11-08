@@ -130,6 +130,62 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a TURN or CONVERSATION row a source landing stamps
+    /// with the source-audience obligation (fix list row 16256), through
+    /// the one raw door whose early check lets that key through. It takes
+    /// the landing's [`SourceAudienceBirth`]; every other public check runs
+    /// as for [`Self::put`], and the write transaction admits the stamp only
+    /// on a row the landing marked born in it.
+    ///
+    /// [`SourceAudienceBirth`]: crate::source_audience::SourceAudienceBirth
+    pub(crate) fn put_source_bound(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        _birth: &crate::source_audience::SourceAudienceBirth,
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::SourceBound,
+        )
+    }
+
+    /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
+    /// content of a carrier its writer already scanned whole and holds marked
+    /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a
+    /// scan's detection on these bytes is that mark. A batch of nothing but
+    /// such puts stores them without the batch door's scan; any other op in
+    /// the batch keeps the door for every op, and bytes other than these
+    /// never take the exemption. Every other check runs as for any put.
+    pub(crate) fn put_marked_carrier(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.marked_carriers
+            .insert(*id, *blake3::hash(data).as_bytes());
+        self.put(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            occurred,
+            learned_at,
+            data,
+        )
+    }
+
     /// FIX 3677: [`Self::put`] of ASSET `id` whose body is the body file
     /// `file` names, published before this batch: the row keeps `manifest` in
     /// its place, and the put binds the file to the row in its transaction.
@@ -162,6 +218,7 @@ impl BatchBuilder<'_> {
         id: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         manifest: &[u8],
         file: crate::store::AssetBodyFacts,
     ) -> Self {
@@ -171,6 +228,7 @@ impl BatchBuilder<'_> {
             crate::registry::ENTITY_TYPE_ASSET,
             occurred,
             learned_at,
+            row_version,
             manifest,
         )
     }
@@ -202,6 +260,30 @@ impl BatchBuilder<'_> {
             learned_at,
             body,
             RawPutDoor::WitnessMessage,
+        )
+    }
+
+    /// The archive MESSAGE put (FIX 7777): stages the bytes an
+    /// [`ArchivedMessageAdmission`] carries, and only those, as the witness
+    /// put stages its authorization's. Its only constructor, in the witness
+    /// archive owner, proves them a canonical envelope an import marked, so
+    /// a restored MESSAGE is imported evidence and never a local witness.
+    ///
+    /// [`ArchivedMessageAdmission`]: crate::memory::ArchivedMessageAdmission
+    pub(crate) fn put_archived_message(
+        self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::memory::ArchivedMessageAdmission,
+    ) -> Self {
+        self.put_through(
+            id,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            occurred,
+            learned_at,
+            admission.body(),
+            RawPutDoor::ArchivedMessage,
         )
     }
 
@@ -366,6 +448,31 @@ impl BatchBuilder<'_> {
         self
     }
 
+    /// The archive NOTE put (FIX 7777): stages the bytes an
+    /// [`ArchivedNoteAdmission`] carries, and only those. Its one
+    /// constructor, in the NOTE archive import owner, proves them a NOTE body
+    /// whose author is no local actor, so a restored NOTE is imported
+    /// evidence and never this vault's actor's note. The kind registry and
+    /// the immutable birth bytes are checked at apply, as for every NOTE.
+    ///
+    /// [`ArchivedNoteAdmission`]: crate::note::ArchivedNoteAdmission
+    pub(crate) fn put_archived_note(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::note::ArchivedNoteAdmission,
+    ) -> Self {
+        self.ops.push(plain_put_op(
+            id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            occurred,
+            learned_at,
+            admission.body(),
+        ));
+        self
+    }
+
     /// Adds a type-0 (CLAIM) put whose predicate may live in the reserved
     /// `edge.*` namespace (D17 reserved-namespace door).
     ///
@@ -433,6 +540,7 @@ impl BatchBuilder<'_> {
         entity_type: u8,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         data: &[u8],
     ) -> Self {
         #[cfg(feature = "sync")]
@@ -453,6 +561,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
         ));
         self
@@ -481,6 +590,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            None,
             data,
         ));
         self
@@ -500,6 +610,7 @@ fn plain_put_op(
         entity_type,
         occurred,
         learned_at,
+        row_version: None,
         data: data.to_vec(),
         allow_maintenance: false,
         allow_reserved_predicate: false,

@@ -10,7 +10,9 @@
 //! A tmux pane is typed only a fixed nudge line of hex TASK ids, never the
 //! batch: the batch stays in the inbox for `wake inbox`. Live helper and
 //! boot delivery also carry coalesced STREAM frames; the offline inbox
-//! stores notices only, never frame replay.
+//! stores notices only, never frame replay. Every batch handed over carries
+//! its wake `opener`, rendered at that handover (FIX 15011); a pane is
+//! still typed ids only.
 //! Nothing here selects policy for human notifications or lives in the engine.
 
 pub(crate) mod board_stream;
@@ -54,7 +56,14 @@ struct WakeBatch<'a> {
     instance_key: &'a str,
     wakes: &'a [WakeEnvelope],
     frames: &'a [BoardStreamFrame],
+    /// The batch's wake opener, rendered when the batch is handed over and
+    /// never stored with its notices (FIX 15011). The harness appends it
+    /// after its own log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    opener: Option<&'a str>,
 }
+
+use crate::runtime::wall_clock_ms;
 
 pub(crate) struct Instance {
     pub(crate) key: String,
@@ -104,6 +113,9 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
     match args.command {
         WakeCommand::Inbox { claude_code_stop } => {
             let wakes = instance.inbox.pending()?;
+            // Stored notices take the opener now, as they are handed over,
+            // never the clock of when they were queued (FIX 15011).
+            let opener = oneiron::context_board::wake_batch_opener(&wakes, wall_clock_ms());
             let output = if claude_code_stop {
                 if wakes.is_empty() {
                     json!({})
@@ -114,6 +126,7 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
                             instance_key: &instance.key,
                             wakes: &wakes,
                             frames: &[],
+                            opener: opener.as_deref(),
                         })?,
                     })
                 }
@@ -122,6 +135,7 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
                     instance_key: &instance.key,
                     wakes: &wakes,
                     frames: &[],
+                    opener: opener.as_deref(),
                 })?
             };
             let mut stdout = io::stdout().lock();

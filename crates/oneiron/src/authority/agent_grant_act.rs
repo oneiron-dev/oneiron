@@ -15,11 +15,15 @@
 //! revoke's always lands, so both are zero
 //! ([`AGENT_GRANT_ACT_SEEN`], CALLS "FIX 5628 grant act revision").
 
+use std::collections::BTreeSet;
+
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::{TimeRange, Vault};
-use oneiron_authority::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
+use oneiron_authority::federation::{
+    FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope, WalletRef,
+};
 
 use super::machine_standing::{InstallCounted, Standing};
 use super::*;
@@ -46,7 +50,11 @@ pub(crate) enum AgentGrantAct {
     /// `grant` is the new FEDERATION_GRANT row's id; `repo_bounds` the repo
     /// bounds he gave besides, signed with the rest (FIX 6867). A `GitPush`
     /// `grant_kind` grants raw git push to the `git_push_bounds` repos alone
-    /// (G1-PUSH); the same act, signer and fold carry it.
+    /// (G1-PUSH); the same act, signer and fold carry it. `verb_classes`
+    /// names the verb classes he gave beside the scope's exact verbs (FIX
+    /// 8735); empty when he named none. `wallet_ref` names the host wallet
+    /// the work the Grant funds draws on (FIX 7766); `None` when he named
+    /// none.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -55,9 +63,15 @@ pub(crate) enum AgentGrantAct {
         repo_bounds: Option<RepoAccessBounds>,
         grant_kind: FederationGrantKind,
         git_push_bounds: Option<GitPushBounds>,
+        verb_classes: BTreeSet<String>,
+        wallet_ref: Option<WalletRef>,
     },
-    /// The owner revokes the Grant `grant`.
-    Revoke { grant: EntityId },
+    /// The owner revokes the Grant `grant`, acknowledging exactly the
+    /// topology decision tokens the writer collected (FIX 5114).
+    Revoke {
+        grant: EntityId,
+        acknowledged_topology: BTreeSet<AuthorityEntryHash>,
+    },
 }
 
 impl AgentGrantAct {
@@ -72,6 +86,8 @@ impl AgentGrantAct {
                 repo_bounds,
                 grant_kind,
                 git_push_bounds,
+                verb_classes,
+                wallet_ref,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -81,9 +97,19 @@ impl AgentGrantAct {
                     repo_bounds,
                     grant_kind,
                     git_push_bounds,
+                    verb_classes,
+                    wallet_ref,
                 },
             ),
-            Self::Revoke { grant } => (grant, AgentGrantChange::Revoke),
+            Self::Revoke {
+                grant,
+                acknowledged_topology,
+            } => (
+                grant,
+                AgentGrantChange::Revoke {
+                    acknowledged_topology,
+                },
+            ),
         }
     }
 }

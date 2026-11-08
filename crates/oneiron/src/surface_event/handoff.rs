@@ -369,14 +369,20 @@ impl Vault {
         };
 
         let payload = decode_surface_event_attempt_payload(&attempt.payload)?;
-        let disposition = dispatcher.dispatch(SurfaceEventDispatchRequest {
-            event: &payload.event,
-            route: payload.route,
-            agent_ref: &payload.event.actor_ref,
-            correlation_id: &payload.event.correlation_id,
-            idempotency_key: &payload.dispatch_idempotency_key,
-            thread_ref: payload.thread_ref.as_deref(),
-        });
+        // A STOP written as the message is admitted as its sender's OptOut
+        // before any dispatcher wakes anyone on it.
+        let disposition =
+            super::stop_reply::admit_stop_reply_before_dispatch(self, &payload.event, now)
+                .unwrap_or_else(|| {
+                    dispatcher.dispatch(SurfaceEventDispatchRequest {
+                        event: &payload.event,
+                        route: payload.route,
+                        agent_ref: &payload.event.actor_ref,
+                        correlation_id: &payload.event.correlation_id,
+                        idempotency_key: &payload.dispatch_idempotency_key,
+                        thread_ref: payload.thread_ref.as_deref(),
+                    })
+                });
 
         let correlation_id = payload.event.correlation_id.as_str();
         match disposition {
@@ -537,6 +543,9 @@ pub(super) fn admit_surface_event_once_in_txn(
     Ok(match outcome {
         EnqueueOutcome::Enqueued(attempt) => {
             super::comm_intake::record_comm_inbound_in_txn(vault, wtxn, event)?;
+            // FIX 4749: the event joins the `surface.inbound` feed fact hooks
+            // follow, in the write that admits it.
+            crate::runtime_hooks::record_surface_inbound_in_txn(vault, wtxn, attempt.id, event)?;
             AdmittedSurfaceEvent {
                 attempt,
                 replayed: false,
@@ -627,8 +636,12 @@ pub(super) fn attempts_for_run_in_write_txn(
         let record = queue
             .get_in_write_txn(wtxn, id)?
             .ok_or(Error::CorruptedIndex("attempt run index"))?;
-        if record.run_id.as_deref() != Some(run_id) {
-            return Err(Error::CorruptedIndex("attempt run index"));
+        if !crate::store::hashed_string_index_matches(
+            record.run_id.as_deref(),
+            run_id,
+            "attempt run index",
+        )? {
+            continue;
         }
         records.push(record);
     }
@@ -785,3 +798,5 @@ pub fn surface_event_run_id(correlation_id: &str) -> String {
 }
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+mod phone_line;

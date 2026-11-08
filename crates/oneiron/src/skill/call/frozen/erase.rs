@@ -6,6 +6,7 @@ use super::{CASES, CaseCaller, FrozenCall, delete_case_in_txn, index};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::receipt::FIELD_ATTEMPT_CALLER;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::helper::CallableGateVerdict;
 use crate::store::Store;
@@ -74,18 +75,19 @@ pub(crate) fn erase_callable_case_actor_in_txn(
 ///
 /// Storage errors.
 pub(crate) fn erase_callable_cases_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     // The skill tear takes its gate verdict with its cases: an exact id16
     // key, so any other entity's erase is a no-op here.
     GATE_VERDICT.delete(store, wtxn, id)?;
     for key in CASES.scan_keys(store, wtxn, id.as_bytes())? {
-        delete_case_in_txn(store, wtxn, &key)?;
+        delete_erased_case_in_txn(write, wtxn, &key)?;
     }
     for key in index::source_cases_in_txn(store, wtxn, id)? {
-        delete_case_in_txn(store, wtxn, &key)?;
+        delete_erased_case_in_txn(write, wtxn, &key)?;
     }
     index::forget_source_in_txn(store, wtxn, id)?;
     let spelled = id.to_hex();
@@ -96,7 +98,11 @@ pub(crate) fn erase_callable_cases_in_txn(
                 sealed.job_ref.as_deref().is_some_and(names)
                     || sealed.trigger_ref.as_deref().is_some_and(names)
                     || sealed.policy_trace.iter().any(|step| names(step.as_str()))
-                    || sealed.fields.values().any(|value| names(value.as_str()))
+                    || sealed
+                        .fields
+                        .iter()
+                        .filter(|(name, _)| name.as_str() != FIELD_ATTEMPT_CALLER)
+                        .any(|(_, value)| names(value.as_str()))
             }
             // No sealed receipt yet: the attempt may still be running, so
             // its live read set names the row instead.
@@ -104,11 +110,22 @@ pub(crate) fn erase_callable_cases_in_txn(
         };
         if named {
             for key in keys {
-                delete_case_in_txn(store, wtxn, &key)?;
+                delete_erased_case_in_txn(write, wtxn, &key)?;
             }
         }
     }
     Ok(())
+}
+
+fn delete_erased_case_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &Vec<u8>,
+) -> Result<()> {
+    let place = format!("side:{}", CASES.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &CASES.key_bytes(key))?;
+    crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
+    delete_case_in_txn(write.store, wtxn, key)
 }
 
 /// Whether the live attempt `receipt` names — still running, its pack
@@ -137,7 +154,7 @@ fn live_attempt_names_source(
 }
 
 /// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
-fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
+pub(super) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt =
         crate::attempt_queue::AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes())

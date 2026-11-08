@@ -94,6 +94,7 @@ pub(super) struct WorkflowIntent {
     /// The spawn's `budget`: a hard carve for the whole workflow.
     #[serde(default)]
     pub budget: Option<u64>,
+    pub token_ceiling: Option<u64>,
     /// A root workflow's spend scope.
     #[serde(default)]
     pub spend: Option<super::SpendScopeId>,
@@ -578,7 +579,12 @@ impl super::AgentDispatcher<'_> {
             let Ok(active) = queue.retry_tip_in_txn(&txn, record.active) else {
                 continue;
             };
-            woke += usize::from(queue.advance_retry_in_txn(&mut txn, active.id, now)?);
+            woke += usize::from(
+                queue.advance_retry_in_txn(&mut txn, active.id, now)?
+                    || super::workflow::tool_wait::advance_saved_retry_in_txn(
+                        self.vault, &mut txn, &active, now,
+                    )?,
+            );
         }
         if woke > 0 {
             txn.commit()?;

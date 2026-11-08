@@ -3,7 +3,7 @@
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
 use super::*;
-use crate::code_run::{ResultOccurrence, unmarked_secret};
+use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
@@ -79,6 +79,21 @@ impl RecordingJsHost<'_, '_> {
             .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
     }
 
+    /// The records whose words the run's recorded and this step's fold
+    /// answers copy, each once (FIX 18924): known dependencies of what the
+    /// run stores, apart from its input rows.
+    fn fold_sources(&self) -> Vec<EntityId> {
+        let step = crate::code_run::recorded_fold_words(&self.bridge_calls);
+        let mut sources: Vec<EntityId> = step
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .chain(self.recorded_fold_sources.iter().copied())
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
+    }
+
     /// The rows the run's recorded and this step's verb answers were served
     /// from, or none known when one answer kept no set.
     pub(super) fn verb_rows(&self) -> Option<Vec<EntityId>> {
@@ -86,6 +101,16 @@ impl RecordingJsHost<'_, '_> {
             .as_ref()
             .zip(agent_verb_rows_of(&self.bridge_calls))
             .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
+    }
+
+    /// The rows of an own occurrence's fixed bytes. Unknown provenance uses
+    /// the live union; act gates retain their verb-only row set.
+    fn occurrence_rows(&self, output: &CodeRunRawOutput, callable: bool) -> Option<Vec<EntityId>> {
+        if callable {
+            output.input_rows.clone().or_else(|| self.result_rows())
+        } else {
+            self.verb_rows()
+        }
     }
 
     /// Whether the run's results stay on this device for its door's caller
@@ -217,9 +242,24 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_with(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let input_rows = self.result_rows();
+        self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -234,9 +274,21 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let input_rows = self.result_rows();
-        let output =
-            storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
+        let producing_step_start = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or(Some(self.step_start), |held| held.producing_step_start);
+        let output = storage.publish_code_run_output_produced(
+            path,
+            sink,
+            true,
+            self.run_id,
+            input_rows,
+            producing_step_start,
+        )?;
+        // FIX 18924: a stored value may copy the run's fold answers.
+        storage.record_code_run_fold_sources(self.run_id, &output, &self.fold_sources())?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
         }
@@ -312,22 +364,38 @@ impl RecordingJsHost<'_, '_> {
         {
             return Ok(Err(result_refusal("outside_delegated_range")));
         }
-        if found.child_source && !self.gated_write.reader_job_live()? {
+        if found.child_source && !self.observe_reader_job_live()? {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
+        // A scoped child's read of its own result or a finding stops at its
+        // live cutoff too, and the read made carries it (FIX 8233).
+        if self.live_cutoff_reached() {
+            return Ok(Err(result_refusal(READER_TASK_SETTLED)));
+        }
         let rows = match found.rows.clone() {
-            None => own,
+            None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
-        match self.withholds_rows(rows.clone())? {
+        let withheld = self.withholds_rows(rows.clone())?;
+        // A read of another run's result keeps its row check's answer, a
+        // refusal too, for a shadow arm to answer the read by (FIX 6352).
+        if found.rows.is_some() {
+            self.observe_retained_read(&target.reference, callable, withheld);
+        }
+        match withheld {
             Ok(false) => {}
             Ok(true) => return Ok(Err(result_refusal("result_withheld"))),
             Err(code) => return Ok(Err(result_refusal(code))),
         }
         if let Some(extra) = &found.rows {
-            // Another run's result reaches this one (FIX 6130).
-            let cause = crate::code_run::ReadWorldUnknown::RetainedResult;
-            self.gated_write.read_worlds_unknown(self.run_id, cause);
+            // Another run's result reaches this one (FIX 6130): the origins
+            // its descriptor froze are noted at the step's bridge position,
+            // or, unknown, the ledger misses it (FIX 7084).
+            self.gated_write.read_worlds_retained(
+                self.run_id,
+                self.next_seq,
+                found.origins.as_ref(),
+            );
             let held = self.callable_rows.1.take();
             self.callable_rows.1 = held
                 .zip(extra.clone())
@@ -349,14 +417,17 @@ impl RecordingJsHost<'_, '_> {
             range,
             foreign,
         )?
-        .map(|read| (read, rows)))
+        .map(|read| (read.with_live_cutoff(self.live_cutoff()), rows)))
     }
 
     /// What `reference` names for a read by this run: its own result first,
     /// then a reader child's source (a scoped child's lent inputs, each by
     /// its name or handle, FIX 7507), then a finding of one of its children.
+    /// The step's replay context keeps the findings the lookup read (FIX
+    /// 6352). Another run's result keeps the origins its descriptor froze
+    /// (FIX 7084).
     pub(super) fn resolve_for_read(
-        &self,
+        &mut self,
         storage: &ExecutorStorage<'_>,
         reference: &JsResultRef,
     ) -> Result<Option<ResolvedResult>> {
@@ -366,6 +437,7 @@ impl RecordingJsHost<'_, '_> {
                 name,
                 owner: self.run_id,
                 rows: None,
+                origins: None,
                 within: None,
                 child_source: false,
             }));
@@ -389,6 +461,7 @@ impl RecordingJsHost<'_, '_> {
                     name: Some(name.to_owned()),
                     owner: source.owner,
                     rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
                     within: Some(source.range),
                     child_source: true,
                 }));
@@ -397,30 +470,27 @@ impl RecordingJsHost<'_, '_> {
                 JsResultRef::Name(name) => child.delegated(true, name),
                 JsResultRef::Handle(handle) => child.delegated(false, handle),
             };
-            let Some((name, source)) = named else {
-                return Ok(None);
-            };
-            let Some(output) =
-                recorded_output(storage, source.owner, &source.path, &source.handle)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(ResolvedResult {
-                output,
-                name: Some(name.to_owned()),
-                owner: source.owner,
-                rows: Some(source.rows.clone()),
-                within: Some(source.range),
-                child_source: true,
-            }));
+            if let Some((name, source)) = named {
+                let Some(output) =
+                    recorded_output(storage, source.owner, &source.path, &source.handle)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(ResolvedResult {
+                    output,
+                    name: Some(name.to_owned()),
+                    owner: source.owner,
+                    rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
+                    within: Some(source.range),
+                    child_source: true,
+                }));
+            }
         }
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);
         };
-        let Some(finding) = storage
-            .reader_finding(self.run_id, handle)?
-            .and_then(|job| job.finding)
-        else {
+        let Some(finding) = self.observe_settled_finding(storage, handle)? else {
             return Ok(None);
         };
         let Some(output) = recorded_output(storage, finding.owner, &finding.path, &finding.handle)?
@@ -432,6 +502,7 @@ impl RecordingJsHost<'_, '_> {
             name: None,
             owner: finding.owner,
             rows: Some(finding.rows),
+            origins: finding.origins,
             within: None,
             child_source: false,
         }))
@@ -445,27 +516,19 @@ impl RecordingJsHost<'_, '_> {
         ))?;
         Ok(match self.checked_result(target)? {
             Ok(read) => {
-                let mut card = read.card(storage)?;
+                // A card its live cutoff cut answers `reader_task_settled`,
+                // whatever the cut left (FIX 8233).
+                let card = read.card(storage);
+                if self.live_cutoff_reached() {
+                    return Ok(result_refusal(READER_TASK_SETTLED));
+                }
+                let mut card = card?;
                 // A whole fold result's card says what the fold covered, as
                 // its store's did: this step's receipt, or its committed one.
-                if read.range().is_none() {
-                    let output = read.output();
-                    let occurrence =
-                        OccurrenceRef::new(read.owner(), &output.path, &output.handle)?;
-                    let staged = self
-                        .receipts
-                        .iter()
-                        .find(|held| held.folded.occurrence == occurrence.occurrence)
-                        .cloned();
-                    let receipt = match staged {
-                        Some(receipt) => Some(receipt),
-                        None => storage.code_run_reader_fold(read.owner(), &output.path)?,
-                    };
-                    if let Some(receipt) =
-                        receipt.filter(|receipt| receipt.folded.handle == output.handle)
-                    {
-                        card["receipt"] = receipt.card();
-                    }
+                if read.range().is_none()
+                    && let Some(receipt) = self.whole_fold_receipt(storage, &read)?
+                {
+                    card["receipt"] = receipt.card();
                 }
                 json!({ "output": card })
             }
@@ -480,7 +543,7 @@ impl RecordingJsHost<'_, '_> {
     /// read's does.
     ///
     /// With `child`, a readable result is also checked as a spawn's source
-    /// would be, writing nothing: the run's own result, then the seat, the
+    /// would be, writing nothing: its own or inherited source, then the seat, the
     /// clock and the scope. The verdict names the children's cutoff and the
     /// meter they spend on (`scope`, with what it may still spend, or
     /// `host`, the host's own meter, with no figure), or why a spawn would be
@@ -497,7 +560,9 @@ impl RecordingJsHost<'_, '_> {
         if !child || verdict["can"] != json!(true) {
             return Ok(json!({"output": verdict}));
         }
-        if self.resolve_result(&target.reference).is_none() {
+        if self.resolve_result(&target.reference).is_none()
+            && !self.is_inherited_reader_source(&target.reference)
+        {
             return Ok(json!({"output": {"can": false, "reason": "unknown_handle"}}));
         }
         match self
@@ -549,7 +614,17 @@ impl RecordingJsHost<'_, '_> {
             ResultFacet::Query => Some(storage.code_run_output_sink()?),
             _ => None,
         };
-        Ok(match read.read(storage, facet, input, sink.as_mut())? {
+        // A read its live cutoff cut answers `reader_task_settled`, whatever
+        // the cut left; a cut selection is never published (FIX 8233).
+        let reply = read.read_delivered(storage, facet, input, sink.as_mut());
+        if self.live_cutoff_reached() {
+            return Ok(result_refusal(READER_TASK_SETTLED));
+        }
+        let (reply, delivered) = reply?;
+        // Past every check, a scoped child's witness keeps the source bytes
+        // the reply shows before the reply leaves (FIX 7735).
+        self.commit_source_delivery(storage, &read, &delivered)?;
+        Ok(match reply {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
@@ -573,64 +648,76 @@ impl RecordingJsHost<'_, '_> {
         storage: &ExecutorStorage<'_>,
         path: &str,
     ) -> Result<Option<Vec<u8>>> {
-        if self.withholds_results()? {
-            return Err(Error::InvalidConfig(
-                "stored result read refused: result_withheld".into(),
-            ));
-        }
         // The read names a body by content and, when the card gave one, an
         // occurrence: a same-byte result reads its own occurrence, never
         // the first with its bytes. A path without an occurrence keeps the
         // legacy meaning (the first occurrence with those bytes).
-        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
+        let found = parse_result_read_path(path).and_then(|(wanted, occurrence, offset)| {
+            self.results
+                .iter()
+                .chain(&self.captured)
+                .find(|output| {
+                    output.output_ref() == wanted
+                        && occurrence.as_ref().is_none_or(|occurrence| {
+                            ResultOccurrence::of(Some(self.run_id), output)
+                                .ok()
+                                .map(|mine| mine.id())
+                                .as_ref()
+                                == Some(occurrence)
+                        })
+                })
+                .map(|output| (output, offset))
+        });
+        let Some((output, offset)) = found else {
+            if self.withholds_results()? {
+                return Err(Error::InvalidConfig(
+                    "stored result read refused: result_withheld".into(),
+                ));
+            }
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".into(),
             ));
         };
-        for output in self.results.iter().chain(&self.captured) {
-            if output.output_ref() != wanted {
-                continue;
-            }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), output)
-                    .ok()
-                    .map(|mine| mine.id());
-                if mine.as_ref() != Some(occurrence) {
-                    continue;
-                }
-            }
-            if offset > output.raw_len {
-                return Err(Error::InvalidConfig(
-                    "stored result offset exceeds its body".into(),
-                ));
-            }
-            // A raw chunk is the occurrence's bytes: a tainted occurrence
-            // (a secret mark reads tainted) refuses here, as its facets do.
-            if storage
-                .code_run_result_taint(Some(self.run_id), output)?
-                .0
-                .is_tainted()
-            {
-                return Err(Error::InvalidConfig(
-                    "stored result read refused: tainted".into(),
-                ));
-            }
-            let bytes = storage
-                .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            // A body stored before its scan read every rule may hold a
-            // secret no mark names: a chunk showing one is withheld like a
-            // card or answer showing one is.
-            if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
-                return Err(Error::InvalidConfig(format!(
-                    "stored result read refused: {reason}"
-                )));
-            }
-            return Ok(Some(bytes));
+        let withheld = self
+            .withholds_rows(self.occurrence_rows(output, true))?
+            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))?;
+        if withheld {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: result_withheld".into(),
+            ));
         }
-        Err(Error::InvalidConfig(
-            "stored result is outside this run".into(),
-        ))
+        if offset > output.raw_len {
+            return Err(Error::InvalidConfig(
+                "stored result offset exceeds its body".into(),
+            ));
+        }
+        // A raw chunk is the occurrence's bytes: a tainted occurrence
+        // (a secret mark reads tainted) refuses here, as its facets do.
+        if storage
+            .code_run_result_taint(Some(self.run_id), output)?
+            .0
+            .is_tainted()
+        {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: tainted".into(),
+            ));
+        }
+        // A scoped child reads the chunk only before its live cutoff,
+        // checked again before the chunk is released (FIX 8233).
+        self.check_live_cutoff("stored result")?;
+        let bytes = storage
+            .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        // A body stored before its scan read every rule may hold a
+        // secret no mark names: a chunk showing one is withheld like a
+        // card or answer showing one is.
+        if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
+            return Err(Error::InvalidConfig(format!(
+                "stored result read refused: {reason}"
+            )));
+        }
+        self.check_live_cutoff("stored result")?;
+        Ok(Some(bytes))
     }
 
     /// A recorded-output read answers where the step's next bridge call
@@ -652,6 +739,7 @@ impl RecordingJsHost<'_, '_> {
             seq: self.next_seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         if let Some(refusal) = self.gated_write.refusal_past_an_unmet_write(site, None)? {
             return Err(refused(&refusal.outcome));

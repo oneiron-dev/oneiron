@@ -5,29 +5,25 @@
 //! or applied for it. Every other refusal stays what it was.
 
 use super::step_charge::StepChargeTally;
-use super::turn_text::residency_deferred;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
+use crate::model_step_context::StepEffectBinding;
 
-/// Whether `error` is that wait, [`super::turn_text`]'s exact
-/// not-resident refusal, and nothing else.
-pub(crate) fn waits_on_residency(error: &Error) -> bool {
-    matches!(error, Error::InvalidClaimBody(reason) if residency_deferred(reason))
-}
+pub(crate) use crate::store::conversation_residency::waits_on_residency;
 
 /// The deferral an attempt that met the wait takes: queued again after
 /// [`super::RESIDENCY_RETRY_SECS`], settling what it already spent.
 pub(super) fn residency_deferral(
     now_ms: u64,
     completed_units: u64,
-    step_hashes: Vec<[u8; 32]>,
+    step_bindings: Vec<StepEffectBinding>,
 ) -> DreamerAttemptExecution {
     DreamerAttemptExecution::Deferred {
         completed_units,
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(super::RESIDENCY_RETRY_SECS),
-        step_hashes,
+        step_bindings,
     }
 }
 
@@ -44,10 +40,10 @@ pub(super) fn spent_or_deferred(
         Ok(residency_deferral(
             ctx.now_ms,
             charges.units,
-            charges.step_hashes.clone(),
+            charges.step_bindings.clone(),
         ))
     } else {
-        ctx.note_spend_before_error(charges.units, &charges.step_hashes);
+        ctx.note_spend_before_error(charges.units, &charges.step_bindings);
         Err(error)
     }
 }

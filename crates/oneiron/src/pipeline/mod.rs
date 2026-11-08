@@ -21,6 +21,7 @@ mod scoped_channels;
 pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, TurnFold};
 mod l2_evidence;
 mod media_channel;
+mod media_query_memory;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
@@ -28,8 +29,7 @@ mod temporal_report;
 pub use temporal_report::TemporalSearchReport;
 mod trace;
 mod types;
-mod vector_refinement;
-pub use vector_refinement::VectorRefinement;
+pub use oneiron_store::vector_refinement::VectorRefinement;
 mod world_authority;
 pub(crate) use world_authority::{
     ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,

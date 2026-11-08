@@ -80,6 +80,25 @@ pub(super) fn drain_one(
     }
 }
 
+/// A retained run's intent, under the current binding and hook switch on
+/// every attempt, as the startup drain judges pending work.
+pub(super) fn drain_one_current(
+    vault: &Vault,
+    key: &RunKey,
+    report: &mut HookPassReport,
+) -> Result<()> {
+    let intent = {
+        let rtxn = vault.store.env.read_txn()?;
+        INTENTS.get(&vault.store, &rtxn, key)?
+    };
+    if let Some(intent) = intent.filter(|intent| intent.state == HookIntentState::Pending) {
+        let bindings = vault.pack_hook_bindings()?;
+        let enabled = vault.hooks_enabled()?;
+        apply_intent(vault, &bindings, enabled, key, intent, report)?;
+    }
+    Ok(())
+}
+
 fn apply_intent(
     vault: &Vault,
     bindings: &[(EntityId, PackHookBinding)],
@@ -285,7 +304,7 @@ fn land(
     input: &ClaimInput,
 ) -> std::result::Result<Landed, String> {
     memory
-        .claim_propose(input)
+        .claim_propose_for_hook_replay(input)
         .map(|receipt| Landed {
             row: Some(*id.as_bytes()),
             reference: receipt.receipt_ref,
@@ -293,8 +312,12 @@ fn land(
         .map_err(refusal_text)
 }
 
-/// Enqueue task: the tasks.create door. `TaskCreateSpec` has no due field, so
-/// `due_at` rides in the spec.
+/// Enqueue task: the tasks.create door. `due_at` rides in the spec as the
+/// hook's original input payload AND as the typed `TaskCreateSpec::due_at`
+/// annotation (FIX685): a due/deadline stamp, never TTL expiry and never a
+/// not-before wait. The standard TASK it lands then ticks once on
+/// `schedule.tick` after that time (FIX 4749). `watch` makes it a watch
+/// TASK, which queues no work and which its tick settles (FIX 22121).
 fn enqueue_task(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -319,9 +342,13 @@ fn enqueue_task(
         Some(task.title.clone()),
         None,
         None,
-    );
+    )
+    .with_watch(task.watch);
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
+    }
+    if let Some(due_at) = task.due_at {
+        spec = spec.with_due_at(due_at);
     }
     let landed = |receipt: &TaskCreateReceipt| {
         let row = receipt.task_ref.or(receipt.proposal_ref);

@@ -130,7 +130,9 @@ def main():
             stage_wit = re.sub(r"    // @js (?:self\.[^\n]*|vault\.[^\n]*|ask)\n    import [^;]+;\n", "", wit)
         else:
             # A first-party write is its own import; it streams no proposals.
-            stage_wit = re.sub(r"    // @js oneiron\.propose\.[^\n]*\n    import [^;]+;\n", "", wit)
+            # The typed `ask` import is linked by no tier: the catalog's
+            # `ask` row owns the `ask` global (FIX 7033).
+            stage_wit = re.sub(r"    // @js (?:oneiron\.propose\.[^\n]*|ask)\n    import [^;]+;\n", "", wit)
 
         (stage / "code-run.wit").write_text(stage_wit)
         run(["wit-bindgen", "c", "--world", "guest", "--out-dir", stage, stage / "code-run.wit"])
@@ -157,7 +159,7 @@ def main():
                 "patched_dtoa_sha256":sha(source / "dtoa.c"),
                 "wit_sha256":sha(ROOT / "crates/oneiron/wit/code-run.wit"),
                 "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js",
-                                                 HERE / "reader_forks.js", HERE / "diff.js",
+                                                 HERE / "reader_forks.js", HERE / "diff.js", HERE / "runtime.d.ts",
                                                  HERE / "hook_guest.c", HERE / "hook_bootstrap.js",
                                                  HERE / "generate_bridge.py", HERE / "build.py"]},
                 "artifacts":artifacts}

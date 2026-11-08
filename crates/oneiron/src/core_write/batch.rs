@@ -5,15 +5,11 @@
 //! is refused in the write transaction
 //! ([`crate::BatchBuilder::commit_below_owner`]).
 
-use super::shape::{
-    ActorAnnouncementAuthority, AnnouncementAuthority, core_write_times, stage_core_put,
-    text_pairs, write_id,
-};
+use super::shape::{AnnouncementAuthority, core_write_times, stage_core_put, text_pairs, write_id};
 use super::{CoreBatchCommit, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt};
 use crate::Vault;
 use crate::batch::BatchBuilder;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::memory::Memory;
+use crate::claim::ScopedRead;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The lane a core write's caller is held to (OF-063; FIX 1223, 6068,
@@ -33,6 +29,25 @@ pub enum CoreWriteLane<'v> {
     Unbound,
 }
 
+/// A caller-transaction view of the write lane. It borrows the actual reader,
+/// including its room and destination bounds, rather than rebuilding its key.
+#[derive(Clone, Copy)]
+pub(crate) enum CoreWriteLaneRef<'v> {
+    Read(&'v ScopedRead<'v>),
+    Target(&'v ScopedRead<'v>),
+    Unbound,
+}
+
+impl CoreWriteLane<'_> {
+    pub(crate) fn as_ref(&self) -> CoreWriteLaneRef<'_> {
+        match self {
+            Self::Read(reader) => CoreWriteLaneRef::Read(reader),
+            Self::Target(reader) => CoreWriteLaneRef::Target(reader),
+            Self::Unbound => CoreWriteLaneRef::Unbound,
+        }
+    }
+}
+
 impl CoreWriteLane<'_> {
     /// Whether this lane's caller may put at every id of `ids` in `txn`
     /// (FIX 6068, 10781): a fresh id always; a stored row only when the
@@ -41,6 +56,16 @@ impl CoreWriteLane<'_> {
     /// anywhere, as before.
     pub(crate) fn admits_puts_in(
         &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+    ) -> crate::Result<bool> {
+        self.as_ref().admits_puts_in(txn, ids)
+    }
+}
+
+impl CoreWriteLaneRef<'_> {
+    pub(crate) fn admits_puts_in(
+        self,
         txn: &heed::RoTxn<'_>,
         ids: &[crate::EntityId],
     ) -> crate::Result<bool> {
@@ -109,12 +134,19 @@ impl Vault {
         })
     }
 
-    /// Every put of `input` staged in one batch, and its receipt rows.
+    /// Every put of `input` staged in one batch, and its receipt rows. The
+    /// batch's entity count is measured against `core_batch_entities`
+    /// (FIX 57): past it the row asks, and every entity is still staged in
+    /// this one batch, so the write stays one atomic transaction.
     fn stage_core_batch(
         &self,
         input: &CoreBatchWriteInput,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<(BatchBuilder<'_>, Vec<CoreBatchEntityReceipt>)> {
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::CoreBatchEntities,
+            input.entities.len() as u64,
+        );
         let mut batch = self.batch();
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {
@@ -153,60 +185,5 @@ impl Vault {
             });
         }
         Ok((batch, entities))
-    }
-}
-
-impl Memory<'_> {
-    /// `vault.batch` on an embedded handle, which carries no credential
-    /// grade: it commits below owner grade, never above it. Its TURNs are
-    /// platform announcements only while the bound actor is a live owner.
-    /// It is held to this handle's write lane ([`Self::core_write_lane`],
-    /// FIX 1223, 6068).
-    /// # Errors
-    /// As [`Self::core_write_lane`] and [`Vault::write_core_batch_in_lane`].
-    pub fn core_batch_write(
-        &self,
-        input: &CoreBatchWriteInput,
-    ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
-        let lane = self.core_write_lane()?;
-        self.vault().write_core_batch_in_lane(
-            input,
-            CoreBatchCommit::BelowOwner,
-            announcement,
-            &lane,
-        )
-    }
-
-    /// The lane this handle's core writes are held to (OF-063; FIX 1223,
-    /// 6068, 10781): its read lane; for a credential that grants no read,
-    /// the lane of that credential's target key, which judges what it may
-    /// write to without asking the read verb, built for the caller where it
-    /// sits and inside a bound room turn as the read lane is. A credential
-    /// with no target key leaves no bounds to judge: it writes unbound, as
-    /// before.
-    /// # Errors
-    /// The read lane's refusal other than a credential that grants no read,
-    /// or the target key's.
-    pub(crate) fn core_write_lane(&self) -> MemoryResult<CoreWriteLane<'_>> {
-        if let Some(read) = self.read_lane_if_granted(ClaimReadStatus::Recorded)? {
-            return Ok(CoreWriteLane::Read(read));
-        }
-        let target = match self.presented_credential() {
-            Some(proof) => self
-                .vault()
-                .credential_target_key(proof)
-                .map_err(MemoryError::from)?,
-            None => None,
-        };
-        let Some(key) = target else {
-            return Ok(CoreWriteLane::Unbound);
-        };
-        let key = self.in_room_turn(key.for_destination(self.destination()))?;
-        Ok(CoreWriteLane::Target(
-            self.vault()
-                .scoped_read(key)
-                .with_claim_status(ClaimReadStatus::Recorded),
-        ))
     }
 }

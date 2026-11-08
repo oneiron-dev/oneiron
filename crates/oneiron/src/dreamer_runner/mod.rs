@@ -29,9 +29,9 @@ mod wake_park;
 #[cfg(test)]
 mod tests;
 
-// `admission` is impl-only: it re-opens `impl DreamerRunnerStore` and owns no
-// name the rest of the crate reaches for, so it needs no re-export. The globs
-// below keep the pre-split surface byte-identical: `pub` items stay `pub`,
+pub(crate) use self::admission::AdmittedBudgetLine;
+
+// The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
 // visible to the whole dreamer_runner tree, tests.rs included.
 // ONE-1707 registration: the plugin-suggestion payload type rides the
@@ -46,9 +46,11 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
-pub(crate) use self::deferral::{SELECTION_DEFERRED_REASON, selection_deferred};
+pub(crate) use self::deferral::{
+    BACKLOG_DEFERRED_REASON, SELECTION_DEFERRED_REASON, selection_deferred,
+};
 pub use self::free_time::*;
-pub(crate) use self::home::reelect_home_in_txn;
+pub(crate) use self::home::{declared_home_candidate, home_candidate_rank, reelect_home_in_txn};
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
@@ -63,13 +65,17 @@ pub(crate) use self::program::{
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
     is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
-    program_milestone_envelope, record_turn_program_wakes_in_txn, settle_program_outbound_in_txn,
-    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
+    program_actor_for_attempt_in_txn, program_milestone_envelope, record_turn_program_wakes_in_txn,
+    settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
+    turn_programs_armed_in_txn,
 };
 // KS-2B1: a turn program's STEP bodies and run actor, for body custody.
 pub(crate) use self::program::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
+// FIX 11906: the project a turn program's code run sends in, for browser
+// consent.
+pub(crate) use self::program::program_run_project_in_txn;
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
@@ -124,7 +130,9 @@ pub mod maintenance;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::free_time::dreamer_free_time_cycle_accepts_masked;
 pub(crate) use self::maintenance::call_receipt_accepts_masked;
+pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_masked;
 pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accepts_masked;
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;

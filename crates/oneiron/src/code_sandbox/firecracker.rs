@@ -11,6 +11,8 @@ mod egress;
 #[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]
+mod oci_mounts;
+#[cfg(target_os = "linux")]
 mod oci_session;
 #[cfg(target_os = "linux")]
 mod protocol;
@@ -120,15 +122,16 @@ impl FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         cancel.check()?;
         // The OCI identity the host selected, kept before the boot artifacts
         // it resolves to shadow the image (FIX 9136).
         #[cfg(target_os = "linux")]
-        let selected_oci = image
-            .oci
-            .as_ref()
-            .and_then(|oci| oneiron_container::ImageRef::pinned(&oci.image).ok());
+        let oci_reference = image.oci.as_ref().map(|oci| oci.image.as_str());
+        #[cfg(target_os = "linux")]
+        let selected_oci =
+            oci_reference.and_then(|reference| oneiron_container::ImageRef::pinned(reference).ok());
         #[cfg(target_os = "linux")]
         let resolved;
         #[cfg(target_os = "linux")]
@@ -143,6 +146,12 @@ impl FirecrackerBackend {
             .config
             .as_ref()
             .ok_or_else(|| refused("jailer host profile unavailable"))?;
+        #[cfg(target_os = "linux")]
+        let oci_config = oci_reference
+            .map(|reference| config.for_oci_image(reference))
+            .transpose()?;
+        #[cfg(target_os = "linux")]
+        let config = oci_config.as_ref().unwrap_or(config);
         config.validate()?;
         config.pins.verify(image)?;
         #[cfg(target_os = "linux")]
@@ -163,7 +172,12 @@ impl FirecrackerBackend {
                     pins,
                 ),
             };
-            release::observe_bound_release(selected, &observed, &release::NoVerifierConfigured)
+            release::observe_bound_release(
+                selected,
+                &observed,
+                &release::NoVerifierConfigured,
+                release::LaunchBackend::MicroVm,
+            )
         };
         // Record the launch evidence even when the run fails or is cancelled.
         #[cfg(target_os = "linux")]
@@ -238,6 +252,7 @@ impl FirecrackerBackend {
             self.transport.as_deref(),
             self.spool.as_deref(),
             cancel,
+            output,
         );
         #[cfg(not(target_os = "linux"))]
         let result: Result<(MicroVmExit, Vec<SandboxProposalWrite>)> =
@@ -250,6 +265,12 @@ impl FirecrackerBackend {
             .get_mut(vm.id())
             .ok_or_else(|| refused("VM state disappeared"))?;
         match result {
+            // A failed guest keeps its program error and leaves no delta to
+            // collect (FIX 9209).
+            Ok((exit, _)) if exit.status != 0 => {
+                state.phase = Phase::Failed;
+                Ok(exit)
+            }
             Ok((exit, proposals)) => {
                 state.phase = Phase::Complete(proposals);
                 Ok(exit)
@@ -343,8 +364,9 @@ impl MicroVmBackend for FirecrackerBackend {
         image: &GuestImage,
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.boot(vm, image, budget, proxy, &StepCancellation::never())
+        self.boot(vm, image, budget, proxy, &StepCancellation::never(), output)
     }
 
     fn run_with_proxy_cancellable(
@@ -354,8 +376,9 @@ impl MicroVmBackend for FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.boot(vm, image, budget, proxy, cancel)
+        self.boot(vm, image, budget, proxy, cancel, output)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

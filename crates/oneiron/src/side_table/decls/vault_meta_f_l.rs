@@ -24,12 +24,21 @@ side_tables! {
     FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
+    /// and record it names, the text update as sent until the owner decides, then the decision.
+    /// Never a vault write. Key: id16(grant) + id16(proposal).
+    FEDERATION_CONNECT_PROPOSAL: VaultMeta b"federation:connect_proposal:v1:" Named
+        => crate::federation::erase_connect_proposer_in_txn;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
     /// The owner's confidence scale for claims one federation peer sends, this device's local
     /// truth (OF-149). Key: id16(peer principal).
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
+    /// An administrative ruling's admission, kept before the grant row that admitted it was
+    /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
+    /// (the ruling).
+    FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// An owner feedback preview as it was shown, kept until it expires (FIX 5212): its exact
@@ -63,11 +72,21 @@ side_tables! {
     /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's
     /// revision (OF-420 T1); absent until the owner binds one. Key: ().
     FEEDBACK_TRIAGE_BINDING: VaultMeta b"feedback:triage-binding:v1:" Named;
+    /// Each acknowledged feedback triage handoff whose evidence is retained, under its evidence
+    /// ASSET (FIX 7550). Key: id16(evidence) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_EVIDENCE: VaultMeta b"feedback:triage-handoff-by-evidence:v1:" Raw;
+    /// Each feedback triage handoff under the sweep that handed it off and the sweep that queued
+    /// its current job (FIX 7550). Key: id16(sweep attempt) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_SWEEP: VaultMeta b"feedback:triage-handoff-by-sweep:v1:" Raw;
+    /// Each feedback triage handoff a requeue pass visits: unacknowledged, or settled erased
+    /// (FIX 7550). Key: bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_OPEN: VaultMeta b"feedback:triage-handoff-open:v1:" Raw;
     /// One feedback revision a triage sweep handed off: its source, id and revision, the ASSET
     /// holding the exact item the triage reads, the sweeps that handed it off and queued its
     /// current job, that job, and the committed result once acknowledged. Source and result
     /// identity only; the queue holds job state. Key: bytes32 (blake3 of source, id, revision).
-    FEEDBACK_TRIAGE_HANDOFF: VaultMeta b"feedback:triage-handoff:v1:" Named;
+    FEEDBACK_TRIAGE_HANDOFF: VaultMeta b"feedback:triage-handoff:v1:" Named
+        => crate::feedback::erase_handoff_actor_in_txn;
     /// Where the triage sweep resumes one feedback source: the open inbox's last arrival number
     /// handed off. Key: string (source name).
     FEEDBACK_TRIAGE_SOURCE: VaultMeta b"feedback:triage-source:v1:" Named;
@@ -146,8 +165,8 @@ side_tables! {
     CRITICAL_CONFIRM_EXPIRY_CURSOR: VaultMeta b"gate_pending:critical_confirm_expiry_cursor:v1" Raw;
     /// Critical confirm list sweep state. Key: ().
     CRITICAL_CONFIRM_LIST_CURSOR: VaultMeta b"gate_pending:critical_confirm_list_cursor:v1" Raw;
-    /// Pending consents grouped by root-group alias. Key: u64be len + string + id16.
-    PENDING_GATE_CONSENT_GROUP_INDEX: VaultMeta b"gate_pending:group_index:v1:" Raw;
+    /// Pending consents grouped by root-group alias. Key: full-string BLAKE3 digest + id16.
+    PENDING_GATE_CONSENT_GROUP_INDEX: VaultMeta b"gate_pending:group_index:v2:" Raw;
     /// Semantic duplicate index of pending consents. Key: bytes32 + id16.
     PENDING_GATE_CONSENT_HASH_INDEX: VaultMeta b"gate_pending:hash_index:v1:" Raw;
     /// Index keys created for a pending consent. Key: id16.
@@ -159,8 +178,8 @@ side_tables! {
     /// `encode_pending_gate_consent_index_state`/
     /// `decode_pending_gate_consent_index_state`.
     PENDING_GATE_CONSENT_INDEX_STATE: VaultMeta b"gate_pending:index_state:v1:" Raw;
-    /// Pending consents grouped by run. Key: u64be len + string + id16.
-    PENDING_GATE_CONSENT_RUN_INDEX: VaultMeta b"gate_pending:run_index:v1:" Raw;
+    /// Pending consents grouped by run. Key: full-string BLAKE3 digest + id16.
+    PENDING_GATE_CONSENT_RUN_INDEX: VaultMeta b"gate_pending:run_index:v2:" Raw;
     /// Pending consent insertion sequence. Key: id16.
     PENDING_GATE_CONSENT_SEQUENCE: VaultMeta b"gate_pending:sequence:v1:" Raw;
     /// Pending-consent sequence high-water mark. Key: ().
@@ -215,7 +234,7 @@ side_tables! {
     SELF_HEAL_HEALER_RELEASE: VaultMeta b"healer:release:" Named;
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
-    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named Authored;
+    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named Authored [accepts: crate::self_heal::self_heal_healer_run_accepts_masked];
     /// The history import ledger: one row per imported source message (the conversation it landed
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
@@ -250,19 +269,58 @@ side_tables! {
     HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
     /// A hook run's saved result and pinned input. Key: hash32 (run key).
     HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_memo_accepts_masked];
+    /// A verb call a count-bound budget window paced, held in its caller's fair line until its
+    /// turn (FIX 8753, ARCH-0044 C5): the call, its args with its ids fixed, the credential
+    /// reference it resumes under, its arrival, its fixed deadline and when it may run, and what
+    /// it came to. Key: id16 (invocation).
+    HOOKS_PACED_VERB: VaultMeta b"hooks:paced_verb:v1:" Named;
+    /// The paced line's bookkeeping: the last arrival handed out and the principal whose turn ran
+    /// last. Key: ().
+    HOOKS_PACED_VERB_LINE: VaultMeta b"hooks:paced_verb_line:v1" Named;
+    /// The instrument a paced credential call's request was admitted on, pinned beside it for the
+    /// drain to verify again: a slip, its holder's challenge and signature, or a managed vault's
+    /// attested owner's person, never a secret. Dropped when the call ends. Key: id16
+    /// (invocation).
+    HOOKS_PACED_VERB_WITNESS: VaultMeta b"hooks:paced_verb_witness:v1:" Named;
     /// A hook run's Hook receipt. Key: hash32 (run key).
     HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_receipt_accepts_masked];
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_accepts_masked];
+    /// One step in a hook's regen history (FIX 4691): a regen decision with its golden manifest,
+    /// or an adoption, cancel or revert of one; body hashes only, never a body. Key: hash32
+    /// (blake3 of the hook's pack, a zero byte and its name) + u64be (sequence within the hook).
+    HOOKS_REGEN_RECEIPT: VaultMeta b"hooks:regen_receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_receipt_accepts_masked];
     /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
-    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    /// The settlement feed fact hooks follow: one row per settled proposal while a fact binding
+    /// reads the feed; an erase leaves a row naming the erased proposal or settler as an empty
+    /// erased row, and the runner prunes the rows every binding passed, every row while no fact
+    /// binding is enabled. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
+    /// connector SurfaceEvent while a fact binding reads the feed, its ids and tokens only; an
+    /// erase leaves a row naming the erased entity as an empty erased row, and the runner prunes
+    /// the rows every binding passed. Key: u64be (sequence).
+    HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
+    /// The last inbound surface-event sequence handed out. Key: ().
+    HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;
+    /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
+    /// + id16 (TASK).
+    HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named;
+    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
+    /// its release committed, if it has ticked. Key: id16 (TASK).
+    HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
+    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released; an erase
+    /// leaves an erased TASK's row as an empty erased row, and the runner prunes the rows every
+    /// binding passed, but an open TASK's own tick. Key: u64be (sequence).
+    HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
+    /// The last tick sequence handed out. Key: ().
+    HOOKS_TICK_NEXT: VaultMeta b"hooks:tick_next:v1" Named;
     /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
@@ -311,7 +369,7 @@ side_tables! {
     /// only: never prompt text, tokens, tensors, credentials or keys. Key: id16 (the catalog id,
     /// drawn at random).
     INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
-        => crate::inference_snapshot::erase_actor_in_txn;
+        => crate::store::snapshot_catalog::erase_actor_in_txn;
     /// One conversation's kept snapshots, by catalog id, so a restore reads
     /// only its conversation's rows (FIX 11286): conversation id16 + catalog
     /// id16, empty markers, written in the row's own transaction.
@@ -327,8 +385,8 @@ side_tables! {
     ATTEMPT_PARENT_CHILD_INDEX: VaultMeta b"job:parent_child:v1:" Raw;
     /// Retried attempt to its retries, empty markers. Key: parent id16 + child id16.
     ATTEMPT_RETRY_CHILD_INDEX: VaultMeta b"job:retry_child:v1:" Raw;
-    /// Run id to queued attempt ids. Key: u64be len + string + id16.
-    ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v1:" Raw;
+    /// Run id to queued attempt ids. Key: full-string BLAKE3 digest + id16.
+    ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v2:" Raw;
     /// The next tagging marker's sequence number, a part of its derived id, so no marker id is
     /// ever drawn twice, even once a settled marker has left the job ledger. Key: (). Value: u64be.
     TAGGING_MARKER_SEQUENCE: VaultMeta b"job:tagging_marker_seq:v1" Raw;
@@ -345,7 +403,8 @@ side_tables! {
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
     /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
-    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// actor a home handoff key seals for, a grant, or a drafter version, FIX 12569) and its
+    /// incarnation; never the key.
     /// Key: bytes32 (the key's random ref).
     KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
         => crate::store::home_handoff_custody::scrub_actor_in_txn;
@@ -395,18 +454,24 @@ side_tables! {
     /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
     /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
-    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
-    /// no checkpoint image carries it. Key: id16 (record).
-    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
     /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
     /// Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A HOST order's standing explicit prospective capture (LEGAL-HOLD-USE = B as a clone,
+    /// FIX 13866): its capture binding, term, public recipient key and next outbox ordinal.
+    /// Host-only, runtime-tier, carried with the host-order family. Key: id16 (order) + u64be
+    /// (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE: VaultMeta b"legal_hold:host:prospective:v1:" Named;
+    /// A new MESSAGE row sealed to its prospective order when it landed, until the HOST
+    /// acknowledges its batch or the order ends: clone custody, never vault data. Host-only,
+    /// runtime-tier. Key: id16 (order) + u64be (generation) + u64be (ordinal).
+    LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX: VaultMeta b"legal_hold:host:prospective_outbox:v1:" Named;
+    /// A released prospective order generation, so a late reconnect never stands it again.
+    /// Content-free. Key: id16 (order) + u64be (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED: VaultMeta b"legal_hold:host:prospective_released:v1:" Raw;
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
-    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
     /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
     /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
     /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
@@ -432,16 +497,20 @@ side_tables! {
     /// Key: string (pack name "\0" skill id hex).
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
         => crate::lens::erase_slot_actor_in_txn;
+    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
+    /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
     /// its last mapping edit. Key: id16 (TASK).
     LINEAR_MIRROR_CONTROL: VaultMeta b"linear.mirror_control.v1/" Named Engine
-        => crate::linear_sync::erase_mirror_control_actor_in_txn;
+        => crate::store::actor_scrubs::erase_mirror_control_actor_in_txn;
     /// One mirror event (OF-427): a webhook delivery, a sent push, a mapping edit or a title
     /// edit, with its external evidence and receipt. Key: direction byte + 32-byte digest.
     LINEAR_MIRROR_EVENT: VaultMeta b"linear.mirror_event.v1/" Named
-        => crate::linear_sync::erase_mirror_event_actor_in_txn;
+        => crate::store::actor_scrubs::erase_mirror_event_actor_in_txn;
     /// One TASK's mirror events by time; the value is empty. Key: id16 (TASK) + u64be (at) +
     /// 33-byte event key.
     LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
@@ -463,10 +532,11 @@ side_tables! {
     /// the pressing actor and the mirrored TASK (FIX 6835). Key: 32-byte operation id + the
     /// press's 32-byte approve-once digest.
     LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw
-        => crate::linear_sync::erase_effect_approval_actor_in_txn;
-    /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
-    /// operation id.
-    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
+        => crate::store::actor_scrubs::erase_effect_approval_actor_in_txn;
+    /// Frozen Linear effect binding digest, verified writer, scheduler and TASK, so hard erase
+    /// can retire the authorization (FIX 12508). Key: 32-byte operation id.
+    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw
+        => crate::store::actor_scrubs::erase_effect_authorized_actor_in_txn;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored [accepts: crate::linear_sync::linear_sync_link_accepts_masked];
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
@@ -480,7 +550,7 @@ side_tables! {
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked];
     /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::llm::llm_description_policy_accepts_masked];
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
@@ -490,7 +560,24 @@ side_tables! {
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
-    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::llm::llm_model_description_accepts_masked];
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
+    /// The model pack the vault followed at its last pack change and the one it followed
+    /// before, each as its install receipt named it: what a way back returns to (FIX 5367,
+    /// FIX 5369). Key: ().
+    LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named;
+    /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
+    /// (FIX 5367, FIX 5369). Key: ().
+    LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named;
+    /// Each model pack's version a same-name update replaced, as its install receipt named it:
+    /// the version the update's change notice names as `previous`, which the one-tap revert
+    /// installs again once its bytes pass an install's checks (FIX 20192). One per pack name;
+    /// the next same-name update replaces it and the pack's removal removes it. Key:
+    /// string(pack name).
+    LLM_MODEL_PACK_REPLACED: VaultMeta b"llm:model_pack_replaced:v1:" Named Admitted;
+    /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
+    /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
+    /// days before it) + string(`pack:<pack id>` or `model:<model id>`).
+    LLM_MODEL_PACK_RETIREMENT_NOTICE: VaultMeta b"llm:model_pack_retirement_notice:v1:" Named Engine;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and
@@ -503,6 +590,7 @@ side_tables! {
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
+        [accepts: crate::llm::registry::llm_registry_row_accepts_masked]
         => crate::llm::registry::erase_registry_source_in_txn;
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).

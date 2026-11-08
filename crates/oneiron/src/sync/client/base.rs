@@ -30,21 +30,45 @@ use crate::sync::{
 /// world.
 const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
 /// FIX 922 item 11 call: a home that may not read a window's world is not asked to promote it; the
-/// `rp:w:` intent stays, and a first-edit promotion reports the home unavailable. Nor is it asked to
-/// retain or demote it (FIX 3872): a retain is marked refused, and a demotion reports the home
-/// unavailable.
+/// `rp:w:` intent stays, and a first-edit promotion is refused. Nor is it asked to retain or demote
+/// it (FIX 3872): a retain is marked refused, and a demotion is refused. Each refusal is
+/// [`TransportError::world_unreadable_by_home`], never a storage fault (FIX 22217).
 pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
+
+/// The home's digest-bound answer to an opened-item queue send.
+pub(crate) enum ResidenceReceipt {
+    Durable([u8; 32]),
+    Held([u8; 32]),
+}
+
+impl ResidenceReceipt {
+    pub(crate) fn digest(&self) -> &[u8; 32] {
+        match self {
+            Self::Durable(digest) | Self::Held(digest) => digest,
+        }
+    }
+
+    pub(crate) fn is_durable(&self) -> bool {
+        matches!(self, Self::Durable(_))
+    }
+}
 
 /// Client-side sync engine.
 pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    /// The home answered this connection's NOTE session bind: the NOTE lane
+    /// (NOTE requests, operations, imports and receipts, publications) runs.
+    /// A peer session binds the socket's actor, never the NOTE authority, so
+    /// this stays false on one (FIX 4748).
     pub(crate) note_session_bound: bool,
     /// FIX 11111: the main socket already logged that it withholds this
     /// machine's credentials from a cleartext server.
     pub(crate) cleartext_withhold_logged: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    /// Transient retry scheduling; subscriptions and pending edits remain durable.
+    pub(crate) document_retries: Mutex<HashSet<crate::EntityId>>,
     pub(crate) client_id: u64,
     pub(crate) config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
@@ -57,14 +81,29 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
+    /// This connection's sealed world updates whose isolated check waits on
+    /// an edge endpoint, in their envelopes: their capsules install once the
+    /// check passes (FIX 10474). Their bytes share the bound of
+    /// `staged_world_updates`. Cleared at every connect.
+    pub(crate) deferred_sealed_updates: Vec<super::window_pads::DeferredSealedUpdate>,
     pub(crate) root_bootstrapped: bool,
-    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
-    /// the BLAKE3 of each acknowledged row's own bytes, set once its window
-    /// pad receipt bound what was sent for it.
-    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
+    /// This connection's home replies to opened-item queue sends, keyed by
+    /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
+    /// Held answers the exchange while its row remains queued.
+    pub(crate) residence_acks: HashMap<u64, ResidenceReceipt>,
+    /// The windows whose promotion the home granted on this connection
+    /// (`PROMOTION_GRANTED`). The durable `rp:w:` marker is this device's
+    /// promotion, not the home's grant on this socket (FIX 20202). Cleared at
+    /// every connect.
+    pub(crate) promotions_granted: HashSet<WindowKey>,
+    /// The windows whose home replacement installed here on this connection
+    /// since a per-window re-bootstrap last asked for one (FIX 20202). Cleared
+    /// at every connect.
+    pub(crate) replacements_installed: HashSet<WindowKey>,
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
+    pub(crate) document_parts: Mutex<crate::sync::transport::DocumentAssembly>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -84,10 +123,30 @@ pub struct SyncClient {
     /// This connection's custody carrier leaf-key requests (FIX 11785).
     /// Started again at every connect.
     pub(super) leaf_key_sends: super::leaf_keys::LeafKeySends,
+    /// This connection's place in the sealed world-update relay (DEC-0005
+    /// fix 8). Started again at every connect.
+    pub(super) sealed_updates: super::sealed_updates::SealedUpdateSession,
+    /// The fetch of a confirmed staged import's owed bodies from its
+    /// attached producer, on that producer's own socket (FIX 12408), and
+    /// when the next is due.
+    pub(super) staged_body_pulls: super::staged_body_pull::StagedBodyPulls,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
     pub(crate) home_peer: crate::authority::PeerMachine,
+    /// The peer this connection syncs with while its home is down (FIX 4748),
+    /// set before each connect; `None` for a session with the home. A peer
+    /// session confirms nothing: no queue or document journal clears on its
+    /// answers, and it takes none of the home's relays or roles.
+    pub(crate) peer_session: Option<crate::EntityId>,
+    /// The open peer session's receipt, written again with its end (FIX
+    /// 4748); `None` for a home session.
+    pub(crate) peer_receipt: Option<crate::sync::peer_route::PeerSyncReceipt>,
+    /// The version of the last state-only copy of each window this peer
+    /// session kept out (FIX 4748): it asks a peer for a window again only
+    /// while the peer's copies move on. Cleared at every connect and at each
+    /// copy it installs.
+    pub(crate) kept_out_peer_copies: HashMap<String, VersionVector>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -175,6 +234,7 @@ impl SyncClient {
             note_session_bound: false,
             cleartext_withhold_logged: false,
             document_updates,
+            document_retries: Mutex::default(),
             vault,
             manager,
             root_doc,
@@ -184,9 +244,13 @@ impl SyncClient {
             requested_windows: Mutex::new(HashSet::new()),
             pending_world_windows: Mutex::new(HashSet::new()),
             staged_world_updates: Vec::new(),
+            deferred_sealed_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
+            promotions_granted: HashSet::new(),
+            replacements_installed: HashSet::new(),
             window_pads: Mutex::default(),
+            document_parts: Mutex::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -197,7 +261,12 @@ impl SyncClient {
             artifact_publication_resend: HashMap::new(),
             asset_bodies: Default::default(),
             leaf_key_sends: Default::default(),
+            sealed_updates: Default::default(),
+            staged_body_pulls: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
+            peer_session: None,
+            peer_receipt: None,
+            kept_out_peer_copies: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -479,6 +548,27 @@ impl SyncClient {
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
             .is_some())
+    }
+
+    /// Whether the home granted window `key`'s promotion on this connection:
+    /// its `PROMOTION_GRANTED` came in since the connect began (FIX 20202).
+    pub(crate) fn promotion_granted_on_connection(&self, key: &WindowKey) -> bool {
+        self.promotions_granted.contains(key)
+    }
+
+    /// Whether the home's replacement of window `key` installed here since
+    /// [`Self::expect_window_replacement`] last named it (FIX 20202).
+    pub(crate) fn window_replacement_installed(&self, key: &WindowKey) -> bool {
+        self.replacements_installed.contains(key)
+    }
+
+    /// Starts a per-window re-bootstrap of `key` (FIX 20202): forgets that the
+    /// window was replaced on this connection and the home's last witnessed
+    /// vector of it, so only the replacement asked for next, and the exchange
+    /// after it, can prove it.
+    pub(crate) fn expect_window_replacement(&mut self, key: &WindowKey) {
+        self.replacements_installed.remove(key);
+        self.server_vvs.remove(key.as_str());
     }
 
     /// Returns the list of window keys from the root doc (set by server).

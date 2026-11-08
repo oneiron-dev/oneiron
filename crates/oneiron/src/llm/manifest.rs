@@ -299,6 +299,11 @@ impl Vault {
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
     }
+    /// The validated manifest in the caller's snapshot. `None` means no
+    /// manifest is set in that transaction, not a missing role or an error.
+    pub fn model_manifest_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Option<ModelManifest>> {
+        read_manifest(&self.store, txn)
+    }
     /// The model a call of `role` binds in the caller's snapshot: the
     /// manifest's pin at the slot's effective route, or `fallback` (the
     /// role's seat) when no manifest is set. A candidate to price, not
@@ -376,7 +381,7 @@ fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality)
     }
     Ok(())
 }
-fn effective_route(
+pub(super) fn effective_route(
     manifest: &ModelManifest,
     routes: &BTreeMap<ModelSlot, ModelLocality>,
     slot: ModelSlot,

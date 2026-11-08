@@ -22,8 +22,9 @@ use super::ledger::{restrictive_state_in, state_in};
 use super::model::{EsignDocument, invalid};
 use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::{EntityId, Result, Vault};
 use oneiron_authority::federation::Scope;
 use oneiron_contracts::memory::MemoryResult;
@@ -249,7 +250,7 @@ pub(super) fn write_artifact<T>(
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
 ) -> MemoryResult<T> {
     memory.with_actor_content_write_txn_as(memory.write_actor(), |content| {
-        content.update_artifact(document, |txn| {
+        content.update_artifact(document, |txn, _lane| {
             reaches_in(lane, txn, document)?;
             write(txn)
         })

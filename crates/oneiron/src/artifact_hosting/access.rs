@@ -79,9 +79,79 @@ impl Vault {
         token: Option<&str>,
         principal: Option<EntityId>,
     ) -> Result<Option<ArtifactServedFile>> {
+        self.resolve_authorized_artifact_file_with_reader(
+            artifact,
+            selector,
+            path,
+            token,
+            principal,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(super) fn resolve_authorized_artifact_file_with_reader(
+        &self,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        path: &str,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Option<ArtifactServedFile>> {
         validate_artifact_id(artifact)?;
         validate_artifact_path(path)?;
         let txn = self.store.env.read_txn()?;
+        let Some(read) =
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+        else {
+            return Ok(None);
+        };
+        self.read_authorized_artifact_in_txn(&txn, artifact, path, &read, reader)
+    }
+
+    /// Visit the hosted projection of one admitted code snapshot in one read view.
+    /// Withheld paths stay absent; callers never receive the owner's raw files.
+    pub fn visit_authorized_artifact_codebase(
+        &self,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+        mut file: impl FnMut(ArtifactServedFile, u32) -> Result<()>,
+    ) -> Result<Option<ArtifactPointer>> {
+        validate_artifact_id(artifact)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(read) =
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+        else {
+            return Ok(None);
+        };
+        let Some(snapshot) = read.target.snapshot.as_ref() else {
+            return Ok(None);
+        };
+        for entry in &snapshot.files {
+            validate_artifact_path(&entry.path)?;
+            if let Some(projected) = self.read_authorized_artifact_in_txn(
+                &txn,
+                artifact,
+                &entry.path,
+                &read,
+                &crate::batch::secret_scan::ContainerReader::default(),
+            )? {
+                file(projected, entry.mode)?;
+            }
+        }
+        Ok(Some(read.target.pointer))
+    }
+
+    fn authorize_artifact_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+    ) -> Result<Option<AuthorizedArtifactRead>> {
         let channels: &[ArtifactPointerChannel] = match selector {
             ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published) => {
                 &[ArtifactPointerChannel::Published]
@@ -95,8 +165,7 @@ impl Vault {
             ],
         };
         for channel in channels {
-            let Some(target) = self.resolve_artifact_target_in_txn(&txn, artifact, *channel)?
-            else {
+            let Some(target) = self.resolve_artifact_target_in_txn(txn, artifact, *channel)? else {
                 continue;
             };
             let pinned = match target.pointer.export {
@@ -113,15 +182,14 @@ impl Vault {
                 ArtifactServeTier::Public => true,
                 ArtifactServeTier::LinkToken(capability) => matches_token(capability, token),
                 ArtifactServeTier::WorldMembers(world_id) => principal.is_some_and(|member| {
-                    self.artifact_world_member_in_txn(&txn, world_id, member, &target.scope)
+                    self.artifact_world_member_in_txn(txn, world_id, member, &target.scope)
                         .unwrap_or(false)
                 }),
             };
             if !allowed {
                 continue;
             }
-            let read = AuthorizedArtifactRead { target, selector };
-            return self.read_authorized_artifact_in_txn(&txn, artifact, path, read);
+            return Ok(Some(AuthorizedArtifactRead { target, selector }));
         }
         Ok(None)
     }
@@ -253,9 +321,10 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &str,
         path: &str,
-        read: AuthorizedArtifactRead,
+        read: &AuthorizedArtifactRead,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<ArtifactServedFile>> {
-        let target = read.target;
+        let target = &read.target;
         // The export's taint is read again in this view before any byte is
         // read (FIX 9574): a stale one serves only under its pointer's stamp
         // while the stale-publish policy still permits it.
@@ -276,10 +345,10 @@ impl Vault {
         let sight = crate::file_secret_marks::SecretSight::Masked;
         let (bytes, media_type, _stored_hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
-                let Some(snapshot) = target.snapshot else {
+                let Some(snapshot) = target.snapshot.as_ref() else {
                     return Ok(None);
                 };
-                let Some(entry) = snapshot_file_entry(&snapshot, path) else {
+                let Some(entry) = snapshot_file_entry(snapshot, path) else {
                     return Ok(None);
                 };
                 if snapshot.project_id != artifact || snapshot.fork_hash != hash {
@@ -302,11 +371,12 @@ impl Vault {
                 } else {
                     let asset =
                         crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
-                    let bytes = match self.sighted_body_file_in_txn(
+                    let bytes = match self.sighted_body_file_in_txn_with_reader(
                         txn,
                         &asset,
                         &entry.content_hash,
                         sight,
+                        reader,
                     )? {
                         Some(bytes) => bytes,
                         None => self.masked_whole_in_txn(
@@ -317,6 +387,7 @@ impl Vault {
                                 &entry.content_hash,
                             )?,
                             &entry.content_hash,
+                            reader,
                         )?,
                     };
                     (bytes, None, entry.content_hash)
@@ -336,8 +407,13 @@ impl Vault {
                 if path != "export" && path != "index.html" && path != serving.export_name {
                     return Ok(None);
                 }
-                let Some(bytes) =
-                    self.read_serving_blob_in_txn(txn, &artifact_id, &serving, sight)?
+                let Some(bytes) = self.read_serving_blob_in_txn_with_reader(
+                    txn,
+                    &artifact_id,
+                    &serving,
+                    sight,
+                    reader,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -371,16 +447,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         bytes: Vec<u8>,
         hash: &[u8; 32],
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Vec<u8>> {
         if blake3::hash(&bytes).as_bytes() != hash {
             return Err(Error::CorruptedIndex("artifact served content hash"));
         }
-        crate::store::file_key_masks::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
             &self.store,
             txn,
             bytes,
             Some(hash),
             crate::file_secret_marks::SecretSight::Masked,
+            reader,
         )
     }
 }

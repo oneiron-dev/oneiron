@@ -45,12 +45,12 @@ pub struct CanonicalShellWorld {
     pub world: [u8; 16],
 }
 
-/// One room turn row a base window carries (OF-522), kept as the window holds
-/// it.
+/// One room turn row a base window carries (OF-522), under its map key,
+/// kept as the window holds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalRoomTurn {
-    pub id: [u8; 16],
+    pub key: String,
     pub row: Vec<u8>,
 }
 
@@ -104,7 +104,8 @@ pub struct CanonicalSchemaManifest {
     pub analyzer_manifest_blake3: [u8; 32],
 }
 
-/// Ordered source state. No op IDs, Loro exports, or Layer-2 indexes are encoded.
+/// Ordered source state. No op IDs, Loro exports, or Layer-2 indexes are
+/// encoded, but for the version an entity document's origin names (FIX 3553).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalSnapshot {
@@ -133,7 +134,7 @@ pub struct CanonicalSnapshot {
     /// when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custody_transitions: Vec<CanonicalCustodyTransition>,
-    /// The base window's room turn rows (OF-522), by turn id. Absent when
+    /// The base window's room turn rows (OF-522), by map key. Absent when
     /// empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub room_turns: Vec<CanonicalRoomTurn>,
@@ -162,4 +163,8 @@ pub struct CanonicalSnapshot {
     /// Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asset_body_refs: Vec<CanonicalAssetBodyRef>,
+    /// The final rows' source audience bindings and every revision of the
+    /// policies they reach (Engine A), by map key. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_audiences: Vec<CanonicalSourceAudience>,
 }

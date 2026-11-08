@@ -10,6 +10,20 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
+/// verb-hook pause from a person's pause and the other engine holds. The
+/// hook invocation is retained on the pause; only that hold can auto-resume.
+/// No old-format reader or migration is provided.
+///
+/// v26 (FIX 10898): attempt record v4 requires each requeue-history entry
+/// to carry its failure count and latest instant. No old-format reader or
+/// migration is provided.
+///
+/// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
+/// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
+/// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is
+/// no migration pass; rebuild the vault.
+///
 /// v23 (OF-190 B++ 2C): the `context:output:v1:` blob family is gone; a
 /// context output is a body of the `code_run:raw_output:v1:` family, keyed by
 /// its content. A step records its provider reply as evidence, and a verb
@@ -122,7 +136,9 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 24;
+/// v27 hashes full run/group identifiers in their v2 secondary-index keys.
+/// v26 is reserved for the separately landing attempt-record v4 format.
+pub const STORAGE_ABI_VERSION: u16 = 28;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
@@ -135,7 +151,7 @@ pub const DB_MANIFEST_VERSION: u16 = 2;
 
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 
-pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+pub(crate) use oneiron_store::graph_version::GRAPH_VERSION_KEY;
 
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
 
@@ -144,9 +160,7 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
 
 pub(super) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 
-pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
-
-pub(crate) const EMBEDDING_MODEL_EPOCH_KEY: &[u8] = b"embedding_model_epoch";
+pub(crate) use oneiron_store::vector_index::keys::{EMBEDDING_MODEL_EPOCH_KEY, VECTOR_VERSION_KEY};
 
 pub(in crate::store) const HNSW_COMPATIBILITY_VERSION: u8 = 3;
 
@@ -209,7 +223,14 @@ pub(super) static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) static VAULT_ROOT_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
-pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentity>>>> =
+/// One open store's place in [`OPEN_STORE_PATHS`]: the root identity it
+/// holds, and the vault handles its leader holds (FIX 12316).
+pub(super) struct OpenStorePath {
+    pub(super) identity: Option<VaultRootIdentity>,
+    pub(super) holds: crate::store::LeaderHolds,
+}
+
+pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, OpenStorePath>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] =

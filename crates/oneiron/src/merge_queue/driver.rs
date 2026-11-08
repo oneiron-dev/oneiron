@@ -19,10 +19,10 @@ use super::{
     BatchState, CheckPhase, MergeBatch, MergeQueue, QUEUE_CHECK_CANDIDATE_PREFIX, QueueDriveHold,
     QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueStageOverlap, QueueWork,
 };
-use crate::contract_oracle::{ContractOracle, invalid};
 use crate::error::Result;
 use crate::federation::QueueReconciliationAdmission;
 use crate::git_wire::{GitWire, lock_repository};
+use crate::store::contract_oracle::{ContractOracle, invalid};
 
 impl MergeQueue<'_> {
     /// What the driver does next on this queue, in priority order. A queue
@@ -183,6 +183,10 @@ impl MergeQueue<'_> {
             }
             QueueWork::Stage { batch, .. } => self.drive_stage(config, batch, pass),
             QueueWork::Diagnose { batch, .. } => {
+                // A removed public name waits for its person review (FIX 4365).
+                if let Some(waiting) = self.hold_for_contract_review(batch)? {
+                    return Ok(waiting);
+                }
                 let request = QueueCheckRequest::Diagnose {
                     batch: batch.clone(),
                 };
@@ -577,26 +581,7 @@ impl MergeQueue<'_> {
             let txn = self.vault.store.env.read_txn()?;
             self.repo_batches_in_txn(&txn)?
         };
-        if link.resolution_batch.is_none()
-            && let Some(task) = link.task
-            && let Some(successor) = retained.iter().find(|other| {
-                !link.batches.contains(&other.id)
-                    && other
-                        .run_order
-                        .as_ref()
-                        .is_some_and(|order| order.task == task)
-            })
-        {
-            link.resolution_batch = Some(successor.id.clone());
-            self.update_overlap_links(&link)?;
-            return Ok(QueueDriveOutcome::Changed);
-        }
-        if let Some(resolution) = &link.resolution_batch
-            && retained
-                .iter()
-                .any(|other| &other.id == resolution && other.state == BatchState::GreenAdvanced)
-        {
-            link.superseded = true;
+        if self.reconcile_conflict_resolution(&mut link, &retained)? {
             self.update_overlap_links(&link)?;
             return Ok(QueueDriveOutcome::Changed);
         }

@@ -3,15 +3,15 @@
 use lopdf::{Document, Object};
 
 use crate::api::{
-    Counter, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
-    note_current,
+    Counter, SealResourceLimits, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, note_current,
 };
 use crate::error::SealError;
 use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
-use super::verify_chain_gates::{VerifyCtx, malformed_input};
+use super::verify_chain_gates::{VerifyCtx, malformed_input, memory_refused};
 use super::verify_dss_core::EmbeddedCert;
 use super::verify_evidence::CadesEvidence;
 pub(super) use super::verify_evidence::evaluate_envelope;
@@ -19,17 +19,30 @@ pub(super) use super::verify_evidence::evaluate_envelope;
 #[path = "verify_tests_timestamp_evidence.rs"]
 mod verify_tests_timestamp_evidence;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SigHandler {
+    Cades,
+    DocTs,
+    UnsupportedAdbe,
+}
+
 #[derive(Debug)]
 pub(super) struct SigEntry {
     pub(super) field_name: String,
-    pub(super) is_doc_ts: bool,
+    pub(super) handler: SigHandler,
     pub(super) byte_range: [u64; 4],
     /// Decoded `/Contents` bytes (DER CMS followed by zero padding).
     pub(super) contents: Vec<u8>,
 }
 
-fn resolved_name<'a>(doc: &'a Document, obj: &'a Object) -> Result<&'a Object, SealError> {
-    pdf::resolve(doc, obj).ok_or_else(malformed_input)
+fn resolved_name<'a>(
+    doc: &'a Document,
+    obj: &'a Object,
+    limits: &SealResourceLimits,
+) -> Result<&'a Object, SealError> {
+    pdf::resolve(doc, obj, limits)
+        .map_err(memory_refused)?
+        .ok_or_else(malformed_input)
 }
 fn name_eq(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
@@ -67,42 +80,52 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 /// by hiding broken form state); both chains are followed whole and fail
 /// closed on a dangling or cyclic link.
 ///
-/// `/SubFilter` dispatch (fail-closed): a candidate is evaluated ONLY under
-/// the handler its `/SubFilter` names — `/Sig` requires
-/// `/ETSI.CAdES.detached`, `/DocTimeStamp` requires `/ETSI.RFC3161`. A typed
-/// dictionary with an absent or foreign `/SubFilter` (e.g.
-/// `/adbe.pkcs7.detached`) is SKIPPED, never evaluated as CAdES; a document
-/// left with no evaluable CAdES signature fails verification. The typeless
-/// interop path tolerates an ABSENT `/SubFilter` (that is the shape it
-/// exists for) but a PRESENT one must still name the CAdES handler. The
-/// interop allowance itself is gated on an ABSENT `/Type`: a present
-/// `/Type` naming neither handler — or not even a name — is skipped, never
-/// laundered into CAdES candidacy through the typeless path.
+/// `/SubFilter` dispatch: `/Sig` with `/ETSI.CAdES.detached` and
+/// `/DocTimeStamp` with `/ETSI.RFC3161` use their respective validators.
+/// `/Sig` with `/adbe.pkcs7.detached` is reported with structural evidence
+/// and unsupported crypto checks as `NotRun`, never evaluated as CAdES.
+/// Other absent or foreign typed `/SubFilter` values are skipped. The
+/// typeless interop path tolerates an ABSENT `/SubFilter`; a present one
+/// selects CAdES or the unsupported adbe report. The interop allowance
+/// itself is gated on an ABSENT `/Type`: a present `/Type` naming neither
+/// handler — or not even a name — is skipped, never laundered into CAdES
+/// candidacy through the typeless path.
 ///
 /// The nodes the descent visits are counted for the `[limits]` field-tree
 /// row, a failed descent's too; no count of them stops it (Rule 5).
-pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
+pub(super) fn collect_signatures(
+    doc: &Document,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut work = 0usize;
-    let collected = discover_signatures(doc, &mut work);
+    let collected = discover_signatures(doc, &mut work, limits);
     note_current(Counter::FieldTreeWork, work);
     collected
 }
 
 /// [`collect_signatures`], counting the nodes it visits in `work`.
-fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>, SealError> {
+fn discover_signatures(
+    doc: &Document,
+    work: &mut usize,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
-    let catalog = pdf::catalog(doc).ok_or_else(malformed_input)?;
+    let catalog = pdf::catalog(doc, limits)
+        .map_err(memory_refused)?
+        .ok_or_else(malformed_input)?;
     let Ok(af_obj) = catalog.get(b"AcroForm") else {
         return Ok(out);
     };
-    let af = pdf::resolve(doc, af_obj)
+    let af = pdf::resolve(doc, af_obj, limits)
+        .map_err(memory_refused)?
         .ok_or_else(malformed_input)?
         .as_dict()
         .map_err(|_| malformed_input())?;
     let Ok(fields_obj) = af.get(b"Fields") else {
         return Ok(out);
     };
-    let fields = pdf::resolve(doc, fields_obj)
+    let fields = pdf::resolve(doc, fields_obj, limits)
+        .map_err(memory_refused)?
         .ok_or_else(malformed_input)?
         .as_array()
         .map_err(|_| malformed_input())?;
@@ -125,16 +148,18 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         std::collections::BTreeSet::new();
     let mut stack: Vec<(&Object, bool)> = Vec::new();
     for field in fields.iter().rev() {
-        stack.push((field, false));
+        pdf::admitted::push(limits, &mut stack, (field, false)).map_err(memory_refused)?;
     }
     while let Some((node, inherited_sig_ft)) = stack.pop() {
         *work = work.saturating_add(1);
-        let (node_id, node_obj) = pdf::chain(doc, node).ok_or_else(malformed_input)?;
+        let (node_id, node_obj) = pdf::chain(doc, node, limits)
+            .map_err(memory_refused)?
+            .ok_or_else(malformed_input)?;
         // A field reached twice (shared kid, or a /Kids cycle) is walked
         // once: re-walking cannot discover a new signature, and refusing to
         // recurse is what makes a cycle terminate.
         if let Some(id) = node_id
-            && !visited.insert(id)
+            && !pdf::admitted::btree_insert(limits, &mut visited, id).map_err(memory_refused)?
         {
             continue;
         }
@@ -142,7 +167,7 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         // /FT is inheritable: a node's own /FT overrides, otherwise the
         // ancestor's verdict carries down.
         let is_sig_ft = match field.get(b"FT") {
-            Ok(ft) => name_eq(resolved_name(doc, ft)?, b"Sig"),
+            Ok(ft) => name_eq(resolved_name(doc, ft, limits)?, b"Sig"),
             Err(_) => inherited_sig_ft,
         };
         // Descend /Kids whenever present. A node's /Kids may hold CHILD
@@ -153,12 +178,14 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         // NOT exclusive: a widget kid carries neither /FT nor /V and simply
         // contributes nothing, while a child field is reached either way.
         if let Ok(kids_obj) = field.get(b"Kids") {
-            let kids = pdf::resolve(doc, kids_obj)
+            let kids = pdf::resolve(doc, kids_obj, limits)
+                .map_err(memory_refused)?
                 .ok_or_else(malformed_input)?
                 .as_array()
                 .map_err(|_| malformed_input())?;
             for kid in kids.iter().rev() {
-                stack.push((kid, is_sig_ft));
+                pdf::admitted::push(limits, &mut stack, (kid, is_sig_ft))
+                    .map_err(memory_refused)?;
             }
         }
         // Signature-discovery looks only at SIGNATURE fields (/FT /Sig,
@@ -173,31 +200,33 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
             // shape, never evaluated.
             continue;
         };
-        let Object::Dictionary(d) = pdf::resolve(doc, v).ok_or_else(malformed_input)? else {
+        let Object::Dictionary(d) = pdf::resolve(doc, v, limits)
+            .map_err(memory_refused)?
+            .ok_or_else(malformed_input)?
+        else {
             return Err(malformed_input());
         };
         let ty = d
             .get(b"Type")
             .ok()
-            .map(|o| resolved_name(doc, o))
+            .map(|o| resolved_name(doc, o, limits))
             .transpose()?;
         let subfilter = d
             .get(b"SubFilter")
             .ok()
-            .map(|o| resolved_name(doc, o))
+            .map(|o| resolved_name(doc, o, limits))
             .transpose()?;
-        let is_doc_ts = match ty {
-            Some(t) if name_eq(t, b"Sig") => {
-                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.CAdES.detached")) {
-                    continue;
-                }
-                false
-            }
+        let handler = match ty {
+            Some(t) if name_eq(t, b"Sig") => match subfilter {
+                Some(sf) if name_eq(sf, b"ETSI.CAdES.detached") => SigHandler::Cades,
+                Some(sf) if name_eq(sf, b"adbe.pkcs7.detached") => SigHandler::UnsupportedAdbe,
+                _ => continue,
+            },
             Some(t) if name_eq(t, b"DocTimeStamp") => {
                 if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.RFC3161")) {
                     continue;
                 }
-                true
+                SigHandler::DocTs
             }
             // A PRESENT /Type naming neither handler (or not a name at all)
             // is never a candidate: the typeless interop allowance exists
@@ -208,10 +237,12 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
                 }
-                if subfilter.is_some_and(|sf| !name_eq(sf, b"ETSI.CAdES.detached")) {
-                    continue;
+                match subfilter {
+                    None => SigHandler::Cades,
+                    Some(sf) if name_eq(sf, b"ETSI.CAdES.detached") => SigHandler::Cades,
+                    Some(sf) if name_eq(sf, b"adbe.pkcs7.detached") => SigHandler::UnsupportedAdbe,
+                    _ => continue,
                 }
-                false
             }
         };
         let br_obj = d.get(b"ByteRange").map_err(|_| malformed_input())?;
@@ -231,37 +262,78 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
-        let field_name = field
-            .get(b"T")
-            .ok()
-            .and_then(|o| pdf::resolve(doc, o))
+        let t_resolved = match field.get(b"T").ok() {
+            Some(t) => pdf::resolve(doc, t, limits).map_err(memory_refused)?,
+            None => None,
+        };
+        let field_name_bytes = t_resolved
             .and_then(|o| o.as_str().ok())
-            .map_or_else(
-                || "unnamed".to_owned(),
-                |v| String::from_utf8_lossy(v).into_owned(),
-            );
-        out.push(SigEntry {
-            field_name,
-            is_doc_ts,
-            byte_range: br,
-            contents: contents.clone(),
+            .unwrap_or(b"unnamed");
+        let field_name_len = field_name_bytes.utf8_chunks().fold(0usize, |len, chunk| {
+            len.saturating_add(chunk.valid().len())
+                .saturating_add(if chunk.invalid().is_empty() {
+                    0
+                } else {
+                    char::REPLACEMENT_CHARACTER.len_utf8()
+                })
         });
+        limits
+            .memory
+            .admit::<u8>(field_name_len)
+            .map_err(memory_refused)?;
+        let field_name = String::from_utf8_lossy(field_name_bytes).into_owned();
+        limits
+            .memory
+            .admit::<u8>(contents.len())
+            .map_err(memory_refused)?;
+        pdf::admitted::push(
+            limits,
+            &mut out,
+            SigEntry {
+                field_name,
+                handler,
+                byte_range: br,
+                contents: contents.clone(),
+            },
+        )
+        .map_err(memory_refused)?;
     }
+    // Stable sorting may allocate a temporary spine; it never copies the
+    // owned names or contents. Keep equal-revision discovery order intact.
+    let scratch_bytes = if out.len() > 1 {
+        out.len().saturating_mul(std::mem::size_of::<SigEntry>())
+    } else {
+        0
+    };
+    let _sort_hold = limits.memory.hold(scratch_bytes).map_err(memory_refused)?;
     out.sort_by_key(|e| e.byte_range[2].saturating_add(e.byte_range[3]));
     Ok(out)
 }
 
-pub(super) struct Checks {
+pub(super) struct Checks<'a> {
     pub(super) list: Vec<VerifyCheck>,
+    limits: &'a SealResourceLimits,
 }
 
-impl Checks {
-    pub(super) fn new() -> Self {
-        Self { list: Vec::new() }
+impl<'a> Checks<'a> {
+    pub(super) fn new(limits: &'a SealResourceLimits) -> Self {
+        Self {
+            list: Vec::new(),
+            limits,
+        }
     }
 
-    pub(super) fn record(&mut self, kind: VerifyCheckKind, ok: bool, finding: VerifyFindingCode) {
-        self.list.push(VerifyCheck {
+    fn push(&mut self, check: VerifyCheck) -> Result<(), SealMemoryRefusal> {
+        pdf::admitted::push(self.limits, &mut self.list, check)
+    }
+
+    pub(super) fn record(
+        &mut self,
+        kind: VerifyCheckKind,
+        ok: bool,
+        finding: VerifyFindingCode,
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: if ok {
                 VerifyCheckStatus::Pass
@@ -269,7 +341,7 @@ impl Checks {
                 VerifyCheckStatus::Fail
             },
             finding: if ok { None } else { Some(finding) },
-        });
+        })
     }
 
     pub(super) fn record_status(
@@ -277,35 +349,35 @@ impl Checks {
         kind: VerifyCheckKind,
         status: VerifyCheckStatus,
         finding: VerifyFindingCode,
-    ) {
-        self.list.push(VerifyCheck {
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status,
             finding: (status == VerifyCheckStatus::Fail).then_some(finding),
-        });
+        })
     }
 
-    pub(super) fn absent(&mut self, kind: VerifyCheckKind) {
-        self.list.push(VerifyCheck {
+    pub(super) fn absent(&mut self, kind: VerifyCheckKind) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotApplicable,
             finding: None,
-        });
+        })
     }
 
-    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) {
-        self.not_run_with_reason(kind, None);
+    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) -> Result<(), SealMemoryRefusal> {
+        self.not_run_with_reason(kind, None)
     }
     pub(super) fn not_run_with_reason(
         &mut self,
         kind: VerifyCheckKind,
         reason: Option<VerifyFindingCode>,
-    ) {
-        self.list.push(VerifyCheck {
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotRun,
             finding: reason,
-        });
+        })
     }
 
     pub(super) fn passed(&self, kind: VerifyCheckKind) -> bool {
@@ -408,7 +480,7 @@ pub(super) fn verify_cades_sig(
     e: &SigEntry,
     ctx: &VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     covered: &mut Vec<EmbeddedCert>,
     memory: &MemoryLedger,
 ) -> Result<CadesEvidence, SealMemoryRefusal> {
@@ -417,22 +489,23 @@ pub(super) fn verify_cades_sig(
         VerifyCheckKind::ByteRange,
         br_ok,
         VerifyFindingCode::InvalidByteRange,
-    );
+    )?;
     checks.record(
         VerifyCheckKind::UnsignedGap,
         br_ok,
         VerifyFindingCode::InvalidUnsignedGap,
-    );
+    )?;
     let spans_digest = if br_ok {
         pdf::hash_byte_range(bytes, e.byte_range).ok()
     } else {
         None
     };
     let cms_der = unpadded_cms(&e.contents);
-    let parsed = cms_der
-        .and_then(|d| cms::parse_cms(d).ok())
-        .map(|parsed| parsed.held(memory))
-        .transpose()?;
+    let parsed = match cms_der.map(|der| cms::parse_cms(der, memory)) {
+        Some(Ok(parsed)) => Some(parsed),
+        Some(Err(cms::TokenError::Memory(refusal))) => return Err(refusal),
+        Some(Err(cms::TokenError::Invalid)) | None => None,
+    };
     let env_ok = parsed.as_ref().is_some_and(|p| {
         p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
             && p.econtent.is_none()
@@ -445,33 +518,33 @@ pub(super) fn verify_cades_sig(
         VerifyCheckKind::CmsEnvelope,
         env_ok,
         VerifyFindingCode::InvalidCms,
-    );
+    )?;
     let Some(parsed) = parsed.filter(|_| env_ok) else {
         checks.record(
             VerifyCheckKind::SignedAttributes,
             false,
             VerifyFindingCode::InvalidSignedAttributes,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::ContentDigest,
             false,
             VerifyFindingCode::DigestMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::SignatureValue,
             false,
             VerifyFindingCode::SignatureMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::SigningCertificateBinding,
             false,
             VerifyFindingCode::CertificateBindingMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::CertificatePath,
             false,
             VerifyFindingCode::CertificatePathInvalid,
-        );
+        )?;
         let timestamp = TimestampEvidence::NotEvaluated.project(
             TimestampKind::Signature,
             checks,
@@ -498,7 +571,7 @@ pub(super) fn verify_cades_sig(
 fn verify_signer(
     ctx: &VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
@@ -510,13 +583,13 @@ fn verify_signer(
         VerifyCheckKind::SignedAttributes,
         md.is_some(),
         VerifyFindingCode::InvalidSignedAttributes,
-    );
+    )?;
     let digest_ok = matches!((md, spans_digest), (Some(a), Some(b)) if a == b);
     checks.record(
         VerifyCheckKind::ContentDigest,
         digest_ok,
         VerifyFindingCode::DigestMismatch,
-    );
+    )?;
     let signer_idx = parsed.certificates.iter().position(|c| {
         let Ok((iss, ser)) = cms::issuer_and_serial(c) else {
             return false;
@@ -531,18 +604,18 @@ fn verify_signer(
         VerifyCheckKind::SigningCertificateBinding,
         signer_idx.is_some(),
         VerifyFindingCode::CertificateBindingMismatch,
-    );
+    )?;
     let Some(idx) = signer_idx else {
         checks.record(
             VerifyCheckKind::SignatureValue,
             false,
             VerifyFindingCode::SignatureMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::CertificatePath,
             false,
             VerifyFindingCode::CertificatePathInvalid,
-        );
+        )?;
         let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
         return Ok(CadesEvidence {
             signer_chain: None,
@@ -557,7 +630,7 @@ fn verify_signer(
                 && cms::verify_signature_value(
                     a,
                     cert_der,
-                    &cms::signed_attrs_signature_input(signer),
+                    &cms::signed_attrs_signature_input(signer, memory)?,
                     &signer.signature,
                 )
                 .is_ok()
@@ -568,7 +641,7 @@ fn verify_signer(
         VerifyCheckKind::SignatureValue,
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
-    );
+    )?;
     let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
     let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     Ok(CadesEvidence {
@@ -587,7 +660,7 @@ fn verify_ts_token(
     clock_ms: u64,
     signer: &cms::ParsedSignerInfo,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     covered: &mut Vec<EmbeddedCert>,
     memory: &MemoryLedger,
 ) -> Result<TimestampResult, SealMemoryRefusal> {
@@ -614,7 +687,7 @@ pub(super) fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
@@ -625,12 +698,12 @@ pub(super) fn verify_doc_ts(
         VerifyCheckKind::ByteRange,
         br_ok,
         VerifyFindingCode::InvalidByteRange,
-    );
+    )?;
     checks.record(
         VerifyCheckKind::UnsignedGap,
         br_ok,
         VerifyFindingCode::InvalidUnsignedGap,
-    );
+    )?;
     let covers_end = !is_last
         || e.byte_range
             .get(2..4)

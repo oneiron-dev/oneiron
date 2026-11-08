@@ -4,8 +4,8 @@
 //! parks its run on a code consent wait, minted beside the held call in the
 //! same writer. The wait binds the exact pending effect: its run and write
 //! site, the frozen bytes' digest, the original caller and its instrument,
-//! the governing key, grant and manifest. It asks the vault's owner one TASK
-//! question with canon's confirm trio.
+//! the governing key, grant and manifest. It asks every live vault owner one
+//! shared TASK question with canon's confirm trio.
 //!
 //! The owner's answer is its own fact: authenticated from any surface the
 //! owner is authenticated on, revalidated in the answering writer, bound to
@@ -28,8 +28,12 @@ mod binding;
 mod browser;
 mod host;
 mod ledger;
+mod rebind;
+mod rebind_types;
 mod replay;
+mod resume;
 mod settle;
+mod standing_offer;
 mod types;
 
 pub(crate) use self::binding::{
@@ -42,13 +46,19 @@ pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub use self::host::CodeConsentEffectHost;
 pub(crate) use self::replay::{
     CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
-    seal_parked_code_consent_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
+    consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
+    verify_parked_code_consent,
+};
+pub use self::resume::{
+    CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer,
 };
 pub(crate) use self::settle::{
-    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
-    original_authority_holds_in_txn, refuse_code_consent_wait_in_txn,
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, active_authority_holds_in_txn,
+    code_consent_admission_in_txn, offered_choices, original_authority_holds_in_txn,
+    prove_code_consent_holder_act_in_txn, refuse_code_consent_wait_in_txn,
     settle_code_consent_wait_listing_in_txn,
 };
+pub use self::standing_offer::CodeConsentStandingOffer;
 pub use self::types::{
     CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentChoice,
     CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
@@ -57,6 +67,10 @@ pub use self::types::{
 pub(crate) use self::types::{
     CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentPendingEffect, CodeConsentPrincipal,
     CodeConsentRememberOffer, CodeConsentWaitRow,
+};
+
+pub(crate) use self::rebind_types::{
+    CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
 };
 
 use crate::EntityId;
@@ -152,6 +166,8 @@ pub enum ConnectorCallReply {
         live_until_ms: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        budget_steering: Vec<String>,
     },
 }
 
@@ -251,8 +267,11 @@ impl ConnectorCallReply {
                 reasons,
             },
             ConnectorCallOutcome::AwaitingInput {
-                call_ref, input, ..
-            } => Self::awaiting_input(name, tool, call_ref, input),
+                call_ref,
+                input,
+                budget_steering,
+                ..
+            } => Self::awaiting_input(name, tool, call_ref, input, budget_steering),
         }
     }
 
@@ -265,6 +284,7 @@ impl ConnectorCallReply {
         tool: &str,
         call_ref: EntityId,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     ) -> Self {
         // A live round always asks something; none here means a reply read
         // from the call's row, which keeps no questions' text.
@@ -281,6 +301,7 @@ impl ConnectorCallReply {
             questions: input.questions,
             live_until_ms: input.live_until_ms,
             reasons,
+            budget_steering,
         }
     }
 

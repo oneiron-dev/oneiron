@@ -20,12 +20,14 @@ use heed::RoTxn;
 
 use crate::Vault;
 use crate::authority::WorldPrivacyView;
-use crate::machine_destination::{Destination, EffectiveRead, PeerMachine};
+use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine};
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
 /// host decides it, from the connection the caller reached it on; nothing the
 /// caller sends sets it. A device that forwards its caller's search to the
 /// home states it there, signed with the request (FIX 3550).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CallerLocality {
     /// On this device: the embedded host, or a caller on its local socket or
@@ -46,7 +48,7 @@ use crate::error::{Error, RecordError, Result};
 /// It only narrows ([`Self::meet`]): once off this device a read never reads
 /// on it again, and a later on-device locality never erases a machine it
 /// carries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadDestination {
     /// Whether the rows leave this device.
     off_device: bool,
@@ -132,6 +134,11 @@ impl ReadDestination {
         if !self.proved.contains(&peer) {
             self.proved.push(peer);
         }
+    }
+
+    /// Connection peers retained even while the current locality is on-device.
+    pub(crate) fn all_peers(&self) -> &[PeerMachine] {
+        &self.proved
     }
 
     /// Every machine the judge reads the world settings for: none on this
@@ -460,6 +467,32 @@ impl Vault {
         rows: &[EntityId],
         destination: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, false)
+    }
+
+    /// [`Self::release_hold_for`] for the owner's own whole-vault export
+    /// (owner ruling 1-EXPORT = B), whose release mode its door chose from
+    /// its trusted route and the owner's fresh proof: his recipient choice
+    /// keeps none of its rows from where it goes, so a row a withheld world
+    /// keeps by that choice alone goes, and every row after it is judged
+    /// on. Every integrity hold still keeps the rows here: a row whose world
+    /// cannot be placed, and a conflicted vault root.
+    pub fn owner_export_release_hold_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, true)
+    }
+
+    /// The one release verdict of [`Self::release_hold_for`] and, with
+    /// `owner_export`, of [`Self::owner_export_release_hold_for`].
+    fn release_hold_judged(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+        owner_export: bool,
+    ) -> Result<Option<ReleaseHold>> {
         if !destination.is_off_device() || rows.is_empty() {
             return Ok(None);
         }
@@ -477,8 +510,12 @@ impl Vault {
                 // Naming the reason never changes the verdict: a reason that
                 // cannot be read is an integrity hold.
                 Ok(true) => {
-                    let hold = row_hold(self, &txn, &view, &withheld, row, destination);
-                    return Ok(Some(hold.unwrap_or(ReleaseHold::Placement)));
+                    let hold = row_hold(self, &txn, &view, &withheld, row, destination)
+                        .unwrap_or(ReleaseHold::Placement);
+                    if owner_export && hold.is_owner_choice() {
+                        continue;
+                    }
+                    return Ok(Some(hold));
                 }
                 Err(Error::CorruptedIndex(_)) => return Ok(Some(ReleaseHold::Placement)),
                 Err(error) => return Err(error),

@@ -14,9 +14,12 @@ use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
 use crate::temporal::TimeRange;
+use crate::work_line::{TASK_WORK_BOUND, TASK_WORK_WAIT, WorkLine};
 use std::path::Path;
 
+mod adopt;
 mod config_validation;
+mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
 
@@ -126,11 +129,7 @@ impl Vault {
     /// A lease another host holds for one owner act is waited out for a
     /// bounded time (FIX 5885, `VaultWriterLease::acquire_after_owner_act`).
     pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
-        validate_open_config(&config)?;
-        std::fs::create_dir_all(path.as_ref())?;
-        let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_owned_with(path, config, super::OpenOptions::default())
     }
 
     /// This vault's own directory on this host, as it was opened
@@ -164,10 +163,15 @@ impl Vault {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_leased(&canonical, config, lease, super::OpenOptions::default())
     }
 
-    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+    fn open_leased(
+        canonical: &Path,
+        config: VaultConfig,
+        lease: VaultWriterLease,
+        options: super::OpenOptions,
+    ) -> Result<Self> {
         let store =
             Store::open_with_writer_lease(canonical, &config, &lease, engine_store_hooks())?;
         // Only the lease holder writes bodies, so what a writer left half
@@ -175,7 +179,7 @@ impl Vault {
         // off-record sessions, none of which outlived its process.
         #[cfg(unix)]
         store.sweep_body_debris()?;
-        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
+        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required, options)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
     }
@@ -208,7 +212,9 @@ impl Vault {
     /// Once every comparison passes, the ordinary existing-vault open writes
     /// run exactly as they do for [`Self::open`] — including the idempotent
     /// seeded system-agent roster reconcile — so a verified vault is no less
-    /// capable than one opened through the create-capable door.
+    /// capable than one opened through the create-capable door. A confirmed
+    /// left shared environment keeps its bootstrap content purged; its policy
+    /// manifest and owed cleanup still reconcile.
     pub fn open_existing(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         validate_open_config(&config)?;
         // Discovered from the operator's trusted dictionary roots, never from
@@ -222,6 +228,7 @@ impl Vault {
             analyzer,
             true,
             DefaultPolicySeedMode::Required,
+            super::OpenOptions::default(),
         )
     }
 
@@ -259,8 +266,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -330,6 +337,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -373,8 +381,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -478,6 +486,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -504,7 +513,7 @@ impl Vault {
                 Store::open_unseeded_for_test(path, &config, engine_store_hooks())?
             }
         };
-        Self::finish_open(store, config, seed_mode)
+        Self::finish_open(store, config, seed_mode, super::OpenOptions::default())
     }
 
     /// Everything after the storage gates: analyzer discovery, the text-index
@@ -513,6 +522,7 @@ impl Vault {
         store: Store,
         config: VaultConfig,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
         let analyzer = discover_analyzer(&config)?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
@@ -537,7 +547,14 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        Self::assemble_open(store, config, analyzer, text_index_trusted, seed_mode)
+        Self::assemble_open(
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+            seed_mode,
+            options,
+        )
     }
 
     /// Everything both open doors share once the text-index state is settled:
@@ -551,15 +568,29 @@ impl Vault {
         analyzer: MultilingualAnalyzer,
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
+        // The store's id first, before this open seeds a row (FIX 3375).
+        let vault_id = super::VaultId::resolve_at_open(
+            &store,
+            config
+                .page_seal
+                .as_ref()
+                .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
+            options.adopted_storage_id(),
+        )?;
         crate::batch::sweep_scope_stamps(&store)?;
-        // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
-        // open, fresh and existing, in its own write transaction before any
-        // caller holds the handle. Missing rows are created with pinned
+        // FIX 12327: rows of a kind no executor serves leave the queue.
+        crate::attempt_queue::drop_unserved_kinds(&store)?;
+        let seed_content = matches!(seed_mode, DefaultPolicySeedMode::Required)
+            && !crate::store::shared_leave_receipt::has_left(&store)?;
+        // ONE-1890: the seeded system-agent roster reconciles on every seeded
+        // open that has not left its shared vault, in its own write transaction
+        // before any caller holds the handle. Missing rows are created with pinned
         // deterministic ids; existing rows are never overwritten, so a user's
         // edits and their `enabled = false` survive every reopen. Test-only
         // unseeded opens skip it and drive the in-transaction seam directly.
-        if matches!(seed_mode, DefaultPolicySeedMode::Required) {
+        if seed_content {
             let mut wtxn = store.env.write_txn()?;
             crate::agent_def::seed_system_agent_definitions(
                 &store,
@@ -586,13 +617,8 @@ impl Vault {
             .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
-            vault_id: super::VaultId::resolve_at_open(
-                &store,
-                config
-                    .page_seal
-                    .as_ref()
-                    .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
-            )?,
+            admitted_model_packs: Default::default(),
+            vault_id,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
@@ -602,13 +628,16 @@ impl Vault {
                 config.vector_evidence,
             )),
             config,
+            tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
+            secret_use_t1_operations: Default::default(),
             page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             claim_vad_payment: Default::default(),
+            cloud_registration_erase_revokes: Default::default(),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -616,16 +645,12 @@ impl Vault {
             confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
+            #[cfg(unix)]
+            host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
-            task_work: crate::work_line::WorkLine::new(
-                None,
-                crate::work_line::TASK_WORK_BOUND,
-                crate::work_line::TASK_WORK_WAIT,
-            ),
-            linear_rate_line: crate::work_line::WorkLine::exclusive(
-                crate::work_line::TASK_WORK_WAIT,
-            ),
+            task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
+            linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
@@ -637,6 +662,8 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            executor_leases_released: std::sync::atomic::AtomicBool::new(false),
+            agent_run_fences: Default::default(),
             #[cfg(feature = "sync")]
             home_search: Default::default(),
             speculative_passes: Default::default(),
@@ -651,14 +678,17 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            esign_page_inspector: Default::default(),
+            xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
+            ask_forward_arrivals: Default::default(),
+            origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
-        // A sealed vault (maximum tier) admits the wrap its seal was
-        // unlocked with, holds its data key and mirrors its wraps before any
-        // caller holds it.
+        // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
+        // holds its data key and mirrors its wraps before any caller holds it.
         vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
@@ -681,20 +711,22 @@ impl Vault {
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
-            // The seeded births below stamp the owner's `substrate` FACET,
-            // which the owner PERSON put mints. Pinned at 0 like the bootstrap
-            // skills: the owner id is the same in every vault, so its seeded
-            // row is too, and a whole-vault import between vaults finds it
-            // unchanged.
-            // An erased owner stays erased.
-            vault.with_write_txn_grouped(|wtxn| {
-                let owner = embedded_owner_actor_id()?;
-                if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
-                    vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
-                }
-                crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
-                Ok(())
-            })?;
+            if seed_content {
+                // The seeded births below stamp the owner's `substrate` FACET,
+                // which the owner PERSON put mints. Pinned at 0 like the bootstrap
+                // skills: the owner id is the same in every vault, so its seeded
+                // row is too, and a whole-vault import between vaults finds it
+                // unchanged.
+                // An erased owner stays erased.
+                vault.with_write_txn_grouped(|wtxn| {
+                    let owner = embedded_owner_actor_id()?;
+                    if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
+                        vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
+                    }
+                    crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
+                    Ok(())
+                })?;
+            }
             // An untouched seeded policy manifest takes the one this build
             // ships. A failure leaves the vault on its own; the next open
             // tries again.
@@ -711,11 +743,16 @@ impl Vault {
                     "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
                 ),
             }
-            crate::skill_hub::seed_bootstrap_skills(&vault)?;
-            crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
-            crate::skill_hub::seed_default_skill_hub(&vault)?;
-            crate::comm::seed_claim_class_descriptors(&vault)?;
-            vault.store.project_writes.seed_root_project(&vault)?;
+            if seed_content {
+                crate::skill_hub::seed_bootstrap_skills(&vault)?;
+                crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
+                crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
+                vault
+                    .store
+                    .record_hooks
+                    .seed_claim_class_descriptors(&vault)?;
+                vault.store.project_writes.seed_root_project(&vault)?;
+            }
         }
         vault.lfs_chunk_parameters()?;
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
@@ -871,6 +908,31 @@ impl Vault {
         }
     }
 
+    /// [`Vault::notify_note_document`] for a typed body's artifact after a
+    /// committed local head write: the invalidation frame names an entity,
+    /// not a NOTE, and the socket forwards an artifact's UPDATE where it
+    /// drops a NOTE's.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_typed_body_document(&self, id: crate::EntityId) {
+        self.notify_note_document(id);
+    }
+
+    /// Invalidate own devices' copies of `id`'s forks after a committed fork
+    /// change at this authority (FIX 12789): a fork made or uploaded here, a
+    /// decision, a bundle opened. Content-free and best effort, as
+    /// [`Self::notify_note_document`]; a replica's notice stays on it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note_forks(id);
+        }
+    }
+
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
     /// compaction ran: an attached manager decides for its own live handles,
     /// and an attached-but-dropped manager defers rather than rewriting a row a
@@ -896,6 +958,34 @@ impl Vault {
                 self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
+        }
+    }
+
+    /// Unloads `key`'s window when it is registered and no handle but the
+    /// manager's holds it: persisted, then deregistered, so a sweep may hold
+    /// it closed (FIX 14534). `false` when it is not registered, a handle
+    /// holds it, or no manager is attached.
+    ///
+    /// # Errors
+    ///
+    /// A persist the unload refused; a poisoned attachment.
+    #[cfg(feature = "sync")]
+    pub(crate) fn unload_idle_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::Result<bool> {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("document manager attachment poisoned"))?
+            .upgrade();
+        let Some(manager) = manager else {
+            return Ok(false);
+        };
+        match manager.unload_window(key) {
+            Ok(unloaded) => Ok(unloaded),
+            Err(crate::Error::Sync(crate::error::SyncError::WindowBusy { .. })) => Ok(false),
+            Err(error) => Err(error),
         }
     }
 

@@ -49,7 +49,7 @@ pub(super) const RECENT_REASON_CODES: usize = 8;
 const ERR_QUARANTINE_ROW: &str = "sync quarantine row";
 
 /// Which CRDT window-doc map the rejected op targeted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QuarantineContainer {
     Entities,
@@ -59,6 +59,12 @@ pub enum QuarantineContainer {
     /// value arriving through the root mirror is quarantined — never
     /// upserted over a previous good `ls:` row, never silently dropped.
     Leases,
+    /// The base window's `office_proposals` map (FIX 2691): a carried
+    /// proposal whose decisions diverge from the copy held here.
+    OfficeProposals,
+    /// The base window's `typed_body_rows` map (FIX 12470): a carried typed
+    /// body receipt that diverges from the copy held here.
+    TypedBodyRows,
 }
 
 impl QuarantineContainer {
@@ -69,6 +75,8 @@ impl QuarantineContainer {
             Self::Edges => "edges",
             Self::Tombstones => "tombstones",
             Self::Leases => "leases",
+            Self::OfficeProposals => "office_proposals",
+            Self::TypedBodyRows => "typed_body_rows",
         }
     }
 }

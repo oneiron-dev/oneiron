@@ -95,6 +95,8 @@ pub(crate) enum WitnessProducer {
     /// A scope summary the run asked for, minted or reused by this Dreamer
     /// attempt; `None` once that attempt's run is erased.
     Summary(Option<AttemptId>),
+    /// A tested queue revision sealed from this run's admitted proposal.
+    QueueSeal,
 }
 
 impl WitnessProducer {
@@ -102,7 +104,7 @@ impl WitnessProducer {
     /// its token held as it was captured, so the edge stays the run's once
     /// the lease has ended.
     const fn lands_late(self) -> bool {
-        matches!(self, Self::Promotion | Self::Summary(_))
+        matches!(self, Self::Promotion | Self::Summary(_) | Self::QueueSeal)
     }
 }
 
@@ -165,7 +167,7 @@ pub(super) fn record_pairs_in_txn(
     pairs: &[(EntityId, EntityId)],
     producer: WitnessProducer,
 ) -> Result<bool> {
-    let live = token.lease_holds_in_txn(store, wtxn);
+    let live = super::run_writes::run_write_lease_holds_in_txn(token, store, wtxn);
     if !live && !producer.lands_late() {
         return Ok(false);
     }
@@ -381,7 +383,7 @@ pub(crate) fn note_summary_request_in_txn(
     let Some(token) = current_run_write_token() else {
         return;
     };
-    if !token.lease_holds_in_txn(store, wtxn) {
+    if !super::run_writes::run_write_lease_holds_in_txn(&token, store, wtxn) {
         return;
     }
     let mut rest = token.attempt().as_bytes().to_vec();

@@ -61,8 +61,17 @@ pub(crate) async fn handle_mcp_request(
                 .ok()
                 .flatten()
                 .map(|id| crate::owner::vault_key::hex(&id));
+            // The version the client asks for when this server speaks it,
+            // else the newest (FIX 4902).
+            let protocol_version = mcp_negotiated_version(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("protocolVersion"))
+                    .and_then(Value::as_str),
+            );
             let result = json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": protocol_version,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
                     "version": env!("CARGO_PKG_VERSION"),
@@ -81,7 +90,7 @@ pub(crate) async fn handle_mcp_request(
                 "actor": mcp_actor_result(&actor),
                 "vault_id": vault_id,
             });
-            super::device_release::mcp_release_result(server, &actor, &[], false, result)
+            super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
         // Actor-free, but a caller is still REQUIRED, as for every method.
         "notifications/initialized" => {
@@ -185,14 +194,40 @@ pub(crate) async fn handle_mcp_request(
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
                         client_surface: params.client_surface(),
+                        signing_request_transport: Some(
+                            oneiron::memory::SigningRequestTransport::new(
+                                connection
+                                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                                    // Embedded locality uses loopback:0, not a TCP peer.
+                                    .filter(|peer| peer.0.port() != 0)
+                                    .map(|peer| peer.0.ip()),
+                                headers
+                                    .get(axum::http::header::USER_AGENT)
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_owned),
+                            ),
+                        ),
                         ..actor.clone()
                     };
                     let args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
+                    // A named verb call keeps its admission intent, as the
+                    // facade's does, unless it sits off the record (FIX 4735).
+                    let intent = super::super::admission_intent::McpIntent::of(
+                        server, &args, &actor, anonymous,
+                    );
                     // The tool fan-out, on the heap (FIX 12072).
-                    Box::pin(execute_mcp_tool(server, args, &actor, headers, connection)).await
+                    let run = execute_mcp_tool(server, args, &actor, headers, connection);
+                    Box::pin(super::super::admission_intent::observed(
+                        server,
+                        &actor,
+                        intent,
+                        run,
+                        |result| result,
+                    ))
+                    .await
                 })
                 .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened

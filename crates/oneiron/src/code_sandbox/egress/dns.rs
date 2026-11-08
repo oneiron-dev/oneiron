@@ -24,6 +24,14 @@ pub(super) fn answer(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8
                 "owner DNS allowlist",
             ));
         }
+        // A query is an outbound operation: it goes past the owner's policy
+        // door before it is sent, as every request and datagram does, and
+        // its receipt names that verdict (FIX 7947).
+        let url = format!("dns://{host}");
+        let (decision, category, policy_receipt) = proxy.policy(&url, query)?;
+        if !OpenEgressProxy::permits(decision) {
+            return Ok(Err((url, decision, category, policy_receipt)));
+        }
         let answer =
             exchange_dns_query(query, proxy.config.request_timeout, UnusableResolver::Fail)?;
         check_answers(&answer)?;
@@ -32,19 +40,19 @@ pub(super) fn answer(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8
         if let Some(bound) = bindings(query, &answer) {
             publish(proxy, &host.to_ascii_lowercase(), &bound);
         }
-        Ok((host, answer))
+        Ok(Ok((url, answer, decision, category, policy_receipt)))
     })();
     match result {
-        Ok((host, answer)) => {
-            proxy.record(
-                "dns",
-                &format!("dns://{host}"),
-                &answer,
-                PolicyClassifyDecision::Allow,
-                PolicyVerdictCategory::None,
-                None,
-            )?;
+        Ok(Ok((url, answer, decision, category, policy_receipt))) => {
+            proxy.record("dns", &url, &answer, decision, category, policy_receipt)?;
             Ok(answer)
+        }
+        Ok(Err((url, decision, category, policy_receipt))) => {
+            proxy.record("dns", &url, query, decision, category, policy_receipt)?;
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "egress policy",
+            ))
         }
         Err(error) => {
             let host = question(query)
@@ -84,6 +92,10 @@ pub enum UnusableResolver {
 /// allowlist, refuses no address and keeps no receipt, and each caller keeps
 /// its own query check. What a resolver the transport cannot use does to
 /// the query is `fallback`.
+///
+/// An exchange holds one transport socket at a time: the UDP socket closes
+/// before a truncated reply's TCP stream opens. So the one socket a caller
+/// charges to the host floor for the exchange covers it (FIX 6301).
 pub fn exchange_dns_query(
     query: &[u8],
     wait: Duration,
@@ -127,6 +139,7 @@ pub fn exchange_dns_query(
                 if answer[2] & 2 == 0 {
                     return Ok(answer);
                 }
+                drop(socket);
                 return tcp_answer(target, query, wait, fallback);
             }
             Err(e) => error = e,

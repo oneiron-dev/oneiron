@@ -4,17 +4,19 @@ use super::{
     ledger::{events_in, hash, state_in},
     model::invalid,
 };
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt,
-    FailAttempt, RetryAttempt,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord, ClaimOutcome};
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundExecutionOutcome,
     OutboundExecutionRequest, OutboundExecutionSink,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
+use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_inputs::RetryAttempt;
+use crate::store::attempt_state::AttemptState;
 use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -357,7 +359,10 @@ impl Vault {
                             id: attempt.id,
                             lease_owner,
                             attempt_count: attempt.attempt_count,
-                            backoff_until: now.saturating_add(60),
+                            // FIX 11660: never before the edge its receipt names.
+                            backoff_until: now
+                                .saturating_add(60)
+                                .max(result.retry_at().unwrap_or(0)),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },

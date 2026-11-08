@@ -56,6 +56,10 @@ use crate::temporal::TimeRange;
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
 mod expiry;
+mod import;
+pub(crate) use import::{SessionImportHint, SessionImportPre};
+mod open_hint;
+pub use open_hint::SessionOpenHint;
 mod speakers;
 pub use expiry::SessionExpiryPolicy;
 pub(crate) use speakers::erase_session_speaker_actor_in_txn;
@@ -199,6 +203,13 @@ pub struct EndedSession {
     pub last_activity: u64,
     pub ended_at: u64,
     pub reason: SessionEndReason,
+    /// The sitting's member TURNs the close planned its Meso round over.
+    pub meso_member_turns: usize,
+    /// The Meso partition attempts the close queued.
+    pub meso_partitions_enqueued: usize,
+    /// The Meso partition attempts the close found queued already for the
+    /// same partition and turns; they are the round's as well.
+    pub meso_partitions_existing: usize,
 }
 
 /// Close predicate for [`Vault::end_session_with_wake`], re-validated
@@ -416,6 +427,11 @@ impl Vault {
         if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &key.pointer())? {
             return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
+        if RECORDS.get(&self.store, wtxn, &id)?.is_some() {
+            return Err(Error::InvariantViolation(
+                "session id already has a lifecycle record",
+            ));
+        }
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
             key,
@@ -483,38 +499,8 @@ impl Vault {
         if let Some(existing) = open {
             return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
-        let id = self.store.clock.entity_id()?;
-        let args = session_hook_args(id, "app_open");
-        let check = |rewritten: &Value| host_args_kept(&args, rewritten);
-        let call = session_hook_call(HOST_SESSION_OPEN, id, key.actor, 0);
-        let pre = self
-            .pre_verb_hooks(call, args.clone(), &check)?
-            .map_err(Error::from)?;
-        let outcome = match self.with_write_txn_grouped(|wtxn| {
-            self.mint_session_with_id_in_txn(wtxn, key, timestamp, id)
-        }) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                if crate::runtime_hooks::verb::error_failed_storage(&error) {
-                    self.reopen_resumed_ask(&pre);
-                }
-                return Err(error);
-            }
-        };
-        if let SessionMintOutcome::Minted(session) = outcome {
-            // The sitting is open whatever a post-hook says.
-            let result = json!({
-                "session": session.to_hex(),
-                "started_at": timestamp.effective_ms / 1_000,
-            });
-            if let Err(error) = self.post_verb_hooks(pre, result) {
-                tracing::warn!(
-                    ?error,
-                    "host.session.open post-hooks failed on an opened sitting"
-                );
-            }
-        }
-        Ok(outcome)
+        let hint = self.prepare_session_open_hint(key, timestamp)?;
+        self.mint_prepared_session_hint(&hint)
     }
 
     /// Bumps the open session's `last_activity` to `now` (unix seconds,
@@ -767,12 +753,21 @@ impl Vault {
             record.explicit_end_hint = Some(timestamp);
         }
         OPEN_POINTER.delete(&self.store, wtxn, &key.pointer())?;
-        // The sitting's own scratchpad ends with it (FIX 9748); a seal that
-        // fails leaves the close as it was.
-        if let Err(error) =
-            crate::context_board::seal_session_pad_in_txn(self, wtxn, key.actor, &id.to_hex())
-        {
-            tracing::warn!(?error, "sitting close left its scratchpad unsealed");
+        // The sitting's own scratchpad ends with it (FIX 9748). The seal runs
+        // in a savepoint (FIX 10566): one that fails part-way leaves none of
+        // its writes, and the close lands as it was.
+        let mut seal = self.store.env.nested_write_txn(wtxn)?;
+        match crate::context_board::seal_session_pad_in_txn(
+            self,
+            &mut seal,
+            key.actor,
+            &id.to_hex(),
+        ) {
+            Ok(_) => seal.commit()?,
+            Err(error) => {
+                drop(seal);
+                tracing::warn!(?error, "sitting close left its scratchpad unsealed");
+            }
         }
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
@@ -797,7 +792,7 @@ impl Vault {
         let scope = DreamerConsolidationScope::Meso;
         let wake = self.plan_session_end_wake_in_txn(wtxn, &id)?;
         let current = read_watermark_in_txn(self, wtxn, scope)?;
-        enqueue_partition_attempts_in_txn(
+        let partitions = enqueue_partition_attempts_in_txn(
             self,
             wtxn,
             scope,
@@ -806,6 +801,15 @@ impl Vault {
             None,
             now,
         )?;
+        let meso_partitions_enqueued = partitions
+            .iter()
+            .filter(|outcome| {
+                matches!(
+                    outcome,
+                    crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(_)
+                )
+            })
+            .count();
 
         // (g) The sitting's summary (FIX 7509, ARCH-0026: the completion
         // event fires right then), same commit. Nothing is checked or read
@@ -822,6 +826,9 @@ impl Vault {
             last_activity: record.last_activity,
             ended_at,
             reason,
+            meso_member_turns: wake.planned_turn_ids.len(),
+            meso_partitions_enqueued,
+            meso_partitions_existing: partitions.len() - meso_partitions_enqueued,
         }))
     }
 
@@ -862,6 +869,20 @@ impl Vault {
                 return Err(error);
             }
         };
+        if let Some(ended) = &ended {
+            // The round the close owes, on the Dreamer's stage target: a
+            // close that planned no Meso partition says so, so a watcher
+            // never waits for a round that was not queued.
+            tracing::info!(
+                target: "oneiron::dreamer::stages",
+                session = %ended.session.to_hex(),
+                reason = end_reason_word(ended.reason),
+                member_turns = ended.meso_member_turns,
+                meso_partitions = ended.meso_partitions_enqueued + ended.meso_partitions_existing,
+                meso_partitions_enqueued = ended.meso_partitions_enqueued,
+                "dreamer sitting close"
+            );
+        }
         if let (Some(pre), Some(ended)) = (pre, &ended) {
             let result = json!({
                 "session": ended.session.to_hex(),

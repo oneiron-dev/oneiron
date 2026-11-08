@@ -255,6 +255,44 @@ pub(crate) async fn vault_skills_code_auto_install_set(
     .await
 }
 
+pub(crate) async fn vault_skills_fit_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillFitSetRequest,
+) -> Listed<HubConsentReceipt> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.fit.set",
+        move |server, owner| {
+            Ok((
+                sdk::skill_fit_set_as_owner(server.vault(), owner, &input)?,
+                Vec::new(),
+            ))
+        },
+    )
+    .await
+}
+
+pub(crate) async fn vault_skills_advisory_ask_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillAdvisoryAskRequest,
+) -> Listed<HubConsentReceipt> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.advisory_ask.set",
+        move |server, owner| {
+            Ok((
+                sdk::skill_advisory_ask_set_as_owner(server.vault(), owner, &input)?,
+                Vec::new(),
+            ))
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_skills_convert(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -511,6 +549,7 @@ impl HostSkillRefiner<'_> {
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, prompt.to_owned()),

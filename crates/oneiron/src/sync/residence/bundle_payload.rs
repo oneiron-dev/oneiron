@@ -20,7 +20,9 @@
 //!   those of a world it knows was deleted here or is no longer eligible for
 //!   this holder ([`SEALED_BUNDLE_CARRY_FILTER`]), read here or not: it knows a
 //!   section's world from a key it holds, or from the pad object's index (FIX
-//!   3359). A section of a world it does not know rides on.
+//!   3359). A section of a world it does not know rides on. So does a section
+//!   it reads that does not open, decode or merge here, which the upload
+//!   lists for the owner to repair (FIX 19525).
 //! - A take opens the sections this machine may read and merges each window into
 //!   its mirror. It never reads the base section: base syncs live between the
 //!   owner's machines. A kit restore reads it all, on an install with no machine
@@ -51,8 +53,9 @@ use crate::sync::window::{
 };
 use crate::world_keys::{
     BundleCarry, KitConfirmation, OpenedBundleSection, OpenedVaultBundle, RecoveryRootSeed,
-    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport, WorldKey,
-    pad_body_world, refused, world_keys_destroyed_in_txn,
+    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, UnmergedSection,
+    UnmergedStage, WorldCapsuleImport, WorldKey, pad_body_world, refused,
+    world_keys_destroyed_in_txn,
 };
 
 mod bodies;
@@ -153,6 +156,15 @@ impl WindowManager {
     /// its provenance. `materialize` is a full machine's (effective residence
     /// mode All): the rows of each window `latest` carries land here too, as
     /// its take lands them (FIX 4788).
+    ///
+    /// A section of `latest` this machine may read that does not open, decode
+    /// or merge here is carried unchanged, as one it may not read is, so no
+    /// history of it is lost and no world's publication stops (Engine 22:38,
+    /// FIX 19525). The upload's `unmerged_sections` shows the owner each one:
+    /// the world, the window whose merge failed, the stage and the error's
+    /// kind. The erased-actor cleanup every fresh section takes
+    /// (`reverse_rematerialize_for_sealing`) did not run on it; the owner
+    /// repairs it.
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
@@ -161,34 +173,88 @@ impl WindowManager {
         request: Option<AuthorityEntryHash>,
         materialize: bool,
     ) -> Result<SealedVaultUpload> {
+        self.assemble_sealed_bundle_using(slot, holder, latest, request, materialize, None)
+    }
+
+    /// Asked publication with a separately offered native pair. The ordinary
+    /// capsule/in-object paths still run first, independently for each object.
+    pub(crate) fn assemble_sealed_bundle_with_publication_grant(
+        &self,
+        slot: u64,
+        holder: Destination,
+        latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
+        request: AuthorityEntryHash,
+        materialize: bool,
+        grant: &crate::world_keys::SealedPublicationGrant,
+    ) -> Result<SealedVaultUpload> {
+        self.assemble_sealed_bundle_using(
+            slot,
+            holder,
+            latest,
+            Some(request),
+            materialize,
+            Some(grant),
+        )
+    }
+
+    fn assemble_sealed_bundle_using(
+        &self,
+        slot: u64,
+        holder: Destination,
+        latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
+        request: Option<AuthorityEntryHash>,
+        materialize: bool,
+        grant: Option<&crate::world_keys::SealedPublicationGrant>,
+    ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
         let windows = discover_local_window_keys(vault)?;
         let (base, eligible, sides) = self.sealed_bundle_base(&windows, holder)?;
         let latest = latest
-            .map(|(bundle, pads)| vault.open_latest_for_publication(bundle, pads, holder, request))
+            .map(|(bundle, pads)| match (request, grant) {
+                (Some(request), Some(grant)) => vault
+                    .open_latest_for_publication_with_grant(bundle, pads, holder, request, grant),
+                _ => vault.open_latest_for_publication(bundle, pads, holder, request),
+            })
             .transpose()?;
         let keys = match &latest {
             Some((_, pads)) => vault.bundle_reader_keys(Some(pads), true)?,
             None => Vec::new(),
         };
         let mut fresh = Vec::new();
+        let mut unmerged_sections = Vec::new();
         for &world in &eligible {
-            // A world this machine does not read now, or does not hold whole,
-            // keeps the section it has.
+            // A world this machine does not read now keeps the section it has.
             if vault.world_key(world).is_err() {
                 continue;
             }
             let opened = latest.as_ref().map(|(opened, _)| opened);
-            let Some(held) = self.complete_source(world, &windows, opened, &keys, materialize)
-            else {
-                continue;
+            // So does one whose section does not merge here: it rides on
+            // unchanged, and the owner is shown it (FIX 19525).
+            let held = match self.complete_source(world, &windows, opened, &keys, materialize) {
+                Ok(held) => held,
+                Err(unmerged) => {
+                    tracing::warn!(
+                        world = %world.to_hex(),
+                        window = unmerged.window.as_deref(),
+                        stage = ?unmerged.stage,
+                        kind = ?unmerged.kind,
+                        "a readable world section did not merge here: it rides on unchanged, \
+                         and the erased-actor cleanup did not run on it"
+                    );
+                    unmerged_sections.push(unmerged);
+                    continue;
+                }
             };
             let mut snapshots = Vec::new();
             for window in &held {
                 snapshots.push((window.clone(), self.sealed_mirror_snapshot(world, window)?));
             }
             let parts = bodies::carried(vault, &snapshots)?;
-            fresh.push((world, encode_world_section(world, &snapshots, &parts)?));
+            // Sealed from the snapshots as they stand, never joined, and
+            // dropped before the next world's are cut (FIX 11947).
+            fresh.push(vault.seal_bundle_section(world, |put| {
+                encode_world_section(put, world, &snapshots, &parts)
+            })?);
         }
         // A section whose world this machine knows goes when that world has a
         // fresh one or the carry filter drops it.
@@ -197,7 +263,7 @@ impl WindowManager {
         if let Some((opened, pads)) = &latest {
             for (key, section) in opened.sections_known(&keys, pads) {
                 if let Some(key) = key
-                    && (fresh.iter().any(|(sealed, _)| *sealed == key.world)
+                    && (fresh.iter().any(|sealed| sealed.world() == key.world)
                         || carry_drops(vault, key.world, &eligible, &known)?)
                 {
                     continue;
@@ -205,10 +271,6 @@ impl WindowManager {
                 carried.push((key, section));
             }
         }
-        let worlds: Vec<(EntityId, &[u8])> = fresh
-            .iter()
-            .map(|(world, payload)| (*world, payload.as_slice()))
-            .collect();
         let mut carry = BundleCarry {
             latest: latest.as_ref().map(|(_, pads)| pads),
             request,
@@ -239,7 +301,10 @@ impl WindowManager {
             }
             carry.carried_authority.push(capsule);
         }
-        vault.seal_vault_bundle_carrying(slot, holder, &base, &worlds, &carried, &carry)
+        let mut upload =
+            vault.seal_vault_bundle_carrying(slot, holder, base, fresh, &carried, &carry)?;
+        upload.unmerged_sections = unmerged_sections;
+        Ok(upload)
     }
 
     /// Takes `bundle` and its pad object in, read from `holder`: opens every
@@ -354,6 +419,7 @@ impl WindowManager {
                 &HashMap::new(),
                 || true,
                 SEALED_KIT_REPLACEMENT_BYTE_BOUND,
+                crate::sync::window::QueuedSends::Retire,
                 None,
             )?;
             drop(window);
@@ -382,9 +448,12 @@ impl WindowManager {
     /// an opened-item machine seals what it holds whole. With `materialize`
     /// (a full machine) each window's rows land here too, merged or already
     /// held (FIX 4788); a window whose rows do not land stays in its mirror,
-    /// as an opened-item machine keeps them all, and still rides. `None` when
-    /// that section does not open, decode or merge here: it rides on
-    /// unchanged.
+    /// as an opened-item machine keeps them all, and still rides. When that
+    /// section does not open, decode or merge here, why it stopped (FIX
+    /// 19525): the world, the window whose merge failed, the stage and the
+    /// error's kind, never its message. The caller then carries the section
+    /// unchanged and shows it to the owner to repair; a window merged before
+    /// the failure stays merged in its mirror.
     fn complete_source(
         &self,
         world: EntityId,
@@ -392,20 +461,23 @@ impl WindowManager {
         latest: Option<&OpenedVaultBundle>,
         keys: &[WorldKey],
         materialize: bool,
-    ) -> Option<Vec<WindowKey>> {
+    ) -> std::result::Result<Vec<WindowKey>, UnmergedSection> {
         let mut held: Vec<WindowKey> = windows
             .iter()
             .filter(|window| window.world() == Some(world))
             .cloned()
             .collect();
         let Some(latest) = latest else {
-            return Some(held);
+            return Ok(held);
         };
         for key in keys.iter().filter(|key| key.id().world == world) {
-            let Some(section) = latest.open_section(key).ok()? else {
-                continue;
+            let section = match latest.open_section(key) {
+                Ok(Some(section)) => section,
+                Ok(None) => continue,
+                Err(error) => return Err(unmerged(world, None, UnmergedStage::Open, &error)),
             };
-            let (carried, _) = decode_world_section(&section.payload, world).ok()?;
+            let (carried, _) = decode_world_section(&section.payload, world)
+                .map_err(|error| unmerged(world, None, UnmergedStage::Decode, &error))?;
             for (window, snapshot) in carried {
                 let landed = materialize
                     && self
@@ -413,14 +485,16 @@ impl WindowManager {
                         .is_ok();
                 if !landed {
                     self.merge_bundle_mirror(world, &window, &snapshot, false)
-                        .ok()?;
+                        .map_err(|error| {
+                            unmerged(world, Some(&window), UnmergedStage::Merge, &error)
+                        })?;
                 }
                 if !held.contains(&window) {
                     held.push(window);
                 }
             }
         }
-        Some(held)
+        Ok(held)
     }
 
     /// Merges each window of an opened world `section` into its mirror,
@@ -538,6 +612,23 @@ impl WindowManager {
             return Ok(None);
         };
         without_key_rows(snapshot).map(Some)
+    }
+}
+
+/// Why `world`'s readable section stopped at `stage`, at `window` when one
+/// window's merge failed (FIX 19525): the error's kind alone, since its
+/// message may quote what the section holds.
+fn unmerged(
+    world: EntityId,
+    window: Option<&WindowKey>,
+    stage: UnmergedStage,
+    error: &Error,
+) -> UnmergedSection {
+    UnmergedSection {
+        world,
+        window: window.map(|window| window.as_str().to_owned()),
+        stage,
+        kind: error.kind(),
     }
 }
 
@@ -678,8 +769,12 @@ fn encode_base(
         put_u32(&mut out, entry.len())?;
         out.extend_from_slice(entry);
     }
-    encode_windows(&mut out, windows)?;
-    bodies::encode(&mut out, carried)?;
+    let mut put = |bytes: &[u8]| -> Result<()> {
+        out.extend_from_slice(bytes);
+        Ok(())
+    };
+    encode_windows(&mut put, windows)?;
+    bodies::encode(&mut put, carried)?;
     Ok(out)
 }
 
@@ -706,19 +801,19 @@ fn decode_base(bytes: &[u8]) -> Result<BundleBase> {
 }
 
 /// label ‖ version (2) ‖ world (16) ‖ windows ([`encode_windows`]) ‖ their
-/// by-reference bodies ([`bodies::encode`]).
+/// by-reference bodies ([`bodies::encode`]), into a stream: the same bytes
+/// on every call, never joined (FIX 11947).
 fn encode_world_section(
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
     world: EntityId,
     windows: &[(WindowKey, Vec<u8>)],
     carried: &[bodies::CarriedBody],
-) -> Result<Zeroizing<Vec<u8>>> {
-    let mut out = Zeroizing::new(Vec::new());
-    out.extend_from_slice(WORLD_LABEL);
-    out.push(SEALED_BUNDLE_WORLD_VERSION);
-    out.extend_from_slice(world.as_bytes());
-    encode_windows(&mut out, windows)?;
-    bodies::encode(&mut out, carried)?;
-    Ok(out)
+) -> Result<()> {
+    put(WORLD_LABEL)?;
+    put(&[SEALED_BUNDLE_WORLD_VERSION])?;
+    put(world.as_bytes())?;
+    encode_windows(put, windows)?;
+    bodies::encode(put, carried)
 }
 
 /// The windows of `world`'s section, each one of the world's, and the
@@ -739,14 +834,19 @@ fn decode_world_section(bytes: &[u8], world: EntityId) -> Result<WorldSection> {
 
 /// count (4) ‖ each window: its key `u16`-length-prefixed, then its snapshot
 /// `u64`-length-prefixed.
-fn encode_windows(out: &mut Vec<u8>, windows: &[(WindowKey, Vec<u8>)]) -> Result<()> {
-    put_u32(out, windows.len())?;
+fn encode_windows(
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
+    windows: &[(WindowKey, Vec<u8>)],
+) -> Result<()> {
+    put(&u32::try_from(windows.len())
+        .map_err(|_| malformed())?
+        .to_be_bytes())?;
     for (key, snapshot) in windows {
         let name = u16::try_from(key.as_str().len()).map_err(|_| malformed())?;
-        out.extend_from_slice(&name.to_be_bytes());
-        out.extend_from_slice(key.as_str().as_bytes());
-        out.extend_from_slice(&(snapshot.len() as u64).to_be_bytes());
-        out.extend_from_slice(snapshot);
+        put(&name.to_be_bytes())?;
+        put(key.as_str().as_bytes())?;
+        put(&(snapshot.len() as u64).to_be_bytes())?;
+        put(snapshot)?;
     }
     Ok(())
 }

@@ -380,6 +380,16 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     if let Some(team) = &body.team {
         entries.push((Value::from("team"), team_stamp_value(team)));
     }
+    // FIX685: elided the same way, so a TASK with no due annotation keeps
+    // its bytes. Its own `due_at` key; never the `ttl` map.
+    if let Some(due_at) = body.due_at {
+        entries.push((Value::from("due_at"), Value::from(due_at)));
+    }
+    // FIX 22121: elided the same way, so a TASK that is no watch keeps its
+    // bytes.
+    if body.watch {
+        entries.push((Value::from("watch"), Value::from(true)));
+    }
     canonical_bytes(&Value::Map(entries))
 }
 
@@ -395,9 +405,23 @@ pub(super) fn stored_brief_value(brief: &super::brief::StoredBrief) -> Value {
     rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed brief MessagePack")
 }
 
-pub(super) fn encode_task_realization_input(spec: &Value) -> Result<Vec<u8>> {
-    let mut payload = Vec::new();
-    rmpv::encode::write_value(&mut payload, spec)
-        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.spec")))?;
-    Ok(payload)
+pub(super) fn encode_task_realization_input(
+    spec: &Value,
+    requester: Option<&crate::agent_dispatch::QueuedRequester>,
+) -> Result<Vec<u8>> {
+    // FIX 11687: the realization carries who queued it, as a dispatch
+    // does. The key is always present, nil for unmarked work, else the
+    // native JSON string both carriers share, so one hard-erase rewrite
+    // covers both.
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("tasks.realize.input"));
+    let requester = match requester {
+        None => Value::Nil,
+        Some(requester) => serde_json::to_string(requester)
+            .map(Value::from)
+            .map_err(|_| invalid())?,
+    };
+    Ok(canonical_bytes(&Value::Map(vec![
+        (Value::from("spec"), spec.clone()),
+        (Value::from("requester"), requester),
+    ])))
 }

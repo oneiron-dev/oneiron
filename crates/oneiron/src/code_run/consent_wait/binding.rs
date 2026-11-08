@@ -12,6 +12,7 @@ use crate::runtime_hooks::verb::VerbAskCredentialSource;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
+use super::resume::CodeConsentRunOrigin;
 use super::types::{
     CODE_CONSENT_SCHEMA_VERSION, CodeConsentAdmission, CodeConsentBinding, CodeConsentCallSite,
     CodeConsentCheckpoint, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentQuestion,
@@ -23,21 +24,23 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
     SideTable::new(&side_table::CODE_RUN_CONSENT_WAIT);
 
 /// The derivation domain of a wait id: its write receipt and call identity.
-const CODE_CONSENT_WAIT_DOMAIN: &[u8] = b"oneiron:code-consent-wait:v1";
+const CODE_CONSENT_WAIT_DOMAIN: &[u8] = crate::entity_id::derived_domains::CODE_CONSENT_WAIT;
 
 /// The hash domain of a binding digest.
-const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v1";
+const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v3";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
-/// `connector.call`; a browser click, click at a point or batch binds the
-/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// `connector.call`, including one through `self.use`; a browser click,
+/// click at a point or batch binds the act its grant's press held (FIX 10423),
+/// as do a library run's steps and
 /// every desktop verb that can press (FIX 11499). Every other verb keeps
 /// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
     matches!(
         verb,
         AgentVerb::ConnectorCall
+            | AgentVerb::SelfUse
             | AgentVerb::SelfBrowserClick
             | AgentVerb::SelfBrowserClickAt
             | AgentVerb::SelfBrowserBatch
@@ -134,8 +137,11 @@ pub(crate) struct CodeConsentDraft {
     pub(crate) principal: CodeConsentPrincipal,
     pub(crate) pending: CodeConsentPendingEffect,
     pub(crate) frozen_input_digest: [u8; 32],
+    pub(crate) holder_settlement:
+        Option<crate::consent::code_settlement::FrozenCodeConsentSettlement>,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
+    pub(crate) standing_offer: Option<super::CodeConsentStandingOffer>,
 }
 
 /// Mints the provisional binding of a consent-only hold in the caller's
@@ -172,14 +178,19 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         }
         principal.opener_slip = Some(slip);
     }
-    let Some(owner) = crate::policy_model::owners_in_txn(vault, txn)?
+    let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
-        .min()
-    else {
+        .collect();
+    if owners.is_empty()
+        && draft
+            .holder_settlement
+            .as_ref()
+            .is_none_or(|settlement| settlement.holders.is_empty())
+    {
         return Ok(None);
-    };
+    }
     let question = CodeConsentQuestion {
-        owner,
+        owners,
         conversation: vault.store.clock.entity_id()?,
         turn: vault.store.clock.entity_id()?,
         message: vault.store.clock.entity_id()?,
@@ -199,17 +210,22 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         verb_row: draft.verb.as_str().to_owned(),
         request_digest: draft.site.request_digest,
         frozen_input_digest: draft.frozen_input_digest,
+        holder_settlement: draft.holder_settlement,
         binding_digest: [0; 32],
         effect_digest: [0; 32],
         original: principal,
         pending: draft.pending,
         hold_reasons: draft.hold_reasons,
         remember_offer: draft.remember_offer,
+        standing_offer: draft.standing_offer,
         question,
         policy_frontier,
         created_at_ms: super::settle::now_ms(),
+        // The admitted MCP caller its host bound on the run (FIX 4606):
+        // sealed with the wait by the parked step's commit.
+        origin: draft.site.origin,
     };
-    binding.binding_digest = binding_digest(&binding);
+    binding.binding_digest = binding_digest(&binding)?;
     let Some(effect_digest) = approval_digest(&binding.binding_digest) else {
         return Ok(None);
     };
@@ -222,17 +238,23 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         admission: None,
         settlement: None,
         consumption: None,
+        resume_refusal: None,
         revision: 0,
+        rebind_proposal: None,
+        rebinds: Vec::new(),
     };
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     Ok(Some(wait_id))
 }
 
 /// The binding digest: BLAKE3 over the stable call site, the request and
-/// frozen digests, the original caller's instrument and the pending effect.
-/// It names no effect digest, ask, time, checkpoint or receipt, so nothing
-/// computed from it later feeds back into it.
-pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
+/// frozen digests, the frozen owner audience, the original caller's instrument
+/// and the pending effect. It names no effect digest, ask, time, checkpoint or receipt, so nothing
+/// computed from it later feeds back into it. It covers the admitted MCP
+/// caller's origin too (FIX 4606), so the seal binds the caller a re-entry
+/// is made for.
+pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
+    let origin = binding.origin.as_ref().map(CodeConsentRunOrigin::digest);
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -250,8 +272,22 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     field(binding.verb_row.as_bytes());
     field(&binding.request_digest);
     field(&binding.frozen_input_digest);
+    match &binding.holder_settlement {
+        Some(settlement) => {
+            field(&[1]);
+            let bytes = rmp_serde::to_vec_named(settlement)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+            field(&bytes);
+        }
+        None => field(&[0]),
+    }
+    field(&(binding.question.owners.len() as u64).to_le_bytes());
+    for owner in &binding.question.owners {
+        field(owner.as_bytes());
+    }
     let original = &binding.original;
     field(original.actor_ref.as_bytes());
+    field(&[original.actor_class]);
     field(
         original
             .opener_slip
@@ -291,6 +327,26 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             field(call.server.as_bytes());
             field(call.tool.as_bytes());
             field(call.endpoint.as_bytes());
+            field(call.payload_data_class.as_str().as_bytes());
+            field(&[u8::from(call.remember_context.is_some())]);
+            if let Some(context) = &call.remember_context {
+                field(&[u8::from(context.connection.is_some())]);
+                field(
+                    context
+                        .connection
+                        .as_ref()
+                        .map_or(&[][..], |connection| &connection.as_bytes()[..]),
+                );
+                field(&[u8::from(context.project.is_some())]);
+                field(
+                    context
+                        .project
+                        .as_ref()
+                        .map_or(&[][..], |project| &project.as_bytes()[..]),
+                );
+                field(&[u8::from(context.lineage.is_some())]);
+                field(context.lineage.as_ref().map_or(&[][..], |root| &root[..]));
+            }
             field(&call.manifest_hash);
             field(call.protocol_revision.as_bytes());
             field(
@@ -341,7 +397,24 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             );
         }
     }
-    *hasher.finalize().as_bytes()
+    field(&[u8::from(binding.remember_offer.is_some())]);
+    if let Some(offer) = &binding.remember_offer {
+        field(offer.settings_act.as_bytes());
+    }
+    field(&[u8::from(binding.standing_offer.is_some())]);
+    if let Some(offer) = &binding.standing_offer {
+        field(offer.actor_ref.as_bytes());
+        field(offer.verb_class.as_bytes());
+        field(&(offer.selectors.len() as u64).to_le_bytes());
+        for selector in &offer.selectors {
+            field(selector.as_bytes());
+        }
+        field(&[u8::from(offer.target.is_some())]);
+        field(offer.target.as_deref().unwrap_or_default().as_bytes());
+    }
+    field(&[u8::from(origin.is_some())]);
+    field(origin.as_ref().map_or(&[][..], |origin| &origin[..]));
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// Whether wait `wait_id` is bound to the held call `call_ref` and still

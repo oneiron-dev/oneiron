@@ -1,7 +1,7 @@
 //! What the index holds for a text a model derived from a marked repo blob
 //! (FIX 7608 S3F, FIX 10405; CALL DERIVED-TEXT-COPY).
 //!
-//! A caption or transcript (ASSET_TEXT) any of whose sources a mark covers
+//! A caption, transcript (ASSET_TEXT) or SUMMARY whose sources a mark covers
 //! ([`repo_derived_index_sources_in`]) is indexed only as a safe copy: the
 //! sealed-file placeholder while its copy is pending, then the text a model
 //! derives again from the sources' masked copies, and only while the proof
@@ -43,7 +43,7 @@ use crate::origin::secret_projection::index::{
     repo_derived_index_sources_in,
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexInventory};
-use crate::registry::ENTITY_TYPE_ASSET_TEXT;
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
 use crate::store::{ManifestDbs, Store};
 
 /// The field a derived text is born indexed under.
@@ -122,7 +122,7 @@ pub(crate) fn refresh_repo_derived_index_copies_in_txn(
     Ok(dependents)
 }
 
-/// What one batch may give a derived text's index: the ASSET_TEXTs it
+/// What one batch may give a derived text's index: the ASSET_TEXTs and SUMMARYs it
 /// puts, the text end of each `DerivedFrom` edge it writes, and the records
 /// it texts (with the fields it texts each under) or vectors.
 #[derive(Debug, Default)]
@@ -130,6 +130,21 @@ pub(crate) struct RepoDerivedBatch {
     texts: BTreeSet<EntityId>,
     fields: BTreeMap<EntityId, Vec<String>>,
     vectors: BTreeSet<EntityId>,
+}
+
+impl RepoDerivedBatch {
+    /// Includes retained texts whose source bytes changed in this writer,
+    /// even when the batch writes no op for those texts.
+    pub(crate) fn include_source_dependents_in(
+        &mut self,
+        view: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        roots: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        self.texts
+            .extend(repo_derived_dependents_in(view, txn, roots)?);
+        Ok(())
+    }
 }
 
 /// The records `ops` may give a derived text's index, read before the
@@ -140,7 +155,7 @@ pub(crate) fn repo_derived_batch(ops: &[BatchOp]) -> RepoDerivedBatch {
         match op {
             BatchOp::Put {
                 id, entity_type, ..
-            } if *entity_type == ENTITY_TYPE_ASSET_TEXT => {
+            } if matches!(*entity_type, ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY) => {
                 batch.texts.insert(*id);
             }
             BatchOp::Edge { src, kind, .. }
@@ -212,6 +227,21 @@ pub(crate) fn finalize_repo_derived_index_copies_in_txn(
         refresh_one_in_txn(vault, wtxn, marks.as_ref(), entity, named)?;
     }
     Ok(())
+}
+
+/// The owner's discard of a world copy takes `id`'s own derived index copy,
+/// its safe text and provenance (FIX 14534, Engine 11-06 08:34 call 4 = A).
+/// The copies derived from it, which retained owners read, stay as they are,
+/// with no pending work queued for them.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn discard_repo_derived_index_copy_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    delete_in_txn(store, wtxn, RepoDerivedOwner::Text(*id))
 }
 
 /// An erase of `id`, a cache cleanup only: its own copy goes, and each
@@ -386,11 +416,14 @@ fn own_words_marked(
         .is_some_and(|text| marks.is_marked(blake3::hash(text.as_bytes()).as_bytes())))
 }
 
-/// Whether record `id` is an ASSET_TEXT `store` holds.
+/// Whether record `id` is an ASSET_TEXT or SUMMARY `store` holds.
 fn is_derived_text(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(store
-        .port_entity_record(txn, id)?
-        .is_some_and(|record| record.entity_type == ENTITY_TYPE_ASSET_TEXT))
+    Ok(store.port_entity_record(txn, id)?.is_some_and(|record| {
+        matches!(
+            record.entity_type,
+            ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY
+        )
+    }))
 }
 
 /// Whether `error` is a transaction's own storage failure.

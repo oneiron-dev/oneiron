@@ -1,4 +1,4 @@
-//! oneiron-bench — benchmark harness skeleton.
+//! oneiron-bench — benchmark harness drivers.
 //!
 //! Subcommands (plan ONE-317 §9, ONE-1120, ONE-1311):
 //!
@@ -33,9 +33,12 @@
 //!   runtime-only case packets through the production model seams; TTFT,
 //!   native and end-to-end rates, sampled VRAM and a quality check per case,
 //!   as resumable JSONL rows.
+//! * `eval route-calibration` — known-answer yes/no cases answered by the
+//!   real decision ladder in a fresh vault, labelled after their answers,
+//!   and the per-route calibration report over those pairs (Engine row 22229).
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
-//! matrix is not shipped here; this binary only ships the bench skeleton,
+//! matrix is not shipped here; this binary ships the bench drivers,
 //! cheap in-workspace checks, and the ONE-1311 trace export seam.
 #![recursion_limit = "256"]
 #![allow(
@@ -139,7 +142,11 @@ fn print_help() {
           eval tune                   run one explicit bounded retrieval-blend\n\
                                        tuning step and print the weight table\n\
                                        entry it persisted\n\
-                                       both eval subcommands open an existing\n\
+          eval route-calibration      answer known-answer yes/no cases through\n\
+                                       the real decision ladder in a fresh vault\n\
+                                       and report route-conditioned calibration\n\
+                                       (Engine row 22229)\n\
+                                       outcome-ingest and tune open an existing\n\
                                        vault and require its full reopen\n\
                                        configuration: --vault --dimensions\n\
                                        --fast-dims --embedding-model\n\

@@ -191,6 +191,7 @@ pub fn supersede_displaced_judge_receipts(
         // verdict committed before this lock is present here; one committed
         // afterward is refused by the revision fence in its own writer.
         let judgments = attribution_judgments_in_txn(vault, txn)?;
+        let mut affected_actors = std::collections::BTreeSet::new();
         let fence = displaced.to_owned();
         if let Some(held) = REVISION_FENCE.get(&vault.store, txn, &fence)? {
             if held != replacement {
@@ -201,6 +202,11 @@ pub fn supersede_displaced_judge_receipts(
         } else {
             REVISION_FENCE.put(&vault.store, txn, &fence, &replacement.to_owned())?;
         }
+        // A label proposal quoting the displaced judge's notes goes while it
+        // waits on its owner (FIX 21885).
+        crate::dreamer_runner::maintenance::withdraw_label_proposals_judged_by_in_txn(
+            vault, txn, displaced,
+        )?;
         for judgment in &judgments {
             let origin = JUDGE_REVISION.get(&vault.store, txn, &judgment.sequence)?;
             if origin.as_ref().map(|origin| origin.0.as_str()) != Some(displaced) {
@@ -217,6 +223,12 @@ pub fn supersede_displaced_judge_receipts(
                     &judgment.sequence,
                     &DisplacedMarker(replacement.to_owned()),
                 )?;
+            }
+            if judgment.verdict == super::AttributionVerdict::ExecutionLapse
+                && let Some(subject) = judgment.subject
+                && let Some(attempt) = judgment.evidence_receipts.first()
+            {
+                affected_actors.insert((subject, attempt.clone()));
             }
             // Also re-project on a repeated call: a crash after committing the
             // marker but before projecting must not strand a stale active claim.
@@ -250,8 +262,14 @@ pub fn supersede_displaced_judge_receipts(
                 }
             }
         }
+        for (actor, attempt) in affected_actors {
+            crate::skill_reliability::reconcile_displaced_actor_credit_in_txn(
+                vault, txn, &actor, &attempt, at,
+            )?;
+        }
         Ok(())
     })?;
+    crate::edit_distance::attribution::project_amendment_reliability(vault)?;
     for (skill, executor) in affected {
         match executor {
             Some(model) => {

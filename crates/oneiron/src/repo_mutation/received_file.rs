@@ -130,6 +130,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,
@@ -138,6 +139,7 @@ impl Vault {
             run: None,
             actor_class: Some(EdgeActorClass::System as u8),
             opener_lineage: Vec::new(),
+            repair_of: None,
         };
         PreparedRepoProposal::new(row, base.encoded).map(Ok)
     }

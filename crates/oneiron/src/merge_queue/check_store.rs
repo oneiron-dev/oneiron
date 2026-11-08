@@ -17,21 +17,24 @@ use serde::{Deserialize, Serialize};
 
 use super::check_inputs::{
     QueueCheckHold, QueueCheckHoldReason, QueueCheckNeed, QueueCheckReceipt,
+    StoredQueueCheckReceipt,
 };
 use super::plan::FrozenCheckPlan;
 use super::storage::{BATCHES, check_row_size};
 use super::{CheckPhase, MergeBatch, MergeQueue, MergeQueuePointers, Quarantine};
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptState, ClaimOutcome, CompleteAttempt, EnqueueOutcome,
-    FailAttempt,
-};
+use crate::attempt_queue::{AttemptQueue, ClaimOutcome, EnqueueOutcome};
 use crate::consent::QueuedCheckApproval;
-use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::ports::JobQueue;
+use crate::repo_mutation::proposal::ContractReviewEvidence;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_state::AttemptState;
+use crate::store::contract_oracle::invalid;
 use crate::{EntityId, Vault};
 
 /// The AttemptQueue kind a queue check's attempt carries.
@@ -195,7 +198,7 @@ pub struct QueueCheckWork {
     pub generation: u32,
     pub status: QueueCheckStatus,
     /// Every generation's receipts, oldest first.
-    pub receipts: Vec<QueueCheckReceipt>,
+    pub receipts: Vec<StoredQueueCheckReceipt>,
     pub verdict_refs: Vec<String>,
     /// The queue pointers a completed init produced.
     pub pointers: Option<MergeQueuePointers>,
@@ -234,6 +237,8 @@ pub(super) struct WorkUpdate<'u> {
     pub(super) config: Option<&'u QueueCheckConfiguration>,
     /// The checked baseline's pending seal, kept once (G2 PR3).
     pub(super) baseline_seal: Option<super::QueueRevisionLink>,
+    /// The removed-name review the new verdict slot routes (FIX 4365).
+    pub(super) contract_review: Option<ContractReviewEvidence>,
 }
 
 impl WorkUpdate<'_> {
@@ -322,7 +327,7 @@ impl MergeQueue<'_> {
             }
             Some(work) => work,
             None => QueueCheckWork {
-                schema_version: 1,
+                schema_version: 2,
                 key: key.clone(),
                 store: self.repo.identity().as_hex(),
                 repo,
@@ -430,7 +435,7 @@ impl MergeQueue<'_> {
     /// The earlier passing receipt of this store whose inputs digest is
     /// `digest`, that a refresh-free check may stand on, read by index
     /// (FIX 7349).
-    pub(super) fn reusable_receipt(&self, digest: &str) -> Result<Option<QueueCheckReceipt>> {
+    pub(super) fn reusable_receipt(&self, digest: &str) -> Result<Option<StoredQueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(super::receipt_index::indexed_receipts_in_txn(
             &self.vault.store,
@@ -453,7 +458,7 @@ impl MergeQueue<'_> {
         &self,
         digest: &str,
         verdict: &str,
-    ) -> Result<Option<QueueCheckReceipt>> {
+    ) -> Result<Option<StoredQueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(super::receipt_index::indexed_receipts_in_txn(
             &self.vault.store,
@@ -635,7 +640,9 @@ impl Vault {
     /// Ends one step of claimed work `ran`: rereads it, and attaches only if
     /// the same attempt and lease still hold it and its owner's approval
     /// still holds; a stale completion attaches nothing. The batch slot,
-    /// configuration, work row and attempt completion commit together.
+    /// its removed-name review route (FIX 4365), configuration, work row and
+    /// attempt completion commit together. A refused completion routes no
+    /// review.
     pub(super) fn finish_queue_check(
         &self,
         ran: &QueueCheckWork,
@@ -663,6 +670,9 @@ impl Vault {
             if let Some((key, batch)) = update.batch {
                 check_row_size(&BATCHES.encode_value(batch)?)?;
                 BATCHES.put(store, &mut txn, &key, batch)?;
+                if let Some(evidence) = &update.contract_review {
+                    self.route_contract_review_in_txn(&mut txn, evidence)?;
+                }
             }
             if let Some(config) = update.config {
                 CHECK_CONFIGS.put(store, &mut txn, &config.store, config)?;
@@ -684,7 +694,9 @@ impl Vault {
         } else {
             status = Some(QueueCheckStatus::Held(authority_lapsed()));
         }
-        current.receipts.extend(update.receipts);
+        let receipts =
+            super::check_exhaust::store_receipts_in_txn(self, &mut txn, &current, update.receipts)?;
+        current.receipts.extend(receipts);
         if let Some(status) = status {
             let attempt = current
                 .attempt

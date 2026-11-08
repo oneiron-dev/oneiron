@@ -22,6 +22,8 @@ pub mod artifact_origin;
 /// The backup handoff: a label's retention pin and the supervisor's
 /// root-stage ack (LC backup shipper).
 pub mod backup_handoff;
+/// The supervisor-pinned public recipient for checkpoint host-order members.
+pub mod checkpoint_recipient;
 /// The publisher training outbox: offers, controls and receipts (OF-420).
 pub mod conversation_training;
 mod ctl;
@@ -32,6 +34,9 @@ pub mod esign_delivery;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+/// HOST-private segregated legal-clone capture stream, never tenant ctl.
+pub mod host_legal;
+mod http_headers;
 mod ledger;
 /// The wake ledger's report in bounded pages (FIX 9549).
 mod ledger_pages;
@@ -56,6 +61,7 @@ pub mod settings_policy;
 pub mod slim_control;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
 pub mod tenancy;
+mod usage_export;
 /// The host's vault UID allocation table: its path, file shape and row codec.
 pub mod vault_uids;
 mod version;
@@ -97,11 +103,13 @@ pub use self::ctl::{
     LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
     ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
+    VmOutboxCompanionState,
 };
+pub use self::http_headers::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
-    LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
-    LedgerReportHead,
+    ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport,
+    LedgerReportAssembly, LedgerReportHead,
 };
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_PAGE_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
@@ -116,17 +124,22 @@ pub use self::managed_backup::{
 pub use self::managed_holder::{
     MANAGED_OWNER_ACTION_HEADER, MANAGED_OWNER_BOUND_HEADERS, MANAGED_PERSON_ACTION_HEADER,
     MANAGED_VOICE_MAX_SKEW_SECS, MANAGED_VOICE_METHOD, MANAGED_VOICE_NONCE_BYTES,
-    MANAGED_VOICE_PATH, ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest,
-    ManagedOwnerTranscript, ManagedPersonAction, ManagedVoiceBody, ManagedWidenAction,
-    ManagedWidenTranscript, embedded_owner_holder_hex, managed_voice_body, managed_voice_nonce,
+    MANAGED_VOICE_PATH, MANAGED_WIDEN_ACTION_HEADER, ManagedOwnerAction, ManagedOwnerHead,
+    ManagedOwnerRequest, ManagedOwnerTranscript, ManagedPersonAction, ManagedVoiceBody,
+    ManagedWidenAction, ManagedWidenTranscript, embedded_owner_holder_hex, managed_voice_body,
+    managed_voice_nonce,
 };
 pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,
     OwnerSigningRecoveryAck, valid_owner_signing_challenge,
 };
+pub use self::preview::{
+    PREVIEW_ROUTE_OPEN_OP, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest,
+};
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };
+pub use self::usage_export::{UsageExportChunk, UsageExportCursor, UsageExportPage};
 pub use self::version::{CONTRACT_VERSION, SLIM_CONTRACT_VERSION, supports_slim};
 pub use self::wake::{
     Schedule, UnixTs, WakeEntry, now_ts, valid_vault_name, validate_wake_entries,

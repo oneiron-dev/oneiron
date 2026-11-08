@@ -42,10 +42,10 @@ use crate::server::SyncServer;
 const SLIP_PREFIX: &str = "v2.slip.";
 
 /// The header an MCP connector names its credential in.
-const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 /// The header a slip's holder proof rides in.
-const BINDING_HEADER: &str = "x-oneiron-binding";
+use oneiron_vault_contract::BINDING_HEADER;
 
 /// The caller the binding door admitted on a managed vault (FIX 4559): the
 /// auth its consuming admission of the request's slip returned, the slip
@@ -129,23 +129,41 @@ pub(crate) fn carries_caller_slip(headers: &HeaderMap) -> bool {
 /// forwarding grants nothing, and the child's left-slip doors verify both.
 /// Any other bearer or connector credential terminated at the supervisor and
 /// is removed, as is a holder proof no slip rides with, so a request without
-/// a slip reaches the child with no caller credential at all.
+/// a slip reaches the child with no caller credential at all. A stock
+/// client's OAuth access token is the one other credential that goes on
+/// ([`forwards_oauth_access_token`], FIX 4902 slice C), with no holder proof.
 pub(crate) fn forward_caller_credentials(headers: &mut HeaderMap) {
     let bearer = carries_caller_slip(headers);
-    let connector = headers
+    let oauth_bearer = bearer_token(headers)
+        .ok()
+        .flatten()
+        .is_some_and(forwards_oauth_access_token);
+    let connector_credential = headers
         .get(MCP_CREDENTIAL_HEADER)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().starts_with(SLIP_PREFIX));
-    if !bearer {
+        .map(str::trim);
+    let connector = connector_credential.is_some_and(|value| value.starts_with(SLIP_PREFIX));
+    let oauth_connector = connector_credential.is_some_and(forwards_oauth_access_token);
+    if !bearer && !oauth_bearer {
         headers.remove(AUTHORIZATION);
     }
-    if !connector {
+    if !connector && !oauth_connector {
         headers.remove(MCP_CREDENTIAL_HEADER);
     }
     let left_slip = headers.contains_key(LEFT_SLIP_HEADER);
     if !bearer && !connector && !left_slip {
         headers.remove(BINDING_HEADER);
     }
+}
+
+/// Whether managed ingress forwards `credential`, a bearer or MCP connector
+/// credential that is no slip, to the child (CALLS, FIX 4902: an engine
+/// call): a stock client's OAuth access token goes on unchanged, since the
+/// child's `/mcp` resolves it against its own token rows and every other door
+/// of the child refuses it, as it reads only a slip there. Forwarding grants
+/// nothing.
+fn forwards_oauth_access_token(credential: &str) -> bool {
+    credential.starts_with(oneiron::authority::OAUTH_ACCESS_TOKEN_PREFIX)
 }
 
 /// The refusal of a caller slip that did not verify on a managed vault: the

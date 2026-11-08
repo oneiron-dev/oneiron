@@ -24,6 +24,27 @@ use super::publication_types::{
 // ---------------------------------------------------------------------------
 
 impl Vault {
+    /// Stages the stable projection's owner after its physical root is written
+    /// under the repository coordinator. The caller commits this row with
+    /// ENGINE_EXPORTS, independently of any publication's lifetime.
+    pub(in crate::origin) fn keep_engine_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_id: &EntityId,
+        oid: &GitOid,
+        revision: EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let key = keep_owner_key(
+            repo_id,
+            oid,
+            OriginKeepRefKind::EngineExport,
+            &revision.to_hex(),
+        );
+        KEEP_OWNER.put(&self.store, txn, &key, &learned_at.to_le_bytes())?;
+        Ok(())
+    }
+
     /// Pins one git object behind a physical keep-ref and one logical owner.
     ///
     /// Crate-local inherent impl in the feature module: `vault.rs` is never
@@ -69,8 +90,8 @@ impl Vault {
     /// The owner row goes first and the keep-ref second, for the same reason
     /// [`Vault::pin_origin_object`] writes them the other way round: an
     /// interrupted release leaves an unclaimed keep-ref, never a claim with no
-    /// root. Deletion happens ONLY when no publication, change, conflict,
-    /// recovery or snapshot owner still references the object.
+    /// root. Deletion happens ONLY when no logical owner still references
+    /// the object.
     pub fn unpin_origin_object(
         &self,
         git: &GitWire<'_>,
@@ -156,6 +177,23 @@ impl Vault {
         git: &GitWire<'_>,
         request: OriginPublicationRequest,
     ) -> Result<OriginPublicationReceipt> {
+        match self.publish_origin_ref_checked(git, request, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::publish_origin_ref`], with `check` judged again as the first
+    /// act of the staging writer (FIX 7179): a refusal publishes nothing.
+    /// Replay, resolve, advance and finish behavior is unchanged.
+    pub(crate) fn publish_origin_ref_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        request: OriginPublicationRequest,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         validate_origin_publication_request(&request)?;
         self.validate_origin_repo(request.repo_id, &request.repo)?;
         let _guard = lock_repository(request.repo.common_dir())?;
@@ -174,28 +212,34 @@ impl Vault {
         }
         let record = match existing {
             Some(record) if record.status == OriginPublicationStatus::Published => {
-                return self.redrive_published_origin_ref(
+                return Ok(Ok(self.redrive_published_origin_ref(
                     git,
                     &request.repo,
                     record,
                     request.learned_at,
-                );
+                )?));
             }
             Some(record) if record.status.is_terminal() => {
-                return origin_receipt(record, false, None);
+                return Ok(Ok(origin_receipt(record, false, None)?));
             }
             Some(record) => record,
-            None => match self.admit_origin_publication(git, &request, publication_id)? {
-                OriginAdmission::Staged(record) => record,
-                OriginAdmission::Resolved(owner) => {
+            None => match self.admit_origin_publication_checked(
+                git,
+                &request,
+                publication_id,
+                &check,
+            )? {
+                Ok(OriginAdmission::Staged(record)) => record,
+                Ok(OriginAdmission::Resolved(owner)) => {
                     let mut receipt = origin_receipt(owner, true, None)?;
                     receipt.answer = OriginPublicationAnswer::ResolvedToOwner;
-                    return Ok(receipt);
+                    return Ok(Ok(receipt));
                 }
+                Err(refused) => return Ok(Err(refused)),
             },
         };
         if record.status.is_terminal() {
-            return origin_receipt(record, false, None);
+            return Ok(Ok(origin_receipt(record, false, None)?));
         }
         let advance = self.advance_prepared_origin_publication(
             git,
@@ -208,7 +252,11 @@ impl Vault {
                 "origin publication awaits readable objects",
             ));
         }
-        origin_receipt(advance.record, advance.already_applied, advance.wire)
+        Ok(Ok(origin_receipt(
+            advance.record,
+            advance.already_applied,
+            advance.wire,
+        )?))
     }
 
     /// The post-crash census: exactly one durable disposition per partial
@@ -277,7 +325,7 @@ impl Vault {
     ///
     /// `None` includes every repository. The list is whole: the scan never
     /// refuses for its length, and past its threshold row it raises an
-    /// [`ScanCheck`](crate::scan_check::ScanCheck).
+    /// [`ScanCheck`](crate::store::ScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

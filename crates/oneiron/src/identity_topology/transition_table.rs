@@ -83,12 +83,13 @@ impl ProposalOutcome {
 /// resolution event's own actor field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposalScope {
-    /// The proposed op's wire kind (`merge` / `split`).
+    /// The proposed op's wire kind (`merge` / `split` / `facet`).
     pub op_kind: &'static str,
     /// Registry kind name of the op's primary target entity (the merge
-    /// survivor / the split original), e.g. `"PERSON"`.
+    /// survivor / the split original / the facet base), e.g. `"PERSON"`.
     pub target_class: String,
-    /// The proposing actor's entity ref in hex, or
+    /// The proposing actor's opaque handle (`proposer:` and 64 hex digits,
+    /// FIX 9870), never its entity ref, or
     /// [`PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED`](super::PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED) when the proposal bound none.
     pub actor: String,
 }
@@ -196,8 +197,10 @@ pub fn evaluate_transition(
                     return Err(IdentityTopologyRejection::DuplicateReassignmentItem);
                 }
                 match entry.target {
+                    // `seen` holds every head: one lookup per row however
+                    // many heads a split names (FIX 10188).
                     ReassignmentTarget::Head(head) => {
-                        if !split.heads.contains(&head) {
+                        if !seen.contains(&head) {
                             return Err(IdentityTopologyRejection::UnknownHead { head });
                         }
                     }
@@ -214,7 +217,9 @@ pub fn evaluate_transition(
                 return Err(IdentityTopologyRejection::EmptyFacets);
             }
             require_active(&facet.entity)?;
-            let facet_count = facet.facets.len() as u32;
+            // An index past `u32::MAX` cannot be written, so a larger mask
+            // count admits every index the wire can carry (FIX 10188).
+            let facet_count = u32::try_from(facet.facets.len()).unwrap_or(u32::MAX);
             let mut seen_items = BTreeSet::new();
             for entry in &facet.reassignment.entries {
                 if !seen_items.insert(encode_reassignment_item(&entry.item)) {

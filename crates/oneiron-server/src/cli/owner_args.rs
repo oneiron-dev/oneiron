@@ -118,6 +118,12 @@ pub struct MaintainArgs {
     #[arg(long, value_name = "ID")]
     pub reclassify_corrupt_claim: Vec<String>,
 
+    /// Remove a completed local training run's staged base files and training
+    /// rows (32-hex run id); repeat for more. Keep output, receipt, stderr and
+    /// its idempotency directory. Nothing is removed without this flag.
+    #[arg(long, value_name = "ID")]
+    pub cleanup_training_inputs: Vec<String>,
+
     /// Queue a historical secret lift run and work it to its end: every
     /// record and authored row is read again by the write door's rules, each
     /// secret they place goes to custody with its handle left in place, and
@@ -678,7 +684,7 @@ pub struct SubscriptionPutArgs {
     #[arg(long)]
     pub agent: String,
 
-    /// `slack` or `line`.
+    /// `slack`, `line` or `email`.
     #[arg(long)]
     pub channel: String,
 
@@ -1036,6 +1042,12 @@ pub struct RunDecisionArgs {
     /// The bundle id `runs show` printed for exactly these proposals.
     #[arg(long)]
     pub bundle: String,
+
+    /// A reminder wording the owner saw, as `CLAIM_ID=HASH`: the
+    /// `reminder_wording_hash` `runs show` printed. Repeat for more; an
+    /// approved reminder sends these words (FIX 12321).
+    #[arg(long = "wording", value_name = "CLAIM_ID=HASH")]
+    pub wording: Vec<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

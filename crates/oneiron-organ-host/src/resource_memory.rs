@@ -28,6 +28,8 @@ pub trait FloorLease: Send {
     /// Grows this lease on its original line, waiting no later than
     /// `deadline` and no longer than `stopped` allows. A refused growth
     /// leaves the original lease and the line's byte counts unchanged.
+    /// Earlier unallocated reservations remain charged against live memory;
+    /// growing a handle alone does not establish that they were allocated.
     ///
     /// # Errors
     /// The machine's floor when the cumulative lease cannot fit even with
@@ -40,6 +42,16 @@ pub trait FloorLease: Send {
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), FloorRefusal>;
 
+    /// Names `reserved` pending bytes allocated as `actual` bytes now held.
+    /// The live memory reading already counts that allocation, so growth
+    /// must not charge it again as pending. Never waits or refuses; a
+    /// reservation alone is not evidence of allocation.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+
+    /// Gives back at most `bytes` previously reserved by this lease. Never
+    /// waits; used to roll back growth whose budget admission failed.
+    fn shrink(&mut self, bytes: u64);
+
     /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
     ///
     /// # Errors
@@ -51,6 +63,11 @@ pub trait FloorLease: Send {
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
 pub trait MachineFloor: Send + Sync {
+    /// Records `bytes` already allocated, held until the returned lease drops.
+    /// This does not admit a new allocation and never waits or refuses. Use
+    /// the actual buffer capacity, and free the buffer before its lease.
+    fn track_allocated(&self, bytes: u64) -> Box<dyn FloorLease>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.
@@ -148,7 +165,7 @@ impl AskHandler for MemoryGrow {
 
 /// A `memory.grow` ask's value, as the wire names its fields.
 fn decode(value: &Value) -> Result<MemoryAsk, AskRefusal> {
-    oneiron_organ_protocol::from_value(value)
+    MemoryAsk::from_value(value)
         .map_err(|err| AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}")))
 }
 

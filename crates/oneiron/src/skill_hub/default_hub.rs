@@ -1,32 +1,55 @@
 //! First-party library source: offline seeding, immutable Git ref, explicit import.
+//! The library reads through a Git hub or a local folder hub (FIX 21922) at a
+//! pinned commit; an index hub names no commit and refuses.
 
+#[cfg(test)]
+use super::GitEndpointSkillHubAdapter;
 use super::{
-    ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy,
-    SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
-    encode_skill_hub_record,
+    ForeignSkillPublisher, HubPin, HubRef, HubSyncPolicy, RefFetch, SkillHubAdapter, SkillHubKind,
+    SkillHubRecord, TrackedHubRef,
     pack_catalog::{
         PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackPermissions,
         PackSource,
     },
 };
-use crate::entity_id::derived_domains::FIRST_PARTY_SKILL_HUB;
+use crate::ports::TombstoneStoreRead;
+pub use crate::store::default_skill_hub::default_skill_hub_id;
 use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, temporal::TimeRange};
 
-/// Released oneiron-hub revision for library skills, and the model catalog
-/// ref's pin until the owner sets that ref's own policy. A floating branch or
-/// network lookup never changes an opened vault's skill source.
-const HUB_COMMIT: &str = "3f14540e167b1bc629afd82bbd6267c3d33f6a4e";
-const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
+/// Released oneiron-hub revision for library skills, the model catalog ref's
+/// pin until the owner sets that ref's own policy, and the commit a caller
+/// pins to install a first-party pack folder. A floating branch or network
+/// lookup never changes an opened vault's skill source.
+const HUB_COMMIT: &str = "cb5c8bed81981161e70db3668776dc8d34abcce9";
 /// Library data, deliberately not a fifth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
+/// The library skill that teaches an agent to write a watcher (FIX 19855,
+/// ARCH-0053): a TASK with a due time, and a hook on its `schedule.tick` or
+/// on a connector's `surface.inbound` events that skips or enqueues a run.
+/// It creates watch TASKs (`TaskCreateSpec.watch`, FIX 22121), which queue
+/// no work and settle at their tick.
+/// Library data like the review explainer: it imports through
+/// [`Vault::import_default_hub_skill`] at the released commit; nothing
+/// imports it on open.
+pub const WRITE_A_WATCHER_SUBTREE: &str = "skills/write-a-watcher";
 /// The model catalog has no authority of its own. Its rows count once the
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
 pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
 /// The first-party model catalog's pack name.
 pub const MODEL_PACK_NAME: &str = "oneiron.models";
-/// The publisher an owner admits when syncing the first-party catalog.
-const MODEL_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
+/// The publisher an owner admits for a first-party pack: the model catalog
+/// on sync, and any first-party pack through `vault.packs.install`.
+pub const FIRST_PARTY_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
+/// The first-party productivity pack's folder (FIX 3961): the native
+/// productivity model (TASK roles, the ChildOf tree, habit check-ins and
+/// streaks) as skills. It installs through `vault.packs.install` at the
+/// released commit with [`FIRST_PARTY_PACK_PUBLISHER`]; nothing installs it
+/// on open.
+pub const PRODUCTIVITY_PACK_SUBTREE: &str = "packs/productivity";
+/// The first-party productivity pack's name. Canon's label
+/// `oneiron-productivity` names this pack; a capability pack name needs a dot.
+pub const PRODUCTIVITY_PACK_NAME: &str = "oneiron.productivity";
 
 /// The first hub and its pinned skill-library source. The owner can point
 /// `record.endpoint` at a mirror through `configure_skill_hub`, and set
@@ -41,22 +64,35 @@ pub struct DefaultSkillHub {
 }
 
 impl DefaultSkillHub {
-    fn skill_adapter(&self) -> Result<GitEndpointSkillHubAdapter> {
-        let HubPin::Commit(commit) = &self.skills.hub_ref.pin else {
+    fn skill_adapter(&self) -> Result<RefFetch> {
+        if self.skills.sync_policy != HubSyncPolicy::PinnedCommit {
             return Err(crate::error::Error::InvalidConfig(
-                "default skill library requires an immutable commit pin".to_owned(),
-            ));
-        };
-        if self.record.kind != SkillHubKind::Git
-            || self.record.sync_policy != HubSyncPolicy::PinnedCommit
-            || self.skills.sync_policy != HubSyncPolicy::PinnedCommit
-        {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
+                "default skill hub requires a pinned-commit Git or local folder configuration"
+                    .to_owned(),
             ));
         }
-        GitEndpointSkillHubAdapter::new(self.hub, &self.record.endpoint, commit)
+        library_fetch(self.hub, &self.record, &self.skills.hub_ref)
     }
+}
+
+/// The library transport for `reference`: the configured Git or local folder
+/// hub, under a pinned-commit policy, at the commit `reference` pins.
+fn library_fetch(hub: EntityId, row: &SkillHubRecord, reference: &HubRef) -> Result<RefFetch> {
+    if !matches!(reference.pin, HubPin::Commit(_)) {
+        return Err(crate::error::Error::InvalidConfig(
+            "default skill library requires an immutable commit pin".to_owned(),
+        ));
+    }
+    if !matches!(row.kind, SkillHubKind::Git | SkillHubKind::LocalDir)
+        || row.sync_policy != HubSyncPolicy::PinnedCommit
+    {
+        return Err(crate::error::Error::InvalidConfig(
+            "default skill hub requires a pinned-commit Git or local folder configuration"
+                .to_owned(),
+        ));
+    }
+    let tracked = TrackedHubRef::new(reference.clone(), HubSyncPolicy::PinnedCommit);
+    super::ref_sync::configured_ref_fetch(hub, row, &tracked, None)
 }
 
 /// The model catalog ref as an owner reads it: its policy and pin, the
@@ -91,56 +127,10 @@ impl PackFitPolicy for KnowledgeOnlyFit {
     }
 }
 
-/// Stable identity of the first-party library hub in every vault.
-pub fn default_skill_hub_id() -> Result<EntityId> {
-    EntityId::derive(FIRST_PARTY_SKILL_HUB, &[])
-}
-
 /// Immutable revision used for imports from the shipped library.
 #[must_use]
 pub const fn default_skill_hub_commit() -> &'static str {
     HUB_COMMIT
-}
-
-pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
-    let id = default_skill_hub_id()?;
-    let mut txn = vault.store.env.write_txn()?;
-    // Reopens never revert an owner's endpoint, trust, or policy changes. Nor
-    // does an erased default come back without an explicit restore decision.
-    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &id)?
-        || vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?
-    {
-        return Ok(());
-    }
-    let row = SkillHubRecord::new(
-        SkillHubKind::Git,
-        HUB_ENDPOINT,
-        SkillHubTrustTier::Verified,
-        HubSyncPolicy::PinnedCommit,
-    )?;
-    crate::batch::apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        &mut txn,
-        vec![crate::batch::BatchOp::Put {
-            id,
-            entity_type: crate::registry::ENTITY_TYPE_SKILL_HUB,
-            occurred: TimeRange { start: 0, end: 0 },
-            learned_at: 0,
-            data: encode_skill_hub_record(&row)?,
-            allow_maintenance: true,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
-        true,
-        true,
-    )?;
-    txn.commit()?;
-    Ok(())
 }
 
 impl Vault {
@@ -162,6 +152,51 @@ impl Vault {
                     HubSyncPolicy::PinnedCommit,
                 )),
         })
+    }
+
+    /// The installed holder of one default-hub skill: the loadable skill of
+    /// this `name` whose current bytes an eligible provenance claim ties to
+    /// the configured `skills/<name>` alias at the owner's pin. Pure vault
+    /// read, fail-closed: no fetch, no default rewrite. An absent or deleted
+    /// default hub configures no source, so this returns `None` and callers
+    /// keep the seeded fallback.
+    pub(crate) fn default_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        self.default_hub_skill_with_source_in_txn(txn, name)
+            .map(|(holder, _)| holder)
+    }
+
+    /// The same lookup, retaining the actual alias and pin it consulted.
+    /// An unmatched alias still records its source; an absent or deleted
+    /// hub consults no alias. This value is provenance, not a read grant or
+    /// a complete entity-source set.
+    pub(crate) fn default_hub_skill_with_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<(Option<EntityId>, Option<HubRef>)> {
+        let hub = default_skill_hub_id()?;
+        // Only absence/deletion returns None: a live row of another type, a
+        // corrupt header, or a misconfigured hub still errors below. The type
+        // read alone still answers for a deleted shell, so deletion is
+        // checked too.
+        if TombstoneStoreRead::port_deletion_state(&self.store, txn, &hub)?.deleted
+            || self.get_entity_type_in_txn(txn, &hub)?.is_none()
+        {
+            return Ok((None, None));
+        }
+        let configured = self.default_skill_hub_in_txn(txn)?;
+        let root = &configured.skills.hub_ref;
+        let source = HubRef::new(
+            root.hub_id,
+            format!("{}/{}", root.ref_string, name),
+            root.pin.clone(),
+        )?;
+        let holder = self.installed_hub_skill_in_txn(txn, &source, name)?;
+        Ok((holder, Some(source)))
     }
 
     fn check_default_skill_source_in_txn(
@@ -201,7 +236,7 @@ impl Vault {
             let (entity, imported) = self.restore_default_hub_skill_from_source(
                 owner,
                 &entry.ref_string,
-                adapter.resolved_commit(),
+                adapter.resolved_commit()?,
                 &source,
                 occurred,
                 learned_at,
@@ -252,13 +287,8 @@ impl Vault {
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
-        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
-            ));
-        }
-        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, HUB_COMMIT)?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(HUB_COMMIT.to_owned()))?;
+        let adapter = library_fetch(id, &row, &reference)?;
         let package = adapter.fetch_package(&reference)?;
         super::hub_owner::check_expected_skill(&package.record, skill_id, version)?;
         let inventory = super::osv::dependency_inventory(&package)?;
@@ -268,7 +298,7 @@ impl Vault {
                 &reference,
                 &package,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(row.kind),
                 occurred,
                 learned_at,
             )?
@@ -398,7 +428,7 @@ impl Vault {
     pub fn sync_model_catalog(&self, owner: &AuthenticatedOwner) -> Result<PackInstallDisposition> {
         let at = self.now_recorded_at();
         let hub = default_skill_hub_id()?;
-        let publisher = self.admit_skill_publisher(owner, MODEL_PACK_PUBLISHER, hub)?;
+        let publisher = self.admit_skill_publisher(owner, FIRST_PARTY_PACK_PUBLISHER, hub)?;
         let tracked = self.model_catalog_ref()?;
         let (source_id, pinned, commit) =
             self.fetch_model_catalog_at_ref(&publisher, TimeRange { start: at, end: at }, at)?;
@@ -418,15 +448,12 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        // The owner is checked before any host path is read.
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
-        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
-            ));
-        }
-        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
+        let adapter = library_fetch(id, &row, &reference)?;
         self.import_skill_from_adapter(owner, &adapter, &reference, occurred, learned_at)
     }
 
@@ -440,13 +467,15 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        // The owner is checked before any host path is read.
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let source = self.default_skill_hub()?;
         let adapter = source.skill_adapter()?;
         Ok(self
             .restore_default_hub_skill_from_source(
                 owner,
                 subtree,
-                adapter.resolved_commit(),
+                adapter.resolved_commit()?,
                 &source,
                 occurred,
                 learned_at,
@@ -491,8 +520,8 @@ impl Vault {
         let id = configured.hub;
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         configured.skill_adapter()?;
-        let adapter = GitEndpointSkillHubAdapter::new(id, &configured.record.endpoint, commit)?;
         let source = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
+        let adapter = library_fetch(id, &configured.record, &source)?;
         let package = adapter.fetch_package(&source)?;
         let hash = package.content_hash()?;
         // A no-op restore makes no advisory request. Recheck after the
@@ -507,8 +536,12 @@ impl Vault {
             return Ok((entity, false));
         }
         let coordinates = super::osv::dependency_inventory(&package)?;
-        let (_, _, scans) =
-            self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
+        let (_, _, scans) = self.dependency_advisories(
+            hash,
+            &coordinates,
+            super::osv::hub_advisory_query(configured.record.kind),
+            learned_at,
+        )?;
         let mut txn = self.store.env.write_txn()?;
         self.check_restore_owner_in_txn(&txn, owner)?;
         self.check_default_skill_source_in_txn(&txn, configured)?;

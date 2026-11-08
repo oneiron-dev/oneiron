@@ -51,7 +51,7 @@ use super::evidence::KEY_AT;
 use super::invalid;
 use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
 use super::validate::{actor_claim_lineage, native_actor_source};
-use super::write::{require_actor_entity, scope_with_lineage};
+use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
 
 const KEY_LANE: &str = "lane";
 const KEY_ATTEMPT: &str = "attempt";
@@ -238,6 +238,7 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
             )?;
+            body.scope_facet = actor_claim_facet_in_txn(vault, wtxn, resident)?;
             body.evidence = Some(evidence.clone());
             body.scope = Some(scope.clone());
             body.valid_from = Some(at);
@@ -473,6 +474,7 @@ fn answer_in_txn(
         verdict.approval(),
         ClaimLifecycleStatus::Active,
     )?;
+    verdict_body.scope_facet = body.scope_facet;
     verdict_body.evidence = Some(Value::Map(evidence));
     verdict_body.scope = Some(scope_with_lineage(None, ClaimSource::Generated));
     verdict_body.valid_from = Some(at);
@@ -540,6 +542,7 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
             occurred_at: card.proposed_at,
             receipt_ref: None,
             payload_ref: Some(card.candidate_id),
+            approval_digest: None,
             concern: None,
             diary_review: None,
             sender: None,
@@ -549,25 +552,38 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
 }
 
 /// Every still-open candidate on `residents`, newest first, beside its
-/// resident.
+/// resident. Shells merged into a resident read as its own (FIX 9073); a
+/// candidate reached twice lists once, beside its stored resident.
 fn pending_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     residents: &[EntityId],
 ) -> Result<Vec<(EntityId, CraftCandidateView)>> {
-    let mut cards = Vec::new();
+    let mut cards: std::collections::BTreeMap<String, (EntityId, CraftCandidateView)> =
+        std::collections::BTreeMap::new();
     for resident in residents {
-        for id in vault.claims_for_subject_in_txn(rtxn, resident)? {
-            let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
-                continue;
-            };
-            if body.lifecycle == ClaimLifecycleStatus::Active
-                && let Some((_, _, card)) = candidate_card(&id, &body)
-            {
-                cards.push((*resident, card));
+        let subjects =
+            crate::skill_reliability::redirect_equivalent_subjects_in_txn(vault, rtxn, resident)?;
+        for subject in &subjects {
+            for id in vault.claims_for_subject_in_txn(rtxn, subject)? {
+                let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+                    continue;
+                };
+                if body.lifecycle == ClaimLifecycleStatus::Active
+                    && let Some((stored, _, card)) = candidate_card(&id, &body)
+                {
+                    let key = card.candidate_id.clone();
+                    match cards.get(&key) {
+                        Some((listed, _)) if *listed == stored || *resident != stored => {}
+                        _ => {
+                            cards.insert(key, (*resident, card));
+                        }
+                    }
+                }
             }
         }
     }
+    let mut cards: Vec<_> = cards.into_values().collect();
     cards.sort_by(|(_, a), (_, b)| {
         b.proposed_at
             .cmp(&a.proposed_at)

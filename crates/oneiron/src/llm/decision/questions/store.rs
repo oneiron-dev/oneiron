@@ -161,6 +161,38 @@ fn create_question_reading(
     definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
+    vault.with_write_txn_grouped(|txn| {
+        create_question_reading_in_txn(vault, txn, asker, read_lane, definition, now)
+    })
+}
+
+/// Stores a standing question in the caller's writer, so its owning record can
+/// keep the question handle atomically with its definition and scheduling head.
+pub(crate) fn create_question_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    asker: WriteActor,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    create_question_reading_in_txn(
+        vault,
+        txn,
+        asker,
+        FrozenReadLane::principal(),
+        definition,
+        now,
+    )
+}
+
+fn create_question_reading_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    asker: WriteActor,
+    read_lane: FrozenReadLane,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
     if definition.activation != QuestionActivation::Standing {
         return Err(invalid("one-off questions only save receipts"));
     }
@@ -171,26 +203,23 @@ fn create_question_reading(
         principal: asker.entity_ref(),
         definition,
         created_at: now,
-        asker_class: Some(asker.actor_class().into()),
+        asker_class: Some(asker.actor_class()),
         read_lane,
     };
-    vault.with_write_txn_grouped(|txn| {
-        let id = record.definition.question.id;
-        super::arrival::watch(&vault.store, txn, &record)?;
-        secret_scan_before_put(&record)?;
-        QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version: 1 }, &record)?;
-        let head = QuestionHead {
-            version: 1,
-            paused: false,
-            last_refresh: None,
-            retry_at: None,
-        };
-        secret_scan_before_put(&head)?;
-        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
-        // The host's question timer re-reads its next due instant.
-        crate::batch::queue_proactivity_change(vault, txn);
-        Ok(())
-    })?;
+    let id = record.definition.question.id;
+    super::arrival::watch(&vault.store, txn, &record)?;
+    secret_scan_before_put(&record)?;
+    QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version: 1 }, &record)?;
+    let head = QuestionHead {
+        version: 1,
+        paused: false,
+        last_refresh: None,
+        retry_at: None,
+    };
+    secret_scan_before_put(&head)?;
+    QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
+    // The host's question timer re-reads its next due instant.
+    crate::batch::queue_proactivity_change(vault, txn);
     Ok(record)
 }
 
@@ -360,7 +389,7 @@ fn edit_question_reading(
             principal,
             definition,
             created_at: now,
-            asker_class: Some(asker.actor_class().into()),
+            asker_class: Some(asker.actor_class()),
             read_lane,
         };
         secret_scan_before_put(&record)?;

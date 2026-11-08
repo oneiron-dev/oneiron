@@ -26,21 +26,25 @@
 
 mod argv;
 mod bridge;
+pub(crate) mod bundle_tree;
 mod checkout;
 mod checkout_remote;
-mod config;
+pub use checkout_remote::validate_checkout_door;
+use oneiron_store::git_wire::config;
 mod env;
 mod execution_context;
 mod execution_scope;
 mod failure;
 mod hub_read;
-mod ids;
+use oneiron_store::git_wire::ids;
 mod import_fetch;
 mod mirror_plan_push;
 mod mirror_plan_review;
 mod mirror_push;
-mod objects;
-mod operation;
+pub(crate) mod mutation_commands;
+use oneiron_store::git_wire::objects;
+use oneiron_store::git_wire::operation;
+use oneiron_store::git_wire::origin_relay;
 mod plan;
 mod process;
 mod projected_checkout;
@@ -50,10 +54,11 @@ mod publish_push;
 mod publish_review;
 mod publish_review_trees;
 mod reachable_blobs;
-mod record;
-mod repo;
+use oneiron_store::git_wire::record;
+use oneiron_store::git_wire::repo;
 mod repository_profile;
 mod retained_object;
+mod secret_purge;
 mod wire_publish;
 mod wire_reads;
 mod wire_stage;
@@ -71,7 +76,9 @@ pub use self::config::{
 pub use self::env::GitWireProcessEnv;
 pub use self::failure::{GitWireFailure, GitWireFailureClass, GitWireResult};
 pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef};
-pub use self::import_fetch::{FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome};
+pub use self::import_fetch::{
+    FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome, SOURCE_RELAY_TICKET_HEADER,
+};
 pub use self::mirror_plan_push::{GitPlanPushReport, GitPlanRef, GitPlanRefOutcome};
 pub use self::mirror_plan_review::{
     GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag,
@@ -100,6 +107,10 @@ pub(crate) use self::repo::{
     lock_repository, lock_repository_within, try_lock_repository,
     try_lock_repository_for_maintenance,
 };
+pub(crate) use oneiron_store::git_wire::path_text::{
+    git_path_bytes, git_path_has_control, git_path_os_str, git_path_string, git_path_text,
+    git_path_text_of_os,
+};
 
 // The flat git_wire.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
@@ -117,9 +128,9 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, PushedHeadReceipt, TeardownReceiptMatch,
 };
 #[cfg(test)]
-use crate::codebase::RepoRef;
-#[cfg(test)]
 use crate::error::Error;
+#[cfg(test)]
+use crate::store::code_snapshot::RepoRef;
 #[cfg(test)]
 use std::ffi::OsString;
 #[cfg(test)]
@@ -127,4 +138,4 @@ use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
 
-pub(crate) use hub_read::read_hub_git;
+pub(crate) use hub_read::{read_hub_git, read_local_hub_git};

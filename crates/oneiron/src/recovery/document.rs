@@ -12,11 +12,13 @@ use loro::LoroDoc;
 #[cfg(feature = "sync")]
 use loro::{LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(feature = "sync")]
 use super::canonical::parse_id;
-use super::canonical::{ByteBudget, CanonicalSnapshot, RecoveryBudgetOverrun, id, invalid, pack};
+use super::canonical::{
+    ByteBudget, CanonicalSnapshot, RecoveryBudgetOverrun, id, invalid, metadata_size, pack,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -78,15 +80,17 @@ pub struct CanonicalDocument {
     pub entity_id: [u8; 16],
     pub head: [u8; 16],
     pub text: String,
-    pub title: Option<String>,
+    /// Editable fields of the document's meta map, each encoded as one
+    /// MessagePack value (FIX 7784): never its identity, pins or authorship.
+    pub metadata: BTreeMap<String, Vec<u8>>,
     /// None once the NOTE's author was erased (FIX 6072): it stays no one.
     pub birth_actor: Option<[u8; 16]>,
     pub birth_at: u64,
     pub authorship: Vec<crate::note::NoteAuthorship>,
 }
 impl CanonicalDocument {
-    /// The bytes this document holds: its ids, text, title, birth and
-    /// authorship, each actor only while it names one (FIX 6540).
+    /// The bytes this document holds: its ids, text, editable fields, birth
+    /// and authorship, each actor only while it names one (FIX 6540).
     fn held(&self) -> usize {
         let authorship = self.authorship.iter().map(|record| {
             16 + record.actor.id().map_or(0, |_| 16)
@@ -97,7 +101,7 @@ impl CanonicalDocument {
         self.entity_id.len()
             + self.head.len()
             + self.text.len()
-            + self.title.as_ref().map_or(0, String::len)
+            + metadata_size(&self.metadata)
             + self.birth_held()
             + authorship.sum::<usize>()
     }
@@ -114,7 +118,7 @@ impl CanonicalDocument {
         crate::note::recovery::rebuild(
             id(self.entity_id)?,
             &self.text,
-            self.title.as_deref(),
+            &self.metadata,
             &self.authorship,
         )
     }
@@ -199,26 +203,30 @@ pub(super) fn capture(
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
             let (DocKey(_, head), bytes) = row?;
-            // A retained parent goes in below, from its own document; the
-            // value of a decided fork no pending fork needs stays out.
+            // Only pending forks' own values go here. Their retained parents
+            // go in below; unneeded retired heads stay out.
             if head == live_head
                 || required.contains(&(note, head))
                 || NOTE_FORK
                     .get(&vault.store, txn, &head)?
-                    .is_some_and(|fork| fork.decided)
+                    .is_none_or(|fork| fork.decided)
             {
                 continue;
             }
             let head = *head.as_bytes();
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
-            let row = from_doc(
-                entity.id,
+            // This row comes from the host's own admitted proposal store.
+            // Canonical recovery carries its value, never its operation authority.
+            let (text, metadata) = crate::note::documents::stored_proposal_values(note, &doc)?;
+            let row = CanonicalDocument {
+                entity_id: entity.id,
                 head,
-                &doc,
-                false,
-                core.author_ref.id().map(|author| *author.as_bytes()),
-                header.learned_at,
-            )?;
+                text,
+                metadata,
+                birth_actor: core.author_ref.id().map(|author| *author.as_bytes()),
+                birth_at: header.learned_at,
+                authorship: Vec::new(),
+            };
             take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
@@ -294,7 +302,23 @@ pub(super) fn from_doc(
     birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, metadata, mut authorship) =
+        crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    if live {
+        let author = birth_actor.map(id).transpose()?.map_or(
+            crate::note::NoteActor::Erased,
+            crate::note::NoteActor::Actor,
+        );
+        // Canonical values bind only an existing birth to this actual core.
+        // Rebuilding native history removes its author literal again.
+        for record in &mut authorship {
+            if record.operation.as_bytes() == &entity_id
+                && record.actor == crate::note::NoteActor::Erased
+            {
+                record.actor = author;
+            }
+        }
+    }
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
@@ -302,7 +326,7 @@ pub(super) fn from_doc(
         entity_id,
         head,
         text,
-        title,
+        metadata,
         birth_actor,
         birth_at,
         authorship,
@@ -328,7 +352,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 2,
+            container_schema_version: 3,
             analyzer_manifest_blake3: [0; 32],
         },
         suppressed_tasks: Vec::new(),
@@ -340,6 +364,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
         asset_body_refs: Vec::new(),
+        source_audiences: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =
@@ -462,6 +487,9 @@ impl CanonicalSnapshot {
         // of a session it removed, go as the window's own carriers do.
         snapshot.settle_row_births_here(vault, &txn)?;
         snapshot.settle_cutoffs_here(vault, &txn)?;
+        // Engine A: this vault's current policies stand in for the
+        // artifact's, and none names an actor it erased.
+        snapshot.settle_source_audiences_here(vault, &txn)?;
         Ok(snapshot)
     }
 }

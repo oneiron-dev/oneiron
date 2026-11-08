@@ -68,6 +68,7 @@ use serde::Deserialize;
 
 use super::action_routes::{
     ActionBound, action_bound, bind_card_run, execute_validated_ui, require_action_scope,
+    take_action_rows,
 };
 use super::host_doors::support::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
@@ -304,6 +305,11 @@ async fn event_answer(
             let rendered_by = held.frame.principal().clone();
             let server = Arc::clone(&server);
             let credential = auth.idempotency_principal();
+            // FIX 4973: the clicking credential's admitted locality;
+            // provenance only, captured before the blocking closure.
+            let caller_origin = oneiron::agent_dispatch::CallerOrigin::Connection {
+                locality: auth.locality(),
+            };
             let key = request.idempotency_key;
             let queued = super::clock_ingress::run_blocking(move || {
                 crate::ai_host::queue_lens_callback(
@@ -313,6 +319,7 @@ async fn event_answer(
                     &emitter,
                     &callback,
                     &key,
+                    caller_origin,
                 )
             })
             .await
@@ -365,7 +372,8 @@ async fn dispatch_tool(
     };
     let (dispatch, stamp) =
         execute_validated_ui(server, headers, extensions, bound, validated, key).await;
-    let answer = dispatch.and_then(|dispatch| {
+    let answer = dispatch.and_then(|mut dispatch| {
+        let _ = take_action_rows(&mut dispatch);
         Ok(serde_json::json!({
             "outcome": dispatch.outcome_value().map_err(engine)?,
             "readReceipt": dispatch.read_receipt,

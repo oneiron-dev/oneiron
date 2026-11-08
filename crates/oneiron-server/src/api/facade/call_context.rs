@@ -11,7 +11,7 @@
 use axum::http::{Extensions, HeaderMap, StatusCode};
 use oneiron::EntityId;
 use oneiron::authority::ActSurface;
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows};
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows, SigningRequestTransport};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::runtime_hooks::verb::VerbAskDrainPermit;
 
@@ -113,6 +113,7 @@ pub(crate) struct FacadeCall<'a> {
     /// the home an opened device asks (FIX 2905, FIX 2907). `None` for an
     /// owner-grade caller, and for an ingress that carries no per-call proof.
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    signing_request_transport: Option<SigningRequestTransport>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -121,7 +122,8 @@ impl<'a> FacadeCall<'a> {
     /// act records: a linked machine its headers' machine proof verifies
     /// on this very request, or the caller the binding door admitted
     /// (`owner_routes::machine_routes::act_surface_admitted`, FIX 4625).
-    pub(super) fn http(
+    /// A direct native read route reads its call the same way (FIX 1435).
+    pub(crate) fn http(
         server: &SyncServer,
         auth: &'a CoreAuth,
         headers: &'a HeaderMap,
@@ -151,6 +153,17 @@ impl<'a> FacadeCall<'a> {
             forwarded: (!auth.is_owner_grade())
                 .then(|| auth.forwarded_caller_proof_admitted(headers, extensions))
                 .flatten(),
+            signing_request_transport: Some(SigningRequestTransport::new(
+                extensions
+                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                    // Embedded requests use loopback:0 for locality, not a TCP peer.
+                    .filter(|peer| peer.0.port() != 0)
+                    .map(|peer| peer.0.ip()),
+                headers
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned),
+            )),
         }
     }
 
@@ -183,6 +196,7 @@ impl<'a> FacadeCall<'a> {
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
+            signing_request_transport: None,
         }
     }
 
@@ -224,10 +238,11 @@ impl<'a> FacadeCall<'a> {
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
+            signing_request_transport: None,
         }
     }
 
-    pub(super) const fn auth(&self) -> &'a CoreAuth {
+    pub(crate) const fn auth(&self) -> &'a CoreAuth {
         self.auth
     }
 
@@ -282,6 +297,23 @@ impl<'a> FacadeCall<'a> {
     /// owner act's audit record (FIX 4625).
     pub(super) const fn surface(&self) -> ActSurface {
         self.surface
+    }
+
+    /// Actual request or same-connection upgrade observations, for signing audit only.
+    pub(super) fn signing_request_transport(&self) -> Option<SigningRequestTransport> {
+        self.signing_request_transport.clone()
+    }
+
+    /// Binds the actual upgrade observations from this call's own socket.
+    /// An in-process call or resumed drain leaves them absent.
+    pub(crate) fn with_signing_request_transport(
+        self,
+        transport: Option<SigningRequestTransport>,
+    ) -> Self {
+        Self {
+            signing_request_transport: transport,
+            ..self
+        }
     }
 
     /// Who this call asks an opened device's home for (FIX 2905): an
@@ -342,6 +374,7 @@ impl<'a> FacadeCall<'a> {
             subscription: self.subscription.clone(),
             surface: self.surface,
             forwarded: self.forwarded.clone(),
+            signing_request_transport: self.signing_request_transport.clone(),
         }
     }
 }
@@ -361,6 +394,7 @@ pub(super) struct OwnedFacadeCall {
     subscription: Option<String>,
     surface: ActSurface,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    signing_request_transport: Option<SigningRequestTransport>,
 }
 
 impl OwnedFacadeCall {
@@ -378,6 +412,7 @@ impl OwnedFacadeCall {
             subscription: self.subscription.clone(),
             surface: self.surface,
             forwarded: self.forwarded.clone(),
+            signing_request_transport: self.signing_request_transport.clone(),
         }
     }
 }
@@ -391,20 +426,34 @@ pub(crate) struct FacadeCallOutput {
     /// opens handles of its own and lists none, never an empty list standing
     /// in for an unknown one.
     pub(crate) rows: Option<Vec<EntityId>>,
+    /// A content-free caller notice, separate from the result's provenance.
+    pub(crate) hook_notice: bool,
 }
 
 impl FacadeCallOutput {
-    /// A result whose reads listed their rows in `producers`.
+    /// A result whose reads listed their rows in `producers`. A retry's
+    /// result that settlement's drain saved with no rows keeps them unknown,
+    /// `None`, never a fresh empty listing (FIX 21054).
     pub(super) fn listed(value: serde_json::Value, producers: &ProducerRows) -> Self {
         Self {
             value,
-            rows: Some(producers.take()),
+            rows: producers.take_listed(),
+            hook_notice: false,
         }
     }
 
     /// A result whose door lists none of its rows.
     pub(super) fn unlisted(value: serde_json::Value) -> Self {
-        Self { value, rows: None }
+        Self {
+            value,
+            rows: None,
+            hook_notice: false,
+        }
+    }
+
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice = hook_notice;
+        self
     }
 }
 

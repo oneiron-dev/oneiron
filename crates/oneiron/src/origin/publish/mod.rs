@@ -255,7 +255,7 @@ impl Vault {
             state: OriginPublishState::Pending,
             requested: OriginPublishAct {
                 actor: Some(caller.actor),
-                class: caller.class.into(),
+                class: caller.class,
                 authority,
                 at: now,
             },
@@ -264,6 +264,7 @@ impl Vault {
             refusal: None,
             created_at: now,
             finished_at: None,
+            broker_isolation: None,
         };
         self.put_publish_request_in_txn(&mut txn, &view, &built.pages)?;
         txn.commit()?;

@@ -87,8 +87,10 @@ impl<'a> LocalEventStream<'a> {
                     part_id: part_id.clone(),
                     text: text.clone(),
                 }));
-                self.pending
-                    .push_back(Ok(LlmStreamEvent::ReasoningEnd { part_id }));
+                self.pending.push_back(Ok(LlmStreamEvent::ReasoningEnd {
+                    part_id,
+                    signature: signature.clone(),
+                }));
                 self.content.push(ContentPart::Reasoning {
                     text,
                     signature,
@@ -118,11 +120,13 @@ impl<'a> LocalEventStream<'a> {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: None,
                 }));
                 self.content.push(ContentPart::ToolCall {
                     call_id,
                     name,
                     input,
+                    signature: None,
                 });
             }
             LocalOutputPart::ToolResult {

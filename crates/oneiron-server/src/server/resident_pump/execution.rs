@@ -7,16 +7,18 @@ use super::{
     AttemptQueue, AttemptRecord, BoundRun, Claimed, DecisionHost, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorStatus, EngineRunError, EntityId, HostPlannerBinding,
     HostPlannerDecisions, HostSelfDispatcher, LeaderStarterSkills, McpCodeModeProvider, ModelId,
-    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills,
-    ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
-    SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
-    TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
-    ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
-    note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
-    run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
+    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills, ReadSetProducer,
+    ReaderSeats, RunCompaction, RunHostDoor, SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask,
+    SpawnHostSeat, SpendScopeId, SyncServer, TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE,
+    Vault, WINDOW_FULL_TRIES, WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor,
+    browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
+    finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
+    pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
+    task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
+use oneiron::engine_executor::SelfBriefPort;
+use oneiron::llm::seat::SeatLearningContext;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -62,7 +64,9 @@ pub(super) fn run_bound(
         tracing::warn!(kind = ?error.kind(), "a resident run's input producers were not declared");
     }
     // One door for the whole run, so its browser lives as long as the run.
-    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    // Its self brief lives longer, with its live run (FIX 17594 D3).
+    let door =
+        Arc::new(RunHostDoor::new(server, actor, runtime, run_id).with_live_run_brief_lifetime());
     let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
@@ -74,6 +78,11 @@ pub(super) fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 15011: a run its dispatch started from an event opens with the
+    // wake opener; a continued run goes on from its source's fork.
+    if !continues {
+        config.wake = claimed.wake;
+    }
     // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
     // strict on this door before its seat is born. One that met its TASK's
     // goal settles the try with no model call; one that handed off names its
@@ -109,14 +118,33 @@ pub(super) fn run_bound(
     // stamp its pack loads write. DOOR-111 S5: the seat is born stamped
     // with the dispatch's type, so its route reads with its own stamp.
     let type_ref = &status.input.type_ref;
+    let learning = status
+        .input
+        .target
+        .agent_definition_ref()
+        .ok()
+        .map(|agent| SeatLearningContext {
+            project: status.input.project_ref,
+            agent,
+            type_ref: type_ref.clone(),
+            call_model_pin: status
+                .input
+                .direct_spawn
+                .as_ref()
+                .and_then(|receipt| receipt.ask.model.as_ref())
+                .filter(|model| model.is_pin())
+                .map(|model| model.value().clone()),
+        });
     let model_seat = if continues {
         continued_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             type_ref,
             definition.models.clone(),
             worlds.clone(),
+            learning,
         )?
     } else {
         // The birth's worlds are the dispatch row's branch world (FIX 11918,
@@ -125,12 +153,14 @@ pub(super) fn run_bound(
         task_engine_run_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             format!("agent-run:{}", run_id.to_hex()),
             type_ref,
             status.input.plan.as_ref(),
             definition.models.clone(),
             worlds,
+            learning,
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -208,12 +238,10 @@ pub(super) fn run_bound(
     // it marked for a contribution check (FIX 3028). A continued run loads
     // it too, and its task already holds the body: it is tagged where its
     // source's append put it.
-    let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     let mut exposures: Vec<TaskExposure> = leader.into_iter().collect();
     if let Some(skill) = AgentDispatcher::new(vault)
-        .prepare_project_conversation_run(
+        .prepare_default_project_conversation_run(
             &status.attempt,
-            &skills,
             config.model.as_str(),
             unix_now(),
         )
@@ -257,21 +285,38 @@ pub(super) fn run_bound(
     if status.input.room.is_some() {
         scope_funding(vault, metered.as_ref(), true).map_err(EngineRunError::Payer)?;
     }
+    // FIX 7766: this path's runs bind no owner's agent Grant wallet, so work
+    // one funds stops here, typed, before any call: never billed to the
+    // host's default allocation.
+    if crate::ai_host::payer_funding::attempt_grant_funding(vault, status.attempt.id)
+        .map_err(EngineRunError::Payer)?
+        .is_some()
+    {
+        return Err(EngineRunError::Payer(
+            crate::ai_host::payer_funding::PayerFault::GrantWalletUnbound {
+                scope: metered.clone(),
+            },
+        ));
+    }
     // The run's caller, as this host leased it: its reader children and its
     // compaction read under that one binding.
-    let caller = pump_caller(actor);
+    let caller = pump_caller(actor).with_caller_origin(status.input.caller_origin);
     // A scoped child queued under the run borrows the lease of the attempt
     // it is (FIX 7507): it lives only while this host holds that lease. No
     // clock is lent, so its children keep one window from its first spawn,
     // and its ordinary readers outlive it as before.
     let parent = crate::ai_host::scoped_child::ReaderParentHost::for_attempt(&status.attempt);
-    let mut seat = seats.seat_with_parent(
-        run_id,
-        metered.clone(),
-        caller.locality(),
-        provider.reader_window_tokens(),
-        parent.as_ref(),
-    );
+    let mut seat = seats
+        .seat_with_parent(
+            &oneiron::code_run::ReaderJobs::canonical(vault),
+            oneiron::code_run::ReaderActor::of(actor),
+            run_id,
+            metered.clone(),
+            caller.locality(),
+            provider.reader_window_tokens(),
+            parent.as_ref(),
+        )
+        .map_err(text)?;
     // FIX 4539: its reader and summary children are held to the list its
     // frozen definition names, as its own seat is.
     seat.listed = definition.models.clone();
@@ -314,6 +359,9 @@ pub(super) fn run_bound(
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
+        if door.take_media_trap() {
+            return Ok(BoundRun::Trapped);
+        }
         let outcome = outcome?;
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
@@ -427,19 +475,30 @@ fn continued_config(
 /// own run's receipt, bound to the model, locality and effort its source ran
 /// on, so the fork's config marker holds on every entry. That model must
 /// still be on the agent's list (`listed`, FIX 4472). It is stamped with
-/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5).
+/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5), and picked
+/// in the dispatched `agent`'s voice (FIX 4543).
+#[allow(clippy::too_many_arguments)]
 fn continued_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     config: &EngineExecutorConfig,
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     // The birth's worlds are the dispatch row's branch world, threaded by the
     // caller (FIX 11918, Engine 00:54); empty inherits. No federation slip here.
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        SeatTask {
+    task_run_seat(
+        vault,
+        provider,
+        agent,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| SeatTask {
             kind: SeatKind::Attempt,
             warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
             task: config.task.clone(),
@@ -455,8 +514,9 @@ fn continued_seat(
             listed,
             worlds: Vec::new(),
             served: None,
-        }
-    })
+            learning: None,
+        },
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
@@ -493,7 +553,9 @@ fn hold_seatless_to_list(
 /// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
 /// and its leader calls answer, and its planned team's start is written on
 /// `model_seat` and the entry's line (DOOR-111 S4c-4); `issuer` signs its
-/// leader's subproject spawn.
+/// leader's subproject spawn. Its requests carry the run's self brief,
+/// installed for its live run once its entry's facts are bound (FIX 17594
+/// D3).
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -522,12 +584,15 @@ fn enter_run(
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
+        .with_bound_run(config.run_id)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec())
         // FIX 6867, FIX 8268: the run's repo proposals take the vault's own review policy.
         .with_repo_review_policy(Arc::new(
             oneiron::memory::repo_doors::OwnerProposalReviewPolicy::new(Arc::clone(vault)),
-        ));
+        ))
+        // FIX 7181: the operator's own Git door base wins over the run's.
+        .with_git_door_base(door.git_door_base());
     let meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
@@ -561,7 +626,7 @@ fn enter_run(
     // attaches, and its guard, held through the whole entry: an action
     // through that handle runs only between entries.
     let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
-    let _serial = live_runs
+    let live = live_runs
         .register(
             vault,
             config.run_id,
@@ -574,18 +639,62 @@ fn enter_run(
             status.input.definition.clone(),
             spend.cloned(),
         )
-        .map_err(text)?
-        .enter();
+        .map_err(text)?;
+    let _serial = live.enter();
     door.bind_meter(line);
     door.bind_lease(lease);
+    // FIX 17594: the run ceiling its `describe(self)` states, from the
+    // admitted dispatch this entry serves.
+    door.bind_run_ceiling(Some(oneiron::context_board::brief_run_ceiling(
+        config.run_id,
+        status.attempt.id,
+        &status.input,
+    )));
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
+    door.bind_media_step(crate::server::RunMediaStep::new(
+        vault,
+        &status.attempt,
+        actor,
+        config.run_id,
+    ));
+    // FIX 17594 D3: the run's self brief, resolved from what this entry
+    // bound and installed under the run's connection, and the port its
+    // requests carry it through. The live run keeps the installation across
+    // its entries and its durable waits, and closes it as it retires (Engine
+    // call RESUME C).
+    // A brief that does not install leaves the run as it ran before it had
+    // one: it enters with no brief, and the miss is logged.
+    let brief = door
+        .install_self_brief(live.self_brief_owner())
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                agent = %actor.entity_ref().to_hex(),
+                "a resident run's self brief did not install; the run enters without one"
+            );
+            None
+        });
+    if let Some(brief) = &brief {
+        live.hold_self_brief(brief.installation());
+    }
     let entered = enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
+        vault,
+        provider,
+        &bound,
+        config,
+        compaction,
+        reactor,
+        meter,
+        model_seat,
+        planned,
+        status.input.definition.models.clone(),
+        brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
     );
     door.bind_meter(None);
     door.bind_lease(None);
+    door.bind_run_ceiling(None);
     door.bind_attempt(None);
     entered
 }
@@ -635,11 +744,11 @@ pub(crate) fn seated_planner<'a>(
         return Ok(None);
     }
     Ok(Some(HostPlannerBinding {
-        skills: PlannerSkills::seeded().map_err(text)?,
+        skills: PlannerSkills::seeded(vault).map_err(text)?,
         seats,
         executor: executor.to_owned(),
         decisions: Some(decisions),
-        leader: LeaderStarterSkills::seeded().map_err(text)?,
+        leader: LeaderStarterSkills::seeded(vault).map_err(text)?,
         top: settings.top,
         // Callers attach the run's own runner after this binding is built:
         // a leased entry in `enter_run`, and a live-run action through

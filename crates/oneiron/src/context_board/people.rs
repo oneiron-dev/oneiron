@@ -8,6 +8,11 @@
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
+mod prepared;
+pub(crate) use prepared::{
+    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::one_line_token;
@@ -92,6 +97,7 @@ pub struct People {
     vault: String,
     rows: Vec<PersonRow>,
     index: BTreeMap<EntityId, usize>,
+    about_sources: BTreeMap<EntityId, Vec<EntityId>>,
 }
 
 impl People {
@@ -252,7 +258,12 @@ impl People {
                 index.entry(*actor).or_insert(at);
             }
         }
-        Self { vault, rows, index }
+        Self {
+            vault,
+            rows,
+            index,
+            about_sources: BTreeMap::new(),
+        }
     }
 
     /// Applies model-channel name disclosure after the roster's own read.
@@ -271,6 +282,7 @@ impl People {
             if !crate::disclosure::model_names_admitted_in(vault, &txn, reader, band)? {
                 row.name.clone_from(&row.handle);
                 row.about = None;
+                self.about_sources.remove(&row.person);
             }
         }
         Ok(())
@@ -299,15 +311,33 @@ impl People {
         self.rows.iter().find(|row| row.handle == handle)
     }
 
-    /// Sets each person's `about` line from `about(person)`.
+    /// Sets each person's `about` line and its exact contributors from `about(person)`.
     pub fn set_about(
         &mut self,
-        about: &mut dyn FnMut(EntityId) -> Result<Option<String>>,
+        about: &mut dyn FnMut(EntityId) -> Result<Option<(String, Vec<EntityId>)>>,
     ) -> Result<()> {
         for row in &mut self.rows {
-            row.about = about(row.person)?;
+            match about(row.person)? {
+                Some((text, sources)) => {
+                    row.about = Some(text);
+                    self.about_sources.insert(row.person, sources);
+                }
+                None => {
+                    row.about = None;
+                    self.about_sources.remove(&row.person);
+                }
+            }
         }
         Ok(())
+    }
+
+    /// The exact contributors stored with this person's current `about` line.
+    #[must_use]
+    pub(crate) fn about_sources(&self, person: EntityId) -> &[EntityId] {
+        self.about_sources
+            .get(&person)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// The cached prefix's roster for this vault, chosen at an epoch boundary:
@@ -316,6 +346,13 @@ impl People {
     /// rest are counted, never dropped silently.
     #[must_use]
     pub fn residence(&self, pinned: &[EntityId]) -> PeoplePrefix {
+        self.residence_within(pinned, PEOPLE_PREFIX_BUDGET_TOK)
+    }
+
+    /// [`Self::residence`] under `budget_tok`: the `people` share of the
+    /// agent's board layout, laid out at an epoch boundary (BOARD-LAYOUT).
+    #[must_use]
+    pub fn residence_within(&self, pinned: &[EntityId], budget_tok: usize) -> PeoplePrefix {
         let mut order: Vec<usize> = Vec::with_capacity(self.rows.len());
         let mut placed = BTreeSet::new();
         for id in pinned {
@@ -334,7 +371,7 @@ impl People {
             let row = &self.rows[at];
             let line = xml_safe(&row.toon_row());
             let cost = crate::count_context_pack_tokens(&line).max(1);
-            if more > 0 || spent + cost > PEOPLE_PREFIX_BUDGET_TOK {
+            if more > 0 || spent + cost > budget_tok {
                 more += 1;
                 continue;
             }
@@ -466,15 +503,7 @@ pub(crate) fn ensure_agent_person_in_txn(
         return Ok(());
     }
     if vault.store.port_entity_record(&*txn, &person)?.is_none() {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("display_name"),
-                rmpv::Value::from(name),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+        let body = agent_person_body(name)?;
         vault
             .batch_in()
             .put(
@@ -492,6 +521,30 @@ pub(crate) fn ensure_agent_person_in_txn(
     Ok(())
 }
 
+/// The rows seeded for one system agent, as (person, substrate claim,
+/// anchor claim): every id derives from the agent, so each device writes
+/// the same rows. The empty-vault join guard reads the same derivations.
+pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, EntityId, EntityId)> {
+    Ok((
+        EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?,
+        EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?,
+        EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?,
+    ))
+}
+
+fn agent_person_body(name: &str) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("display_name"),
+            rmpv::Value::from(name),
+        )]),
+    )
+    .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+    Ok(body)
+}
+
 /// [`ensure_agent_person_in_txn`] for a seeded system agent (FIX 12098):
 /// its claim ids derive from the agent and every time is the seed time, so
 /// each device writes the same rows byte for byte. No birth, no authorship
@@ -506,7 +559,7 @@ pub(crate) fn ensure_seeded_agent_person_in_txn(
         return Ok(());
     }
     let at = crate::agent_def::SEEDED_AGENT_DEFINITION_TIMESTAMP;
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
+    let (person, substrate, anchor) = seeded_agent_person_ids(agent)?;
     // An anchor the agent holds from any time, its seeded one or a later
     // one, leaves it be: a write at the seed time would overlap it.
     if crate::subject_model::actor_subject_anchor_in_txn(vault, &*txn, &agent, u64::MAX)?.is_some()
@@ -535,8 +588,6 @@ pub(crate) fn ensure_seeded_agent_person_in_txn(
             .apply(txn)?;
     }
     let writer = WriteActor::new(agent, EdgeActorClass::Agent);
-    let substrate = EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?;
-    let anchor = EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?;
     crate::subject_model::seeded::ensure_seeded_model_person_in_txn(
         vault, txn, person, writer, substrate, at,
     )?;
@@ -620,6 +671,13 @@ fn person_name(body: &[u8]) -> Option<String> {
             .ok()?
             .get("display_name")?
             .as_str()
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str())
             .map(str::to_owned)
     })
     .filter(|name| !name.trim().is_empty())

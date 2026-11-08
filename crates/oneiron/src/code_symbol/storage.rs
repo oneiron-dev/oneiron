@@ -7,7 +7,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::code_artifact::decode_code_artifact_body;
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -26,6 +26,7 @@ use super::keys::{
     MANIFEST, REVISION_INDEX, code_symbol_entity_id, code_symbol_revision_index_key,
     code_symbol_revision_index_prefix, delete_index_rows_for_id, id_from_index_key,
 };
+use super::manifest_reads::code_symbol_manifest_ids;
 use super::rust_source::PreparedCodeSymbolGraph;
 use super::text_diff::symbol_line_range;
 use super::types::{
@@ -50,7 +51,13 @@ fn observe_manifest_rows(
 ) -> Result<()> {
     let scope = code_artifact_id.as_bytes();
     let mut rows = ScanCount::start(store, txn, EngineScan::SymbolManifestRows, scope)?;
-    rows.rows(manifest.chunks.len().max(manifest.symbols.len()));
+    rows.rows(
+        manifest
+            .chunks
+            .len()
+            .max(manifest.symbols.len())
+            .max(manifest.relations.len()),
+    );
     rows.defer(store);
     let longest = manifest
         .chunks
@@ -86,6 +93,7 @@ impl Vault {
         MANIFEST.encode_value(manifest)?;
         let mut wtxn = self.store.env.write_txn()?;
         validate_code_artifact_target(&self.store, &wtxn, code_artifact_id, &manifest.repo_ref)?;
+        validate_manifest_identity(self, &wtxn, manifest)?;
         observe_manifest_rows(&self.store, &wtxn, code_artifact_id, manifest)?;
         let manifest = keep_erased_actors(&self.store, &wtxn, code_artifact_id, manifest)?;
 
@@ -101,6 +109,14 @@ impl Vault {
             );
             REVISION_INDEX.put(&self.store, &mut wtxn, &key, &())?;
         }
+        // The manifest's symbols join its snapshot's repository scope (FIX 4300).
+        let symbols = code_symbol_manifest_ids(&manifest)?;
+        crate::codebase::put_scope_symbol_rows_in_txn(
+            &self.store,
+            &mut wtxn,
+            code_artifact_id,
+            &symbols,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -177,16 +193,19 @@ impl Vault {
         validate_code_symbol_manifest(manifest)?;
         scan_code_symbol_manifest_metadata(manifest)?;
         validate_code_artifact_target(&self.store, wtxn, code_artifact_id, &manifest.repo_ref)?;
-        observe_manifest_rows(&self.store, wtxn, code_artifact_id, manifest)?;
-
+        validate_manifest_identity(self, wtxn, manifest)?;
         let mut batch = self.batch_in();
         let mut symbol_ids = BTreeSet::new();
         for symbol in &manifest.symbols {
-            let symbol_id = code_symbol_entity_id(&manifest.repo_ref, symbol)?;
+            let symbol_id = code_symbol_entity_id(&manifest.repo_identity, symbol)?;
             symbol_ids.insert(symbol_id);
             let (start_line, end_line) = symbol_line_range(symbol, &manifest.chunks)?;
-            let body =
-                encode_code_symbol_entity_body(&manifest.repo_ref, symbol, start_line, end_line)?;
+            let body = encode_code_symbol_entity_body(
+                &manifest.repo_identity,
+                symbol,
+                start_line,
+                end_line,
+            )?;
             batch = batch
                 .put(
                     &symbol_id,
@@ -199,9 +218,17 @@ impl Vault {
         }
         batch.apply(wtxn)?;
         let mut pending = Vec::with_capacity(CODE_SYMBOL_EDGE_BATCH);
+        let mut relations = Vec::new();
         let mut sink = |edge: CodeSymbolGraphEdge| -> Result<()> {
             validate_code_symbol_graph_edge(&edge)?;
             if symbol_ids.contains(&edge.source) && symbol_ids.contains(&edge.target) {
+                if super::relations::is_relation_kind(edge.kind) {
+                    relations.push(super::relations::CodeSymbolRelation {
+                        source: edge.source,
+                        kind: edge.kind,
+                        target: edge.target,
+                    });
+                }
                 pending.push(edge);
             }
             if pending.len() < CODE_SYMBOL_EDGE_BATCH {
@@ -211,6 +238,11 @@ impl Vault {
         };
         edges(&mut sink)?;
         self.put_code_symbol_edges_in_txn(wtxn, &mut pending)?;
+        super::relations::normalize_relations(&mut relations);
+        let mut recorded = manifest.clone();
+        recorded.relations = relations;
+        let manifest = &recorded;
+        observe_manifest_rows(&self.store, wtxn, code_artifact_id, manifest)?;
         MANIFEST.encode_value(manifest)?;
         let kept = keep_erased_actors(&self.store, wtxn, code_artifact_id, manifest)?;
         delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
@@ -225,6 +257,13 @@ impl Vault {
             );
             REVISION_INDEX.put(&self.store, wtxn, &key, &())?;
         }
+        // The manifest's symbols join its snapshot's repository scope (FIX 4300).
+        crate::codebase::put_scope_symbol_rows_in_txn(
+            &self.store,
+            wtxn,
+            code_artifact_id,
+            &symbol_ids,
+        )?;
         Ok(())
     }
 
@@ -347,7 +386,7 @@ impl Vault {
             .symbols
             .iter()
             .filter(|symbol| symbol.name == name)
-            .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+            .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
             .collect()
     }
 
@@ -445,19 +484,30 @@ impl Vault {
             .find(|symbol| {
                 symbol.path == path && symbol.name == name && &symbol.fingerprint == fingerprint
             })
-            .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+            .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
             .transpose()
     }
 }
 
-fn code_symbol_definition(
-    repo_ref: &RepoRef,
+/// Definitions of this already-loaded manifest, without resolving another revision.
+pub(crate) fn code_symbol_manifest_definitions(
+    manifest: &CodeSymbolManifest,
+) -> Result<Vec<CodeSymbolDefinition>> {
+    manifest
+        .symbols
+        .iter()
+        .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
+        .collect()
+}
+
+pub(super) fn code_symbol_definition(
+    repo: &RepoIdentity,
     symbol: &CodeSymbolRevision,
     chunks: &[CodeChunk],
 ) -> Result<CodeSymbolDefinition> {
     let (start_line, end_line) = symbol_line_range(symbol, chunks)?;
     Ok(CodeSymbolDefinition {
-        entity_id: code_symbol_entity_id(repo_ref, symbol)?,
+        entity_id: code_symbol_entity_id(repo, symbol)?,
         path: symbol.path.clone(),
         name: symbol.name.clone(),
         kind: symbol.kind.clone(),
@@ -513,6 +563,10 @@ pub(crate) fn delete_code_symbol_manifest_in_txn(
                 );
                 REVISION_INDEX.delete(store, wtxn, &key)?;
             }
+            // Its symbols leave the snapshot's repository scope, unless
+            // another retained snapshot of that scope names them (FIX 4300).
+            let symbols = code_symbol_manifest_ids(&manifest)?;
+            crate::codebase::delete_scope_symbol_rows_in_txn(store, wtxn, id, symbols)?;
         }
         None => {
             delete_index_rows_for_id(store, wtxn, id)?;
@@ -529,7 +583,26 @@ fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<
     Ok(Some(raw.entity_type))
 }
 
-fn validate_code_artifact_target(
+/// A new manifest's identity is the one its repository resolves to in
+/// `rtxn` (FIX 12761): symbol ids derived under any other identity name
+/// symbols no reader of that repository finds. A parse in the same writer
+/// resolves it from this snapshot, so it always agrees.
+fn validate_manifest_identity(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    manifest: &CodeSymbolManifest,
+) -> Result<()> {
+    if crate::codebase::resolve_repo_identity_in_txn(vault, rtxn, &manifest.repo_ref)?
+        != manifest.repo_identity
+    {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "symbol manifest repo_identity is not its repository's identity",
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_code_artifact_target(
     store: &Store,
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,

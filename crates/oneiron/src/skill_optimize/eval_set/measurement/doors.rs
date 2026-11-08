@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, MeasurementMethodPin,
-    MeasurementState, MeasurementUnavailable,
+    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy,
+    MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
 };
 use crate::Vault;
 use crate::dreamer_runner::maintenance::coach::enqueue_coach_eval_measurement_in_txn;
@@ -26,22 +26,40 @@ const MAX_REF_BYTES: usize = 256;
 /// candidate and the incumbent retest, each a Candidate serving (CALL: three
 /// exposures, not two).
 const EXPOSURE_LEGS: [&str; 3] = ["incumbent", "candidate", "retest"];
-/// The canary metric a seat declares beside its measured axis. None is
-/// declared in this build (CALL), so every measured card reads unknown with
-/// `NoCanary` until a ruling names one.
+/// The seat-specific canary metric a seat declares beside its measured axis:
+/// the override table a later ruling fills. Empty in this build, so every seat
+/// measures the generic default below until one is named (FIX 10437).
 const SEAT_CANARIES: &[(EvalSeat, &str)] = &[];
+/// Every seat's canary while its override table holds none: its call failure
+/// rate, errors + refusals over calls from the legs' own receipts (FIX 10437).
+const GENERIC_SEAT_CANARY: &str = "call_failure_rate";
+/// How far the candidate arm's call failure rate must sit above the
+/// incumbent's to read diverged: 0.0 is literal "moved apart" (FIX 10437).
+const CANARY_FAILURE_DIVERGENCE_TOLERANCE: f64 = 0.0;
+
+/// The required floor slices a seat declares. None is declared in this
+/// build, so every request reads empty until a ruling names one (FIX 10446).
+const SEAT_FLOOR_SLICES: &[(EvalSeat, &str)] = &[];
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 
-/// The canary metric `seat` declares, if any.
+/// The canary metric `seat` measures beside its axis: its declared override,
+/// else the generic call failure rate every seat shares (FIX 10437).
 #[must_use]
 pub fn eval_seat_canary(seat: &EvalSeat) -> Option<&'static str> {
     SEAT_CANARIES
         .iter()
         .find(|(declared, _)| declared == seat)
         .map(|(_, metric)| *metric)
+        .or(Some(GENERIC_SEAT_CANARY))
+}
+
+/// The candidate-over-incumbent call failure gap that reads diverged.
+#[must_use]
+pub(super) fn canary_failure_divergence_tolerance() -> f64 {
+    CANARY_FAILURE_DIVERGENCE_TOLERANCE
 }
 
 /// The digest that keys a request's row: its domain and its named encoding.
@@ -144,6 +162,38 @@ fn pending(digest: &[u8; 32], request: &EvalMeasurementRequest, now: u64) -> Eva
 }
 
 impl Vault {
+    /// The floor-slice policy in force for an offer measurement on `seat`
+    /// (FIX 10446): the owner's minimums plus the seat's declared required
+    /// slices.
+    /// # Errors
+    /// Storage errors.
+    pub fn offer_floor_slices(&self, seat: &EvalSeat) -> Result<FloorSlicePolicy> {
+        let min_families = crate::learning_setting::setting_value_scoped(
+            self,
+            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES,
+            None,
+            None,
+        )?
+        .max(0.0) as u32;
+        let min_families_per_slice = crate::learning_setting::setting_value_scoped(
+            self,
+            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
+            None,
+            None,
+        )?
+        .max(0.0) as u32;
+        let required = SEAT_FLOOR_SLICES
+            .iter()
+            .filter(|(declared, _)| declared == seat)
+            .map(|(_, slice)| (*slice).to_owned())
+            .collect();
+        Ok(FloorSlicePolicy {
+            required,
+            min_families_per_slice,
+            min_families,
+        })
+    }
+
     /// [`Self::request_eval_measurement`] under the caller's writer.
     /// # Errors
     /// As [`Self::request_eval_measurement`].
@@ -154,6 +204,21 @@ impl Vault {
         now: u64,
     ) -> Result<[u8; 32]> {
         validate(request)?;
+        // An unnamed canary freezes to the seat's measured one before the
+        // digest, so redelivery still hits the same row (FIX 10437). A
+        // host-named metric freezes as-is; the worker still measures the
+        // generic default beside the axis.
+        let filled;
+        let request = if request.canary.is_none() {
+            filled = {
+                let mut stamped = request.clone();
+                stamped.canary = eval_seat_canary(&stamped.seat).map(str::to_owned);
+                stamped
+            };
+            &filled
+        } else {
+            request
+        };
         let digest = request_digest(request)?;
         if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
             // An open measurement's job is queued again; the queue's dedupe
@@ -165,6 +230,31 @@ impl Vault {
                 enqueue_coach_eval_measurement_in_txn(self, txn, &digest, now)?;
             }
             return Ok(digest);
+        }
+        // A retry names its predecessor's Partial row with transient reasons
+        // only (FIX 10442): a moved cohort is a new question, not a retry.
+        if request.retry > 0 {
+            let mut predecessor = request.clone();
+            predecessor.retry -= 1;
+            let digest = request_digest(&predecessor)?;
+            let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? else {
+                return Err(invalid("a retry names its predecessor's Partial row"));
+            };
+            let MeasurementState::Partial { reasons } = &row.state else {
+                return Err(invalid("a retry follows a Partial row"));
+            };
+            let transient = reasons.iter().all(|reason| {
+                matches!(
+                    reason,
+                    MeasurementUnavailable::GenerationFailed
+                        | MeasurementUnavailable::BudgetExhausted
+                        | MeasurementUnavailable::ClockExhausted
+                        | MeasurementUnavailable::UncertainLeg
+                )
+            });
+            if !transient {
+                return Err(invalid("a retry follows only transient failures"));
+            }
         }
         let cohort = cohort_in_txn(self, &*txn, &request.cohort)?;
         if cohort.seat != request.seat || cohort_moved(&cohort, request) {
@@ -182,7 +272,8 @@ impl Vault {
     /// one's job is queued again. Nothing is counted or paid here.
     /// # Errors
     /// Unbounded or identical arms, another method, a cohort that is not the
-    /// seat's as the request froze it, or storage errors.
+    /// seat's as the request froze it, a new retry without its predecessor's
+    /// transient Partial, or storage errors.
     pub fn request_eval_measurement(
         &self,
         request: &EvalMeasurementRequest,
@@ -197,6 +288,15 @@ impl Vault {
     pub fn eval_measurement(&self, digest: &[u8; 32]) -> Result<Option<EvalMeasurement>> {
         let txn = self.store.env.read_txn()?;
         measurement_in_txn(self, &txn, digest)
+    }
+
+    /// One measurement on the caller's snapshot.
+    pub(crate) fn eval_measurement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        digest: &[u8; 32],
+    ) -> Result<Option<EvalMeasurement>> {
+        measurement_in_txn(self, txn, digest)
     }
 
     /// Claim a Pending measurement before any paid work: count three

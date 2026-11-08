@@ -9,6 +9,7 @@ pub struct ReplicatedEntity<'a> {
     pub entity_type: u8,
     pub occurred: TimeRange,
     pub learned_at: u64,
+    pub row_version: u64,
     pub body: &'a [u8],
 }
 
@@ -40,9 +41,17 @@ pub fn replay_entity_with_birth(
                 entity.entity_type,
                 entity.occurred,
                 entity.learned_at,
+                Some(entity.row_version),
                 entity.body,
             )
             .apply(txn)?;
+        // Fix list row 16256: this door carries no source-audience binding,
+        // so a row whose own bytes name the obligation and stands unbound
+        // rolls the whole replay back, pending its binding; it travels in a
+        // window with its binding and policy.
+        if crate::source_audience::unbound_obligation_in(vault, txn, &entity.id)? {
+            return Err(crate::sync::source_audiences::pending_error());
+        }
         if let Some(birth) = birth
             && crate::vault::live_entity_row_in_txn(&vault.store, txn, &entity.id)?.is_live()
         {

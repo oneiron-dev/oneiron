@@ -55,6 +55,7 @@ fn output(
         GraphFsCoreutilsDecision::Pushdown => GraphFsPlan::Pushdown,
         GraphFsCoreutilsDecision::Walk => GraphFsPlan::Walk,
     };
+    let read_receipt = result.read_receipt().cloned();
     let (output, encoding) = match String::from_utf8(result.into_bytes()) {
         Ok(text) => (text, GraphFsEncoding::Utf8),
         Err(bytes) => (
@@ -69,6 +70,7 @@ fn output(
         encoding,
         next_cursor,
         plan,
+        read_receipt,
     }
 }
 
@@ -118,6 +120,7 @@ impl Memory<'_> {
             next_cursor: page
                 .next_cursor()
                 .map(|cursor| tree.seal_public_cursor(&call, cursor)),
+            read_receipt: page.read_receipt().cloned(),
         })
     }
 
@@ -143,10 +146,12 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
+        let read = tree.read_link_with_receipt(&input.path)?;
         Ok(GraphFsLinkView {
             mount: descriptor(&tree, &input.mount),
-            target: tree.read_link(&input.path)?,
+            target: read.value,
             path: input.path,
+            read_receipt: read.receipt,
         })
     }
 

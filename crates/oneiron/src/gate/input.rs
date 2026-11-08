@@ -9,13 +9,7 @@ use super::ceiling::{PolicyApprovalCeiling, PolicyCriticality};
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::decision::GateReasonCode;
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateActor {
-    pub(crate) actor_class: String,
-    pub(crate) actor_ref: Option<String>,
-    pub(crate) delegation_grant_ref: Option<String>,
-}
+pub(crate) use crate::store::policy_record::GateActor;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +17,8 @@ pub(crate) enum GateContentKind {
     Claim,
     EdgeProvenanceClaim,
     PolicyManifest,
+    /// Creating a reusable agent definition through a credential-bound setup door.
+    AgentDefinitionSetup,
     ExternalEffect,
     /// ONE-1395: an unexecuted repair intent, evaluated with engine-stamped authority.
     Repair,
@@ -39,6 +35,7 @@ impl GateContentKind {
             Self::Claim => "claim",
             Self::EdgeProvenanceClaim => "edge_provenance_claim",
             Self::PolicyManifest => "policy_manifest",
+            Self::AgentDefinitionSetup => "agent_definition_setup",
             Self::ExternalEffect => "external_effect",
             Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",
@@ -56,6 +53,12 @@ pub(crate) struct GateProvenanceHandles {
     /// Native-mail one-shot content handle, supplied by the frozen intent
     /// and hashed into the owner-approved effect. Never an authority source.
     pub(crate) mail_content_ref: Option<String>,
+    /// Fix list row 17645: every recipient of one mail message sent to more
+    /// than one, roles and order kept, supplied by the frozen intent; empty
+    /// for a send to its counterparty alone. The external-effect door judges
+    /// each recipient on its own and the message's one-shot digest pins them
+    /// all. Never an authority source.
+    pub(crate) mail_recipients: Vec<crate::outbound::OutboundRecipient>,
     /// FIX 6424: the one send a non-mail approve-once press on this effect
     /// approves, supplied by its canonical producer and hashed into that
     /// one-shot digest only. Never an authority source; no Grant reads it.
@@ -222,24 +225,7 @@ pub(super) fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Ve
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ExternalEffectPolicyRisk {
-    #[default]
-    Normal,
-    HoldToProposal,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl ExternalEffectPolicyRisk {
-    #[must_use]
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::HoldToProposal => "hold_to_proposal",
-        }
-    }
-}
+pub(crate) use crate::store::policy_record::ExternalEffectPolicyRisk;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -169,6 +169,8 @@ pub enum ContentPart {
         call_id: String,
         name: String,
         input: JsonValue,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolResult {
         call_id: String,
@@ -229,6 +231,8 @@ pub enum LlmStreamEvent {
     },
     ReasoningEnd {
         part_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolCallStart {
         part_id: String,
@@ -244,6 +248,8 @@ pub enum LlmStreamEvent {
         call_id: String,
         name: String,
         input: JsonValue,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolResultStart {
         part_id: String,
@@ -289,6 +295,7 @@ pub enum LlmStreamEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmEndpointFlavor {
+    OpenAiResponsesHttp,
     OpenAiResponsesSocket,
     OpenAiChatCompletions,
 }

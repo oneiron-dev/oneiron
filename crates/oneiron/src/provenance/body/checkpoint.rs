@@ -26,17 +26,23 @@ fn occurrence_row(
     out: &mut Captured,
     owner: &EntityId,
     occurrence: &EntityId,
+    sources: &[EntityId],
     at: RowLocator,
     value: Vec<u8>,
 ) {
     let compartment = OwnerRef::occurrence(owner, occurrence);
     out.owner(compartment).occurrence_hint = Some(*occurrence.as_bytes());
     out.depends(compartment, &at, OwnerRef::entity(owner));
+    for source in sources {
+        out.depends(compartment, &at, OwnerRef::entity(source));
+    }
     out.exact(compartment, at, value);
 }
 
 /// Every body descriptor and digest holder row in `txn`, by occurrence.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
+    let dependencies =
+        crate::agent_dispatch::workflow_tool_checkpoint::body_dependencies(dbs, txn)?;
     let mut out = Captured::default();
     for row in rows::typed_rows(dbs, txn, BODY, &mut out)? {
         let (owner, occurrence) = row.key;
@@ -44,12 +50,32 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
-        occurrence_row(&mut out, &owner, &occurrence, row.at, row.bytes);
+        occurrence_row(
+            &mut out,
+            &owner,
+            &occurrence,
+            dependencies
+                .get(&owner)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            row.at,
+            row.bytes,
+        );
     }
     // A holder row is keyed by the digest; its owner is its value.
     for row in rows::typed_rows(dbs, txn, BODY_DIGEST, &mut out)? {
         let occurrence = row.key.1;
-        occurrence_row(&mut out, &row.value, &occurrence, row.at, row.bytes);
+        occurrence_row(
+            &mut out,
+            &row.value,
+            &occurrence,
+            dependencies
+                .get(&row.value)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            row.at,
+            row.bytes,
+        );
     }
     Ok(out)
 }
@@ -78,4 +104,66 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+}
+
+/// Restores the getter's rows, then applies only this restore's admitted
+/// body retirements to the actual joined rows in the same writer.
+pub(crate) fn restore_pruned_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: OpenedOwnerRows,
+    retired_digests: &std::collections::BTreeSet<[u8; 32]>,
+) -> Result<Restored> {
+    if retired_digests.is_empty() {
+        return restore_in_txn(dbs, txn, opened);
+    }
+    let written = std::cell::RefCell::new(Vec::new());
+    let mut restored = rows::restore_parts(
+        dbs,
+        txn,
+        &opened,
+        |at, value| {
+            check(at, value)?;
+            written.borrow_mut().push(at.clone());
+            Ok(())
+        },
+        rows::no_join,
+    )?;
+    // The check runs on final joined locators, not actor-part placeholders.
+    let mut before = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for at in written.into_inner() {
+        if !seen.insert(at.clone()) {
+            continue;
+        }
+        let value = dbs
+            .vault_meta()
+            .get(txn, &at.key)?
+            .ok_or(crate::Error::CorruptedIndex(
+                "restored body descriptor row missing",
+            ))?;
+        before.push((at, value.to_vec()));
+    }
+    let mut after: Vec<_> = before
+        .iter()
+        .map(|(at, value)| (at.key.clone(), value.clone()))
+        .collect();
+    for digest in retired_digests {
+        crate::store::owned_body::prune_digest_in_rows(&mut after, digest)?;
+    }
+    let after: std::collections::BTreeMap<_, _> = after.into_iter().collect();
+    for (at, value) in before {
+        match after.get(&at.key) {
+            Some(updated) if updated != &value => {
+                dbs.vault_meta().put(txn, &at.key, updated)?;
+            }
+            None => {
+                dbs.vault_meta().delete(txn, &at.key)?;
+                restored.written -= 1;
+                restored.dropped.push(at);
+            }
+            _ => {}
+        }
+    }
+    Ok(restored)
 }

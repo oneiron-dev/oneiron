@@ -97,6 +97,17 @@ impl CuratorRubric {
     }
 }
 impl Vault {
+    /// The actual stored curator rubric, or its validated shipped defaults,
+    /// read with the owner's current authority in this same snapshot.
+    pub fn curator_rubric_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<CuratorRubric> {
+        let txn = self.store.env.read_txn()?;
+        super::validate_owner_in_txn(self, &txn, owner)?;
+        rubric_in_txn(self, &txn)
+    }
+
     pub fn set_curator_rubric(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -148,7 +159,7 @@ impl DreamerRunnerStore<'_> {
     }
 }
 /// The owner-set rubric as `txn` reads it, else the shipped defaults.
-fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
+pub(super) fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
     let rubric = match RUBRIC.get(&vault.store, txn, &())? {
         Some(rubric) => rubric,
         None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
@@ -356,6 +367,14 @@ pub(super) struct CuratorInverse {
     after_revision: [u8; 32],
 }
 
+impl CuratorInverse {
+    /// The claim that carries the rung after it applied: the target, or a
+    /// weakening's successor.
+    pub(super) const fn after(&self) -> EntityId {
+        self.after
+    }
+}
+
 /// The target's ClaimOf weight on its own subject, if it has one.
 fn claim_of_weight_in_txn(
     vault: &Vault,
@@ -385,7 +404,7 @@ fn claim_of_weight_in_txn(
 /// Applies one finding's rung as the Dreamer, in the finding's own write.
 /// The target must still be the body the finding graded, and active.
 /// Returns the target's before-state as the inverse.
-fn apply_in_txn(
+pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     value: &serde_json::Value,
@@ -507,6 +526,7 @@ fn demote_in_place_in_txn(
             end: now,
         },
         learned_at: header.learned_at,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

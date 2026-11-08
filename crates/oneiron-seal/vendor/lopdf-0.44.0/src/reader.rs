@@ -27,7 +27,7 @@ use crate::load_options::{FilterFunc, LoadOptions};
 use crate::object_stream::ObjectStream;
 use crate::parser;
 use crate::xref::XrefEntry;
-use crate::{Dictionary, Document, Error, IncrementalDocument, Object, ObjectId, Result};
+use crate::{Dictionary, Document, Error, IncrementalDocument, Object, ObjectId, Result, Stream};
 
 #[cfg(not(feature = "async"))]
 impl Document {
@@ -490,11 +490,6 @@ pub struct Reader<'a> {
     pub decode_admission: Option<Arc<dyn DecodeAdmission>>,
 }
 
-/// Maximum allowed embedding of literal strings.
-pub const MAX_BRACKET: usize = 100;
-
-pub const MAX_NESTING_DEPTH: usize = 100;
-
 /// PDF metadata extracted without loading the entire document.
 /// This is useful for quickly getting basic information about large PDFs.
 #[derive(Debug, Clone)]
@@ -587,7 +582,8 @@ impl Reader<'_> {
         let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
 
-        let version = parser::header(self.buffer, self.strict).ok_or(ParseError::InvalidFileHeader)?;
+        let version = parser::header(self.buffer, self.strict, self.decode_admission.as_deref())?
+            .ok_or(ParseError::InvalidFileHeader)?;
 
         let xref_start = Self::get_xref_start(self.buffer)?;
         if xref_start > self.buffer.len() {
@@ -608,10 +604,11 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            if let Some(admission) = self.decode_admission.as_deref() {
-                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-            }
-            xref.merge(prev_xref);
+            crate::admitted::xref::merge_admitted(
+                &mut xref,
+                prev_xref,
+                self.decode_admission.as_deref(),
+            )?;
 
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
             if let Some(prev) = prev_xref_stream_start.and_then(|offset| offset.as_i64().ok()) {
@@ -620,10 +617,11 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                if let Some(admission) = self.decode_admission.as_deref() {
-                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-                }
-                xref.merge(prev_xref);
+                crate::admitted::xref::merge_admitted(
+                    &mut xref,
+                    prev_xref,
+                    self.decode_admission.as_deref(),
+                )?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
@@ -810,17 +808,17 @@ impl Reader<'_> {
     pub fn read(mut self, filter_func: Option<FilterFunc>) -> Result<Document> {
         let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
-        // With an admission, every object the load parses is charged to it (FIX 8446).
-        let _scope = decode_admission::ParseScope::enter(self.decode_admission.as_ref());
 
         // The document structure can be expressed in PEG as:
         //   document <- header indirect_object* xref trailer xref_start
-        let version = parser::header(self.buffer, self.strict).ok_or(ParseError::InvalidFileHeader)?;
+        let version = parser::header(self.buffer, self.strict, self.decode_admission.as_deref())?
+            .ok_or(ParseError::InvalidFileHeader)?;
 
         //The binary_mark is in line 2 after the pdf version. If at other line number, then will be declared as invalid
         // pdf.
         if let Some(pos) = self.buffer.iter().position(|&byte| byte == b'\n')
-            && let Some(binary_mark) = parser::binary_mark(&self.buffer[pos + 1..])
+            && let Some(binary_mark) =
+                parser::binary_mark(&self.buffer[pos + 1..], self.decode_admission.as_deref())?
             && binary_mark.iter().all(|&byte| byte >= 128)
         {
             self.document.binary_mark = binary_mark;
@@ -832,6 +830,9 @@ impl Reader<'_> {
         }
         self.document.xref_start = xref_start;
 
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Xref { offset: xref_start })?;
+        }
         let (mut xref, mut trailer) = parser::xref_and_trailer(&self.buffer[xref_start..], &self)?;
 
         // Read previous Xrefs of linearized or incremental updated document.
@@ -846,8 +847,15 @@ impl Reader<'_> {
                 return Err(Error::Xref(XrefError::PrevStart));
             }
 
+            if let Some(admission) = self.decode_admission.as_deref() {
+                admission.checkpoint(decode_admission::ReadProgress::Xref { offset: prev as usize })?;
+            }
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
+            crate::admitted::xref::merge_admitted(
+                &mut xref,
+                prev_xref,
+                self.decode_admission.as_deref(),
+            )?;
 
             // Read xref stream in hybrid-reference file
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -857,7 +865,11 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
+                crate::admitted::xref::merge_admitted(
+                    &mut xref,
+                    prev_xref,
+                    self.decode_admission.as_deref(),
+                )?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
@@ -915,6 +927,10 @@ impl Reader<'_> {
 
         let mut object_streams = Vec::new();
 
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Vec<u8>>(admission, 0)?;
+        }
+
         for (obj_num, entry) in entries {
             match entry {
                 XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
@@ -939,6 +955,10 @@ impl Reader<'_> {
                     // Skip free entries
                 }
             }
+        }
+
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, 0)?;
         }
 
         self.parse_encryption_dictionary()?;
@@ -991,7 +1011,7 @@ impl Reader<'_> {
                 if let Some(container_obj) = self.document.objects.get_mut(&(container_id, 0))
                     && let Ok(stream) = container_obj.as_stream_mut()
                 {
-                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_ref()) {
+                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_deref()) {
                         Ok(mut object_stream) => {
                             // Each object number is listed once, so its object moves out instead of being copied.
                             for (obj_num, _index) in objects_in_stream {
@@ -1105,7 +1125,7 @@ impl Reader<'_> {
                         let obj_stream = match ObjectStream::new_admitted(
                             stream,
                             self.max_decompressed_size,
-                            self.decode_admission.as_ref(),
+                            self.decode_admission.as_deref(),
                         ) {
                             Ok(obj_stream) => obj_stream,
                             Err(Error::DecodeAdmission(err)) => {
@@ -1180,13 +1200,11 @@ impl Reader<'_> {
 
         #[cfg(feature = "rayon")]
         {
-            self.document.objects = self
-                .document
-                .reference_table
-                .entries
-                .par_iter()
-                .filter_map(entries_filter_map)
-                .collect();
+            self.document.objects = if self.decode_admission.as_deref().is_some_and(|a| a.sequential()) {
+                self.document.reference_table.entries.iter().filter_map(entries_filter_map).collect()
+            } else {
+                self.document.reference_table.entries.par_iter().filter_map(entries_filter_map).collect()
+            };
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -1223,6 +1241,9 @@ impl Reader<'_> {
     }
 
     fn read_stream_content(&mut self, object_id: ObjectId) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Stream { id: object_id })?;
+        }
         let length = self.get_stream_length(object_id)?;
         let stream = self
             .document
@@ -1289,8 +1310,11 @@ impl Reader<'_> {
         let mut already_seen = HashSet::new();
         // The container is this call's own copy, and so is its object stream:
         // both move rather than being cloned.
-        let mut container_stream = match self.get_object(container_id, &mut already_seen)? {
-            Object::Stream(stream) => stream,
+        let mut owned = self.get_object(container_id, &mut already_seen)?;
+        let mut container_stream = match &mut owned {
+            Object::Stream(stream) => {
+                std::mem::replace(stream, Stream::new(Dictionary::new(), Vec::new()))
+            }
             other => {
                 return Err(Error::ObjectType {
                     expected: "Stream",
@@ -1301,7 +1325,7 @@ impl Reader<'_> {
         let mut object_stream = ObjectStream::new_admitted(
             &mut container_stream,
             self.max_decompressed_size,
-            self.decode_admission.as_ref(),
+            self.decode_admission.as_deref(),
         )?;
         object_stream.objects.remove(&id).ok_or(Error::MissingXrefEntry)
     }
@@ -1394,12 +1418,18 @@ impl Reader<'_> {
     }
 
     fn setup_encryption_for_metadata(&mut self) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, 0)?;
+        }
         self.parse_encryption_dictionary()?;
         self.authenticate_and_setup_encryption(true)?;
         Ok(())
     }
 
     fn extract_raw_object(&mut self, offset: usize) -> Result<(ObjectId, Vec<u8>)> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Object { id: None, offset })?;
+        }
         if offset > self.buffer.len() {
             return Err(Error::InvalidOffset(offset));
         }
@@ -1474,6 +1504,9 @@ impl Reader<'_> {
     fn read_object(
         &self, offset: usize, expected_id: Option<ObjectId>, already_seen: &mut HashSet<ObjectId>,
     ) -> Result<(ObjectId, Object)> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Object { id: expected_id, offset })?;
+        }
         if offset > self.buffer.len() {
             return Err(Error::InvalidOffset(offset));
         }

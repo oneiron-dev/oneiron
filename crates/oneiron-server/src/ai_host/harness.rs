@@ -1,6 +1,6 @@
 //! The Dreamer's tuning config, recorded as a versioned vault artifact so the
 //! nightly harness self-audit (ARCH-0026 harness-maintenance) can see a
-//! backbone or dial change. Recording never retunes anything: the audit only
+//! backbone, prompt or dial change. Recording never retunes anything: the audit only
 //! files a retune proposal for the owner.
 
 use std::collections::BTreeMap;
@@ -45,6 +45,16 @@ pub(super) fn record_tuning_config(
         .chain(std::iter::once(format!(
             "task_instruction:{}",
             blake3::hash(task.as_bytes()).to_hex()
+        )))
+        .chain(std::iter::once(format!(
+            "confession_instruction:{}",
+            blake3::hash(settings.wording.confession().as_bytes()).to_hex()
+        )))
+        // The compaction check's effective rubric (FIX 4814): an operator's
+        // rubric names a new config, as any other prompt does.
+        .chain(std::iter::once(format!(
+            "compaction_check_rubric:{}",
+            blake3::hash(settings.compaction_check_rubric.as_bytes()).to_hex()
         )))
         .collect();
     // A sitting dial the host left unset is the vault's row, not this

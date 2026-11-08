@@ -22,9 +22,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
-use crate::skill_hub::osv::{OsvDevClient, OsvQuery};
+use crate::skill_hub::osv::hub_advisory_query;
 use crate::skill_hub::{
-    CallerPermissions, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting, pinned_tracking,
+    CallerPermissions, MarketplaceFit, RuleSkillFit, SkillFitSetting, SkillHubAdapter,
+    pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -35,7 +36,9 @@ use rmpv::Value;
 
 mod receipt_erase;
 pub(crate) use receipt_erase::erase_section_fit_receipts_in_txn;
-pub(crate) use receipt_erase::scrub_section_fit_receipt_actors_in_txn;
+pub(crate) use receipt_erase::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
+};
 
 /// The engine-owned receipt a fitted install leaves on its skill. `skill.*`
 /// is a reserved namespace: no generic claim door can write one, so only
@@ -517,15 +520,10 @@ impl Offer<'_> {
             start: self.now,
             end: self.now,
         };
-        let osv = Some(&OsvDevClient as &dyn OsvQuery);
-        let fitted = match vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)? {
-            RefFetch::Git(adapter, _) => vault.fit_marketplace_skill(
-                &adapter, hub_ref, &publisher, &*fit, osv, occurred, self.now,
-            )?,
-            RefFetch::Http(adapter, _) => vault.fit_marketplace_skill(
-                &adapter, hub_ref, &publisher, &*fit, osv, occurred, self.now,
-            )?,
-        };
+        let fetch = vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)?;
+        let osv = Some(hub_advisory_query(fetch.kind()));
+        let fitted = vault
+            .fit_marketplace_skill(&fetch, hub_ref, &publisher, &*fit, osv, occurred, self.now)?;
         let mut permissions = section.to_vec();
         permissions.extend(fitted.requested_permissions());
         permissions.sort();

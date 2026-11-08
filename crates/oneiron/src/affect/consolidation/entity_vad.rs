@@ -71,6 +71,7 @@ impl Vault {
                         end: annotation.annotated_at,
                     },
                     learned_at: annotation.annotated_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -133,9 +134,21 @@ impl Vault {
         expected_type: u8,
     ) -> Result<Option<VadAnnotation>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_entity_vad_annotation_in_txn(&rtxn, id, expected_type)
+    }
+
+    /// [`Self::get_entity_vad_annotation`] in `rtxn`: the target's type, its
+    /// annotation CLAIM, its metadata and a TURN's saved mood, all read in
+    /// the caller's snapshot.
+    pub(super) fn get_entity_vad_annotation_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        expected_type: u8,
+    ) -> Result<Option<VadAnnotation>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -148,7 +161,7 @@ impl Vault {
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
         if let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, &claim_id)?
+            .port_entity_record(rtxn, &claim_id)?
             .map(|row| row.encode())
         {
             let header =
@@ -171,9 +184,9 @@ impl Vault {
         }
 
         let key = vad_annotation_meta_key(expected_type, id);
-        let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, &rtxn, &key)? else {
+        let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, rtxn, &key)? else {
             if expected_type == ENTITY_TYPE_TURN {
-                return super::saved_turn_mood_in_txn(self, &rtxn, id);
+                return super::saved_turn_mood_in_txn(self, rtxn, id);
             }
             return Ok(None);
         };

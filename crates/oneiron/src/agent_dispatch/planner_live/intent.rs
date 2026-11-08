@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -149,6 +149,8 @@ struct PlannedIntent {
     asker_erase_key: Option<[u8; 32]>,
     /// The spawning attempt; an owner's root intent has none.
     parent: Option<AttemptId>,
+    /// Provenance frozen by the first reservation, outside the ask digest.
+    caller_origin: crate::agent_dispatch::CallerOrigin,
     /// The original ask as its asker gave it, and its digest; neither once
     /// erased.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -299,6 +301,11 @@ impl PlannedLaunch {
             .ok_or_else(|| invalid("a planned intent holds its plan"))
     }
 
+    /// The origin the first reservation froze, never the launching call's.
+    pub(super) fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.row.caller_origin
+    }
+
     /// A team's pattern start, once one is frozen.
     pub(super) fn spec(&self) -> Option<&PatternLaunchSpec> {
         self.row.pattern_launch.as_ref()
@@ -306,13 +313,17 @@ impl PlannedLaunch {
 
     /// Whether this read still holds what `read` was read with: the same
     /// custody fence, placed stamp and plan, and the same frozen start and
-    /// pack.
+    /// pack apart from its erasable retained-revision witness.
     pub(super) fn holds_frozen(&self, read: &Self) -> bool {
         self.row.fence == read.row.fence
             && self.row.placed == read.row.placed
             && self.row.plan == read.row.plan
             && self.row.pattern_launch == read.row.pattern_launch
-            && self.row.pattern_pack == read.row.pattern_pack
+            && match (&self.row.pattern_pack, &read.row.pattern_pack) {
+                (Some(current), Some(read)) => current.same_frozen_pack(read),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 
@@ -384,6 +395,11 @@ impl AgentDispatcher<'_> {
                 actor: Some(actor),
                 asker_erase_key: Some(erase::asker_erase_key(&actor)),
                 parent,
+                caller_origin: self.inherited_caller_origin_in_txn(
+                    &txn,
+                    parent,
+                    Some(host.caller_origin),
+                )?,
                 ask: Some(ask()),
                 ask_digest: Some(name.digest),
                 project,
@@ -615,8 +631,24 @@ impl AgentDispatcher<'_> {
             LaunchStand::Planned(planned) if planned.row.pattern_launch.is_none() => planned,
             stand => return Ok(stand),
         };
+        let entry = crate::skill::pin_loaded_in_txn(
+            self.vault,
+            &mut txn,
+            &pack.entity,
+            &pack.record,
+            ManifestEntry::new(
+                ManifestKind::Skill,
+                &pack.record.skill_id,
+                &pack.record.version,
+                at,
+            ),
+        )?;
+        let frozen = FrozenPatternPack::of(pack);
         planned.row.pattern_launch = Some(spec);
-        planned.row.pattern_pack = Some(FrozenPatternPack::of(pack));
+        planned.row.pattern_pack = Some(match entry.revision {
+            Some((entity, revision)) => frozen.with_revision(entity, revision),
+            None => frozen,
+        });
         planned.row.updated_at = at;
         put_intent_in_txn(&self.vault.store, &mut txn, &planned.key, &mut planned.row)?;
         txn.commit()?;

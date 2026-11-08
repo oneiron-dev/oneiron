@@ -1,17 +1,17 @@
-//! An erased scope's learning goes with it (FIX 6038, FIX 11533). Erasing a
-//! project removes every cell keyed in its scope, with the rows keyed by
-//! the cell's digest: its subject index, evidence and stored prior. Each
-//! learning head scoped to it is retracted and re-keyed to one fresh opaque
-//! scope, and a surviving prior or head whose borrowed provenance names the
-//! erased scope loses that provenance, keeping its measurement. The owner's
-//! setting and choice rows over the erased project or goal and every
-//! setting fit keyed by it as a project or a subject are deleted. No stored
-//! key or body still derives from the erased id. Vault cells and every
-//! other scope's stay as they are.
-
+//! An erased project's learning goes with it (FIX 6038, FIX 11533): its
+//! cells, subject index, evidence and stored priors. Its learning heads are
+//! retracted and re-keyed to one fresh opaque scope; surviving priors and
+//! heads lose borrowed provenance naming it, keeping their measurements.
+//! Hard-erasing a subject also removes its cells in every scope and closes
+//! its active learning heads in place. Closed heads keep their history,
+//! apart from the existing scope and borrowed-provenance scrubs.
+//! The owner's setting and choice rows over the erased project or goal and
+//! every setting fit keyed by it as a project or subject are deleted.
+//! Other subjects' cells outside the erased scope stay as they are.
 use std::collections::BTreeSet;
 
 use crate::Vault;
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -32,7 +32,7 @@ const CELL_BY_SUBJECT_RAW: SideTable<Vec<u8>, LearningPredicate, Named> =
 /// Learning heads read per page of the predicate index: a pace, not a cap.
 const HEAD_PAGE: usize = 256;
 
-/// Removes erased `entity`'s learning scope. A cell registration that no
+/// Removes erased `entity`'s learning scope and subject cells. A registration that no
 /// longer decodes goes with every row keyed by its digest. An entity no
 /// cell, head or prior names changes nothing.
 ///
@@ -53,7 +53,7 @@ pub(crate) fn erase_learning_scope_in_txn(
             continue;
         };
         match CELL.decode_value(&value) {
-            Ok(row) if row.cell.project != Some(*entity) => {}
+            Ok(row) if row.cell.project != Some(*entity) && row.cell.subject != *entity => {}
             Ok(_) => {
                 doomed.insert(digest);
             }
@@ -111,11 +111,12 @@ fn clear_prior_provenance_in_txn(
         match PRIOR.decode_value(&value) {
             Ok(mut prior) => {
                 if prior
+                    .prior
                     .from
                     .as_deref()
                     .is_some_and(|from| from.contains(named))
                 {
-                    prior.from = None;
+                    prior.prior.from = None;
                     PRIOR.put(&vault.store, wtxn, &digest, &prior)?;
                 }
             }
@@ -131,7 +132,8 @@ fn clear_prior_provenance_in_txn(
 /// Walks every learning head, found by predicate, not by registration. A
 /// head scoped to `entity` is re-keyed to one fresh opaque scope, and
 /// retracted at the erase's time while active; a head whose borrowed
-/// provenance names it loses that provenance.
+/// provenance names it loses that provenance. Active heads about `entity`
+/// close in place, even when the subject row has already gone.
 fn rescope_heads_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -139,6 +141,7 @@ fn rescope_heads_in_txn(
     named: &str,
 ) -> Result<()> {
     let mut erased: Option<(EntityId, u64)> = None;
+    let mut subject_erased_at = None;
     for predicate in LEARNING_PREDICATES {
         let mut after = None;
         loop {
@@ -175,13 +178,15 @@ fn rescope_heads_in_txn(
                     continue;
                 };
                 let scoped = stored.cell.project == Some(entity);
+                let subject = stored.cell.subject == entity;
                 let cited = stored
                     .estimate
                     .prior
                     .from
                     .as_deref()
                     .is_some_and(|from| from.contains(named));
-                if !scoped && !cited {
+                if !scoped && !cited && (!subject || body.lifecycle != ClaimLifecycleStatus::Active)
+                {
                     continue;
                 }
                 if cited {
@@ -214,8 +219,52 @@ fn rescope_heads_in_txn(
                         range.end = at;
                     }
                 }
-                body.value = stored.to_value()?;
-                vault.put_reserved_claim_in_txn(wtxn, &id, &body, range, header.learned_at)?;
+                if subject && body.lifecycle == ClaimLifecycleStatus::Active {
+                    let now = match subject_erased_at {
+                        Some(now) => now,
+                        None => {
+                            let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+                            subject_erased_at = Some(now);
+                            now
+                        }
+                    };
+                    let at = now.max(header.occurred_start);
+                    body.lifecycle = ClaimLifecycleStatus::Retracted;
+                    body.valid_to = Some(at);
+                    range.end = at;
+                }
+                if scoped || cited {
+                    body.value = stored.to_value()?;
+                }
+                if subject {
+                    // An idempotent erase or restore re-scrub may have no
+                    // subject row. Close the existing head without adding
+                    // a new ClaimOf edge, as the family lifecycle writer does.
+                    apply_ops(
+                        &vault.store,
+                        &vault.config,
+                        &vault.analyzer,
+                        wtxn,
+                        vec![BatchOp::Put {
+                            id,
+                            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                            occurred: range,
+                            learned_at: header.learned_at,
+                            row_version: None,
+                            data: crate::claim::encode_claim_body(&body)?,
+                            allow_maintenance: false,
+                            allow_reserved_predicate: true,
+                            hub_sync_imported: false,
+                        }],
+                        vault
+                            .text_index_trusted
+                            .load(std::sync::atomic::Ordering::Acquire),
+                        false,
+                        true,
+                    )?;
+                } else {
+                    vault.put_reserved_claim_in_txn(wtxn, &id, &body, range, header.learned_at)?;
+                }
             }
         }
     }

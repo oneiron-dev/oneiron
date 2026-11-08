@@ -13,7 +13,14 @@
 //! reads run on the task-work turn the calling operation holds
 //! ([`author_memory`]).
 
+mod outcome;
 pub(super) mod session;
+mod wait;
+
+use outcome::completed;
+pub(super) use outcome::{SavedOutcome, saved_producers};
+pub use wait::VerbHookWaitStatus;
+pub(super) use wait::status as wait_status;
 
 use std::sync::Arc;
 
@@ -24,13 +31,16 @@ use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId,
-    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
+    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec,
+    TaskAskStatus,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
+use super::{
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookStop, VerbResume, credential,
+};
 
 /// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
 /// settlement parses the rest, and an ask's Changed deliveries skip it.
@@ -47,15 +57,22 @@ pub(super) const USED: &str =
 /// invocation instead of meeting the misleading "already used".
 pub(super) const UNKNOWN: &str =
     "this invocation's ask was used but its call never finished; call again with a new invocation";
-/// The most bytes of JSON a drained call's saved result keeps for its
-/// caller's retry. Encoding stops past it.
-pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
 /// The most bytes of a drained call's saved error message.
 pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
-/// The error a retry gets when the drained call completed but its result was
-/// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
-/// again.
+/// The error a retry gets when a completed call's result was not retained.
+/// The call ran, and must not be sent again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+/// The error code a retry gets when its ask was used up but no outcome was
+/// ever saved (FIX 1996): something stopped between the resumed chain's
+/// commit and the outcome's, so the engine cannot tell whether the verb
+/// ran, and never runs it again under this invocation. The caller decides
+/// from what the verb would have changed.
+pub const HOOK_OUTCOME_UNCERTAIN: &str = "HOOK_OUTCOME_UNCERTAIN";
+/// The most unsettled open rows one prune pass reads through their asks.
+/// This budget is separate from the deletion cap: a row whose ask cannot be
+/// read is kept (it is not provably dead), and must not starve deletions of
+/// rows already known dead (FIX 2185).
+const PRUNE_UNSETTLED_READ_MAX: usize = 32;
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +81,7 @@ struct VerbAsk {
     #[serde(with = "crate::serialize::entity_ref")]
     actor: EntityId,
     class: HookActorClass,
-    scope: Option<String>,
+    scope: Option<VerbCallScope>,
     domain: VerbDomain,
     /// The args the asking hook saw, re-validated, as JSON.
     args: String,
@@ -102,83 +119,9 @@ struct VerbAsk {
     /// waits on the drain's in-flight hold, not on this mark, which a crash
     /// can leave set.
     running: bool,
-    /// What the drained call returned, for the caller's retry.
+    /// What the drained call returned, for the caller's retry, a result
+    /// beside the rows it was derived from (FIX 1435).
     outcome: Option<SavedOutcome>,
-}
-
-/// What a call the drain ran returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum SavedOutcome {
-    /// The caller's view of the result, as JSON.
-    Ok { result: String },
-    Err {
-        code: String,
-        message: String,
-        /// The refusal receipt a credential call that ended refused left.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        receipt: Option<String>,
-    },
-}
-
-impl SavedOutcome {
-    /// What a drained call that returned `value` saves: its JSON, encoded
-    /// through a writer that stops past [`MAX_SAVED_VERB_RESULT_BYTES`]. A
-    /// result over it saves [`HOOK_RESULT_NOT_RETAINED`] instead: the call
-    /// completed, and a retry must not send it again.
-    pub(super) fn result(value: &Value) -> Result<Self> {
-        let mut capped = Capped {
-            bytes: Vec::new(),
-            cap: MAX_SAVED_VERB_RESULT_BYTES,
-        };
-        match serde_json::to_writer(&mut capped, value) {
-            Ok(()) => Ok(Self::Ok {
-                result: String::from_utf8(capped.bytes)
-                    .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))?,
-            }),
-            Err(error) if error.is_io() => Ok(Self::Err {
-                code: HOOK_RESULT_NOT_RETAINED.to_owned(),
-                message: format!(
-                    "the call completed once its hook's ask was answered, but its result is over \
-                     the {MAX_SAVED_VERB_RESULT_BYTES} bytes kept for a retry; do not send it \
-                     again"
-                ),
-                receipt: None,
-            }),
-            Err(_) => Err(Error::InvariantViolation("verb hook ask outcome encode")),
-        }
-    }
-
-    /// What a drained call that failed with `code` saves: its message cut to
-    /// [`MAX_SAVED_VERB_ERROR_BYTES`].
-    pub(super) fn error(code: String, message: &str) -> Self {
-        Self::Err {
-            code,
-            message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
-            receipt: None,
-        }
-    }
-}
-
-/// A writer that keeps at most `cap` bytes: a write past it fails, so the
-/// encoder stops there.
-struct Capped {
-    bytes: Vec<u8>,
-    cap: usize,
-}
-
-impl std::io::Write for Capped {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.bytes.len().saturating_add(buf.len()) > self.cap {
-            return Err(std::io::Error::other("over the saved result cap"));
-        }
-        self.bytes.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,12 +248,19 @@ pub(super) fn retry(
             }
             return skipped(USED);
         }
-        // FIX 1443: a consumed-but-unfinished READ re-opens inline and
-        // resumes, while the same state on a WRITE answers Skipped with an
-        // honest unknown-outcome reason instead of "already used".
         if row.domain == VerbDomain::Write {
-            return skipped(UNKNOWN);
+            return Ok(Retry::Stop(VerbHookStop::CompletedWithError {
+                invocation: call.invocation.to_hex(),
+                code: HOOK_OUTCOME_UNCERTAIN.to_owned(),
+                message: "this invocation's ask was used but no outcome was saved; the verb \
+                          may or may not have run, and it will not run again under this \
+                          invocation"
+                    .to_owned(),
+                receipt_ref: None,
+                hook_notice: None,
+            }));
         }
+        // A consumed-but-unfinished read can resume without repeating a write.
         let token = AskToken {
             key,
             ask: row.ask,
@@ -434,27 +384,6 @@ pub(super) fn is_used(stop: &VerbHookStop) -> bool {
     matches!(stop, VerbHookStop::Skipped { reason, .. } if reason == USED)
 }
 
-/// The stop a retry of a drained call gets: what the call returned.
-fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {
-    Ok(match outcome {
-        SavedOutcome::Ok { result } => VerbHookStop::Completed {
-            invocation: invocation.to_hex(),
-            result: serde_json::from_str(result)
-                .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
-        },
-        SavedOutcome::Err {
-            code,
-            message,
-            receipt,
-        } => VerbHookStop::CompletedWithError {
-            invocation: invocation.to_hex(),
-            code: code.clone(),
-            message: message.clone(),
-            receipt_ref: receipt.clone(),
-        },
-    })
-}
-
 /// Opens the hook's ask as its author and saves the stopped call, with the
 /// chain's own rows (`write`), in the ask's write. `write` runs first, so a
 /// resumed chain uses up its old answer before the new ask's row takes the
@@ -488,7 +417,7 @@ pub(super) fn open(
     ] {
         let option = TaskAskOptionId::new(option)
             .map_err(|_| Error::InvariantViolation("verb hook ask option"))?;
-        what.options.insert(option, text);
+        what.options.insert(option, TaskAskOption::new(text));
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     spec.intent_key = format!(
@@ -594,10 +523,14 @@ pub(super) fn settled_in_txn(
     if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
         return Ok(());
     }
+    let first_settlement = row.settled_at.is_none();
     row.settled_at = Some(now);
     row.proceeds = proceeds(result);
     row.ready = row.resume.is_some() && row.proceeds;
     ASKS.put(&vault.store, txn, &key, &row)?;
+    if first_settlement {
+        crate::batch::queue_verb_hook_ask_change(vault, txn);
+    }
     if row.ready {
         // The hook runner wakes on the commit, not only on its tick.
         crate::batch::queue_proactivity_change(vault, txn);
@@ -751,7 +684,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     {
         let rtxn = vault.store.env.read_txn()?;
         for entry in ASKS.iter_raw_from(&vault.store, &rtxn, &[])? {
-            if old.len() + unsettled.len() >= max {
+            if old.len() >= max && unsettled.len() >= PRUNE_UNSETTLED_READ_MAX {
                 break;
             }
             let (key, value) = entry?;
@@ -762,10 +695,13 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
                 continue;
             };
             if outlived(&row, cutoff) {
-                old.push(key);
+                if old.len() < max {
+                    old.push(key);
+                }
             } else if row.state == VerbAskState::Open
                 && row.created_at < cutoff
                 && row.settled_at.is_none()
+                && unsettled.len() < PRUNE_UNSETTLED_READ_MAX
             {
                 unsettled.push((key, row.author, row.author_class, row.ask));
             }
@@ -774,7 +710,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     for (key, author, class, ask) in unsettled {
         let status = author_memory(vault, author, class, None)
             .tasks_ask_status(TaskAskHandle { group_ref: ask });
-        if matches!(status, Ok(TaskAskStatus::Settled(_))) {
+        if matches!(status, Ok(TaskAskStatus::Settled(_))) && old.len() < max {
             old.push(key);
         }
     }

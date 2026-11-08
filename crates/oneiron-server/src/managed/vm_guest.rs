@@ -56,6 +56,7 @@ pub(super) struct VmGuestHost {
     anchor: Option<VmAnchorHandoff>,
     /// The pipe the bootstrap carries the anchor's credential into.
     anchor_credentials_fd: Option<RawFd>,
+    checkpoint_recipient_pipe: Option<std::fs::File>,
 }
 impl VmGuestHost {
     pub(super) fn new(args: &ManagedArgs, shutdown: ManagedShutdown) -> Self {
@@ -70,12 +71,20 @@ impl VmGuestHost {
             restoring: matches!(args.start_mode, ManagedStartMode::Restore { .. }),
             anchor: args.vm_anchor.clone(),
             anchor_credentials_fd: args.custody_anchor_credentials_fd,
+            checkpoint_recipient_pipe: super::checkpoint_recipient::adopt(
+                args.checkpoint_host_holds_recipient_fd,
+            ),
         }
     }
     /// The outbox carrier's revision, when the image's companion answered at
     /// boot with its storage laid out and its carrier attached (FIX 5235).
     pub(super) fn vm_outbox_revision(&self) -> Option<u32> {
         self.vm_outbox_revision
+    }
+    pub(super) fn checkpoint_host_holds_recipient(
+        &mut self,
+    ) -> Option<oneiron_store::checkpoint_host_recipient::HostHoldsRecipient> {
+        super::checkpoint_recipient::read(self.checkpoint_recipient_pipe.take())
     }
     pub(super) fn clear_secrets(&mut self) {
         self.inner.0.clear_secrets();
@@ -131,6 +140,7 @@ impl VmGuestHost {
         }
         let ledger = bind_unix_socket(&self.hypnos_socket)?;
         spawn_outbound(ledger, VM_LEDGER_PORT);
+        super::vm_source_control::register(self.ctl_socket.clone());
         Ok(())
     }
 }
@@ -234,12 +244,14 @@ fn next_wake(entries: &[WakeEntry]) -> Option<SystemTime> {
 /// vault exactly as SIGTERM does on a node, and is heard while the vault is
 /// parked too (FIX 9548): a Stop, or the channel lost for good, ends the
 /// park at once and starts the drain, with no resume reported and the
-/// companion left to the drain.
+/// companion left to the drain. `outbox_admitted` is the bootstrap's
+/// immutable admission, not the live probe, which can be down mid-bracket.
 pub(super) fn spawn_lifecycle(
     link: GuestLink,
     state: Arc<ManagedState>,
     server: Arc<SyncServer>,
     shutdown: ManagedShutdown,
+    outbox_admitted: bool,
 ) {
     tokio::spawn(async move {
         loop {
@@ -256,12 +268,12 @@ pub(super) fn spawn_lifecycle(
                             None
                         }
                     };
-                    let snapshot_ok = !server.vault().has_open_off_record_session();
-                    let companion = state.vm_outbox_revision().is_some();
+                    let companion = outbox_admitted;
                     let parked = async {
                         if companion {
                             super::vm_outbox::park_companion().await;
                         }
+                        let snapshot_ok = !server.vault().has_open_off_record_session();
                         link.idle(wake, snapshot_ok).await
                     };
                     tokio::select! {
@@ -276,7 +288,13 @@ pub(super) fn spawn_lifecycle(
                         }
                     }
                     if companion {
-                        super::vm_outbox::resume_companion().await;
+                        tokio::select! {
+                            () = link.stop_requested() => {
+                                shutdown.trigger();
+                                return;
+                            }
+                            () = super::vm_outbox::resume_companion() => {}
+                        }
                     }
                 }
             }

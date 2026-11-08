@@ -1,4 +1,7 @@
-//! Credential filtering at memory serve and export serialization boundaries.
+//! Core half of `batch::export::credential_filter`: its store-layer items live in `oneiron_store::batch::export::credential_filter` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
@@ -131,6 +134,34 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     }
 }
 
+/// One scoped export record (its metadata header, then its body) as an
+/// export releases it (FIX 8742; ARCH-0038: an export never carries a
+/// credential-like field that survived by bug, legacy import or a vault that
+/// ran with the scan off). The body is read as [`redacted_memory_payload`]
+/// reads a raw transport: each credential replaced in place, the safe bytes
+/// and their types as stored. `None` withholds the record: an ASSET whose
+/// body the filter would change, since a file leaves whole or not at all and
+/// its id may be its bytes' own hash.
+///
+/// # Errors
+/// A record shorter than its header, or a failed re-encoding.
+pub(crate) fn export_released_record(
+    entity_type: u8,
+    mut record: Vec<u8>,
+) -> Result<Option<Vec<u8>>> {
+    if record.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("scoped export record header"));
+    }
+    let body = record.split_off(ENTITY_METADATA_HEADER_LEN);
+    let stored = blake3::hash(&body);
+    let released = redacted_memory_payload(body)?;
+    if entity_type == crate::registry::ENTITY_TYPE_ASSET && blake3::hash(&released) != stored {
+        return Ok(None);
+    }
+    record.extend_from_slice(&released);
+    Ok(Some(record))
+}
+
 /// Stored bytes go back as they are only when the write door's reading of
 /// those very bytes refuses nothing: an encoding can differ from the decoded
 /// value's own (a wider header, a length that reads as a line break).
@@ -205,14 +236,19 @@ impl Vault {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::InvariantViolation("invalid export entity header"))?;
             // Words a deletion withdrew, or whose recorded sources no longer
-            // stand, leave with the export too (I1).
+            // stand, leave with the export too (I1). The whole vault's
+            // bundle keeps a record a cleanup archive filed away (FIX 21912).
             if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                 &self.store,
                 &txn,
                 id,
                 header.entity_type,
             )? || (raw.len() > ENTITY_METADATA_HEADER_LEN
-                && !crate::ports::raw_readable_in_txn(&self.store, &txn, id, &raw)?)
+                && !(if scope == ExportScope::WholeVault {
+                    crate::ports::raw_exportable_in_txn(&self.store, &txn, id, &raw)?
+                } else {
+                    crate::ports::raw_readable_in_txn(&self.store, &txn, id, &raw)?
+                }))
             {
                 continue;
             }
@@ -278,7 +314,8 @@ impl Vault {
         let key = crate::store::row_birth::WithheldKey::for_export();
         let mut entities = Vec::with_capacity(records.len());
         for (id, mut record) in records {
-            if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, &txn, &id)?
+            if let Some(birth) =
+                crate::store::birth_record::row_birth_in_txn(&self.store, &txn, &id)?
                 && let Some(fields) = record.as_object_mut()
             {
                 let birth = serde_json::to_value(birth.masked(|row| ships.contains(row), &key))

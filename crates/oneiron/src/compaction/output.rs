@@ -5,6 +5,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
+pub use crate::store::output_decay::OutputDecayPolicy;
+
 /// The occurrence path a context output's manifest names. Its body is one of
 /// the code-run raw-output family, keyed by its content: inline in its row
 /// up to the inline bound, past it a file beside data.mdb.
@@ -41,12 +43,6 @@ pub struct OutputContextEntry {
     pub source: OutputRef,
     pub created_turn: u64,
     pub overview: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputDecayPolicy {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,21 +204,31 @@ impl OutputWorkingContext {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<Vec<OutputContextView>> {
-        self.assemble_with(turn, policy, |source| {
-            restore_output(vault, source).map(Some)
-        })
+        self.assemble_with(
+            turn,
+            policy,
+            |source, _| restore_output(vault, source).map(Some),
+            |source, _| output_clean(vault, source),
+        )
     }
 
-    /// Assemble through the owner's own routed raw-output store. The callback
-    /// is invoked for full views only; overview and stub never read raw bytes.
+    /// Assemble through the owner's own routed raw-output store. `restore`
+    /// is invoked for full views only; overview and stub never read raw
+    /// bytes.
     ///
     /// `restore` returns `None` for a Full body the caller will not hold in
     /// memory; that entry's view is its stub, which reads it by reference.
+    /// `clean` judges an Overview's source as the Full read judges its body:
+    /// an overview is made from the output, so one whose output may not enter
+    /// model context as it stands shows the withheld mark (FIX 9735).
+    /// Both callbacks get the entry's own turn beside its source, so a caller
+    /// judges that exact observation: equal outputs share one source.
     pub fn assemble_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        mut restore: impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
+        mut restore: impl FnMut(OutputRef, u64) -> Result<Option<Vec<u8>>>,
+        mut clean: impl FnMut(OutputRef, u64) -> Result<bool>,
     ) -> Result<Vec<OutputContextView>> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -236,7 +242,7 @@ impl OutputWorkingContext {
                 if item.recoverable_only {
                     Ok(item.entry.stub_view())
                 } else {
-                    item.entry.view_with(turn, policy, &mut restore)
+                    item.entry.view_with(turn, policy, &mut restore, &mut clean)
                 }
             })
             .collect()
@@ -270,6 +276,21 @@ impl OutputContextEntry {
         })
     }
 
+    /// Capture an output with the actual run's retained replay record.
+    pub fn capture_for_run(
+        vault: &Vault,
+        run: EntityId,
+        bytes: &[u8],
+        created_turn: u64,
+        overview: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            source: store_output_for_run(vault, run, bytes)?,
+            created_turn,
+            overview,
+        })
+    }
+
     fn stub_view(&self) -> OutputContextView {
         OutputContextView {
             source: self.source,
@@ -288,16 +309,20 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<OutputContextView> {
-        self.view_with(turn, policy, &mut |source| {
-            restore_output(vault, source).map(Some)
-        })
+        self.view_with(
+            turn,
+            policy,
+            &mut |source, _| restore_output(vault, source).map(Some),
+            &mut |source, _| output_clean(vault, source),
+        )
     }
 
     fn view_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        restore: &mut impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
+        restore: &mut impl FnMut(OutputRef, u64) -> Result<Option<Vec<u8>>>,
+        clean: &mut impl FnMut(OutputRef, u64) -> Result<bool>,
     ) -> Result<OutputContextView> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -308,9 +333,16 @@ impl OutputContextEntry {
         let (tier, bytes) = if age >= policy.stub_after_turns {
             (OutputTier::Stub, Vec::new())
         } else if age >= policy.overview_after_turns {
-            (OutputTier::Overview, self.overview.as_bytes().to_vec())
+            let overview = if clean(self.source, self.created_turn)? {
+                self.overview.as_bytes().to_vec()
+            } else {
+                crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                    .as_bytes()
+                    .to_vec()
+            };
+            (OutputTier::Overview, overview)
         } else {
-            let Some(bytes) = restore(self.source)? else {
+            let Some(bytes) = restore(self.source, self.created_turn)? else {
                 return Ok(self.stub_view());
             };
             self.source.verify(&bytes)?;
@@ -352,6 +384,17 @@ pub fn store_output_sourced(
         .output_ref())
 }
 
+/// Stores an output with the actual run's retained replay record. The body
+/// and its replay link commit together. An unretained run keeps the standalone
+/// storage that [`store_output`] uses; input rows remain unknown.
+pub fn store_output_for_run(vault: &Vault, run: EntityId, bytes: &[u8]) -> Result<OutputRef> {
+    let mut sink = vault.code_run_output_sink()?;
+    sink.write(bytes)?;
+    Ok(vault
+        .publish_code_run_output_for_replay(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, run, None)?
+        .output_ref())
+}
+
 /// The whole body `source` names, checked against its digest and length. A
 /// body the secret scan marked, or one under live or stale taint, is read as
 /// the withheld mark instead, as every model-context view reads it: the view
@@ -381,13 +424,15 @@ pub fn restore_output_window(vault: &Vault, source: OutputRef, cap: usize) -> Re
         return restore_output(vault, source);
     }
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     // A ranged read checks the manifest it is given: this one names the
     // path every context output's does.
-    let mut output = crate::code_run::CodeRunRawOutput::of_ref(source);
+    let mut output = crate::store::result_manifest::CodeRunRawOutput::of_ref(source);
     output.path = CONTEXT_OUTPUT_PATH.to_owned();
     let mut head = vault
         .read_code_run_raw_output_range(&output, 0, cap)?

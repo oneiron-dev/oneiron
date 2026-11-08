@@ -1,44 +1,92 @@
 //! The step replay capsule and contribution fork rows (FIX 3028): each
 //! capsule's metadata keyed by its attempt, lease generation and step, each
 //! matched pair's fork receipts or the reason it is unavailable, and the
-//! request, start and response bodies they name, owned by the original run.
+//! request, start and response bodies they name, an engine step's fork's
+//! executed bodies too ([`execution`], FIX 3607), the replay context its
+//! step's checkpoint committed ([`context`], FIX 6351), and the route prompt
+//! its answering rung put first ([`route_prompt`], FIX 6255), owned by the
+//! original run. An owner verdict's pair also keeps its pending owner pair
+//! beside its forks ([`owner_pair`], FIX 3609).
 //!
 //! Each body is written as the side-row wall admits it, in the writer that
 //! puts its capsule ([`admit`]), and an erase of the capsule's actor
 //! releases them all ([`erase`]). A read checks, in its own snapshot, that
 //! the capsule still holds its content and that the run still holds the
 //! body's occurrence, whoever else keeps the same bytes (FIX 6144).
+//!
+//! A capsule keeps its request as pieces its run holds once for the actor
+//! (FIX 4192, [`pieces`]): the config, each message and one sequence node
+//! per message. Its own request body is the manifest that names them. Its
+//! start is kept the same way ([`start_pieces`]): the config, the record's
+//! frame, and each element of each growing array of the record.
+//!
+//! A capsule also names the folds whose accepted summaries each of its
+//! bodies copies (FIX 18924). A read of a body whose folds' words are
+//! withdrawn reads none, and a fork writer meets such a request as erased.
+//! The withdrawal retires each such body in its own writer ([`fold_words`]).
+//! A hard erase of a source row retires each kept start it owns, in the
+//! erase's writer ([`source_erase`], FIX 20329).
 
 mod admit;
+mod context;
 mod erase;
+mod execution;
+mod fold_words;
+mod fork_erase;
+mod owner_pair;
+mod pieces;
+mod restore;
+mod route_prompt;
+mod source_erase;
 mod spawn_erase;
+mod start_landing;
 mod start_parts;
+mod start_pieces;
 
 use serde::{Deserialize, Serialize};
 
+use self::pieces::{PieceScope, held_request_bytes};
+use self::start_pieces::held_start_bytes_in_txn;
 use super::super::contribution::{
-    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
+    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment, OwnerPair,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::replay_capsule::{
-    CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule,
-};
+use super::super::replay_capsule::{CapsuleHost, CapsuleRequest, StepReplayCapsule};
+use super::fold_answers::words_withdrawn;
 use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
-pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
-pub(crate) use self::erase::actor_gone_in_txn;
+pub(crate) use self::admit::{put_staged_capsule, refresh_staged_request, store_fork_response};
+pub(crate) use self::context::{
+    capsule_context_body, join_step_context_in_txn, stage_step_context,
+};
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
-pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
+pub(super) use self::erase::{capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor};
+pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
+pub(super) use self::fold_words::retire_fold_word_capsules_in_txn;
+pub(crate) use self::fork_erase::ForkProvenance;
+pub(crate) use self::fork_erase::{
+    contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
+};
+pub(crate) use self::owner_pair::{
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
+};
+pub(crate) use self::restore::retire_replay_bodies_in_rows;
+pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
+pub(super) use self::source_erase::retire_source_step_starts_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
+pub(crate) use self::start_landing::{StrippedPieces, republish_step_start_lengths_in_rows};
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
+pub(crate) use self::start_pieces::{start_piece_held_apart_in_txn, step_start_content_pieces};
 
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =
@@ -49,7 +97,7 @@ pub(crate) fn code_run_replay_capsule_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<StepReplayCapsule, Named>(bytes)
 }
 
-/// Fork rows. Key: hash32(attempt receipt, skill, axis) + the row's name.
+/// Fork rows. Key: the experiment digest (opaque after erase) + the row's name.
 const FORKS: SideTable<([u8; 32], String), ForkRow, Named> =
     SideTable::new(&side_table::CODE_RUN_CONTRIBUTION_FORK);
 
@@ -58,9 +106,17 @@ const UNAVAILABLE_ROW: &str = "unavailable";
 
 /// One row of a matched pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ForkRow {
+struct ForkRow {
+    provenance: ForkProvenance,
+    value: ForkValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ForkValue {
     Fork(ContributionForkReceipt),
     Unavailable(ContributionReplayUnavailable),
+    /// An owner verdict's pending pair (FIX 3609).
+    OwnerPair(Box<OwnerPair>),
 }
 
 /// A matched pair's rows as they stand.
@@ -69,6 +125,7 @@ pub(crate) struct ForkRows {
     pub(crate) unavailable: Option<ContributionReplayUnavailable>,
     pub(crate) with_skill: Option<ContributionForkReceipt>,
     pub(crate) without_skill: Option<ContributionForkReceipt>,
+    pub(crate) owner_pair: Option<OwnerPair>,
 }
 
 fn fork_row_name(treatment: ForkTreatment) -> &'static str {
@@ -96,6 +153,32 @@ fn kept_in_txn(
     Ok(CAPSULES
         .get(&vault.store, rtxn, key)?
         .filter(|capsule| capsule.content.actor().is_some()))
+}
+
+/// What a fork writer kept, or why it kept nothing (FIX 6256). The writer
+/// that meets the fence names the reason, and the runner keeps it as it is.
+type ForkWrite<T> = std::result::Result<T, ContributionReplayUnavailable>;
+
+/// The capsule at `key` and its actor, as a fork writer reads it in `txn`
+/// (FIX 6256). A capsule row that is gone is `Unreadable`. A capsule whose
+/// actor's erase took its content is `Erased`: its custody is retired. So is
+/// one whose request copies fold words a withdrawal took (FIX 18924): no
+/// fork answer is published from it.
+fn fork_capsule_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+) -> Result<ForkWrite<(StepReplayCapsule, EntityId)>> {
+    let Some(capsule) = CAPSULES.get(&vault.store, txn, key)? else {
+        return Ok(Err(ContributionReplayUnavailable::Unreadable));
+    };
+    let Some(actor) = capsule.content.actor() else {
+        return Ok(Err(ContributionReplayUnavailable::Erased));
+    };
+    if words_withdrawn(&vault.store, txn, &capsule.fold_words.request)? {
+        return Ok(Err(ContributionReplayUnavailable::Erased));
+    }
+    Ok(Ok((capsule, actor)))
 }
 
 /// The whole body `body` names at `path`, as run `owner` holds it, read in
@@ -139,33 +222,6 @@ fn held_body(
         return Ok(None);
     }
     held_body_in_txn(vault, &rtxn, owner, path, body)
-}
-
-/// Records the rung that answered the capsule at `key`, and the route it
-/// went out on when it pinned one (PR-S1), once and in one write: a capsule
-/// already finalized keeps its rung and its pin. An erased capsule, or one
-/// whose actor is gone by now, takes neither: its route prompt is content an
-/// erase clears (FIX 6144).
-pub(crate) fn finalize_capsule(
-    vault: &Vault,
-    key: &(EntityId, u64, u64),
-    binding: CapsuleRungBinding,
-    route_pin: Option<ReplayRoutePin>,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let Some(mut capsule) = CAPSULES.get(&vault.store, txn, key)? else {
-            return Ok(());
-        };
-        let Some(actor) = capsule.content.actor() else {
-            return Ok(());
-        };
-        if capsule.binding.is_some() || erase::actor_gone_in_txn(vault, txn, &actor) {
-            return Ok(());
-        }
-        capsule.binding = Some(binding);
-        capsule.route_pin = route_pin;
-        CAPSULES.put(vault, txn, key, &capsule)
-    })
 }
 
 /// Every capsule of `attempt`, in lease generation then step order.
@@ -229,7 +285,11 @@ pub(crate) fn undecodable_step_capsule_in_txn(
 /// stored: masked, its prefix row the run's row as the wall admitted it.
 /// `None` when the capsule has no start, holds its content no longer (its
 /// actor was erased), or its body is released, gone, withheld or no longer
-/// its digest.
+/// its digest, and when its prefix records withdrawn fold words (FIX 18924).
+/// FIX 4192: the whole start is put together from the pieces its manifest
+/// names, each as the capsule's run holds it for the capsule's actor. A
+/// piece whose bytes drifted from its row is no start, as bytes no longer
+/// its digest are; a read that fails stays an error (FIX 4194).
 pub(crate) fn capsule_start_body(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -238,26 +298,52 @@ pub(crate) fn capsule_start_body(
     let Some(capsule) = kept_in_txn(vault, rtxn, &capsule_key(capsule))? else {
         return Ok(None);
     };
-    let Some(start) = &capsule.start else {
+    let (Some(actor), Some(start)) = (capsule.content.actor(), &capsule.start) else {
         return Ok(None);
     };
-    let held = match held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body) {
-        // Bytes that drifted from their row are no start, as bytes no longer
-        // its digest are; a read that fails stays an error (FIX 4194).
-        Err(error) if body_drifted(&error) => return Ok(None),
-        held => held?,
+    if start.erased || words_withdrawn(&vault.store, rtxn, &capsule.fold_words.start)? {
+        return Ok(None);
+    }
+    let scope = PieceScope {
+        run: capsule.run,
+        actor,
     };
-    let Some(bytes) = held else {
+    let Some(bytes) = held_start_bytes_in_txn(vault, rtxn, scope, start)? else {
         return Ok(None);
     };
     Ok((*blake3::hash(&bytes).as_bytes() == start.digest).then_some(bytes))
+}
+
+/// Whether a withdrawal took the words of a fold one of `capsule`'s bodies
+/// copies (FIX 18924), its request, its start or its context, as the
+/// vault reads now: a frozen replay source refuses such a capsule.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn capsule_fold_words_withdrawn(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let words = &capsule.fold_words;
+    for named in [&words.request, &words.start, &words.context] {
+        if words_withdrawn(&vault.store, &rtxn, named)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The capsule's request as stored: the request it captured, each secret in
 /// it its custody handle. `None` when the capsule holds its content no
 /// longer (its actor was erased), when the wall withheld the request at its
 /// capture (FIX 6254), or its body is released, gone, withheld, not its
-/// stored hash or not a request; never an empty or rebuilt one.
+/// stored hash or not a request; never an empty or rebuilt one. FIX 4192:
+/// the whole request is put together from the pieces its manifest names,
+/// each as the capsule's run holds it for the capsule's actor. FIX 18924: a
+/// request that copies withdrawn fold words reads as none, in the snapshot
+/// its pieces are read in.
 pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
@@ -266,22 +352,65 @@ pub(crate) fn capsule_request(
         body,
         path,
         stored_hash,
+        erased: false,
     } = &capsule.request
     else {
         return Ok(None);
     };
     let key = capsule_key(capsule);
-    let still = |rtxn: &heed::RoTxn<'_>| -> Result<bool> {
+    let still = |rtxn: &heed::RoTxn<'_>| -> Result<Option<PieceScope>> {
         let row = kept_in_txn(vault, rtxn, &key)?;
-        Ok(row.is_some_and(|row| row.request == capsule.request))
+        let Some(row) = row.filter(|row| row.request == capsule.request) else {
+            return Ok(None);
+        };
+        if words_withdrawn(&vault.store, rtxn, &row.fold_words.request)? {
+            return Ok(None);
+        }
+        let run = row.run;
+        Ok(row.content.actor().map(|actor| PieceScope { run, actor }))
     };
-    let Some(bytes) = held_body(vault, capsule.run, path, *body, still)? else {
+    let Some(bytes) = held_request_bytes(vault, *body, path, still)? else {
         return Ok(None);
     };
     if blake3::hash(&bytes).as_bytes() != stored_hash {
         return Ok(None);
     }
     Ok(serde_json::from_slice(&bytes).ok())
+}
+
+/// Binds a single-call workflow step's answer to its capsule (FIX 3611):
+/// `answer`, the digest and length of the text the call returned, on the
+/// capsule at `key` whose request was sent as `request_hash`. Only a
+/// finalized workflow capsule that still holds its content, for an actor
+/// that is not erased, takes it, and only once: a bound answer stays as it
+/// is. Whether the capsule binds `answer` now.
+pub(crate) fn bind_capsule_answer(
+    vault: &Vault,
+    key: &(EntityId, u64, u64),
+    request_hash: [u8; 32],
+    answer: OutputRef,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let Some(mut capsule) = CAPSULES.get(&vault.store, wtxn, key)? else {
+            return Ok(false);
+        };
+        let Some(actor) = capsule.content.actor() else {
+            return Ok(false);
+        };
+        if capsule.host != CapsuleHost::WorkflowStep
+            || capsule.binding.is_none()
+            || capsule.request_hash != request_hash
+            || actor_gone_in_txn(vault, wtxn, &actor)
+        {
+            return Ok(false);
+        }
+        if let Some(bound) = capsule.answer {
+            return Ok(bound == answer);
+        }
+        capsule.answer = Some(answer);
+        CAPSULES.put(vault, wtxn, key, &capsule)?;
+        Ok(true)
+    })
 }
 
 /// A matched pair's rows.
@@ -299,46 +428,92 @@ pub(crate) fn fork_rows_in_txn(
 ) -> Result<ForkRows> {
     let mut rows = ForkRows::default();
     for ((_, _), row) in FORKS.scan_from(&vault.store, txn, pair)? {
-        match row {
-            ForkRow::Unavailable(reason) => rows.unavailable = Some(reason),
-            ForkRow::Fork(receipt) => match receipt.treatment {
+        match row.value {
+            ForkValue::Unavailable(reason) => rows.unavailable = Some(reason),
+            ForkValue::Fork(receipt) => match receipt.treatment {
                 ForkTreatment::WithSkill => rows.with_skill = Some(receipt),
                 ForkTreatment::WithoutSkill => rows.without_skill = Some(receipt),
             },
+            ForkValue::OwnerPair(pair) => rows.owner_pair = Some(*pair),
         }
     }
     Ok(rows)
 }
 
-/// Writes one fork's receipt, replacing its earlier row.
+/// Scores the exact fork still kept at its live pair, or reuses its first
+/// committed score. An erase that moved it, or ran while the scorer
+/// answered, can never recreate its old row. A fork no longer kept as it
+/// was is `Unreadable`; a subject gone now is the fence's `Unfinished`
+/// (FIX 6256).
 pub(crate) fn put_fork(
     vault: &Vault,
     pair: &[u8; 32],
     receipt: &ContributionForkReceipt,
-) -> Result<()> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let key = (*pair, fork_row_name(receipt.treatment).to_owned());
-    vault.with_write_txn_grouped(|txn| FORKS.put(vault, txn, &key, &ForkRow::Fork(receipt.clone())))
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        };
+        let ForkValue::Fork(kept) = &row.value else {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        };
+        let mut expected = receipt.clone();
+        expected.score = kept.score;
+        if *kept != expected {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        }
+        if let Err(reason) = row.provenance.fence_in_txn(vault, txn) {
+            return Ok(Err(reason));
+        }
+        if kept.score.is_some() {
+            return Ok(Ok(kept.clone()));
+        }
+        row.value = ForkValue::Fork(receipt.clone());
+        FORKS.put(vault, txn, &key, &row)?;
+        Ok(Ok(receipt.clone()))
+    })
 }
 
-/// Records why a pair is unavailable, so no later pass pays for it again.
+/// Records why a live pair is unavailable, so no later pass pays for it
+/// again. The original subjects fence a late write after their erase.
 pub(crate) fn put_unavailable(
     vault: &Vault,
     pair: &[u8; 32],
+    provenance: &ForkProvenance,
     reason: ContributionReplayUnavailable,
 ) -> Result<()> {
     let key = (*pair, UNAVAILABLE_ROW.to_owned());
-    vault.with_write_txn_grouped(|txn| FORKS.put(vault, txn, &key, &ForkRow::Unavailable(reason)))
+    vault.with_write_txn_grouped(|txn| {
+        if !provenance.live_in_txn(vault, txn) {
+            return Ok(());
+        }
+        FORKS.put(
+            vault,
+            txn,
+            &key,
+            &ForkRow {
+                provenance: provenance.clone(),
+                value: ForkValue::Unavailable(reason),
+            },
+        )
+    })
 }
 
-/// A fork's stored answer; `None` when its body is released (its capsule's
-/// actor was erased), gone or withheld.
+/// A fork's stored answer, read while `admits` holds in the read's own
+/// snapshot (FIX 20607); `None` when its body is released (its capsule's
+/// actor was erased), gone or withheld, or `admits` does not hold.
 pub(crate) fn fork_response(
     vault: &Vault,
     run: EntityId,
     receipt: &ContributionForkReceipt,
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Option<LlmResponse>> {
+    if receipt.response_erased {
+        return Ok(None);
+    }
     let path = receipt.response_path.as_str();
-    let Some(bytes) = held_body(vault, run, path, receipt.response, |_| Ok(true))? else {
+    let Some(bytes) = held_body(vault, run, path, receipt.response, admits)? else {
         return Ok(None);
     };
     Ok(serde_json::from_slice(&bytes).ok())

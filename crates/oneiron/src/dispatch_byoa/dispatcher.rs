@@ -1,5 +1,6 @@
 //! Dispatcher organ with dispatch, execute, authorize, and capture doors.
 
+pub(crate) mod capture_fact;
 mod terminal;
 
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use crate::attempt_queue::{
 use crate::checkout::CheckoutLeaseAct;
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
 use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
 
@@ -41,14 +42,13 @@ use super::seat::{
     HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
     hosted_seat_bound, spent_seat_in,
 };
-use super::seat_quota::{record_seat_quota_by_id_in_txn, seat_quota_id};
+use super::seat_quota::{record_runner_quota_in_txn, seat_quota_id};
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
 use super::work_binding::{
-    RunnerWorkBinding, SpentCapture, capture_hop_seat_quota_in_txn, capture_seat_in_txn,
-    note_spent_hop_in_txn,
+    RunnerWorkBinding, SpentCapture, capture_hop_seat_quota_in_txn, note_spent_hop_in_txn,
 };
 use super::work_resume::moved_on_in_txn;
 /// Resolves an endpoint config into a concrete host-owned backend.
@@ -402,7 +402,9 @@ where
     /// # Errors
     ///
     /// Refuses an invalid policy or seat index, and every refusal capture
-    /// and dispatch have, without durable writes.
+    /// and dispatch have, without durable writes. Erased task inputs commit
+    /// byte-free settlement and quota accounting before returning
+    /// [`ByoaError::TaskErased`]; they never dispatch a successor.
     pub fn route_runner_terminal(
         &mut self,
         registry: &ProviderAdapterRegistry,
@@ -431,66 +433,81 @@ where
                 .get_or_insert_with(|| spent.reason().to_owned());
         }
         let now = capture.now;
-        self.vault.try_with_write_txn_grouped(|wtxn| {
-            let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
-            // A replayed spend of a bound work that moved past it (FIX 7450)
-            // writes nothing more and names where the work stands.
-            if let Some(route) =
-                moved_on_in_txn(self.vault, wtxn, policy, &receipt, spent.as_ref())?
-            {
-                return Ok(route);
-            }
-            let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
-            // Charge the identity that ran even when its seat was removed:
-            // the current seat, else the capture hop's frozen quota (FIX 11984).
-            let quota = match seat {
-                Some(index) => seat_quota_id(policy.seat(index)?)?,
-                None => EntityId::from_bytes(
-                    capture_hop_seat_quota_in_txn(self.vault, wtxn, &receipt)?.1,
-                )?,
-            };
-            record_seat_quota_by_id_in_txn(
-                self.vault,
-                wtxn,
-                quota,
-                &receipt.attempt,
-                spent.as_ref(),
-            )?;
-            let Some(spent) = spent else {
-                return Ok(SeatRoute::Settled(receipt));
-            };
-            let route = match policy.on_spent {
-                OnSeatSpent::Stop => SeatRoute::Park {
-                    until: spent.back_at(now),
-                    receipt,
-                    spent: spent.clone(),
-                },
-                OnSeatSpent::InternalModels => SeatRoute::InternalModels {
-                    receipt,
-                    spent: spent.clone(),
-                },
-                OnSeatSpent::NextSeat => self.next_seat_in_txn(
+        let outcome = self.vault.try_with_write_txn_grouped(
+            |wtxn| -> ByoaResult<Result<SeatRoute, AttemptRecord>> {
+                let receipt = match self.capture_terminal_exhaust_in_txn(wtxn, capture)? {
+                    terminal::TerminalCapture::Captured(receipt) => receipt,
+                    terminal::TerminalCapture::Erased(attempt) => {
+                        record_runner_quota_in_txn(
+                            self.vault,
+                            wtxn,
+                            policy,
+                            &attempt,
+                            seat,
+                            spent.as_ref(),
+                        )?;
+                        return Ok(Err(attempt));
+                    }
+                };
+                // A replayed spend of a bound work that moved past it (FIX 7450)
+                // writes nothing more and names where the work stands.
+                if let Some(route) =
+                    moved_on_in_txn(self.vault, wtxn, policy, &receipt, spent.as_ref())?
+                {
+                    return Ok(Ok(route));
+                }
+                let seat = record_runner_quota_in_txn(
+                    self.vault,
                     wtxn,
-                    registry,
                     policy,
-                    SpentCapture {
+                    &receipt.attempt,
+                    seat,
+                    spent.as_ref(),
+                )?;
+                let Some(spent) = spent else {
+                    return Ok(Ok(SeatRoute::Settled(receipt)));
+                };
+                let route = match policy.on_spent {
+                    OnSeatSpent::Stop => SeatRoute::Park {
+                        until: spent.back_at(now),
                         receipt,
                         spent: spent.clone(),
-                        seat,
-                        now,
                     },
-                )?,
-            };
-            // A bound work the spend kept on this seat notes it for its outcome.
-            if !matches!(route, SeatRoute::NextSeat { .. }) {
-                let (seat, quota) = match seat {
-                    Some(index) => (index, *seat_quota_id(policy.seat(index)?)?.as_bytes()),
-                    None => capture_hop_seat_quota_in_txn(self.vault, wtxn, route.receipt())?,
+                    OnSeatSpent::InternalModels => SeatRoute::InternalModels {
+                        receipt,
+                        spent: spent.clone(),
+                    },
+                    OnSeatSpent::NextSeat => self.next_seat_in_txn(
+                        wtxn,
+                        registry,
+                        policy,
+                        SpentCapture {
+                            receipt,
+                            spent: spent.clone(),
+                            seat,
+                            now,
+                        },
+                    )?,
                 };
-                note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
-            }
-            Ok(route)
-        })
+                // A bound work the spend kept on this seat notes it for its outcome.
+                if !matches!(route, SeatRoute::NextSeat { .. }) {
+                    let (seat, quota) = match seat {
+                        Some(index) => (index, *seat_quota_id(policy.seat(index)?)?.as_bytes()),
+                        None => capture_hop_seat_quota_in_txn(
+                            self.vault,
+                            wtxn,
+                            &route.receipt().attempt,
+                        )?,
+                    };
+                    note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
+                }
+                Ok(Ok(route))
+            },
+        )?;
+        match outcome {
+            Ok(route) => Ok(route),
+            Err(attempt) => Err(terminal::erased_capture_error(self.vault, &attempt)),
+        }
     }
 
     /// Resolves an endpoint connector into the host backend that serves it.
@@ -630,7 +647,10 @@ where
             )
         })?;
         Ok(ByoaExhaust {
-            transcript: Some(encode_execution_transcript(&response)?),
+            transcript: Some(encode_execution_transcript(
+                &response,
+                self.vault.proposal_spool(),
+            )?),
             ..ByoaExhaust::default()
         })
     }

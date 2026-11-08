@@ -5,10 +5,10 @@
 
 mod batch;
 mod conversations;
-mod dag;
 pub mod shape;
 
 pub use batch::CoreWriteLane;
+pub(crate) use batch::CoreWriteLaneRef;
 pub use oneiron_store::core_write::{
     ConversationCreateInput, ConversationTurnCreateInput, CoreBatchCommit, CoreBatchEntityInput,
     CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt, CoreDagAddressMode,

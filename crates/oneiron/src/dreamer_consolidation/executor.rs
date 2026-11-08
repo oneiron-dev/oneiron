@@ -11,6 +11,8 @@ pub(super) mod extraction;
 mod failure;
 mod merge_resolution;
 mod partition_run;
+mod partition_window;
+mod root_bridge;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
@@ -507,6 +509,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "executor actor is not the queued Dreamer authority",
             ));
         }
+        if attempt.status.payload.attempt_type == super::root_evidence::bridge::ATTEMPT {
+            return self.run_root_bridge(attempt, ctx).await;
+        }
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
             return self.run_nightly_merge(attempt, ctx).await;
         }
@@ -526,11 +531,14 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
+        }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT {
+            return self.run_typing_batch(attempt, ctx).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
             return self.run_follower(attempt, ctx).await;
@@ -599,7 +607,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
 
@@ -684,7 +692,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                                 .now_ms
                                 .div_ceil(1_000)
                                 .saturating_add(super::RESIDENCY_RETRY_SECS),
-                            step_hashes: Vec::new(),
+                            step_bindings: Vec::new(),
                         })
                     }
                     _ => Err(invalid_consolidation(

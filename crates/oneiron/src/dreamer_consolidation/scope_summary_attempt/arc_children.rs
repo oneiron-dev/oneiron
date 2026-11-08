@@ -25,7 +25,7 @@ use super::arc_chunks::{
 use super::arc_compose::{owe, owe_bare};
 use super::arc_evidence::ArcView;
 use super::arc_output::arc_schema;
-use super::arc_reduce::{Landing, Observed, observations};
+use super::arc_reduce::{Landing, Observed, observations, part_observations};
 use super::arc_review::{
     CallBuilder, CallShape, Called, KIND_COMPOSE, KIND_REVIEW, call_input, frame_tokens,
     show_observation, store_exit,
@@ -43,6 +43,7 @@ use crate::scope_summary::{
     ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
 };
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// The identity an Arc composed in parts is known by: its parts' contract.
 const ARC_PARTS_DOMAIN: &str = "oneiron:arc-summary-parts:v1";
@@ -214,7 +215,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         plan: &ScopeSummaryPlan,
         evidence: &ScopeSummaryEvidence,
         instruction: &str,
-        (window, charges): (u64, StepChargeTally),
+        (window, charges, calls): (u64, StepChargeTally, u32),
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
         let (Some(arc), Some(view), Some(scope), Some(first)) = (
@@ -242,7 +243,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             Ok(false) => {}
@@ -352,7 +353,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             frame,
             covers: evidence.covers.iter().copied().collect(),
             charges,
-            calls: 0,
+            calls,
             limit,
             reset: BTreeSet::new(),
         };
@@ -499,7 +500,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         observations(&memory, &row.reviewed)
                     };
                     let observed = match read {
-                        Ok(Observed::All(observed)) => observed,
+                        Ok(Observed::All(observed)) => {
+                            part_observations(observed, &run.members, &group, &row.opened)
+                        }
                         // A review that no longer reads back (FIX 8288) is
                         // asked again, with every compose step after it.
                         Ok(Observed::Unread(index)) => {
@@ -556,6 +559,37 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             // (FIX 8286): one the summed estimate let past it splits.
             if framed_tokens(run.instruction, &user, &run.schema)? > run.manifest.pins.window {
                 return self.split(run, ctx, position, row);
+            }
+            if row.mode == ChildMode::Single {
+                let candidates: Vec<_> = context
+                    .shown
+                    .keys()
+                    .copied()
+                    .filter(|turn| !opened.contains(turn))
+                    .collect();
+                let ask = match self
+                    .arc_open_turns(
+                        ctx,
+                        step_ctx,
+                        run.evidence,
+                        &user,
+                        &context.labels,
+                        &candidates,
+                        &mut run.calls,
+                        Some(run.limit),
+                        &mut run.charges,
+                    )
+                    .await?
+                {
+                    ControlFlow::Continue(ask) => ask,
+                    ControlFlow::Break(exit) => return Ok(ChildStep::Exit(exit)),
+                };
+                if super::arc_open_apply::open_advised(run, ctx, row, &group, &shape, &ask) {
+                    if let Some(exit) = run.save(ctx, id, row, true) {
+                        return Ok(ChildStep::Exit(exit));
+                    }
+                    continue;
+                }
             }
             let (reply, step) = match self
                 .child_call(run, ctx, step_ctx, user, context, opened)

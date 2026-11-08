@@ -85,6 +85,7 @@ impl ClaimMaterialization {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -103,7 +104,8 @@ impl ClaimMaterialization {
             return Err(binding_error());
         }
         let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next =
+            crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, txn, data, false)?;
         let expected = demotion_body(&vault.store, txn, id, &prior, &next, &ops[1..])?;
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
@@ -260,6 +262,7 @@ impl ClaimMaterialization {
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 occurred,
                 learned_at: header.learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -287,7 +290,28 @@ impl ClaimMaterialization {
         persist_pending: bool,
         approver: Option<crate::WriteActor>,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver)
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver, None)
+    }
+
+    /// Gate an unamended approval as its authorized caller while retaining
+    /// the stored claim's separate authorship binding.
+    pub(crate) fn apply_approval_with_caller(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        persist_pending: bool,
+        caller: WriteEnvelope,
+    ) -> Result<()> {
+        let approver = caller.actor();
+        Self::apply_approval_inner(
+            vault,
+            txn,
+            op,
+            persist_pending,
+            None,
+            Some(approver),
+            Some(caller),
+        )
     }
 
     pub(crate) fn apply_refinement_approval(
@@ -296,7 +320,7 @@ impl ClaimMaterialization {
         op: BatchOp,
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None)
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None, None)
     }
 
     fn apply_approval_inner(
@@ -306,12 +330,14 @@ impl ClaimMaterialization {
         persist_pending: bool,
         proof: Option<crate::skill_hub::RefinementAdmissionProof>,
         approver: Option<crate::WriteActor>,
+        caller: Option<WriteEnvelope>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -375,6 +401,7 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        let caller_envelopes = caller.into_iter().map(|envelope| (*id, envelope)).collect();
         let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         super::apply_ops_with_gate_mode(
             &vault.store,
@@ -393,13 +420,14 @@ impl ClaimMaterialization {
                 None => ApplyOpsGateMode::new(false, persist_pending)
                     .with_claim_materializations(bindings)
                     .with_verified_claim_transitions(vec![transition]),
-            },
+            }
+            .with_caller_envelopes(caller_envelopes),
         )
     }
 
     pub(super) fn matches_op(&self, op: &BatchOp) -> bool {
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-            occurred, learned_at, data, allow_maintenance: false,
+            occurred, learned_at, row_version: _, data, allow_maintenance: false,
             allow_reserved_predicate, hub_sync_imported: false }
             if *id == self.id && *occurred == self.occurred && *learned_at == self.learned_at
                 && *data == self.data && *allow_reserved_predicate == self.reserved)

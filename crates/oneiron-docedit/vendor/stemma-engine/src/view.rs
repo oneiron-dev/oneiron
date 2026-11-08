@@ -976,19 +976,32 @@ fn paragraph_comprehension_text(p: &crate::domain::ParagraphNode) -> String {
 /// formatting (`vocabulary::paragraph_role_ids`), so the view surfaces a role a
 /// cold agent can author with.
 fn block_to_view(tracked: &TrackedBlock, role_ids: &HashMap<NodeId, String>) -> BlockView {
-    let block_status = TrackStatus::from(&tracked.status);
+    block_node_to_view(&tracked.block, &tracked.status, role_ids)
+}
+
+/// Project one actual story-local block without copying its canonical content.
+pub fn build_story_block_view(block: &BlockNode, status: &TrackingStatus) -> BlockView {
+    block_node_to_view(block, status, &HashMap::new())
+}
+
+fn block_node_to_view(
+    block: &BlockNode,
+    status: &TrackingStatus,
+    role_ids: &HashMap<NodeId, String>,
+) -> BlockView {
+    let block_status = TrackStatus::from(status);
     // When the whole block is tracked-inserted/deleted, the paragraph mark's
     // own status is subsumed by the block status (mirrors
     // `project_tracked_document`, which only surfaces para_mark_status when the
     // block itself is Normal).
-    let block_is_tracked = !matches!(tracked.status, TrackingStatus::Normal);
+    let block_is_tracked = !matches!(status, TrackingStatus::Normal);
 
     // The block's staleness guard is its semantic hash at read time — the SAME
     // value a write op carries as `guard`. Computed for every block kind so the
     // single-staleness-mechanism contract holds uniformly.
-    let guard = crate::semantic_hash::block_guard(&tracked.block);
+    let guard = crate::semantic_hash::block_guard(block);
 
-    match &tracked.block {
+    match block {
         BlockNode::Paragraph(p) => {
             // Build the inline projection from the SHARED span enumeration so the
             // `s_<n>` handles here are exactly what `edit::resolve_span` resolves.
@@ -1340,6 +1353,19 @@ pub fn build_document_view_from_canon(canonical: &CanonDoc) -> DocumentView {
         .map(|b| block_to_view(b, &role_ids))
         .collect();
     DocumentView { blocks }
+}
+
+/// Project one non-body story's locally identified blocks. Body role tokens
+/// cannot be looked up by these ids: separate stories reuse the same id
+/// namespace, and the body vocabulary does not describe their paragraphs.
+pub fn build_story_blocks_view(blocks: &[TrackedBlock]) -> DocumentView {
+    let role_ids = HashMap::new();
+    DocumentView {
+        blocks: blocks
+            .iter()
+            .map(|block| block_to_view(block, &role_ids))
+            .collect(),
+    }
 }
 
 /// Render a [`DocumentView`] as a single plain-text string.

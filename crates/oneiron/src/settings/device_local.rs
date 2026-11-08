@@ -94,24 +94,34 @@ impl Vault {
         endpoint: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
+        self.model_call_hold_in_txn(&rtxn, world, endpoint)
+    }
+
+    /// The same model-world verdict in the caller's snapshot.
+    pub(crate) fn model_call_hold_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+        endpoint: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        let flagged = device_local_worlds_for(self, rtxn, endpoint)?;
         let Some(world) = world else {
             return Ok(
-                (!flagged.is_empty()).then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint))
+                (!flagged.is_empty()).then(|| worlds_hold_in(self, rtxn, &flagged, endpoint))
             );
         };
         if flagged.contains(&world) {
             let world = std::collections::BTreeSet::from([world]);
-            return Ok(Some(worlds_hold_in(self, &rtxn, &world, endpoint)));
+            return Ok(Some(worlds_hold_in(self, rtxn, &world, endpoint)));
         }
         if world == oneiron_contracts::claim::base_world_id() {
             return Ok(None);
         }
-        if self.get_entity_type_in_txn(&rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
+        if self.get_entity_type_in_txn(rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
             return Ok(Some(ReleaseHold::Placement));
         }
         let visibility =
-            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
+            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &world)?;
         Ok(
             (visibility.deleted || visibility.archived || visibility.stale)
                 .then_some(ReleaseHold::Placement),
@@ -157,16 +167,28 @@ impl Vault {
         ids: Vec<EntityId>,
         destination: &ReadDestination,
     ) -> Result<Vec<EntityId>> {
-        let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
-        let mut readable = Vec::with_capacity(ids.len());
-        for id in ids {
-            if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
-                readable.push(id);
-            }
-        }
-        Ok(readable)
+        off_device_readable_in(self, &self.store, ids, destination)
     }
+}
+
+/// [`Vault::off_device_readable_for`], each row read from `store`: a room's
+/// overlay ∪ base places the rows the room stages as the room holds them
+/// (FIX 7355). The world settings are the vault's, read in the same snapshot.
+pub(crate) fn off_device_readable_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    ids: Vec<EntityId>,
+    destination: &ReadDestination,
+) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let flagged = device_local_worlds_for(vault, &rtxn, destination)?;
+    let mut readable = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !device_local_keeps_among(store, &rtxn, &flagged, &id)? {
+            readable.push(id);
+        }
+    }
+    Ok(readable)
 }
 
 /// [`Vault::device_local_keeps`], read in the caller's transaction.
@@ -206,7 +228,7 @@ pub(crate) fn device_local_worlds_for(
 pub(crate) fn device_local_worlds_for_machine(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    receiving: crate::machine_destination::Destination,
+    receiving: oneiron_base::machine_destination::Destination,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     crate::authority::WorldPrivacyView::load_in(vault, txn)?.withheld_for(receiving)
 }

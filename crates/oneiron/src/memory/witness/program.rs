@@ -25,17 +25,22 @@ use crate::compaction::TurnVector;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
-    WitnessMessageAuthorization, WitnessMessageEnvelope, check_witness_message_ceiling_with_permit,
+    WitnessMessageAuthorization, WitnessMessageEnvelope,
+    check_source_bound_witness_message_ceiling, check_witness_message_ceiling_with_permit,
     coach_offer_question_permit_in_txn, resolve_policy_manifest,
 };
 use crate::off_record::OffRecordSession;
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute, TxnSegmentGuard};
+use crate::source_audience::SourceAudienceBirth;
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
 
+mod caller;
 mod execute;
+mod parts;
+pub use caller::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 mod planning;
 mod provenance;
 
@@ -61,12 +66,16 @@ pub(super) enum WitnessTarget<'a, 'v> {
     /// summary is overlay-only (see [`Memory::witness_into_session`]).
     Session {
         session: &'a OffRecordSession<'v>,
+        /// An already captured native caller route; existing one-shot doors mint one.
+        route: Option<&'a SessionWriteRoute>,
         summary: Option<&'a str>,
         admit: Option<Admit<'a>>,
         /// The room whose roster admits speech into its overlay.
         rostered: Option<EntityId>,
         /// The server's pre-embedded turn vector, staged once on mint/extend.
         turn_vector: Option<TurnVector>,
+        /// Native RAM streaming finality, written beside the actual new MESSAGE.
+        terminal: Option<&'a super::stream::SessionStreamTerminal>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
@@ -87,6 +96,13 @@ pub(crate) struct ImportedTurnStamp {
     pub(crate) conversation_body: Vec<u8>,
     /// Unix seconds per message, in the turn's message order.
     pub(crate) message_occurred: Vec<u64>,
+    /// A source landing's proof (fix list row 16256): with it, the
+    /// CONVERSATION, the TURN and every MESSAGE revision this turn lands
+    /// carry the source-audience obligation in their own bytes, and the turn
+    /// joins only containers that carry it. History and connector imports
+    /// hold none, and land no row that names it. `source` stays import
+    /// provenance only.
+    pub(crate) source_audience: Option<SourceAudienceBirth>,
 }
 
 /// Who holds the door, and which turn-id capability they carry.
@@ -126,6 +142,7 @@ enum Landing<'a, 'v> {
 
 /// One MESSAGE as the plan holds it. The envelope the door authorizes and the
 /// canonical body it proves come from ONE value ([`witness_message_envelope`]).
+#[derive(Clone)]
 pub(super) struct PlannedMessage<'t> {
     pub(super) message: &'t WitnessMessage,
     pub(super) id: EntityId,
@@ -134,9 +151,21 @@ pub(super) struct PlannedMessage<'t> {
     pub(super) occurred: TimeRange,
     envelope: WitnessMessageEnvelope<'t>,
     body: Vec<u8>,
+    /// The source-bound body the row is stored as, when the plan holds a
+    /// source landing's proof (fix list row 16256).
+    stamped: Option<Vec<u8>>,
+}
+
+impl PlannedMessage<'_> {
+    /// The bytes the row is stored as: the source-bound body when there is
+    /// one, else the canonical body.
+    fn stored_body(&self) -> &[u8] {
+        self.stamped.as_deref().unwrap_or(&self.body)
+    }
 }
 
 /// Everything the program decides before its write transaction.
+#[derive(Clone)]
 pub(super) struct WitnessPlan<'t> {
     pub(super) turn: &'t WitnessTurn,
     /// Every row carries the witness's own stamps, never the wall clock:
@@ -163,6 +192,13 @@ pub(super) struct WitnessPlan<'t> {
 impl WitnessPlan<'_> {
     pub(super) fn message_ids(&self) -> Vec<EntityId> {
         self.messages.iter().map(|planned| planned.id).collect()
+    }
+
+    /// The source landing's proof the plan lands under, if any.
+    fn source_audience(&self) -> Option<&SourceAudienceBirth> {
+        self.imported
+            .as_ref()
+            .and_then(|stamp| stamp.source_audience.as_ref())
     }
 }
 
@@ -211,7 +247,10 @@ enum WitnessSink<'a, 'v> {
 }
 
 enum Landed {
-    Base(WitnessReceipt),
+    Base {
+        receipt: WitnessReceipt,
+        bodies: Vec<(EntityId, u64, Vec<u8>)>,
+    },
     HardDeleted(EntityId),
     Overlay {
         segment: TxnSegmentGuard,

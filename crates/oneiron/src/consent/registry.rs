@@ -61,6 +61,10 @@ pub struct ConsentRegistryRow {
     pub created_at: u64,
     /// The one-tap revoke command the host interprets.
     pub revoke_action: ConsentRevokeAction,
+    /// A revoked witness-read grant's owner re-grant command and its exact
+    /// arguments; absent on every other row. This is a projection, not authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regrant_action: Option<ConsentRegrantAction>,
     /// Where a scoped catastrophe bypass grant applies; `None` for an
     /// ordinary standing grant.
     pub bypass: Option<super::bypass::BypassExtent>,
@@ -68,16 +72,18 @@ pub struct ConsentRegistryRow {
     /// mint; `None` for every other row. Projection only: no grant row
     /// stores or edits it.
     pub delegation: Option<ConsentRegistryDelegation>,
-    /// An owner's agent grant (FIX 5628), projected from its grant row;
-    /// absent on every other row.
+    /// An owner's agent grant (FIX 5628), projected from its live row or
+    /// signed revoked mint; absent on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_grant: Option<ConsentRegistryAgentGrant>,
 }
 
 /// An owner's agent grant as the registry shows it (FIX 5628): the agent it
 /// names, the owner who granted it, its expiry (absent: it stands until
-/// revoked), the repo bounds he gave it (FIX 6894) and whether its scope
-/// confers now. Its exact scope is the row's `scope`.
+/// revoked), the repo bounds he gave it (FIX 6894), the verb classes it
+/// names beside its exact verbs (FIX 8735), the host wallet its funded work
+/// draws on (FIX 7766) and whether its scope confers now. Its exact scope is
+/// the row's `scope`.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -93,8 +99,17 @@ pub struct ConsentRegistryAgentGrant {
     /// the agent, as the mint answer shows them; absent on a general grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
-    /// Whether it confers now: unexpired, with `read` among its verbs and no
-    /// empty world, band, audience or sensitivity axis.
+    /// The verb classes the owner named beside its exact verbs, each
+    /// resolved when a door judges a verb; absent when it names none.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub verb_classes: std::collections::BTreeSet<String>,
+    /// The host wallet the owner named for the work the grant funds; absent
+    /// when it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<crate::federation::WalletRef>,
+    /// Whether it confers now: unexpired, with `read` among its verbs (or
+    /// admitted by a class it names) and no empty world, band, audience or
+    /// sensitivity axis.
     pub confers: bool,
 }
 
@@ -125,6 +140,20 @@ pub struct ConsentRevokeAction {
     pub command: String,
     /// The row this command revokes.
     pub grant_ref: String,
+}
+
+/// A pre-filled owner re-grant of a revoked connector witness-read grant.
+/// Invoking it still runs the command's full owner-proof grant flow.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsentRegrantAction {
+    /// Pinned command name.
+    pub command: String,
+    /// The stored agent principal, in the grant command's input shape.
+    pub agent: String,
+    /// The stored conversation, in the grant command's input shape.
+    pub conversation: String,
 }
 
 /// Pinned one-tap revoke command for a consent registry row.
@@ -158,6 +187,7 @@ impl ConsentRegistryRow {
                 command: CONSENT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: row.bypass,
             delegation: None,
@@ -184,6 +214,7 @@ impl ConsentRegistryRow {
                 command: CONTACT_CLEARANCE_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,
@@ -221,6 +252,7 @@ impl ConsentRegistryRow {
                 command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: Some(ConsentRegistryDelegation {
@@ -243,48 +275,73 @@ impl ConsentRegistryRow {
     pub(crate) fn from_agent_grant(
         standing: &crate::federation::AgentGrantStanding,
         now: u64,
+        classes: &crate::federation::AgentVerbClasses,
     ) -> Self {
         let grant = &standing.grant;
-        let grant_ref = standing.id.to_hex();
-        let mut selectors = render_scope(&grant.authority_scope);
-        if let Some(bounds) = &grant.repo_bounds {
+        Self::from_agent_grant_fields(
+            standing.id,
+            &grant.authority_scope,
+            ConsentRegistryAgentGrant {
+                agent: grant.member_ref,
+                delegated_by: standing.delegated_by,
+                expires_at: grant.expires_at,
+                repo_bounds: grant.repo_bounds.clone(),
+                verb_classes: grant.verb_classes.clone(),
+                wallet_ref: grant.wallet_ref.clone(),
+                confers: grant.confers_with_classes_at(now, classes),
+            },
+            if standing.stands_at(now) {
+                ConsentGrantStatus::Active
+            } else {
+                ConsentGrantStatus::Revoked
+            },
+            standing.created_at,
+        )
+    }
+
+    /// Projects live row fields or a revoked grant's signed mint, without
+    /// constructing a grant with a made-up residence scope.
+    pub(crate) fn from_agent_grant_fields(
+        id: EntityId,
+        scope: &Scope,
+        agent_grant: ConsentRegistryAgentGrant,
+        status: ConsentGrantStatus,
+        created_at: u64,
+    ) -> Self {
+        let grant_ref = id.to_hex();
+        let mut selectors = render_scope(scope);
+        if let Some(bounds) = &agent_grant.repo_bounds {
             selectors.push(format!(
                 "repo:{}@project:{}",
                 bounds.repo.to_hex(),
                 bounds.project.to_hex()
             ));
         }
-        selectors.push(format!("delegated_by:{}", standing.delegated_by.to_hex()));
-        selectors.push(grant.expires_at.map_or_else(
+        selectors.push(format!(
+            "delegated_by:{}",
+            agent_grant.delegated_by.to_hex()
+        ));
+        selectors.push(agent_grant.expires_at.map_or_else(
             || "expiry:durable".to_owned(),
             |expires_at| format!("expiry:{expires_at}"),
         ));
         Self {
             domain: ConsentDomain::Action,
-            subject: format!("{}/agent", grant.member_ref.to_hex()),
+            subject: format!("{}/agent", agent_grant.agent.to_hex()),
             class: AGENT_GRANT_CLASS.to_owned(),
             selectors,
-            scope: Some(grant.authority_scope.clone()),
-            status: if standing.stands_at(now) {
-                ConsentGrantStatus::Active
-            } else {
-                ConsentGrantStatus::Revoked
-            },
-            created_at: standing.created_at,
+            scope: Some(scope.clone()),
+            status,
+            created_at,
             revoke_action: ConsentRevokeAction {
                 command: crate::federation::AGENT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,
-            agent_grant: Some(ConsentRegistryAgentGrant {
-                agent: grant.member_ref,
-                delegated_by: standing.delegated_by,
-                expires_at: grant.expires_at,
-                repo_bounds: grant.repo_bounds.clone(),
-                confers: grant.confers_at(now),
-            }),
+            agent_grant: Some(agent_grant),
         }
     }
 }

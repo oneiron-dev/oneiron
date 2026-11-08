@@ -20,13 +20,17 @@ mod connector_call_input;
 mod connector_call_input_resume;
 mod connector_call_output;
 mod connector_call_pending;
+mod connector_call_rebind;
 mod connector_call_resume;
+mod connector_call_sent;
 mod connector_call_start;
 mod connector_call_types;
 mod connector_elicitation_asks;
 mod connector_elicitation_consent;
 mod connector_elicitation_receipt;
+mod connector_remember;
 mod execution;
+mod raw_body;
 mod recovery;
 mod result_scrub;
 mod scope;
@@ -45,8 +49,8 @@ pub use self::authority::{
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState,
-    ConnectorQuestion, ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef,
-    UntrustedToolResult,
+    ConnectorQuestion, ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema,
+    PendingConnectorCallRef, UntrustedToolResult,
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub(crate) use self::connector_call_code::{
@@ -57,7 +61,16 @@ pub(crate) use self::connector_call_consent::{
 };
 pub(crate) use self::connector_call_erase::erase_connector_call_actor_in_txn;
 pub use self::connector_call_input::ConnectorCallInput;
-pub use self::connector_call_input_resume::{ConnectorResumeProtocol, OpenedConnectorResume};
+pub use self::connector_call_input_resume::{
+    ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
+};
+pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+pub(crate) use self::connector_call_rebind::{
+    code_wait_rebind_effects_in_txn, code_wait_retry_approval_in_txn,
+};
+pub use self::connector_call_sent::{
+    ConnectorSentClearer, SentGeneration, SentGenerations, replace_spans,
+};
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,
 };
@@ -71,6 +84,7 @@ pub use self::execution::{
 // production builds, so the re-export lives under the same cfg as its callers.
 #[cfg(test)]
 use self::execution::execute_scoped_mcp_outbound_call;
+pub use self::raw_body::{RawOutboundBody, RawOutboundBodyReader};
 pub use self::recovery::{
     AuthorizedRecoveryError, AuthorizedRecoveryReport, StaleConnectorManifestRefusal,
     recover_authorized_outbound_intents,

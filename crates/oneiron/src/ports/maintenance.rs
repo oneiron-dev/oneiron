@@ -29,6 +29,7 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     /// byte-exact; the body must be a map carrying exactly one `entity_doc_ref` string.
     fn port_entity_document_pointer_put(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut Self::Write<'_>,
         id: &EntityId,
         body: &[u8],
@@ -57,13 +58,6 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
         txn: &mut Self::Write<'_>,
         id: &EntityId,
         record: &crate::connector_key::ConnectorKeyRecord,
-    ) -> Result<()>;
-    fn port_outbound_grant_touch(
-        &self,
-        txn: &mut Self::Write<'_>,
-        id: &EntityId,
-        grant: crate::outbound_grant::StandingOutboundGrant,
-        used_at: u64,
     ) -> Result<()>;
     fn port_habit_streak_materialize(
         &self,

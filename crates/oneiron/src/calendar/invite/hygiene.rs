@@ -8,14 +8,12 @@ use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
 use crate::comm::CommParties;
-use crate::comm::count_active_party_claims_in_txn;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grants_in_txn,
 };
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT};
+use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
 use std::collections::BTreeMap;
 
@@ -218,18 +216,24 @@ fn resolve_consent_basis_in_txn(
     event_ref: EntityId,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
-    let party = crate::comm::resolve_party_ref_in_txn(vault, txn, recipient)
+    let party = vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, txn, recipient)
         .map_err(|err| ingest_reason(err.to_string()))?;
     consent_basis(
         |channel_class| match party {
-            Some(party) => count_active_party_claims_in_txn(
-                vault,
-                txn,
-                party,
-                PREDICATE_COMM_LAST_TOUCH,
-                channel_class,
-            )
-            .map_err(|err| ingest_reason(err.to_string())),
+            Some(party) => vault
+                .store
+                .record_hooks
+                .count_active_party_claims_in_txn(
+                    vault,
+                    txn,
+                    party,
+                    PREDICATE_COMM_LAST_TOUCH,
+                    channel_class,
+                )
+                .map_err(|err| ingest_reason(err.to_string())),
             None => Ok(0),
         },
         || {
@@ -341,14 +345,17 @@ impl PartyTouches {
             let touches = PRIOR_THREAD_CHANNEL_CLASSES
                 .into_iter()
                 .map(|channel_class| {
-                    let count = count_active_party_claims_in_txn(
-                        vault,
-                        &rtxn,
-                        party,
-                        PREDICATE_COMM_LAST_TOUCH,
-                        channel_class,
-                    )
-                    .map_err(|err| ingest_reason(err.to_string()));
+                    let count = vault
+                        .store
+                        .record_hooks
+                        .count_active_party_claims_in_txn(
+                            vault,
+                            &rtxn,
+                            party,
+                            PREDICATE_COMM_LAST_TOUCH,
+                            channel_class,
+                        )
+                        .map_err(|err| ingest_reason(err.to_string()));
                     (channel_class, count)
                 })
                 .collect::<BTreeMap<_, _>>();
@@ -385,24 +392,18 @@ struct StandingGrants {
 
 impl StandingGrants {
     fn read(vault: &Vault) -> Result<Self, CalendarError> {
-        let grant_refs = vault
-            .entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)
-            .map_err(CalendarError::from)?;
-        let mut grants = Vec::new();
-        {
+        let grants: Vec<(EntityId, StandingOutboundGrant)> = {
             let rtxn = vault
                 .store
                 .env
                 .read_txn()
                 .map_err(|error| CalendarError::from(crate::Error::from(error)))?;
-            for grant_ref in grant_refs {
-                if let Some(grant) = standing_outbound_grant_in_txn(&vault.store, &rtxn, &grant_ref)
-                    .map_err(CalendarError::from)?
-                {
-                    grants.push((grant_ref, grant));
-                }
-            }
-        }
+            standing_outbound_grants_in_txn(&vault.store, &rtxn)
+                .map_err(CalendarError::from)?
+                .into_iter()
+                .map(|grant| (grant.id, grant))
+                .collect()
+        };
         let pages = grants.iter().any(|(_, grant)| {
             live(grant)
                 && matches!(
@@ -468,14 +469,8 @@ fn covering_invite_in_txn(
 ) -> Result<Option<EntityId>, CalendarError> {
     let principal = actor.to_hex();
     let mut matched: Option<EntityId> = None;
-    for entry in vault
-        .store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?
-    {
-        let grant_ref = entry?;
-        let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &grant_ref)? else {
-            continue;
-        };
+    for grant in standing_outbound_grants_in_txn(&vault.store, txn)? {
+        let grant_ref = grant.id;
         if !live(&grant) || grant.principal_ref != principal {
             continue;
         }
@@ -512,8 +507,8 @@ fn recipient_scope_covers(scope: &StandingOutboundGrantScope, recipient: &str) -
 }
 
 /// Whether `grant` is active and unrevoked.
-fn live(grant: &StandingOutboundGrant) -> bool {
-    grant.status == StandingOutboundGrantStatus::Active && grant.revoked_at.is_none()
+const fn live(grant: &StandingOutboundGrant) -> bool {
+    grant.is_active()
 }
 
 /// Whether a settled `calendar.attendee` claim already binds this recipient:

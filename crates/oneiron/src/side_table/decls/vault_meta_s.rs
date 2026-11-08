@@ -38,6 +38,11 @@ side_tables! {
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
+    /// The facet a source-free ASSET_TEXT was born under, the batch mask or the vault default, written
+    /// in its birth transaction beside its `FacetOf` stamp and retired with its record-scope stamp: the
+    /// record that the text was born bound to no source (FIX 8741). Key: id16 (text). Value: id16
+    /// (facet).
+    SCOPE_SOURCE_FREE_TEXT: VaultMeta b"scope:source_free_text:v1:" Named;
     /// One row of an Arc's durable work generation (FIX 7509 PR3): its manifest, a part's progress or
     /// its assembly, as refs, pins, ranges and step refs only. Key: string (work id hex + typed suffix).
     SCOPE_SUMMARY_ARC_WORK: VaultMeta b"scope_summary:arc_work:v1:" Named;
@@ -72,6 +77,14 @@ side_tables! {
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
     /// entry hash).
     SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
+    /// The owner's mark that he imported one export secret request's supplement here, which this
+    /// install could not sign in the import's writer, with no live machine profile or no install
+    /// key loaded (FIX 12291): the owner the import revalidated, the surface he imported from
+    /// and the second the import was at, until a pass that can sign carries it or finds nothing
+    /// owed. Holds no secret byte, ciphertext, secret name, proof, credential or key. Key: hash32
+    /// (the request's entry hash).
+    SECRET_CUSTODY_PENDING_IMPORT_MARK: VaultMeta b"secret_custody:pending_import_mark:v1:" Named Engine
+        => crate::store::pending_import_mark::erase_pending_import_mark_actor_in_txn;
     /// A revoke of one portable custody record this install made but could not carry for the
     /// owner yet, with no live machine profile or no install key loaded (CALLS
     /// CUSTODY_REVOKE_PENDING_CARRY): the owner it is by, the surface he decided on, the second
@@ -124,6 +137,8 @@ side_tables! {
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
     /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
     SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
+    /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
+    SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked];
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -148,6 +163,9 @@ side_tables! {
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
         => crate::secret_lease::erase_receipt_actor_in_txn;
+    /// Canonical lift counts by run, family and actual source entity or explicitly unmapped
+    /// source (FIX 10493). No values. Key: run id16, family byte, source tag, source id16 if known.
+    SECRET_LIFT_CONTRIBUTION: VaultMeta b"secret_lift:contribution:v1:" Named Engine;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
@@ -160,8 +178,8 @@ side_tables! {
     /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
     /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
-    /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
-    /// (OF-067). Key: id16 (run id).
+    /// Completion metadata for one lift run (OF-067); its canonical contribution rows supply
+    /// the served receipt's counts. Never a value or a digest. Key: id16 (run id).
     SECRET_LIFT_RECEIPT: VaultMeta b"secret_lift:receipt:v1:" Named;
     /// The lift sweep run in progress: its trigger and its `(family, last key)` cursor (OF-067).
     /// Key: ().
@@ -187,7 +205,7 @@ side_tables! {
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
-        => crate::self_heal::erase_centroid_source_in_txn;
+        => crate::store::centroid_evidence::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -217,7 +235,7 @@ side_tables! {
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored [accepts: crate::store::send_receipt_attempt_audit_accepts_masked];
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason) and its
@@ -232,6 +250,11 @@ side_tables! {
     /// hours between and the newest kept, one row for the whole choice. Absent is no choice, and
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
+    /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
+    /// agent's board renders under until it lays out its own, and the override whose sections win
+    /// over every agent's own. Absent reads empty. Key: ().
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named
+        => crate::settings::board_layout::erase_board_layout_agent_override_in_txn;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
@@ -325,6 +348,13 @@ side_tables! {
     /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
     /// id).
     SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
+    /// A membership change this install executed with no host issuer to sign it, whose
+    /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
+    /// executed it, the member it moved, the act, the second it was executed at, the signed-mint
+    /// Grants it withdrew and an Owner act's handover, until the pass whose writer the fold counts
+    /// the record in. Holds no value, credential or proof. Key: hex32 (receipt id).
+    SHARED_ACT_MEMBERSHIP_PENDING: VaultMeta b"shared-act:membership-pending:v1:" Named Engine
+        => crate::Vault::erase_pending_membership_execution_actor_in_txn;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
@@ -354,20 +384,32 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// The key a pending invitation's own slips must bind, as the invitee bound it with an
+    /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
+    /// Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION_KEY: VaultMeta b"shared-vault:invitation-key:v1:" Raw;
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
     /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
+    /// One Sheets write's claim on its caller's invocation (FIX 4862, REVIEW-6403): the request it
+    /// bound (tool, spreadsheet id, request digest, mutation), its intent Gate record, and its send
+    /// under way or settled with what it came to and its outcome Gate record, so a replay never
+    /// sends an attempted write again. Key: id16 (invocation ref).
+    SHEETS_WRITE_INVOCATION: VaultMeta b"sheets:write_invocation:v1:" Named;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// Last short-id counter per runtime (pack) kind, by its stable short-id prefix, kept across
+    /// uninstall, slot collection and reinstall (FIX 7741). Key: string.
+    SHORT_ID_KIND_COUNTER: VaultMeta b"sid_kind_counter:" Raw;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
     SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
-        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+        [refs: CALLABLE_CASE_REFS] [accepts: crate::skill::skill_callable_case_accepts_masked] => crate::skill::erase_callable_case_actor_in_txn;
     /// The frozen callable cases by what they were made from, so an erase reads only the cases
     /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
     /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
@@ -405,7 +447,7 @@ side_tables! {
     /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
+        => crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn;
     /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
     /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
     /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair
@@ -450,7 +492,7 @@ side_tables! {
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
     /// keyed by sequence; its skill and its actor are each nil once erased. Key: u64be.
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
-        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
+        => crate::store::skill_attribution_evidence::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
@@ -460,7 +502,7 @@ side_tables! {
     /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
     /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
-        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
+        => crate::store::skill_attribution_judgments::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
     /// id is redacted where it is named. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named
@@ -470,12 +512,12 @@ side_tables! {
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill;
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
-        => crate::skill_attribution::erase_positive_proposals_in_txn;
+        => crate::store::positive_skill_proposals::erase_positive_proposals_in_txn;
     /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
     /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
     /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
     SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
-        => crate::skill_attribution::erase_site_exposure_in_txn;
+        => crate::store::site_skill_exposure::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;
@@ -486,8 +528,12 @@ side_tables! {
     /// Key: ().
     SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR: VaultMeta b"skill_attribution:sweep_scan:v1" Raw;
     /// One outcome the attribution judge left `unclear`, with each unclear hunk's reason, share and
-    /// note, awaiting Dreamer clustering. Key: string (lane ":" reference).
-    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw;
+    /// note, and the context frozen with them (FIX 7824): actor, skill, scope, project, task type,
+    /// attempt receipt, judge revision and model, and the rows the judge read; awaiting Dreamer
+    /// clustering. A row whose context names an erased entity goes whole. Key: string (lane ":"
+    /// reference).
+    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw
+        => crate::skill_attribution::erase_unclear_entity_in_txn;
     /// Skills citing a source. Key: id16 + id16.
     SKILL_SOURCE_INDEX: VaultMeta b"skill_convert/source_index/v1\0" Raw;
     /// Staleness note of a skill. Key: id16.
@@ -567,7 +613,7 @@ side_tables! {
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
     /// A proposal's live goal-axis report, bound to its bodies, evidence and plan (MessagePack
     /// named map). Key: id16 (proposal).
-    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
+    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v2\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// A proposal's offline preflight: its floor and cost axes and the honesty floor scored on the
@@ -629,8 +675,9 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named
         => crate::skill_optimize::erase_offer_source_in_txn;
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
-    /// id16 (offer).
-    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// id16 (offer). Its scrub leaves an erased actor's answers naming no one.
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named
+        => crate::skill_optimize::erase_offer_answer_actor_in_txn;
     /// An immutable owner-nominated seat/candidate pin for a Coach offer. Key: id16.
     SKILL_OPTIMIZE_OFFER_CANDIDATE: VaultMeta b"skill_optimize:offer_candidate:v1:" Named;
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
@@ -644,8 +691,10 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named
         => crate::skill_optimize::erase_switch_actor_in_txn;
     /// The prepared training run an approved Train offer handed off, with the exact spec the
-    /// owner authorized. Key: id16 (offer).
-    SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named;
+    /// owner authorized. Key: id16 (offer). Its scrub leaves an erased actor's handoffs naming
+    /// no one.
+    SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named
+        => crate::skill_optimize::erase_offer_training_actor_in_txn;
     /// The owner's final pick between a blind preference pair's two responses (preferred side,
     /// picker, time). Key: string (pair reference).
     SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;
@@ -673,13 +722,48 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
+    /// A row a source landing is about to stamp with the source-audience obligation in its own
+    /// write (fix list row 16256): the one mark the write door admits the stamp under. Binding the
+    /// row takes it away, and the landing commits with none left, so a row never outlives its
+    /// transaction here. Key: id16(row).
+    SOURCE_AUDIENCE_BIRTH: VaultMeta b"source_audience:birth:v1:" Named;
+    /// The policies a row written from source-bound rows reads under beside its own lineage, the
+    /// union of every set a full-window carrier brought (fix list row 17207). It only grows.
+    /// Key: id16(row).
+    SOURCE_AUDIENCE_DERIVED: VaultMeta b"source_audience:derived:v1:" Named;
+    /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
+    /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
+    SOURCE_AUDIENCE_EVENT: VaultMeta b"source_audience:event:v1:" Named;
+    /// A row this vault reads to no one meanwhile (FIX 12559 follow-up): its carried binding
+    /// waits for its policy, or the vault it came from withheld it after it travelled. Key:
+    /// id16(row).
+    SOURCE_AUDIENCE_HELD: VaultMeta b"source_audience:held:v1:" Named;
+    /// Whether a row a source landed was ever written here, by any door (fix list row 16255):
+    /// until one is, no row's words came from one, and the source-audience walk answers at
+    /// once. Key: ().
+    SOURCE_AUDIENCE_LANDED: VaultMeta b"source_audience:landed:v1:seen" Named;
+    /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
+    /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
+    SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
+        => crate::source_audience::erase_actor_in_txn;
+    /// A changed source audience's pending wake of the windows it rides (fix list row 17203):
+    /// its generation and the last window the live mirror's drain took. Key: id16(policy).
+    SOURCE_AUDIENCE_POLICY_WAKE: VaultMeta b"source_audience:policy_wake:v1:" Named;
+    /// A window that carries a source audience policy, as its last export or persist found it
+    /// (fix list row 17203): the window's label. Key: id16(policy) + blake3 (32) of the label.
+    SOURCE_AUDIENCE_POLICY_WINDOW: VaultMeta b"source_audience:policy_window:v1:" Named;
+    /// The source audience a row was born under; it never moves (FIX 12559). Key: id16(row).
+    SOURCE_AUDIENCE_RECORD: VaultMeta b"source_audience:record:v1:" Named;
+    /// One source thread's audience policy (FIX 12559). Key: id16(source policy) + blake3 (32)
+    /// of the source's thread key.
+    SOURCE_AUDIENCE_THREAD: VaultMeta b"source_audience:thread:v1:" Named;
     /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
     /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
     /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An
     /// actor's scrub forgets the asker and keeps the row; behind the hard-delete marker, an erase
     /// of the asker or of the AGENT_DEF its plan seats leaves the row's erased form: its ids,
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
-    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
+    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v2:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// The erase selector of each asker a hard erase reached: value-free and permanent, one
     /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a
@@ -691,6 +775,27 @@ side_tables! {
     /// Blake3 digest stamp of the last claim body that produced a subject's composite state-index
     /// claim, used to detect out-of-band claim edits. Key: id16.
     AFFECT_STATE_COMPOSITE_PRODUCER: VaultMeta b"state:composite:producer:v1:" Raw;
+    /// An open MFA step-up ceremony (FIX 11694): the person, the exact slip it is bound to, the
+    /// ceremony and when it closes. Key: the 32 challenge bytes.
+    STEP_UP_CHALLENGE: VaultMeta b"step_up:challenge:v1:" Named
+        => crate::authority::erase_step_up_challenges_actor_in_txn;
+    /// A person's enrolled passkey (FIX 11694): credential id, COSE algorithm, public key, RP id,
+    /// origin, counter, label and times. Holds no secret. Key: id16 (the person) + SHA-256 (32) of
+    /// the credential id.
+    STEP_UP_PASSKEY: VaultMeta b"step_up:passkey:v1:" Named
+        => crate::authority::erase_step_up_passkeys_actor_in_txn;
+    /// A completed MFA step-up on one slip (FIX 11694): the person, the factor, the passkey and
+    /// when. Key: the 32-byte slip id.
+    STEP_UP_RECORD: VaultMeta b"step_up:record:v1:" Named
+        => crate::authority::erase_step_up_records_actor_in_txn;
+    /// Pending authenticator enrollment: the exact slip, sealed seed, key ref and expiry.
+    /// Key: person id16 + enrollment id32; never replaces a confirmed enrollment.
+    STEP_UP_TOTP_PENDING: VaultMeta b"step_up:totp:pending:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
+    /// A person's confirmed authenticator: sealed seed, erasable key ref and spent step.
+    /// Key: person id16 + enrollment id32. Seed bytes never rest in plaintext.
+    STEP_UP_TOTP: VaultMeta b"step_up:totp:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
     /// Storage ABI stamp. Key: ().
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.

@@ -9,6 +9,17 @@
 //! works to its end. A running `serve` runs the same pass on its own tick and
 //! answers `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep
 //! that failed makes the exit nonzero.
+//!
+//! The model pack retirement sweep resolves the active pack's roles against
+//! the access the router `serve` builds would hold, so the pass sends a
+//! retiring model's notices too (FIX 22059, 22189): the routes of the
+//! `[models]` config, the on-device views of the managed EXL3 workers plain
+//! `serve` launches, and the models the owner's other nodes offer, as the
+//! vault's mesh discovery rows hold them, with or without `[models]`. A
+//! `serve` with the mesh off marks those rows stale at its start, so
+//! `maintain` counts them only after a `serve` with the mesh on (FIX
+//! 22227). It is read from the config and those rows, with no backend
+//! built, no worker launched and nothing sent.
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
 use oneiron::maintain::CorruptClaimRepair;
@@ -18,6 +29,7 @@ use serde::Serialize;
 use super::owner::{emit, open_stopped_vault_with, vault_config};
 use crate::cli::MaintainArgs;
 use crate::config::resolve_serve_config;
+use crate::models::ModelRouter;
 
 #[derive(Debug, Serialize)]
 struct MaintainReport {
@@ -27,6 +39,8 @@ struct MaintainReport {
     /// The lift sweep's state after the pass, when the owner queued a run.
     #[serde(skip_serializing_if = "Option::is_none")]
     secret_lift: Option<SecretLiftStatus>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    training_inputs: Vec<crate::ai_host::training_pack::TrainingInputCleanup>,
 }
 
 /// What each repair the owner named did; a repair not named is absent.
@@ -130,12 +144,19 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         vault_config,
         "or ask it: `oneiron api raw POST /v1/owner/maintain`",
     )?;
+    let training_inputs = cleanup_training_inputs(
+        &vault,
+        config.models.as_ref().map(|models| &models.training),
+        &args.cleanup_training_inputs,
+    )?;
     let repairs = repair(&vault, &args)?;
     if args.lift_secrets {
         let owner = crate::owner::local_owner(&vault)?;
         vault.start_secret_lift(&owner, vault.now_recorded_at())?;
     }
-    let housekeeping = vault.housekeeping_all(HousekeepingBudget::unbounded())?;
+    let access = ModelRouter::stopped_vault_access_snapshot(config.models.as_ref(), &vault);
+    let housekeeping =
+        vault.housekeeping_all_with_access(HousekeepingBudget::unbounded(), &access)?;
     let failed = housekeeping.failed();
     let secret_lift = args
         .lift_secrets
@@ -145,12 +166,28 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         housekeeping,
         repairs,
         secret_lift,
+        training_inputs,
     })?;
     anyhow::ensure!(
         failed == 0,
         "{failed} housekeeping sweep(s) failed; the report names them, and the next pass retries them"
     );
     Ok(())
+}
+
+fn cleanup_training_inputs(
+    vault: &oneiron::Vault,
+    settings: Option<&crate::config::models::TrainingSettings>,
+    ids: &[String],
+) -> anyhow::Result<Vec<crate::ai_host::training_pack::TrainingInputCleanup>> {
+    ids.iter()
+        .map(|hex| {
+            let id = oneiron::EntityId::from_hex(hex).map_err(|_| {
+                anyhow::anyhow!("--cleanup-training-inputs {hex} is not a 32-hex run id")
+            })?;
+            crate::ai_host::training_pack::cleanup_training_job_inputs(vault, settings, &id)
+        })
+        .collect()
 }
 
 fn repair(vault: &oneiron::Vault, args: &MaintainArgs) -> anyhow::Result<Repairs> {

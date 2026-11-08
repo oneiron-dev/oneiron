@@ -1,13 +1,18 @@
 //! Query-bound slot cache. Cached bodies are never publication authority.
 use super::super::booking_anti_abuse::{cached_slot_list_body, remember_slot_list_body};
+use super::helpers::domain_digest;
 use super::*;
 use oneiron::booking::BookingPagePublication;
 use oneiron::booking::publication::PublicBookingAuthority;
 use serde::{Deserialize, Serialize};
 
+/// Domain of the digest a cached answer is keyed by.
+const QUERY_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.slot_cache.query.v1\0";
+
 #[derive(Serialize, Deserialize)]
 struct CachedAvailability {
-    query: serde_json::Value,
+    /// The digest of the query the answer was solved for (lower-case hex).
+    query: String,
     response: BookingOperationResponse,
     /// The rows the cached solve was derived from, by hex id (FIX 4781):
     /// its calendar binding's claims and every row its oracle listed. An
@@ -19,16 +24,19 @@ struct CachedAvailability {
 /// A cached answer and the rows its solve listed, `None` when unknown.
 pub(super) type CachedListing = (BookingOperationResponse, Option<Vec<EntityId>>);
 
-fn query(
-    input: &BookingAvailabilityInput,
-    authority: &PublicBookingAuthority,
-) -> serde_json::Value {
-    // Session identity does not change availability. Window, timezone,
-    // constraint, event, and exact owner snapshot do.
-    serde_json::json!({
+/// The digest a cached answer is keyed by, `None` when the query does not
+/// encode (nothing is cached or read then). Session identity does not change
+/// availability. Window, timezone, constraint, event, and exact owner
+/// snapshot do. The entry keeps the digest, not the query: the snapshot's
+/// presentation fields have no length bound (FIX 20663), and the entry does.
+fn query(input: &BookingAvailabilityInput, authority: &PublicBookingAuthority) -> Option<String> {
+    let material = serde_json::to_vec(&serde_json::json!({
         "event_type": input.event_type, "window": {"start": input.window.start, "end": input.window.end},
         "visitor_tz": input.visitor_tz, "constraint": input.constraint, "authority": authority,
-    })
+    }))
+    .ok()?;
+    let digest = domain_digest(QUERY_DIGEST_DOMAIN, &material);
+    Some(blake3::Hash::from(digest).to_hex().to_string())
 }
 
 pub(super) fn validate_public_request(
@@ -83,13 +91,16 @@ pub(super) fn cached_response(
     else {
         return Ok(None);
     };
+    let Some(digest) = query(input, authority) else {
+        return Ok(None);
+    };
     let Some(bytes) = cached_slot_list_body(server, &page, Some(&input.event_type))? else {
         return Ok(None);
     };
     let Ok(cached) = serde_json::from_slice::<CachedAvailability>(&bytes) else {
         return Ok(None);
     };
-    if cached.query != query(input, authority) {
+    if cached.query != digest {
         return Ok(None);
     }
     if !matches!(
@@ -114,12 +125,12 @@ pub(super) fn remember_response(
     response: &BookingOperationResponse,
     sources: &[EntityId],
 ) -> Result<(), ApiError> {
-    let Some(authority) = authority else {
+    let Some(digest) = authority.and_then(|authority| query(input, authority)) else {
         return Ok(());
     };
     let entry = |sources: Option<Vec<String>>| {
         serde_json::to_vec(&CachedAvailability {
-            query: query(input, authority),
+            query: digest.clone(),
             response: response.clone(),
             sources,
         })
