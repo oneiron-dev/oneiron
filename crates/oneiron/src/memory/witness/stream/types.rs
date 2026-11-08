@@ -160,7 +160,7 @@ pub enum MessageStreamError {
     WaitedOut(#[from] crate::live_rows::LiveWaitedOut),
     #[error("message stream buffer limit reached")]
     BufferOverflow,
-    #[error("message stream presence exceeds the 64 KiB frame budget")]
+    #[error("message stream presence frame does not encode")]
     PresenceFrameTooLarge,
     #[error("invalid message stream request: {0}")]
     InvalidRequest(&'static str),

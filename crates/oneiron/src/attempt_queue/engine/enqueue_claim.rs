@@ -206,7 +206,7 @@ impl<'a> AttemptQueue<'a> {
         task_ref: Option<String>,
         dedupe_actor_ref: Option<&str>,
     ) -> Result<EnqueueOutcome> {
-        self.enqueue_storage_in_txn(wtxn, input, task_ref, dedupe_actor_ref, None)
+        self.enqueue_storage_in_txn(wtxn, input, task_ref, dedupe_actor_ref, None, None)
     }
 
     /// Transaction-composable, actorless enqueue under an id the caller derived
@@ -222,7 +222,24 @@ impl<'a> AttemptQueue<'a> {
         id: AttemptId,
         input: EnqueueAttempt,
     ) -> Result<EnqueueOutcome> {
-        self.enqueue_storage_in_txn(wtxn, input, None, None, Some(id))
+        self.enqueue_storage_in_txn(wtxn, input, None, None, Some(id), None)
+    }
+
+    /// [`Self::enqueue_with_id_in_txn`] that also carries the row's TASK
+    /// backlink and the try it goes on from (`retry_of`), for a machine that
+    /// takes over an agent run another machine ran (FIX 4747 slice 6): the
+    /// run's live try is queued here under its own id, so the memo keys of its
+    /// finished steps match. A taken id is refused as a collision, and a
+    /// pending row that holds the dedupe key answers as the existing row.
+    pub(crate) fn enqueue_handed_over_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        retry_of: Option<AttemptId>,
+    ) -> Result<EnqueueOutcome> {
+        self.enqueue_storage_in_txn(wtxn, input, task_ref, None, Some(id), retry_of)
     }
 
     /// Atomically claims the oldest queued attempt under LMDB's single-writer
