@@ -116,7 +116,8 @@ pub(super) fn facade_invoke_concern_move(
             Ok((output, wake))
         },
     )?;
-    let output = super::drained_still_admitted(&server.vault, call.auth(), producers, output);
+    let output =
+        super::drained_still_admitted(&server.vault, call.auth(), producers, output, false);
     Ok((output, wake))
 }
 
@@ -224,10 +225,18 @@ pub(super) fn facade_invoke_in_turn_with_notice(
             })
         },
     )?;
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, call.auth(), verb);
     // A drained call's answer is judged once more for the caller its retry
     // came by (FIX 21054); the notice stays beside it.
     Ok((
-        super::drained_still_admitted(&server.vault, call.auth(), producers, output),
+        super::drained_still_admitted(
+            &server.vault,
+            call.auth(),
+            producers,
+            output,
+            owner_whole_vault_export,
+        ),
         hook_notice,
     ))
 }

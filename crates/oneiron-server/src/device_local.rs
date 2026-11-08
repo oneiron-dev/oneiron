@@ -38,11 +38,34 @@ pub(crate) fn retained_hold(
     if !destination.is_off_device() {
         return Ok(None);
     }
+    vault.release_hold_for(&released_rows(rows, payload), destination)
+}
+
+/// [`retained_hold`] for the owner's own whole-vault export (owner ruling
+/// 1-EXPORT = B), a mode its door chose from its trusted route and the
+/// owner's fresh proof, never from the payload: his recipient choice keeps
+/// none of its rows from `destination`, so only an integrity hold keeps it
+/// here ([`oneiron::Vault::owner_export_release_hold_for`]). The same rows
+/// and the same whole-id scan of `payload` are judged.
+pub(crate) fn owner_export_retained_hold(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    rows: &[EntityId],
+    payload: &[u8],
+) -> oneiron::Result<Option<ReleaseHold>> {
+    if !destination.is_off_device() {
+        return Ok(None);
+    }
+    vault.owner_export_release_hold_for(&released_rows(rows, payload), destination)
+}
+
+/// `rows` and every row `payload` names by whole id, each once.
+fn released_rows(rows: &[EntityId], payload: &[u8]) -> Vec<EntityId> {
     let mut named = entity_ids_in(payload);
     named.extend_from_slice(rows);
     named.sort_unstable_by_key(|id| *id.as_bytes());
     named.dedup();
-    vault.release_hold_for(&named, destination)
+    named
 }
 
 /// Where a prompt's rows go for a model call (FIX 4937): to `caller`, who

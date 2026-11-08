@@ -10,21 +10,25 @@
 //! snapshot, which was read from raw bytes; a code thread's words are read
 //! again from the file its hash names, once that file's ASSET is admitted.
 //! An offer reads the head the same way, once the head's own rows are
-//! admitted. A held task shows only when the thread's newest brief and its
-//! TASK are both admitted; otherwise the thread shows without it. An offer
-//! is still only an offer.
+//! admitted; on a code artifact it reads each file of the current snapshot
+//! once the lane admits the ASSET its hash names. A held task shows only
+//! when the thread's newest brief and its TASK are both admitted; otherwise
+//! the thread shows without it. An offer is still only an offer.
 
 use super::super::anchor_text::{UnitFormat, anchor_text, find_text};
 use super::super::code_units::{CodeFile, code_span_words_in_txn};
 use super::super::model::{AnnotationThread, Locator};
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
+use super::code::code_reattach_offers_in_txn;
 use super::{ReattachOffer, UNATTACHED, UnattachedThread};
 use crate::Vault;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::claim::{ClaimBody, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::secret_custody::SecretSight;
+use crate::store::code_snapshot::codebase_asset_entity_id;
 
 /// Whether the reader's lane admits one row, in the listing's snapshot.
 type Admits<'a> = &'a dyn Fn(&EntityId) -> Result<bool>;
@@ -59,7 +63,9 @@ impl Vault {
     /// start from the threads [`Self::unattached_annotation_threads_scoped`]
     /// serves it, in the same snapshot, and the head is read through `sight`
     /// only once the lane admits the head's own CLAIM and ASSET. A withheld
-    /// head offers nothing.
+    /// head offers nothing. On a code artifact each file of its current
+    /// snapshot is read through `sight` only once the lane admits the ASSET
+    /// its hash names, and a withheld file offers nothing (FIX 7905).
     pub fn annotation_reattach_offers_scoped(
         &self,
         lane: &ScopedRead<'_>,
@@ -67,12 +73,26 @@ impl Vault {
         sight: SecretSight,
     ) -> Result<Vec<ReattachOffer>> {
         lane.persist_grant_clock()?;
+        let code_artifact = self.get_entity_type(artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT);
+        // A code artifact's files are found inside the read below: every body
+        // is pinned before it opens (FIX 5399).
+        let _bodies = code_artifact.then(|| self.pin_all_result_bodies());
         let rtxn = self.store.env.read_txn()?;
         let policy = lane.live_policy_manifest_in(&rtxn)?;
         let admits = |id: &EntityId| lane.is_ref_readable_with_policy_in(&rtxn, &policy, id);
         let unattached = self.unattached_scoped_in_txn(&rtxn, &admits, artifact_id, sight)?;
         if unattached.iter().all(|thread| thread.snapshot.is_none()) {
             return Ok(Vec::new());
+        }
+        if code_artifact {
+            return code_reattach_offers_in_txn(
+                self,
+                &rtxn,
+                artifact_id,
+                &unattached,
+                sight,
+                |hash| admits(&codebase_asset_entity_id(hash)?),
+            );
         }
         let Some(head) = read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)? else {
             return Ok(Vec::new());

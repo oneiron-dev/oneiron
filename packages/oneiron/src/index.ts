@@ -648,7 +648,7 @@ export class Oneiron {
     budgets: {
       /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
       lease: Object.assign((input: Facade.SpendScopeRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLease(input) as Facade.SpendLeaseView), {
-        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit. */
+        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on. */
         open: (input: Facade.OpenSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseOpen(input) as Facade.SpendLeaseView),
         /** The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap. */
         top_up: (input: Facade.TopUpSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseTopUp(input) as Facade.SpendLeaseView),
@@ -889,7 +889,7 @@ export class Oneiron {
       /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
       resolve_proposal: (input: Facade.ClusterResolveRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterResolveProposal(input) as Facade.ClusterTopologyReceipt),
     }),
-    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
+    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */
     export: Object.assign((format?: string): Facade.ExportAnswer => this.#call(() => this.#client.vaultExport({format: format}) as Facade.ExportAnswer), {
       transfer: {
         /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */
@@ -2128,6 +2128,14 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
+      models: {
+        responses_store: {
+          /** Reads the owner's Responses store switch from the serving vault. */
+          read: (input: Facade.EmptyRequest): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreRead(input) as Facade.ModelResponsesStoreSettings),
+          /** Sets the owner's Responses store switch, persisting it before updating this server's live providers. */
+          set: (input: Facade.ModelResponsesStoreSettings): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreSet(input) as Facade.ModelResponsesStoreSettings),
+        },
+      },
       /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
       web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
@@ -2437,8 +2445,12 @@ export class Oneiron {
       },
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
+      /** Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused. */
+      session_model_heal_count: (input: Facade.CodeRunSessionModelHealCountRequest): Facade.CodeRunSessionModelHealCountView => this.#call(() => this.#client.vaultCodeSessionModelHealCount(input) as Facade.CodeRunSessionModelHealCountView),
       /** Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only. */
       corrections: (input: Facade.CodeRunCorrectionsRequest): Facade.CodeRunCorrectionsView => this.#call(() => this.#client.vaultCodeCorrections(input) as Facade.CodeRunCorrectionsView),
+      /** Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records. */
+      step_evidence: (input: Facade.CodeRunStepEvidenceRequest): Facade.CodeRunStepEvidenceView | null => this.#call(() => this.#client.vaultCodeStepEvidence(input) as Facade.CodeRunStepEvidenceView | null),
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
@@ -2560,7 +2572,7 @@ export class Oneiron {
         reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
       },
       snapshots: {
-        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
@@ -2634,10 +2646,16 @@ export class Oneiron {
         set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
       },
       grants: {
-        /** The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door. */
+        /** The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
+      },
+      verb_classes: {
+        /** The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash. */
+        get: (input: Facade.EmptyRequest = {}): Facade.AgentVerbClassesView => this.#call(() => this.#client.vaultAgentsVerbClassesGet(input) as Facade.AgentVerbClassesView),
+        /** The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once. */
+        configure: (input: Facade.AgentVerbClassesConfigureRequest): Facade.AgentVerbClassesReceipt => this.#call(() => this.#client.vaultAgentsVerbClassesConfigure(input) as Facade.AgentVerbClassesReceipt),
       },
       /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
       base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),
@@ -2657,7 +2675,7 @@ export class Oneiron {
         revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
       },
       anchor: {
-        /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+        /** The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership. */
         bind: (input: Facade.RepoAnchorBindInput): Facade.RepoAnchorBindOutput => this.#call(() => this.#client.vaultRepoAnchorBind(input) as Facade.RepoAnchorBindOutput),
       },
       snapshots: {
@@ -3422,11 +3440,11 @@ export class Oneiron {
     },
     mail: {
       pack: {
-        /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+        /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
         install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
       },
       sources: {
-        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
         connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
         /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
         list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
@@ -3442,6 +3460,10 @@ export class Oneiron {
         audience_events: (input: Facade.MailSourceRef): Facade.SourceAudienceEventView[] => this.#call(() => this.#client.vaultMailSourcesAudienceEvents(input) as Facade.SourceAudienceEventView[]),
         /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
         sync_status: (input: Facade.MailSourceRef): Facade.MailSyncStatusView => this.#call(() => this.#client.vaultMailSourcesSyncStatus(input) as Facade.MailSyncStatusView),
+        /** The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place. */
+        import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
+        /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
+        sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
       },
       threads: {
         /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
@@ -3450,6 +3472,16 @@ export class Oneiron {
         unshare: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsUnshare(input) as Facade.MailThreadShareReceipt),
         /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
         read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
+      },
+      reply: {
+        /** Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves. */
+        draft: (input: Facade.MailReplyDraftRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDraft(input) as Facade.MailReplyDraftView),
+        /** The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state. */
+        drafts: (input: Facade.MailReplyDraftsRequest): Facade.MailReplyDraftPage => this.#call(() => this.#client.vaultMailReplyDrafts(input) as Facade.MailReplyDraftPage),
+        /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
+        discard: (input: Facade.MailReplyDraftRef): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDiscard(input) as Facade.MailReplyDraftView),
+        /** The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice. */
+        approve: (input: Facade.MailReplyApproveRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyApprove(input) as Facade.MailReplyDraftView),
       },
       compliance: {
         /** Whether org compliance search across mailboxes is on; off by default. */
@@ -3463,6 +3495,10 @@ export class Oneiron {
       },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+      attachments: {
+        /** A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers. */
+        open: (input: Facade.MailAttachmentOpenRequest): Facade.MailAttachmentView => this.#call(() => this.#client.vaultMailAttachmentsOpen(input) as Facade.MailAttachmentView),
+      },
     },
     dreamer: {
       follower: {

@@ -84,7 +84,9 @@ impl FacadeReleased {
 /// effect stays committed. An answer whose rows are unknown, and every answer
 /// on this device, goes out as it was. The step feedback an answer carries
 /// is judged apart from it, after it (FIX 10389): a hold on one withholds
-/// only that feedback's text, never the answer.
+/// only that feedback's text, never the answer. The owner's own whole-vault
+/// export, as its route and his fresh proof name it, keeps every integrity
+/// hold and no recipient choice (owner ruling 1-EXPORT = B).
 pub(super) fn released_reply(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -116,6 +118,8 @@ pub(super) fn released_value(
         hook_notice,
     } = output;
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, auth, verb);
     let destination = auth.destination();
     let carried = take_program_steps(verb, &value);
     let held = known_denied(
@@ -124,6 +128,7 @@ pub(super) fn released_value(
         rows.as_deref(),
         carried.as_ref().map_or(&value, |(base, _)| base),
         owner_export,
+        owner_whole_vault_export,
     );
     let released = carried.filter(|_| !held).and_then(|(_, feedback)| {
         let rows = rows.as_deref();
@@ -184,11 +189,16 @@ pub(super) fn unbound_reply(
 /// here; so does a row a world withheld from this waiter's destination. A
 /// waiter toward another machine than the first call's is answered for its
 /// own, never refused for the difference. Unknown rows keep the answer.
+/// `owner_whole_vault_export`: the owner's own whole-vault export, its waiter
+/// admitted again now as its owner
+/// ([`super::export_transfer::owner_whole_vault_export_admitted`]), released
+/// as its first call's answer was.
 pub(crate) fn replayed_value(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     release: InvocationRelease,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     if release.peer != auth.peer() {
         tracing::debug!(
@@ -197,7 +207,7 @@ pub(crate) fn replayed_value(
         );
     }
     if let Some(rows) = release.rows.as_deref()
-        && !rows_still_admitted(vault, auth, rows)
+        && !rows_still_admitted(vault, auth, rows, owner_whole_vault_export)
     {
         return details_on_device();
     }
@@ -210,6 +220,7 @@ pub(crate) fn replayed_value(
         release.rows.as_deref(),
         carried.as_ref().map_or(&release.value, |(base, _)| base),
         owner_export,
+        owner_whole_vault_export,
     ) {
         return details_on_device();
     }
@@ -230,6 +241,7 @@ pub(crate) fn replayed_claim_value(
     auth: &CoreAuth,
     verb: &str,
     release: InvocationRelease,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Result<(serde_json::Value, bool)> {
     let SavedFacadeReply { value, hook_notice } = serde_json::from_value(release.value)?;
     let release = InvocationRelease {
@@ -237,7 +249,16 @@ pub(crate) fn replayed_claim_value(
         value,
         rows: release.rows,
     };
-    Ok((replayed_value(vault, auth, verb, release), hook_notice))
+    Ok((
+        replayed_value(
+            vault,
+            auth,
+            verb,
+            release,
+            owner_whole_vault_export,
+        ),
+        hook_notice,
+    ))
 }
 
 /// `value`, an answer released as it stands, with the step feedback it
@@ -298,20 +319,24 @@ pub(crate) fn released_hook_stop(
 /// withheld from where the answer goes keeps the result on this device: the
 /// caller gets the content-free word that the call ran
 /// ([`details_on_device`]). Unknown rows withhold nothing, as for every
-/// facade answer ([`known_denied`]).
+/// facade answer ([`known_denied`]). `owner_whole_vault_export`: the owner's
+/// own whole-vault export, as the retry's route and his fresh proof name it
+/// ([`super::export_transfer::owner_whole_vault_export_admitted`]), released
+/// as a kept answer of it is (owner ruling 1-EXPORT = B).
 pub(crate) fn released_saved_result(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     rows: Option<Vec<EntityId>>,
     result: serde_json::Value,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     let release = InvocationRelease {
         peer: auth.peer(),
         value: result,
         rows,
     };
-    replayed_value(vault, auth, verb, release)
+    replayed_value(vault, auth, verb, release, owner_whole_vault_export)
 }
 
 /// `output`, a facade row's answer, as `auth`, its caller now, may read it
@@ -322,14 +347,20 @@ pub(crate) fn released_saved_result(
 /// content-free word that the call ran ([`details_on_device`]). A fresh
 /// answer, or a drained one whose rows are unknown, is `output` as it is.
 /// The destination release follows for every answer ([`released_value`]).
+/// The owner's own whole-vault export (`owner_whole_vault_export`, chosen
+/// from the call's route) reads its rows as his credential reads them on
+/// this device (owner ruling 1-EXPORT = B).
 pub(super) fn drained_still_admitted(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     producers: &oneiron::memory::ProducerRows,
     output: serde_json::Value,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     match producers.drained_rows() {
-        Some(rows) if !rows_still_admitted(vault, auth, &rows) => details_on_device(),
+        Some(rows) if !rows_still_admitted(vault, auth, &rows, owner_whole_vault_export) => {
+            details_on_device()
+        }
         _ => output,
     }
 }
@@ -337,42 +368,78 @@ pub(super) fn drained_still_admitted(
 /// Whether `auth`'s credential still reads every one of `rows` now, and none
 /// was erased since (FIX 7914, FIX 8212): the waiter's current source
 /// admission. A check that cannot be read passes: unknown never withholds.
+/// The owner's own whole-vault export (`owner_whole_vault_export`, its owner
+/// admitted again by its door) reads each row as his credential reads it on
+/// this device: his recipient choice keeps none of them (owner ruling
+/// 1-EXPORT = B); the release judges where they go after.
 pub(crate) fn rows_still_admitted(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     rows: &[EntityId],
+    owner_whole_vault_export: bool,
 ) -> bool {
+    let destination = if owner_whole_vault_export {
+        ReadDestination::on_device()
+    } else {
+        auth.destination()
+    };
     rows.iter().all(|row| {
+        // A run whose results the owner's own archive carries may have no
+        // entity row (a replay an action left): its run's own standing
+        // admits it, as an erase of its replies refuses it (FIX 9591).
+        if owner_whole_vault_export
+            && vault.get_entity_type(row).ok().flatten().is_none()
+            && let Ok(Some(stands)) = vault.code_run_results_stand(row)
+        {
+            return stands;
+        }
         let erased =
             oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false);
-        !erased && auth.can_read_entity(vault, row).unwrap_or(true)
+        !erased
+            && auth
+                .can_read_entity_at(vault, row, &destination)
+                .unwrap_or(true)
     })
 }
 
 /// [`known_denied`] for one item of a listing, `value`, derived from `rows`
 /// (FIX 8164): whether it holds a detail exactly known to be withheld from
-/// `destination`.
+/// `destination`, for the owner's own whole-vault export
+/// (`owner_whole_vault_export`) by an integrity hold alone.
 pub(super) fn known_denied_rows(
     vault: &oneiron::Vault,
     destination: &ReadDestination,
     rows: &[EntityId],
     value: &serde_json::Value,
+    owner_whole_vault_export: bool,
 ) -> bool {
-    known_denied(vault, destination, Some(rows), value, false)
+    known_denied(
+        vault,
+        destination,
+        Some(rows),
+        value,
+        false,
+        owner_whole_vault_export,
+    )
 }
 
 /// Whether an answer `value` derived from `rows` holds a detail exactly known
 /// to be withheld from `destination` (F1): a listed row, or a row it names by
 /// whole id or short ref, that a world withheld from there keeps. Unknown
 /// rows, a check that cannot be read and a conflicted root judge nothing, so
-/// they withhold nothing. An owner's own agent-pack export is judged by its
-/// listed rows and short refs alone (FIX 5522).
+/// they withhold nothing. An owner's own agent-pack export
+/// (`owner_pack_export`) is judged by its listed rows alone (FIX 5522). The
+/// owner's own whole-vault export (`owner_whole_vault_export`) is judged by
+/// the same rows, refs and ids, its notices' world names read as no ref, and
+/// only an integrity hold withholds it: his recipient choice keeps none of
+/// its rows (owner ruling 1-EXPORT = B).
 fn known_denied(
     vault: &oneiron::Vault,
     destination: &ReadDestination,
     rows: Option<&[EntityId]>,
     value: &serde_json::Value,
-    owner_export: bool,
+    owner_pack_export: bool,
+    owner_whole_vault_export: bool,
 ) -> bool {
     let Some(rows) = rows else {
         return false;
@@ -381,18 +448,55 @@ fn known_denied(
         return false;
     }
     let mut named = rows.to_vec();
-    if !owner_export {
-        named.extend(crate::device_local::short_refs_named(vault, value).unwrap_or_default());
+    if !owner_pack_export {
+        let cleared = owner_whole_vault_export
+            .then(|| notice_names_cleared(value))
+            .flatten();
+        let scanned = cleared.as_ref().unwrap_or(value);
+        named.extend(crate::device_local::short_refs_named(vault, scanned).unwrap_or_default());
     }
-    let payload = if owner_export {
+    let payload = if owner_pack_export {
         Vec::new()
     } else {
         serde_json::to_vec(value).unwrap_or_default()
     };
+    let hold = if owner_whole_vault_export {
+        crate::device_local::owner_export_retained_hold(vault, destination, &named, &payload)
+    } else {
+        crate::device_local::retained_hold(vault, destination, &named, &payload)
+    };
     matches!(
-        crate::device_local::retained_hold(vault, destination, &named, &payload),
+        hold,
         Ok(Some(ReleaseHold::Recipient(_) | ReleaseHold::Placement))
     )
+}
+
+/// The copy of an owner's whole-vault export answer `value` its short-ref
+/// scan reads: each notice's world name, his own words for his world, read
+/// as none, as MCP reads an owner export's (FIX 5522). `None` when no notice
+/// names one: the answer is scanned as it is.
+fn notice_names_cleared(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let names_world = |notice: &serde_json::Value| {
+        notice
+            .get("world_name")
+            .is_some_and(serde_json::Value::is_string)
+    };
+    let notices = value.get("notices")?.as_array()?;
+    if !notices.iter().any(names_world) {
+        return None;
+    }
+    let mut scan = value.clone();
+    for notice in scan
+        .get_mut("notices")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(name) = notice.get_mut("world_name") {
+            *name = serde_json::Value::Null;
+        }
+    }
+    Some(scan)
 }
 
 /// The content-free word that the call ran and its details stay on this
