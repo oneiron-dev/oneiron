@@ -159,7 +159,7 @@ pub(super) fn release(
             window = window_key,
             "window frame withheld: a peer is served state-only copies, never operations"
         );
-        return Vec::new();
+        return Err(Released::Withheld);
     }
     let window = server.reassert_manager.window(&key);
     let context = window.as_ref().map(|window| &window.doc);
