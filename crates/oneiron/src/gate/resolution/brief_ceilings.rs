@@ -372,17 +372,41 @@ impl PolicyManifestResolution {
                 continue;
             };
             if key.status != ConnectorKeyStatus::Active {
-                verdicts.push(worded_line(
-                    format!("mcp:{server}/*"),
-                    BriefClassSource::ConnectorKey {
-                        key: key_id,
-                        server,
-                        status: key.status.as_str().to_owned(),
-                    },
-                    &[GateReasonCode::DenyConnectorKeySuspended],
-                    None,
-                    vec![],
-                ));
+                let class = format!("mcp:{server}/*");
+                let source = BriefClassSource::ConnectorKey {
+                    key: key_id,
+                    server,
+                    status: key.status.as_str().to_owned(),
+                };
+                let verdict = match key.status {
+                    ConnectorKeyStatus::Suspended | ConnectorKeyStatus::Pending => {
+                        // The connector driver stops these statuses before the
+                        // Gate; its administrative hold is not a Gate denial.
+                        let hold = if key.status == ConnectorKeyStatus::Suspended {
+                            "connector_key_suspended"
+                        } else {
+                            "connector_key_pending"
+                        };
+                        BriefClassVerdict {
+                            class,
+                            source,
+                            inside: CanEffectVerdict::Held,
+                            reasons: vec![hold.to_owned()],
+                            holds: vec![hold.to_owned()],
+                            outside: None,
+                            per_act: vec![],
+                        }
+                    }
+                    ConnectorKeyStatus::Revoked => worded_line(
+                        class,
+                        source,
+                        &[GateReasonCode::DenyConnectorKeySuspended],
+                        None,
+                        vec![],
+                    ),
+                    ConnectorKeyStatus::Active => unreachable!("guarded above"),
+                };
+                verdicts.push(verdict);
                 continue;
             }
             let catalog_charter = crate::connector_key::catalog_charter_in_txn(store, txn, &key)?;
