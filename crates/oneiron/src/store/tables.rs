@@ -393,7 +393,10 @@ crate::side_table::side_tables! {
     /// Recipient-selected storage-only restriction, independent of legal holds.
     /// Key: id16(record) + bytes32(pact) + bytes16(request nonce).
     COOPERATIVE_RESTRICTION: VaultMeta b"cooperative_deletion:restriction:v1:" Named
-        [restore: none] [family: unclassified] [tier: canonical];
+        // Restore class: A recipient's restriction stands as the live vault holds it, as the legal
+        // holds and use limits beside it do: a restore neither lifts one nor revives one lifted
+        // since (FIX 22408).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One revision of a host rule row: the owner's reason on an answered decision ask, the
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
@@ -833,10 +836,15 @@ crate::side_table::side_tables! {
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
     RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named
-        [restore: none] [family: unclassified] [tier: canonical];
+        // Restore class: The owner's pins go with the blend weights they hold
+        // (RETRIEVAL_BLEND_WEIGHTS_ACTIVE, content), so a restore gives back one weight state
+        // (FIX 22408).
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named
-        [restore: none] [family: unclassified] [tier: canonical];
+        // Restore class: Learned retrieval state, content as the active blend weights it goes with
+        // (FIX 22408).
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
