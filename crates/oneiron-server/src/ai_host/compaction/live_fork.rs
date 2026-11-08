@@ -193,7 +193,7 @@ impl ServedCompactionBackend {
             .collect();
         // The span's input, last, names each step the prefix already holds
         // by where it sits there, never by its text again (FIX 4931).
-        if let Some(ContentPart::Text { text }) = suffix.last_mut() {
+        if let Some(ContentPart::Text { text, .. }) = suffix.last_mut() {
             *text = input::live_fork_span_input(fork.request(), request, retry);
         }
         call.messages.push(LlmMessage {
