@@ -2729,6 +2729,9 @@ impl OneironClient {
                 "tasks.outcomes" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::CalibrationPair>,
                 >(client, verb, &input),
+                "tasks.outcomes.route_calibration" => remote_agent_verb_output::<
+                    oneiron::llm::decision::questions::RouteCalibrationReport,
+                >(client, verb, &input),
                 "vault.rooms.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::RoomEntry>,
                 >(client, verb, &input),
@@ -14969,6 +14972,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.outcomes", value)
+    }
+    pub fn tasks_outcomes_route_calibration(
+        &self,
+        input: &oneiron::task_verb::TaskAskHandle,
+    ) -> Result<oneiron::llm::decision::questions::RouteCalibrationReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.outcomes.route_calibration", value)
     }
     pub fn vault_rooms_list(
         &self,

@@ -3797,7 +3797,10 @@ export class Oneiron {
       }),
     }),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-    outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
+    outcomes: Object.assign((handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]), {
+      /** Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only. */
+      route_calibration: (handle: TaskAskHandle): Facade.RouteCalibrationReport => this.#call(() => this.#client.tasksOutcomesRouteCalibration(handle) as Facade.RouteCalibrationReport),
+    }),
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */
     refuse: (input: Facade.LiveRunRequest<Facade.TaskRefuseInput>): Facade.TaskRefuseOutput => this.#call(() => this.#client.tasksRefuse(input) as Facade.TaskRefuseOutput),
   }

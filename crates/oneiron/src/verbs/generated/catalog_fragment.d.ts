@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1389 code-mode rows (1346 host rows, 43 run rows), 4867 declarations.
-// Replies: 1197 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1390 code-mode rows (1347 host rows, 43 run rows), 4879 declarations.
+// Replies: 1198 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -3288,7 +3288,19 @@ declare namespace Sdk {
   type AskForwardReceipt = { state: "pending"; intent_ref: EntityId } | { state: "answered"; intent_ref: EntityId; answer: TaskAskAnswer } | { state: "voided"; intent_ref: EntityId; generation: number };
   type TaskAnswerForwardStatusRequest = { intent_ref: EntityId };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };
-  type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel };
+  type DecisionRoute = { kind: "rule" } | { kind: "direct"; rung: DecisionRung } | { kind: "stepped_up"; rung: DecisionRung } | { kind: "step_unfinished"; rung: DecisionRung } | { kind: "person" } | { kind: "unrouted" };
+  type RoutingPolicy = { band_version: number; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
+  type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel; question_version: number; route: DecisionRoute; policy?: RoutingPolicy | null; providers: ProviderPin[] };
+  type RouteGroupKey = { question_version: number; route: DecisionRoute; policy?: RoutingPolicy | null; providers: ProviderPin[] };
+  type CalibrationMetrics = { brier_score: number; calibration_error: number };
+  type CalibrationPairRef = { answer: string; fact: string };
+  type MapKnot = { raw: number; fitted: number };
+  type RouteCalibrationMap = { question: string; key: RouteGroupKey; fit: CalibrationPairRef[]; knots: MapKnot[] };
+  type AcceptanceAtCut = { cut: number; raw: number; accepted: number; coverage: number; accepted_error?: number | null };
+  type RouteFitRefusal = { kind: "too_few_fit_pairs"; needed: number } | { kind: "weightless_fit" };
+  type RouteFit = { state: "fitted"; map: RouteCalibrationMap; fitted?: CalibrationMetrics | null; acceptance: AcceptanceAtCut[] } | { state: "refused"; reason: RouteFitRefusal };
+  type RouteCalibrationGroup = { key: RouteGroupKey; fit_pairs: number; check_pairs: number; raw?: CalibrationMetrics | null; fit: RouteFit };
+  type RouteCalibrationReport = { question: string; groups: RouteCalibrationGroup[] };
   type RoomOriginCard = { room: string; thread: string; message: string; at: number };
   type ProjectRoom = { schema_version: number; kind: string; project_id: string; memberIds: string[]; claims_scope_ref: string; origin?: RoomOriginCard | null };
   type RoomEntry = { id: string; room: ProjectRoom };
@@ -5444,7 +5456,10 @@ declare const tasks: {
   /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`). */
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-  outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
+  outcomes: ((input: Sdk.TaskAskHandle) => Promise<Sdk.CalibrationPair[] | StoredResult>) & {
+    /** Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only. */
+    route_calibration(input: Sdk.TaskAskHandle): Promise<Sdk.RouteCalibrationReport | StoredResult>;
+  };
   /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
   redo(input: Sdk.TaskRedo): Promise<Sdk.TaskCallReceipt | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;

@@ -886,6 +886,7 @@ both bindings and their export-census tests in one change.
 - `tasks.answer.forward`
 - `tasks.answer.forward.status`
 - `tasks.outcomes`
+- `tasks.outcomes.route_calibration`
 - `vault.rooms.list`
 - `vault.rooms.messages`
 - `vault.rooms.participants`

@@ -8303,6 +8303,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_outcomes_route_calibration(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.outcomes.route_calibration")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("tasks.outcomes.route_calibration", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.list")?;
         let output = py

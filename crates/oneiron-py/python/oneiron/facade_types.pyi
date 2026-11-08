@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1335 facade rows, 4808 declarations.
-Inputs: 1264 of 1335 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1164 of 1335 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1336 facade rows, 4820 declarations.
+Inputs: 1265 of 1336 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1165 of 1336 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -16640,10 +16640,84 @@ class OutcomeLabel(TypedDict):
     label: bool
     noise_weight: float
     occurred_at: int
+class DecisionRouteRule(TypedDict):
+    kind: Literal["rule"]
+class DecisionRouteDirect(TypedDict):
+    kind: Literal["direct"]
+    rung: DecisionRung
+class DecisionRouteSteppedUp(TypedDict):
+    kind: Literal["stepped_up"]
+    rung: DecisionRung
+class DecisionRouteStepUnfinished(TypedDict):
+    kind: Literal["step_unfinished"]
+    rung: DecisionRung
+class DecisionRoutePerson(TypedDict):
+    kind: Literal["person"]
+class DecisionRouteUnrouted(TypedDict):
+    kind: Literal["unrouted"]
+DecisionRoute = DecisionRouteRule | DecisionRouteDirect | DecisionRouteSteppedUp | DecisionRouteStepUnfinished | DecisionRoutePerson | DecisionRouteUnrouted
+class RoutingPolicy(TypedDict):
+    band_version: int
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
 class CalibrationPair(TypedDict):
     prediction: DecisionAnswer
     probability: float
     outcome: OutcomeLabel
+    question_version: int
+    route: DecisionRoute
+    policy: NotRequired[RoutingPolicy | None]
+    providers: list[ProviderPin]
+class RouteGroupKey(TypedDict):
+    question_version: int
+    route: DecisionRoute
+    policy: NotRequired[RoutingPolicy | None]
+    providers: list[ProviderPin]
+class CalibrationMetrics(TypedDict):
+    brier_score: float
+    calibration_error: float
+class CalibrationPairRef(TypedDict):
+    answer: str
+    fact: str
+class MapKnot(TypedDict):
+    raw: float
+    fitted: float
+class RouteCalibrationMap(TypedDict):
+    question: str
+    key: RouteGroupKey
+    fit: list[CalibrationPairRef]
+    knots: list[MapKnot]
+class AcceptanceAtCut(TypedDict):
+    cut: float
+    raw: float
+    accepted: int
+    coverage: float
+    accepted_error: NotRequired[float | None]
+class RouteFitRefusalTooFewFitPairs(TypedDict):
+    kind: Literal["too_few_fit_pairs"]
+    needed: int
+class RouteFitRefusalWeightlessFit(TypedDict):
+    kind: Literal["weightless_fit"]
+RouteFitRefusal = RouteFitRefusalTooFewFitPairs | RouteFitRefusalWeightlessFit
+class RouteFitFitted(TypedDict):
+    state: Literal["fitted"]
+    map: RouteCalibrationMap
+    fitted: NotRequired[CalibrationMetrics | None]
+    acceptance: list[AcceptanceAtCut]
+class RouteFitRefused(TypedDict):
+    state: Literal["refused"]
+    reason: RouteFitRefusal
+RouteFit = RouteFitFitted | RouteFitRefused
+class RouteCalibrationGroup(TypedDict):
+    key: RouteGroupKey
+    fit_pairs: int
+    check_pairs: int
+    raw: NotRequired[CalibrationMetrics | None]
+    fit: RouteFit
+class RouteCalibrationReport(TypedDict):
+    question: str
+    groups: list[RouteCalibrationGroup]
 class RoomOriginCard(TypedDict):
     room: str
     thread: str

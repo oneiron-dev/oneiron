@@ -338,7 +338,7 @@ pub(super) struct QuestionHead {
 }
 
 pub use crate::model_decision::questions::{
-    CalibrationPair, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource,
+    CalibrationPair, DecisionRoute, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource,
     OutcomeWindowClose, QuestionActivation, QuestionAudience, QuestionMedia, QuestionScheduleHead,
-    RefreshPolicy, SourceConflict, WindowOutcome,
+    RefreshPolicy, RoutingPolicy, SourceConflict, WindowOutcome,
 };
