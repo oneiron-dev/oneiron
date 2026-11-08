@@ -12,7 +12,9 @@
 //! holder's kind derives, and a 16-byte fingerprint of each lowercase
 //! ASCII-hex 32-byte window a birth source or receipt archive holds. No
 //! payload is kept: the fingerprints match an erased id's hex and recover
-//! nothing. The facts stay for the vault's lifetime, as a window can.
+//! nothing. Every admitted body file keeps its row, an empty one too, so a
+//! scrub never takes a peer's word for a file's kind. The facts stay for
+//! the vault's lifetime, as a window can.
 
 use std::collections::BTreeSet;
 
@@ -93,11 +95,6 @@ impl CarrierScrubFacts {
         }
     }
 
-    /// Whether no owning adapter's scrub fact is in the bytes.
-    fn is_empty(&self) -> bool {
-        self.holder.is_none() && self.birth_child.is_none() && !self.receipt_archive
-    }
-
     /// Whether the scrub removes this carrier when the ids `erased` are
     /// erased (`erased_copied` their fingerprints), and whether the
     /// carrier's own id joins the erase, as the scrub decides for an inline
@@ -149,10 +146,13 @@ pub(super) fn erased_fingerprints(erased: &BTreeSet<EntityId>) -> BTreeSet<[u8; 
         .collect()
 }
 
-/// Keeps what the scrub reads in `body`, the bytes of ASSET `id`'s carrier
-/// whose body file (`digest`) its put binds in `txn`, so a later scrub of a
-/// window that names the file reads none of its bytes (FIX 22091). A body
-/// no owning adapter reads keeps nothing.
+/// Keeps what the scrub reads in the body file (`digest`, of `kind`) that
+/// ASSET `id`'s put binds in `txn`, so a later scrub of a window that names
+/// the file reads none of its bytes (FIX 22091): what `body`, the bytes the
+/// put read for its adapter checks, holds; with no bytes read, nothing for
+/// a file this vault's stager judged no carrier, as it files no body an
+/// owning adapter reads under another kind. Empty facts are kept too: they
+/// are the scrub's local proof that the file names no holder.
 ///
 /// # Errors
 ///
@@ -161,27 +161,31 @@ pub(crate) fn stage_carrier_scrub_facts_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
-    digest: &[u8; 32],
-    body: &[u8],
+    (digest, kind): (&[u8; 32], AssetFileKind),
+    body: Option<&[u8]>,
 ) -> Result<()> {
-    let facts = CarrierScrubFacts::of_carrier(id, body);
-    if facts.is_empty() {
-        return Ok(());
-    }
+    let facts = match body {
+        Some(body) => CarrierScrubFacts::of_carrier(id, body),
+        // A carrier file's put reads its bytes; one that read none keeps no
+        // facts, and its scrub reads its live file or fails.
+        None if kind == AssetFileKind::Carrier => return Ok(()),
+        None => CarrierScrubFacts::default(),
+    };
     FACTS.put(store, txn, &(*id, *digest), &facts)
 }
 
-/// What the scrub reads in the carrier body file `reference` names in a
-/// window: the facts its admission kept; none for a file of another kind,
-/// which no owning adapter reads; for a carrier whose facts were never kept,
-/// its bytes, read while the live row still names this file. The caller
+/// What the scrub reads in the body `reference` names in a window, whatever
+/// kind the window's writer gave it: the facts its admission kept; with
+/// none, what the live row of its id holds while that row holds the same
+/// body: its bytes when they are in the row or in a carrier file, nothing
+/// for a file of another kind, which this vault's stager judged. The caller
 /// opened `txn` under the custody guard after pinning the result bodies.
 ///
 /// # Errors
 ///
-/// [`Error::CorruptedIndex`] for a carrier with neither facts nor a
-/// readable file: the window's sweep fails and is owed again, never read as
-/// holding no holder. Storage and filesystem errors.
+/// [`Error::CorruptedIndex`] for a body with neither kept facts nor a live
+/// row that holds it: the window's sweep fails and is owed again, never
+/// read as holding no holder. Storage and filesystem errors.
 pub(super) fn historical_carrier_facts_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -191,18 +195,25 @@ pub(super) fn historical_carrier_facts_in_txn(
     if let Some(facts) = FACTS.get(store, txn, &(reference.id, reference.body_blake3))? {
         return Ok(facts);
     }
-    if reference.kind != AssetFileKind::Carrier {
-        return Ok(CarrierScrubFacts::default());
-    }
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &reference.id)?
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ASSET)
         && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
-        && crate::store::asset_file_in_txn(store, txn, &reference.id, body)?
-            .is_some_and(|manifest| manifest.facts.blake3 == reference.body_blake3)
     {
-        let carrier = crate::store::asset_carrier_body_in_txn(store, txn, &reference.id, body)?;
-        return Ok(CarrierScrubFacts::of_carrier(&reference.id, &carrier));
+        match crate::store::asset_file_in_txn(store, txn, &reference.id, body)? {
+            Some(manifest) if manifest.facts.blake3 == reference.body_blake3 => {
+                if manifest.kind != AssetFileKind::Carrier {
+                    return Ok(CarrierScrubFacts::default());
+                }
+                let carrier =
+                    crate::store::asset_carrier_body_in_txn(store, txn, &reference.id, body)?;
+                return Ok(CarrierScrubFacts::of_carrier(&reference.id, &carrier));
+            }
+            None if *blake3::hash(body).as_bytes() == reference.body_blake3 => {
+                return Ok(CarrierScrubFacts::of_carrier(&reference.id, body));
+            }
+            _ => {}
+        }
     }
     Err(Error::CorruptedIndex(
         "historical asset carrier scrub facts",

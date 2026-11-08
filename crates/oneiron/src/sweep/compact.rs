@@ -815,6 +815,11 @@ fn scrub_erased_ids_from_doc(
         let rtxn = vault.store.env.read_txn()?;
         let erased_copied = super::carrier_facts::erased_fingerprints(erased);
         for (key, reference) in filed {
+            // An erased id's row is residue whatever it holds: the pass
+            // below removes it, and no body is read to prove it.
+            if erased.contains(&reference.id) || source_ids.contains(&reference.id) {
+                continue;
+            }
             let facts =
                 super::carrier_facts::historical_carrier_facts_in_txn(vault, &rtxn, &reference)?;
             let (removed, owned) = facts.verdict(erased, &erased_copied);
