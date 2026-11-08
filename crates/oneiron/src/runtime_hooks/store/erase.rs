@@ -201,6 +201,25 @@ pub(in crate::runtime_hooks) fn rows_named_by_call(
     rows.into_iter().collect()
 }
 
+/// The rows a fact run's whole `input` names anywhere but as the fact's
+/// actor (`/fact/actor/principal`), whose erase only renames it: read
+/// before the pin bound drops the input, so an erase of one retires the
+/// memo even when its input was not kept (FIX 22240). An input that does
+/// not decode names every id it can spell.
+pub(in crate::runtime_hooks) fn rows_named_by_fact(input: &str) -> Vec<EntityId> {
+    let mut rows = BTreeSet::new();
+    match serde_json::from_str::<Value>(input) {
+        Ok(mut value) => {
+            if let Some(actor) = value.pointer_mut("/fact/actor/principal") {
+                *actor = Value::Null;
+            }
+            named_ids(&value, &mut rows);
+        }
+        Err(_) => spelled_ids_in(input, &mut rows),
+    }
+    rows.into_iter().collect()
+}
+
 /// Adds to `ids` each id the JSON `text` can spell in a string or key once
 /// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
 /// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a
@@ -273,6 +292,11 @@ enum RunErase {
 /// (FIX 22240). An input that names an erased id and does not decode or
 /// encode again loses its whole payload.
 fn erase_fact_memo(memo: &mut HookRunRecord, erased: &ErasedIds) -> RunErase {
+    // Read from the whole input, so an input past the pin bound is reached
+    // too (review #6848).
+    if memo.named_rows.iter().any(|row| erased.holds(row)) {
+        return RunErase::Depends;
+    }
     let Some(input) = memo
         .input_json
         .as_deref()
@@ -394,7 +418,8 @@ pub(in crate::runtime_hooks) fn scrub_erased_memo_in_txn(
     memo: &mut HookRunRecord,
     actor: EntityId,
 ) -> Result<bool> {
-    let named = BTreeSet::from([actor]);
+    let mut named = BTreeSet::from([actor]);
+    named.extend(memo.named_rows.iter().copied());
     let input = memo.input_json.as_deref();
     let Some(erased) = erased_among_in_txn(vault, txn, named, input.as_slice())? else {
         return Ok(false);
