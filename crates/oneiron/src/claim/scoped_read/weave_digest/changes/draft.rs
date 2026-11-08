@@ -77,11 +77,12 @@ impl Basis {
 impl Vault {
     /// Says whether a host Coach whose model drafts this vault's digest
     /// settings steps is serving it (FIX 5609, 6165): its worker says ready
-    /// after a round that served, with the interval its rounds are expected
-    /// at, and not ready after a round that erred or when it ends. Ready
-    /// lapses once `COACH_HOST_LIVENESS_INTERVALS` of those intervals pass
-    /// with no further round served, and returns with the next one that
-    /// serves (FIX 7211). While ready the digest timer queues the Coach's
+    /// after each job a round completes and after a round that served, with
+    /// the interval its rounds are expected at, and not ready after a round
+    /// that erred or when it ends. Ready lapses once
+    /// `COACH_HOST_LIVENESS_INTERVALS` of those intervals pass with nothing
+    /// further served, and returns with the next job that serves (FIX 7211,
+    /// 7328). While ready the digest timer queues the Coach's
     /// job; while not, the closed-form rule evaluates each owner whose
     /// evaluation is due, as with no host. In memory only: a reopened vault
     /// starts not ready.

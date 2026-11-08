@@ -34,6 +34,7 @@ impl MediaVoiceRoute {
             operation,
             parts: vec![part],
             references: Vec::new(),
+            mask: None,
             params,
             voice,
         }
