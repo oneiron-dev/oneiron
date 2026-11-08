@@ -29438,7 +29438,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_synopsis.rs",
      "purpose": "The Arc's optional synopsis (FIX 8290, Engine 02:3x): once its parts' lines are assembled, one more call…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {

@@ -2409,7 +2409,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/scope_summary_attempt/arc_part_merge.rs` | src | s | 2 crate-vis | — | One Arc part's pieces, merged before the Arc is assembled (FIX 8285) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs` | src | m | 7 crate-vis | — | The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly; only the… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_review.rs` | src | m | 18 crate-vis | — | The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_synopsis.rs` | src | s | 3 crate-vis | — | The Arc's optional synopsis (FIX 8290, Engine 02:3x): once its parts' lines are assembled, one more call… |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_synopsis.rs` | src | s | 2 crate-vis | — | The Arc's optional synopsis (FIX 8290, Engine 02:3x): once its parts' lines are assembled, one more call… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs` | src | s | 4 crate-vis | — | The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names… |
 | `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 1 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
 | `src/dreamer_consolidation/scope_summary_attempt/durable_labels.rs` | src | s | 4 crate-vis | — | Summary text in durable names (FIX 10359), as a nightly narrative's is (FIX 7576) |
