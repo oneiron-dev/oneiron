@@ -44,8 +44,9 @@ pub struct ComponentBudget {
     /// completion, and its elapsed time counts. Once the allowance is spent the
     /// step stops at its next safe point (before another host call or output, or
     /// at the guest's epoch check) and answers the typed `step_deadline` stop: not
-    /// done, not failed, its finished host calls kept (FIX 7665). This is not a
-    /// hard end-to-end RPC timeout.
+    /// done, not failed, its finished host calls kept (FIX 7665). Its host takes
+    /// the stop as a typed fact and may run the same program again from those
+    /// calls (FIX 7703). This is not a hard end-to-end RPC timeout.
     pub wall_time: Duration,
     /// An advisory observation threshold, never a ceiling (FIX 8676): each
     /// step counts its host calls, and a count past it only marks the
@@ -195,6 +196,9 @@ impl WasmtimeComponentRuntime {
         let deadline = Instant::now()
             .checked_add(budget.wall_time)
             .ok_or(failure("invalid component deadline"))?;
+        // The step's deadline stop, shared by its guest's store and its host
+        // loop: set once the step stops at its deadline (FIX 7703).
+        let stop = Arc::new(AtomicBool::new(false));
         let nested = self.fresh();
         let mut bridge = Bridge {
             host,
@@ -215,6 +219,7 @@ impl WasmtimeComponentRuntime {
         let outcome = std::thread::scope(|scope| {
             let worker_engine = engine.clone();
             let worker_cancel = cancel.clone();
+            let worker_stop = Arc::clone(&stop);
             let worker = scope.spawn(move || {
                 let result = execute_component(
                     &worker_engine,
@@ -226,10 +231,11 @@ impl WasmtimeComponentRuntime {
                     events.clone(),
                     deadline,
                     worker_cancel,
+                    worker_stop,
                 );
                 let _ = events.send(HostEvent::Finished(result));
             });
-            let result = drive_host(requests, &mut bridge, deadline);
+            let result = drive_host(requests, &mut bridge, deadline, &stop);
             // Also interrupts a worker after a host-side refusal/timeout.
             // drive_host drops its receiver first, so blocked sends wake.
             engine.increment_epoch();
@@ -248,7 +254,12 @@ impl WasmtimeComponentRuntime {
         cancel.check()?;
         match outcome? {
             Stepped::Ended(outcome) => bridge.held.into_outcome(outcome),
-            Stepped::Deadline(calls) => bridge.held.into_deadline_outcome(&calls),
+            Stepped::Deadline(calls) => {
+                // The host takes the stop as a typed fact, never from the
+                // outcome's text (FIX 7703).
+                bridge.host.stopped_at_step_deadline();
+                bridge.held.into_deadline_outcome(&calls)
+            }
         }
     }
 }
@@ -308,6 +319,7 @@ fn execute_component(
     events: mpsc::SyncSender<HostEvent>,
     deadline: Instant,
     cancel: StepCancellation,
+    stop: Arc<AtomicBool>,
 ) -> Result<Stepped> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
@@ -324,6 +336,7 @@ fn execute_component(
             limits,
             calls: typed::ComponentCallObservation::new(budget.host_calls),
             message_bytes: budget.message_bytes,
+            deadline_stop: Arc::clone(&stop),
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -334,16 +347,16 @@ fn execute_component(
     // Epochs belong to the Engine, not a Store. A sibling's cleanup can wake
     // this store, but must not cancel it before its own host-owned deadline.
     // Its own step's cancel, read from its own token first, traps it.
-    let stop = cancel.clone();
-    // Set only by the deadline's own trap, so a spent allowance reads as the
-    // typed stop and every other trap stays a failure.
-    let spent = Arc::new(AtomicBool::new(false));
-    let latch = Arc::clone(&spent);
+    let cancelled = cancel.clone();
+    // Set only by the deadline's own trap or the host loop's deadline stop,
+    // so a spent allowance reads as the typed stop and every other trap
+    // stays a failure.
+    let latch = Arc::clone(&stop);
     store.epoch_deadline_callback(move |_| {
-        if stop.is_cancelled() {
+        if cancelled.is_cancelled() {
             Err(wasmtime::Error::msg("component step cancelled"))
         } else if Instant::now() >= deadline {
-            latch.store(true, Ordering::Relaxed);
+            latch.store(true, Ordering::Release);
             Err(wasmtime::Error::msg("component deadline exceeded"))
         } else {
             Ok(wasmtime::UpdateDeadline::Continue(1))
@@ -354,13 +367,14 @@ fn execute_component(
     cancel.check()?;
     if Instant::now() >= deadline {
         // No guest code has run: the whole step is still to do.
+        stop.store(true, Ordering::Release);
         return Ok(Stepped::Deadline(Vec::new()));
     }
     let mut linker = Linker::new(engine);
     typed::link_imports(&mut linker, boundary)?;
     let instance = match linker.instantiate(&mut store, component) {
         Ok(instance) => instance,
-        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) if stop.load(Ordering::Acquire) => return Ok(Stepped::Deadline(Vec::new())),
         Err(_) => return Err(failure("component imports or instantiation refused")),
     };
     let run = instance
@@ -372,7 +386,7 @@ fn execute_component(
     // step, except the deadline's own, which stops it.
     let (output,) = match run.call(&mut store, (script.to_owned(),)) {
         Ok(output) => output,
-        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) if stop.load(Ordering::Acquire) => return Ok(Stepped::Deadline(Vec::new())),
         Err(_) => return Err(failure("component execution trapped")),
     };
     let output = output.map_err(|message| guest_failure(&message, prepared))?;
@@ -390,11 +404,14 @@ fn execute_component(
 /// end: a cancel it sees wins over the deadline, an output failure or a
 /// worker failure that lands with it. An operation already admitted
 /// settles first; once the deadline has passed it admits no new one, and the
-/// step ends with the typed `step_deadline` stop (FIX 7665).
+/// step ends with the typed `step_deadline` stop (FIX 7665). An admitted call
+/// that settles past the deadline keeps its answer in its host, and the
+/// guest that made it stops in its import without reading it (FIX 7703).
 fn drive_host(
     requests: mpsc::Receiver<HostEvent>,
     bridge: &mut Bridge<'_>,
     deadline: Instant,
+    stop: &AtomicBool,
 ) -> Result<Stepped> {
     let mut finished = Vec::new();
     loop {
@@ -403,17 +420,20 @@ fn drive_host(
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
         else {
-            return Ok(Stepped::Deadline(finished));
+            return stop_at_deadline(bridge, stop, finished);
         };
         match requests.recv_timeout(remaining.min(CANCEL_POLL_SLICE)) {
             Ok(HostEvent::Call { name, input, reply }) => {
                 bridge.cancel.check()?;
                 if Instant::now() >= deadline {
-                    return Ok(Stepped::Deadline(finished));
+                    return stop_at_deadline(bridge, stop, finished);
                 }
                 let response = wire::dispatch(bridge, name, &input);
                 bridge.cancel.check()?;
                 finished.push(name);
+                if Instant::now() >= deadline {
+                    return stop_at_deadline(bridge, stop, finished);
+                }
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Output {
@@ -423,7 +443,7 @@ fn drive_host(
             }) => {
                 bridge.cancel.check()?;
                 if Instant::now() >= deadline {
-                    return Ok(Stepped::Deadline(finished));
+                    return stop_at_deadline(bridge, stop, finished);
                 }
                 // A refused frame traps the guest, so no step goes on with
                 // part of its result missing; the host's reason is the step's.
@@ -432,6 +452,9 @@ fn drive_host(
                     failure("streamed output refused")
                 });
                 bridge.cancel.check()?;
+                if response.is_ok() && Instant::now() >= deadline {
+                    return stop_at_deadline(bridge, stop, finished);
+                }
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Finished(result)) => {
@@ -453,6 +476,22 @@ fn drive_host(
             }
         }
     }
+}
+
+/// The step's `step_deadline` stop, latched for its guest (FIX 7703): the
+/// import the guest waits in, and any it calls next, traps on the latch, so
+/// no guest code reads a refusal it could catch and run on past the safe
+/// point. A frame the host already refused stays the step's failure.
+fn stop_at_deadline(
+    bridge: &mut Bridge<'_>,
+    stop: &AtomicBool,
+    finished: Vec<&'static str>,
+) -> Result<Stepped> {
+    if let Some(error) = bridge.output_failure.take() {
+        return Err(error);
+    }
+    stop.store(true, Ordering::Release);
+    Ok(Stepped::Deadline(finished))
 }
 
 impl JsCodeModeRuntime for WasmtimeComponentRuntime {
@@ -635,6 +674,9 @@ struct State {
     /// The step's host calls, observed when its store drops (FIX 8676).
     calls: typed::ComponentCallObservation,
     message_bytes: usize,
+    /// The step's deadline stop: once set, every import traps instead of
+    /// answering its guest (FIX 7703).
+    deadline_stop: Arc<AtomicBool>,
 }
 
 enum HostEvent {

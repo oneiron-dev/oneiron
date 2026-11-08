@@ -9,6 +9,16 @@
 //! per pack name, for the owner's one-tap revert (FIX 20192). The kept
 //! version is never followed by itself: only a revert installs it again,
 //! after its bytes pass an install's checks once more.
+//!
+//! Each installed model pack's full check is kept in memory, per vault
+//! handle, beside what it read that can move (FIX 20043): the install
+//! receipt, the pin a frozen hub ref holds and the source's liveness. A role
+//! call reads those in its own transaction and reuses the kept check while
+//! they match the store; an install, update, revert or removal, or a moved
+//! freeze, changes them and the pack is checked in full again.
+use std::collections::BTreeMap;
+use std::sync::{Mutex, PoisonError};
+
 use heed::{RoTxn, RwTxn};
 use oneiron_store::settings::model_pack::{ModelPack, ModelPackId};
 
@@ -56,6 +66,75 @@ pub struct InstalledModelPack {
     pub pack: ModelPack,
 }
 
+/// What a model pack's full check reads that can move while the store holds
+/// its receipt (FIX 20043): the receipt itself, the owner's lift of a hold
+/// included, the pin its hub ref is frozen to, and whether the source it
+/// names is live. A source's bytes are fixed by its id, and the scan
+/// evidence on them is kept, a newer scan replacing an older one, so a
+/// kept check reads neither again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModelPackAdmissionKey {
+    receipt: PackInstallReceipt,
+    /// The pin the receipt's hub ref is frozen to; `None` when the ref holds
+    /// no freeze.
+    frozen_pin: Option<HubPin>,
+    source_live: bool,
+}
+
+/// One model pack's last full check: what it read, and the pack it
+/// admitted, `None` when a check refused it.
+#[derive(Debug, Clone)]
+struct KeptModelPackCheck {
+    key: ModelPackAdmissionKey,
+    admitted: Option<ModelPack>,
+}
+
+/// Each installed model pack's last full check, by pack name (FIX 20043).
+/// In memory only, one per vault handle: a reopened vault checks each pack
+/// in full on its first read. A check is reused only while its key matches
+/// the store, so a check kept from any transaction is never followed past a
+/// change; no timer drops one.
+#[derive(Debug, Default)]
+pub(crate) struct AdmittedModelPacks {
+    kept: Mutex<BTreeMap<String, KeptModelPackCheck>>,
+}
+
+impl AdmittedModelPacks {
+    /// Pack `name`'s kept check when it read `key`: the pack it admitted,
+    /// or `None` when it refused it.
+    fn reuse(&self, name: &str, key: &ModelPackAdmissionKey) -> Option<Option<ModelPack>> {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .filter(|kept| kept.key == *key)
+            .map(|kept| kept.admitted.clone())
+    }
+
+    /// Keeps pack `name`'s full check of `key`, in place of the one before.
+    fn keep(&self, name: &str, key: &ModelPackAdmissionKey, admitted: Option<&ModelPack>) {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                name.to_owned(),
+                KeptModelPackCheck {
+                    key: key.clone(),
+                    admitted: admitted.cloned(),
+                },
+            );
+    }
+
+    /// Drops the checks of every pack `names` leaves out: no longer an
+    /// Active model pack.
+    fn retain(&self, names: &[String]) {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|name, _| names.contains(name));
+    }
+}
+
 /// The source's model pack: its data file, read under its manifest's name
 /// and version. A source of kind `model` without one, or whose data does not
 /// read, is refused.
@@ -78,12 +157,15 @@ impl Vault {
     /// from the source its receipt names. A pack that fails a check its
     /// receipt binds (a frozen ref's drift, the source's name, kind or
     /// content hash, its scan evidence, its data) is not admitted and is
-    /// left out, so no route follows it.
+    /// left out, so no route follows it. A pack whose receipt, frozen pin
+    /// and source liveness read in `txn` match its kept check is that
+    /// check's outcome; any other is checked in full and kept (FIX 20043).
     pub(crate) fn installed_model_packs_in_txn(
         &self,
         txn: &RoTxn<'_>,
     ) -> Result<Vec<InstalledModelPack>> {
         let mut packs = Vec::new();
+        let mut names = Vec::new();
         for entry in admission::PACK_INSTALL.iter_from(&self.store, txn, &[])? {
             let (name, receipt) = entry.map_err(|error| {
                 if error.kind() == ErrorKind::SideTableRow {
@@ -95,24 +177,76 @@ impl Vault {
             if receipt.kind != PackKind::Model || receipt.status != PackInstallStatus::Active {
                 continue;
             }
-            if let Some(pack) = self.admit_installed_model_pack_in_txn(txn, &name, receipt)? {
-                packs.push(pack);
+            let key = self.model_pack_admission_key_in_txn(txn, receipt)?;
+            let admitted = match self.admitted_model_packs.reuse(&name, &key) {
+                Some(admitted) => admitted,
+                None => {
+                    let admitted = self
+                        .admitted_model_pack_source_in_txn(txn, &name, &key.receipt)?
+                        .map(|(_, pack)| pack);
+                    self.admitted_model_packs
+                        .keep(&name, &key, admitted.as_ref());
+                    admitted
+                }
+            };
+            if let Some(pack) = admitted {
+                packs.push(InstalledModelPack {
+                    receipt: key.receipt,
+                    pack,
+                });
             }
+            names.push(name);
         }
+        self.admitted_model_packs.retain(&names);
         Ok(packs)
     }
 
-    /// `receipt`'s pack, when it meets every check the first-party model
-    /// catalog meets; `None` when one fails.
-    fn admit_installed_model_pack_in_txn(
+    /// What `receipt`'s full check reads that can move while it stands,
+    /// read in `txn` (FIX 20043): its hub ref's row and its source's
+    /// liveness, never the source's bytes or scan evidence.
+    fn model_pack_admission_key_in_txn(
         &self,
         txn: &RoTxn<'_>,
-        name: &str,
         receipt: PackInstallReceipt,
-    ) -> Result<Option<InstalledModelPack>> {
+    ) -> Result<ModelPackAdmissionKey> {
+        let frozen_pin = self.model_pack_frozen_pin_in_txn(txn, &receipt)?;
+        let source_live = match EntityId::from_hex(&receipt.source_id) {
+            Ok(source_id) => self.pack_source_live_in_txn(txn, &source_id)?,
+            Err(_) => false,
+        };
+        Ok(ModelPackAdmissionKey {
+            receipt,
+            frozen_pin,
+            source_live,
+        })
+    }
+
+    /// The pin `receipt`'s hub ref is frozen to, when the ref's policy
+    /// accepts one content hash; `None` when it holds no freeze.
+    fn model_pack_frozen_pin_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        receipt: &PackInstallReceipt,
+    ) -> Result<Option<HubPin>> {
+        let Ok(hub) = EntityId::from_hex(&receipt.hub_id) else {
+            return Ok(None);
+        };
         Ok(self
-            .admitted_model_pack_source_in_txn(txn, name, &receipt)?
-            .map(|(_, pack)| InstalledModelPack { receipt, pack }))
+            .hub_ref_sync_in_txn(txn, &hub, &receipt.hub_ref)?
+            .filter(|tracked| tracked.sync_policy == HubSyncPolicy::ContentHashFrozen)
+            .map(|tracked| tracked.hub_ref.pin))
+    }
+
+    /// Whether `receipt`'s hub ref is frozen to other bytes: the ref's own
+    /// policy judges drift, and a frozen ref accepts one hash.
+    fn model_pack_drifted_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        receipt: &PackInstallReceipt,
+    ) -> Result<bool> {
+        Ok(self
+            .model_pack_frozen_pin_in_txn(txn, receipt)?
+            .is_some_and(|pin| pin != HubPin::ContentHash(receipt.content_hash.clone())))
     }
 
     /// The source `receipt` names and its model pack, when they meet every
@@ -126,17 +260,13 @@ impl Vault {
         if receipt.pack_name != name {
             return Ok(None);
         }
-        let (Ok(hub), Ok(source_id)) = (
+        let (Ok(_), Ok(source_id)) = (
             EntityId::from_hex(&receipt.hub_id),
             EntityId::from_hex(&receipt.source_id),
         ) else {
             return Ok(None);
         };
-        // The ref's own policy judges drift: a frozen ref accepts one hash.
-        if let Some(tracked) = self.hub_ref_sync_in_txn(txn, &hub, &receipt.hub_ref)?
-            && tracked.sync_policy == HubSyncPolicy::ContentHashFrozen
-            && tracked.hub_ref.pin != HubPin::ContentHash(receipt.content_hash.clone())
-        {
+        if self.model_pack_drifted_in_txn(txn, receipt)? {
             return Ok(None);
         }
         let Some(source) = self.pack_source_in_txn(txn, &source_id)? else {
@@ -242,6 +372,33 @@ impl Vault {
         Ok(Some(InstalledModelPack { receipt, pack }))
     }
 
+    /// Whether pack `name` is held at `content_hash`, installed or kept as
+    /// its replaced version, under a hub ref frozen to other bytes (FIX
+    /// 22058): the frozen ref's drift check refuses that version, as a
+    /// freeze on the version a same-name update installed refuses the one
+    /// it replaced, until the owner lifts the freeze.
+    pub(crate) fn model_pack_frozen_out_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        name: &str,
+        content_hash: &str,
+    ) -> Result<bool> {
+        let key = name.to_owned();
+        let held = [
+            admission::PACK_INSTALL.get(&self.store, txn, &key)?,
+            REPLACED.get(&self.store, txn, &key)?,
+        ];
+        for receipt in held.into_iter().flatten() {
+            if receipt.kind == PackKind::Model
+                && receipt.content_hash == content_hash
+                && self.model_pack_drifted_in_txn(txn, &receipt)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Installs model pack `name`'s replaced version again, in a revert's
     /// transaction (FIX 20192): its kept receipt becomes the pack's install
     /// receipt, and the receipt it replaces is kept in its place, so a
@@ -251,14 +408,16 @@ impl Vault {
     /// so its receipt is all an install of it writes, but for the
     /// first-party model catalog: its rows follow the version restored, as
     /// an install activates them, the outgoing seed and source kept first
-    /// (review #6755).
+    /// (review #6755). A revert is a new install of the kept version: its
+    /// receipt carries the time of the revert, on the vault's clock, as its
+    /// install time (FIX 22058).
     pub(crate) fn restore_replaced_model_pack_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
         name: &str,
     ) -> Result<()> {
         let key = name.to_owned();
-        let replaced = REPLACED
+        let mut replaced = REPLACED
             .get(&self.store, txn, &key)?
             .ok_or_else(|| invalid("no replaced model pack version is kept"))?;
         let installed = admission::PACK_INSTALL
@@ -273,6 +432,7 @@ impl Vault {
         } else {
             (None, None)
         };
+        replaced.installed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         admission::PACK_INSTALL.put(&self.store, txn, &key, &replaced)?;
         REPLACED.put(&self.store, txn, &key, &installed)?;
         if model_catalog {
