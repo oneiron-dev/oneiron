@@ -132,8 +132,9 @@ pub(crate) fn admit_message_doc_map(key: Option<&WindowKey>, map: &LoroMap) -> R
 }
 
 /// Writes into `doc` the document MESSAGE `message` holds here, when it holds
-/// more than the window's head: operations the head lacks, a purge, or a
-/// Switch off the head's document (FIX 3554). The window's head stands where
+/// more than the window's head: operations the head lacks, a purge, a
+/// Switch off the head's document (FIX 3554), or a canonical restore's
+/// successor of the head's incarnation (FIX 3553). The window's head stands where
 /// it holds as much, where it holds operations this machine lacks (they
 /// merge here first), where it names another document, or where its history
 /// starts at a newer floor than this machine's, from an empty one or an
@@ -158,7 +159,7 @@ pub(crate) fn mirror_message_document(
         .and_then(|bytes| decode(&bytes).ok())
         .map(|(held, _)| held);
     if held.as_ref().is_some_and(|held| {
-        !(local.holds(&held.head) || local.replaces(&held.head))
+        !(local.holds(&held.head) || local.replaces(&held.head) || local.supersedes(&held.head))
             || held.head.covers(&local)
             || held.head.purges(&local)
     }) {
@@ -181,10 +182,12 @@ pub(crate) fn mirror_message_document(
     };
     if let Some(held) = &held
         && !carried.head.covers(&held.head)
-        && (!carried.head.replaces(&held.head) || carried.head.purges(&held.head))
+        && (!(carried.head.replaces(&held.head) || carried.head.supersedes(&held.head))
+            || carried.head.purges(&held.head))
     {
         // An owner purge here: the old snapshot holds the history it dropped.
-        // A Switch's document keeps all of its old one's.
+        // A Switch's document keeps all of its old one's, and a restore's
+        // successor replaces a history nobody purged.
         super::window::require_history_free_window(vault, window)?;
     }
     map_insert_bytes(&map, &key, &encode(&carried)?)?;

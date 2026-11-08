@@ -414,41 +414,59 @@ fn bindings_in_txn(
 ) -> Result<Vec<(EntityId, PackHookBinding)>> {
     let mut result = Vec::new();
     for id in crate::claim::claim_ids_for_predicate_in_txn(store, txn, PREDICATE)? {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-            continue;
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || raw.len() == ENTITY_METADATA_HEADER_LEN
-        {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.predicate != PREDICATE
-            || !is_hook_binding(&body)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || !matches!(
-                body.approval,
-                ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
-            )
-        {
-            continue;
-        }
-        match serde_json::from_str::<PackHookBinding>(body.value.as_str().unwrap_or_default()) {
-            Ok(row) if body.subject == ClaimSubject::Entity(row.code) => result.push((id, row)),
-            Ok(_) => tracing::warn!(
-                claim = %id.to_hex(),
-                "hook binding subject is not its CODE entity; skipped"
-            ),
-            Err(error) => tracing::warn!(
-                claim = %id.to_hex(),
-                %error,
-                "hook binding is malformed; skipped"
-            ),
+        if let Some(row) = binding_in_txn(store, txn, &id)? {
+            result.push((id, row));
         }
     }
     Ok(result)
+}
+
+/// The live, approved hook binding claim at `id`, enabled or not, as
+/// [`bindings_in_txn`] reads each; `None` for any other row, with a warning
+/// when its payload is no binding of its CODE entity.
+fn binding_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<PackHookBinding>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PREDICATE
+        || !is_hook_binding(&body)
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+    {
+        return Ok(None);
+    }
+    match serde_json::from_str::<PackHookBinding>(body.value.as_str().unwrap_or_default()) {
+        Ok(row) if body.subject == ClaimSubject::Entity(row.code) => Ok(Some(row)),
+        Ok(_) => {
+            tracing::warn!(
+                claim = %id.to_hex(),
+                "hook binding subject is not its CODE entity; skipped"
+            );
+            Ok(None)
+        }
+        Err(error) => {
+            tracing::warn!(
+                claim = %id.to_hex(),
+                %error,
+                "hook binding is malformed; skipped"
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// The owner's dial on the binding claim at `id`, read from the raw claim so

@@ -262,6 +262,7 @@ fn outcome(stored: InvocationClaimEntry) -> Result<InvocationOutcome, Invocation
         body: serde_json::from_slice(&stored.response_body)
             .map_err(InvocationClaimStoreError::json)?,
         release,
+        refusal_hook_notice: None,
     })
 }
 

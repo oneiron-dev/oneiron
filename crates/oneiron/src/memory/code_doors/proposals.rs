@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
-use crate::repo_mutation::proposal::RepoProposalReview;
+use crate::repo_mutation::proposal::{RepoProposal, RepoProposalReview};
 use crate::store::repo_fork::RepoForkHash;
 use crate::{
     repo_mutation::RepoMutationRequest,
@@ -17,6 +17,9 @@ impl Memory<'_> {
     /// Proposed repository proposal through the unchanged engine admission,
     /// which captures and retains the base at the pinned commit. The engine
     /// mints the proposal id; nothing is approved, queued, applied or retried.
+    /// The answer names its submission admission receipt (FIX 4338); a
+    /// `repair_of` source is linked to it as that failed proposal's
+    /// replacement in the same writer (FIX 4364).
     pub fn code_proposal_submit_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -50,18 +53,45 @@ impl Memory<'_> {
             self.code_readable(original, None)?;
         }
         let repo = input.repo;
+        let repair_of = input.repair_of;
         let (request, catalog) = owner_submission(repo_ref, actor, input);
+        // A re-review keeps its original's lineage: it repairs nothing
+        // (FIX 4364).
+        if original.is_some() && repair_of.is_some() {
+            return Err(MemoryError::bad_request(
+                "a re-review cannot also repair a failed proposal",
+            ));
+        }
         let proposal = match original {
             Some(original) => self
                 .vault
                 .propose_repo_rereview_as_owner(owner, repo, original, request, catalog)?,
             None => self
                 .vault
-                .propose_repo_mutation_as_owner(owner, repo, request, catalog)?,
+                .propose_repo_mutation_as_owner(owner, repo, request, catalog, repair_of)?,
         };
+        self.code_submitted(repo, actor, &proposal)
+    }
+
+    /// A stored proposal's submission answer, with its submission admission
+    /// receipt read and checked (FIX 4338), then read through the caller.
+    pub(super) fn code_submitted(
+        &self,
+        repo: EntityId,
+        actor: EntityId,
+        proposal: &RepoProposal,
+    ) -> MemoryResult<CodeProposalSubmitted> {
         self.produced_from([proposal.id]);
+        let admission_receipt = self
+            .vault
+            .repo_proposal_admission_receipt(proposal)?
+            .ok_or(crate::error::Error::CorruptedIndex(
+                "a stored proposal has no admission receipt",
+            ))?;
+        self.code_readable(admission_receipt, Some(ENTITY_TYPE_CLAIM))?;
         Ok(CodeProposalSubmitted {
             proposal: proposal.id,
+            admission_receipt,
             repo,
             actor,
             session: proposal.session,
@@ -97,13 +127,18 @@ impl Memory<'_> {
     /// The CALL behind proposal provenance: an existing SESSION and an
     /// existing `repo.provenance` CLAIM, each read through the caller's
     /// credential, and every provenance ref present read likewise. They are
-    /// attribution only; the actor is the caller.
+    /// attribution only; the actor is the caller. A repair source is a
+    /// proposal the caller reads too (FIX 4364); the engine judges its
+    /// failure in the replacement's writer.
     pub(super) fn code_submission_sources(
         &self,
         input: &CodeProposalSubmitRequest,
     ) -> MemoryResult<()> {
         self.code_readable(input.session, Some(ENTITY_TYPE_SESSION))?;
         self.code_readable(input.provenance_claim, Some(ENTITY_TYPE_CLAIM))?;
+        if let Some(source) = input.repair_of {
+            self.code_readable(source, Some(ENTITY_TYPE_CLAIM))?;
+        }
         let provenance = &input.op_provenance;
         for id in [
             provenance.turn,

@@ -81,11 +81,8 @@ impl Vault {
         let result = self.commit_ingest_snapshot(
             &snapshot,
             &capture.blobs,
-            &repo_ref,
-            None,
             timing,
             None,
-            Some(path.trim_end_matches('/')),
             &contents,
             Some(owner),
             |txn| {

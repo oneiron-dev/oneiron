@@ -244,12 +244,30 @@ fn shared_sources_readable(
             }
         }
     }
+    let non_claims = candidates.len();
+    let bounded_sources = if reader.read.actor_key().share_view_ref().is_some() {
+        let Some(sources) = crate::share::share_prompt_sources(
+            vault,
+            reader.read,
+            reader.share_id,
+            reader.viewer,
+            reader.narrowing,
+            &candidates,
+        )?
+        else {
+            return Ok(None);
+        };
+        Some(sources)
+    } else {
+        None
+    };
     if !claims.is_empty() {
-        let Some(resolved) = vault.resolve_share_for_view(
+        let Some(resolved) = vault.resolve_share_for_read(
             reader.share_id,
             reader.viewer,
             reader.narrowing,
             &claims,
+            Some(reader.read),
         )?
         else {
             return Ok(None);
@@ -257,7 +275,14 @@ fn shared_sources_readable(
         candidates.extend(resolved.visible_claim_refs);
     }
     let mut readable = BTreeSet::new();
-    for source in candidates {
+    for (index, source) in candidates.into_iter().enumerate() {
+        if index < non_claims
+            && bounded_sources
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(&source))
+        {
+            continue;
+        }
         let body = reader.frame.scoped_body(reader.read, &source)?;
         if body.value.is_some() {
             readable.insert(source);

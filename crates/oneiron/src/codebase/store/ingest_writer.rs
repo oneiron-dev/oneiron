@@ -292,8 +292,6 @@ impl Vault {
         self.commit_ingest_snapshot(
             &snapshot,
             &blobs,
-            &repo_ref,
-            Some(&commit_hash),
             (occurred, learned_at),
             repository.as_ref(),
             custody_root,
@@ -338,8 +336,6 @@ impl Vault {
         &self,
         snapshot: &CodebaseSnapshot,
         blobs: &[RepoIngestBlob],
-        repo_ref: &RepoRef,
-        commit_hash: Option<&str>,
         (occurred, learned_at): (TimeRange, u64),
         repository: Option<&CaptureRepository>,
         custody_root: Option<&str>,
@@ -356,7 +352,7 @@ impl Vault {
             // The anchor the capture belongs to stands, with the folder this
             // import read (FIX 4299).
             if let Some(capture) = repository {
-                self.require_capture_repository_in_txn(wtxn, capture, repo_ref)?;
+                self.require_capture_repository_in_txn(wtxn, capture, &snapshot.repo_ref)?;
             }
             let capture_actor = owner
                 .map(|owner| owner.revalidate_in_txn(self, wtxn))
@@ -457,7 +453,8 @@ impl Vault {
             // as this writer reads it (FIX 7809), under the repository
             // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
-            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
+            let identity =
+                crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
