@@ -64,12 +64,7 @@ impl AgentDispatcher<'_> {
         run: &CodeRunReplayRecord,
         now: u64,
     ) -> Result<Option<EntityId>> {
-        let Some(answer) = run
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.complete && output.path.ends_with(".observation.txt"))
-        else {
+        let Some(answer) = self.agent_run_output(attempt, run) else {
             return Ok(None);
         };
         if self.vault.get_code_run_raw_output(answer)?.is_none() {
@@ -91,19 +86,45 @@ impl AgentDispatcher<'_> {
         Ok(Some(result.id))
     }
 
+    fn agent_run_output<'run>(
+        &self,
+        attempt: &AttemptRecord,
+        run: &'run CodeRunReplayRecord,
+    ) -> Option<&'run crate::code_run::CodeRunRawOutput> {
+        let observation = run
+            .outputs
+            .iter()
+            .rev()
+            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        if observation.is_some_and(|output| output.raw_len != 0) {
+            return observation;
+        }
+        // A decline without console or finish still publishes an empty REPL observation.
+        let decline = attempt
+            .task_ref
+            .as_deref()
+            .and_then(|task| crate::EntityId::from_hex(task).ok())
+            .and_then(|task| run.task_decline_output(task))
+            .filter(|output| {
+                // A retained path is not body evidence until its digest-checked read succeeds.
+                self.vault
+                    .get_code_run_raw_output(output)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+        decline.or(observation)
+    }
+
     fn prepare_agent_run_result(
         &self,
         attempt: &AttemptRecord,
         run: &CodeRunReplayRecord,
     ) -> Result<PreparedRunResult> {
         let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
-        // The finished step's observation, never a marker or a file the run
-        // wrote after it.
-        let answer = run
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        // The finished step's observation or its accepted native decline reason,
+        // never a marker or an unrelated file.
+        let answer = self.agent_run_output(attempt, run);
         let field = |key: &str, value: Value| (Value::from(key), value);
         let artifact = Value::Map(vec![
             field("kind", Value::from("agent.run_result")),

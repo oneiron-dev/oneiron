@@ -147,8 +147,10 @@ const CAMPAIGN_TASTE_BUDGET: std::time::Duration = std::time::Duration::from_sec
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
-/// The ThinkThreshold row's version a host's start value takes.
-const THINK_THRESHOLD_VERSION: u32 = 1;
+/// The ThinkThreshold row's version a host's start value takes. Public so a
+/// host that builds its own house-read ladder (the route-calibration bench)
+/// pins the same routing-policy revision this host does.
+pub const THINK_THRESHOLD_VERSION: u32 = 1;
 /// The purpose the host's Local-vision rung budgets its calls under.
 const LOCAL_VISION_PURPOSE: &str = "decision.local_vision";
 /// The run each house read on the ladder is admitted as.
