@@ -9298,6 +9298,9 @@ impl AgentVerb {
             Self::TasksCreate | Self::TasksUpdate | Self::TasksRedo
         )
     }
+    pub const fn overlay_write(self) -> bool {
+        matches!(self, Self::VaultClaimsUpsert | Self::VaultNotesCreate)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
@@ -16105,4 +16108,31 @@ impl AgentVerb {
             }
         }
     }
+    /// The member of a custody row's input that holds the secret's value or its sealed input (`custody` on the row).
+    pub const fn custody_member(self) -> Option<&'static str> {
+        match self {
+            Self::VaultSecretsRegister => Some("value_base64"),
+            Self::VaultSecretsRotate => Some("value_base64"),
+            Self::VaultSecretsCustodySubmit => Some("input_base64"),
+            _ => None,
+        }
+    }
+    /// The read a run bound to a session serves through its room's view (`session_read` on the row).
+    pub(crate) const fn session_read(self) -> Option<crate::memory::SessionRead> {
+        match self {
+            Self::VaultReceipts => Some(crate::memory::SessionRead::Receipts),
+            Self::VaultHydrate => Some(crate::memory::SessionRead::Hydrate),
+            Self::VaultGet => Some(crate::memory::SessionRead::Get),
+            Self::VaultRefsResolve => Some(crate::memory::SessionRead::RefsResolve),
+            Self::VaultSearchBm25 => Some(crate::memory::SessionRead::SearchBm25),
+            _ => None,
+        }
+    }
 }
+/// The custody rows, whose input carries a secret's value or its sealed input. The action registry
+/// offers none of them: an action keeps its whole input in its replay record.
+pub const CUSTODY_VALUE_ROWS: [&str; 3] = [
+    "vault.secrets.register",
+    "vault.secrets.rotate",
+    "vault.secrets.custody.submit",
+];
