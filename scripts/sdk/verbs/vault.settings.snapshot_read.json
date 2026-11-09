@@ -3,7 +3,7 @@
   "description": "Reads the owner's bounds on snapshot handles: open handles per actor, the default and the most lifetime, rows and bytes per page, and rows per handle. Unset reads as the defaults.",
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "crate::settings::snapshot_read::SnapshotReadSettings",
-  "call": "crate::snapshot_read::read_snapshot_read_settings(memory)?",
+  "call": "{ let _ = &input; crate::snapshot_read::read_snapshot_read_settings(memory)? }",
   "scope": "Read",
   "host_door": true,
   "host_door_precheck": false,
