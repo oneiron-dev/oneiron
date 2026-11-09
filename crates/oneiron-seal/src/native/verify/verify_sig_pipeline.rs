@@ -312,10 +312,6 @@ fn discover_signatures(
 
 pub(super) struct Checks<'a> {
     pub(super) list: Vec<VerifyCheck>,
-    /// ValidationMaterial failed on forged presented material (a shadow CRL
-    /// signer). Such a failure is never a missing-root symptom, so the
-    /// missing-root probe keeps it (`classify_missing_material_root`).
-    pub(super) material_forged: bool,
     limits: &'a SealResourceLimits,
 }
 
@@ -323,7 +319,6 @@ impl<'a> Checks<'a> {
     pub(super) fn new(limits: &'a SealResourceLimits) -> Self {
         Self {
             list: Vec::new(),
-            material_forged: false,
             limits,
         }
     }

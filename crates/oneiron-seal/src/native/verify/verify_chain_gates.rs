@@ -198,13 +198,13 @@ pub(super) fn anchors(
 /// root availability is NotRun. No provisional result grants trust or profile.
 /// The covered certificates serve as those roots as they are, never copied
 /// (FIX 12260). Memory its decodes were refused ends it as itself, never as
-/// a failed or malformed DSS. A failure on forged presented material (a
-/// shadow CRL signer) is never a missing-root symptom and stays as it is:
-/// treating every covered certificate as a root would exempt it from the
-/// very check that finds the forgery. So before the probe the material is
-/// re-read at the same time under the real `anchors`; a shadow found there
-/// (it may have been hidden by an earlier failure at the first reading's
-/// time) keeps the failure too.
+/// a failed or malformed DSS. A shadow CRL signer is never a missing-root
+/// symptom, and treating every covered certificate as a root would exempt
+/// it from the very check that finds it. So before the probe the material
+/// is re-read at the same time under the real `anchors`: a shadow found
+/// there (an earlier failure at the first reading's time may have hidden
+/// it) is what the check reports, NotRun with
+/// ValidationMaterialPossibleTampering (lead ruling F).
 pub(super) fn classify_missing_material_root(
     doc: &Document,
     anchors: &[EmbeddedCert],
@@ -222,28 +222,36 @@ pub(super) fn classify_missing_material_root(
             )
     });
     if !unresolved
-        || checks.material_forged
         || !checks.list.iter().any(|c| {
             c.kind == VerifyCheckKind::ValidationMaterial && c.status == VerifyCheckStatus::Fail
         })
     {
         return Ok(());
     }
+    let tampering = Some(VerifyFindingCode::ValidationMaterialPossibleTampering);
     let mut real = Checks::new(limits);
     verify_dss(doc, anchors, covered, at, memory, &mut real, limits)?;
-    if real.material_forged {
-        return Ok(());
-    }
-    let mut probe = Checks::new(limits);
-    verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
-    if probe.passed(VerifyCheckKind::ValidationMaterial)
-        && let Some(check) = checks
-            .list
-            .iter_mut()
-            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+    let finding = if real.list.iter().any(|c| {
+        c.kind == VerifyCheckKind::ValidationMaterial
+            && c.status == VerifyCheckStatus::NotRun
+            && c.finding == tampering
+    }) {
+        tampering
+    } else {
+        let mut probe = Checks::new(limits);
+        verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
+        if !probe.passed(VerifyCheckKind::ValidationMaterial) {
+            return Ok(());
+        }
+        Some(VerifyFindingCode::TrustRootUnavailable)
+    };
+    if let Some(check) = checks
+        .list
+        .iter_mut()
+        .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
     {
         check.status = VerifyCheckStatus::NotRun;
-        check.finding = Some(VerifyFindingCode::TrustRootUnavailable);
+        check.finding = finding;
     }
     Ok(())
 }

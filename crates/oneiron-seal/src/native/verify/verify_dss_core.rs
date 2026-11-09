@@ -107,14 +107,6 @@ fn check_dss(
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
         )?,
-        MaterialValidity::Forged => {
-            checks.record(
-                VerifyCheckKind::ValidationMaterial,
-                false,
-                VerifyFindingCode::ValidationMaterialInvalid,
-            )?;
-            checks.material_forged = true;
-        }
         MaterialValidity::Unresolved(reason) => {
             checks.not_run_with_reason(VerifyCheckKind::ValidationMaterial, Some(reason))?;
         }
@@ -125,9 +117,6 @@ fn check_dss(
 enum MaterialValidity {
     Valid,
     Invalid,
-    /// Invalid because presented material is forged (a shadow CRL signer):
-    /// never a symptom of a missing trust root.
-    Forged,
     Unresolved(VerifyFindingCode),
 }
 
