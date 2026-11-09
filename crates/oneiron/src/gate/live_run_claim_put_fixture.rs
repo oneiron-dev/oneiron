@@ -19,10 +19,11 @@ use super::constants::{
     SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
     SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
+// The function itself: gate's re-export of it is `#[cfg(test)]` only.
+use super::definition_ceiling::first_party_connector_actor_ref;
 use super::{
     ClaimGateWrite, GateWriteMode, check_claim_policy_for_write_with_record,
-    default_policy_manifest, default_policy_manifest_id, first_party_connector_actor_ref,
-    resolve_policy_manifest,
+    default_policy_manifest, default_policy_manifest_id, resolve_policy_manifest,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
