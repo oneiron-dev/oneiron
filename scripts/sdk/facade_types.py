@@ -49,6 +49,8 @@ CRATES = {
     'oneiron_container': 'crates/oneiron-container/src',
     'oneiron_spawn': 'crates/oneiron-spawn/src',
     'oneiron_guest': 'crates/oneiron-guest/src',
+    # The Dreamer wake contract (core split slice 3).
+    'oneiron_wake_contract': 'crates/oneiron-wake-contract/src',
     # The client crate: the hand-written lens-frame calls cross its bodies
     # (FIX 3297). Read only when a root names it.
     'oneiron_remote': 'crates/oneiron-remote/src',

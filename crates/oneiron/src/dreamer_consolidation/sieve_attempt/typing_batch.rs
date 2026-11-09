@@ -189,9 +189,10 @@ impl ConsolidationExecutor<'_> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(
-                        charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
-                    );
+                    return Ok(charges.park_for(
+                        &error.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                    ));
                 }
             };
             // A question the decision clock cut keeps its memo: the carrier

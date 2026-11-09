@@ -22,6 +22,7 @@ pub use oneiron_store::settings::web_connector;
 
 pub use destination::{
     CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
+    read_destination_at, read_destination_locality,
 };
 pub(crate) use destination::{
     machine_recipient_hold_in, recipient_limits_in, withheld_row_hold_in, withheld_worlds_in,

@@ -33,7 +33,7 @@ pub(super) fn park_partition_failure_with_spend(
     let cause = if matches!(error, DurableStepError::SpentSchemaValidation { .. }) {
         DreamerParkCause::Retry
     } else {
-        DreamerParkCause::of_step(&error)
+        crate::dreamer_runner::dreamer_park_cause_of_step(&error)
     };
     charges.park_for(&error.to_string(), cause)
 }

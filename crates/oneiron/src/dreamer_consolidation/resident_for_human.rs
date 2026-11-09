@@ -525,7 +525,7 @@ pub async fn run_free_time_for_human(
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
+                cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),
             });
         }
     };
