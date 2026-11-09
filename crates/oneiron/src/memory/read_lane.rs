@@ -532,7 +532,7 @@ impl Memory<'_> {
     pub(crate) fn read_proof_expires_at(&self) -> Option<u64> {
         self.read_proof
             .as_ref()
-            .map(crate::authority::VerifiedSlip::expires_at)
+            .map(|proof| proof.claims().expires_at)
     }
 
     /// [`Self::read_views`] for a door whose output no read can follow
