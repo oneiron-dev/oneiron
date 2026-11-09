@@ -189,11 +189,7 @@ fn an_agent_reads_the_leases_of_its_own_scope_tree_and_no_other() -> TestResult 
     else {
         return Err("expected one fresh spawn".into());
     };
-    let agent = status
-        .input
-        .target
-        .agent_definition_ref()
-        .ok_or("the dispatch targets an agent")?;
+    let agent = status.input.target.agent_definition_ref()?;
     let run = status.attempt.id;
     // The agent's run spends under the launch; it reserved a child below it.
     // A sibling no actor runs spends under the same launch.
