@@ -2,11 +2,12 @@
 //! 15:2x, 9 Nov).
 //!
 //! An ExecutorError park and a private Other park wait on an owner act: a budget, a consent, a seat or a peer. No
-//! resumer retries them blindly (constraint C5), boot included. Each such park raises one owner notice in its own
-//! write, and the vault's authenticated owner releases it, against the exact park a read showed him (its cause and
-//! when it was parked, as `vault.consolidation.status` and the owner's lineage show them), so a park that changed
-//! since refuses and nothing moves. The release resumes the park as the
-//! same try and resolves its notice. In slice 6.5 typed waits replace this door for budget, consent, seat and peer:
+//! resumer retries them blindly (constraint C5), boot included. Each such park raises one notice for each live owner
+//! (recipient set, so no other reader sees the try) in its own write, and the vault's authenticated owner releases
+//! it, against the exact park a read showed him (its cause, when it was parked and the try's lease generation, as
+//! `vault.consolidation.status` and the owner's lineage show them), so a park that changed since refuses and nothing
+//! moves. A try parks only under a lease, so a later park of the same try is a later generation, even within the same
+//! second (review 6910 P1). The release resumes the park as the same try and resolves its notices. In slice 6.5 typed waits replace this door for budget, consent, seat and peer:
 //! the matching signal resumes the park.
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,9 @@ pub struct ReleaseParkedAttemptRequest {
     /// owner's lineage): a park that changed since refuses.
     pub cause: DreamerParkCauseView,
     pub parked_at: u64,
+    /// The try's lease generation (`attempt_count`) as the same read showed it: a release of an earlier park of
+    /// the same try refuses, even when both parks fall in the same second.
+    pub attempt_count: u32,
     /// The owner's note on the try's queue row.
     #[serde(default)]
     pub note: Option<String>,
@@ -60,23 +64,31 @@ pub struct ParkReleaseView {
     pub state: String,
 }
 
-/// The source of the owner notice for `record`: one per park, its id derived from the try and its park time, so a
-/// replay finds the row it wrote and a new park of the same try raises its own.
+/// The source of `owner`'s notice for `record`, parked under lease generation `attempt_count`: one per park and
+/// owner, its id derived from the try, its generation, its park time and the owner, so a replay finds the row it
+/// wrote and a new park of the same try (a later generation) raises its own.
 pub(crate) fn park_release_notice_source(
     record: &DreamerParkedAttemptRecord,
+    attempt_count: u32,
+    owner: &EntityId,
 ) -> NotificationSource {
     let attempt = bytes_to_hex_lower(record.attempt_id.as_bytes());
     NotificationSource {
         producer: PARK_RELEASE_OWED_PRODUCER.to_owned(),
-        event: format!("{attempt}:{}", record.parked_at),
+        event: format!(
+            "{attempt}:{attempt_count}:{}:{}",
+            record.parked_at,
+            owner.to_hex()
+        ),
         attempt: Some(attempt),
         detail: Some(PARK_RELEASE_OWED_DETAIL.to_owned()),
         ..NotificationSource::default()
     }
 }
 
-/// Raises the owner's notice for `record` in its park's own write, when only the owner's release resumes it. A
-/// notice that is not written is logged; the park still lands.
+/// Raises each live owner's notice for `record` in its park's own write, when only the owner's release resumes it:
+/// one notice per owner, for that owner only (review 6910 P1). A notice that is not written is logged; the park
+/// still lands.
 pub(crate) fn raise_park_release_notice_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -87,17 +99,24 @@ pub(crate) fn raise_park_release_notice_in_txn(
     }
     let raised = (|| -> Result<()> {
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-        vault.record_notification_in_txn(
-            &mut savepoint,
-            &NotificationEvent {
-                kind: NotificationKind::Finding,
-                source: park_release_notice_source(record),
-                subject_refs: Vec::new(),
-                recipient: None,
-                created_at: record.parked_at,
-                origin_conversation: None,
-            },
-        )?;
+        let Some(attempt) =
+            AttemptQueue::new(vault).get_in_write_txn(&savepoint, record.attempt_id)?
+        else {
+            return Ok(());
+        };
+        for owner in crate::policy_model::owners_in_txn(vault, &savepoint)? {
+            vault.record_notification_in_txn(
+                &mut savepoint,
+                &NotificationEvent {
+                    kind: NotificationKind::Finding,
+                    source: park_release_notice_source(record, attempt.attempt_count, &owner),
+                    subject_refs: Vec::new(),
+                    recipient: Some(owner),
+                    created_at: record.parked_at,
+                    origin_conversation: None,
+                },
+            )?;
+        }
         savepoint.commit()?;
         Ok(())
     })();
@@ -152,7 +171,10 @@ fn release_in_txn(
     if !park.resumable_by(ParkResumer::OwnerRelease) {
         return Err(Error::EntityNotFound);
     }
-    if DreamerParkCauseView::from(park.cause) != input.cause || park.parked_at != input.parked_at {
+    if DreamerParkCauseView::from(park.cause) != input.cause
+        || park.parked_at != input.parked_at
+        || status.attempt.attempt_count != input.attempt_count
+    {
         return Err(Error::ConcurrentWrite(
             "the parked try changed since it was read",
         ));
@@ -180,7 +202,7 @@ fn release_in_txn(
     store
         .resume_parked_in_txn(wtxn, attempt, &park.park_owner, now)?
         .ok_or(Error::EntityNotFound)?;
-    resolve_notice_in_txn(vault, wtxn, &park, &actor)?;
+    resolve_notices_in_txn(vault, wtxn, &park, input.attempt_count)?;
     let state = store
         .status_with_park_in_txn(&*wtxn, attempt)?
         .map(|(status, _)| status.attempt.state.as_str().to_owned())
@@ -193,29 +215,39 @@ fn release_in_txn(
     })
 }
 
-/// Marks `park`'s owner notice seen and acknowledged for the releasing owner. A notice that was never raised, or
-/// is gone, stays as it is.
-fn resolve_notice_in_txn(
+/// Marks each live owner's notice of `park` (lease generation `attempt_count`) seen and acknowledged for that
+/// owner: the park is released for all of them. A notice that was never raised, or is gone, stays as it is.
+fn resolve_notices_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     park: &DreamerParkedAttemptRecord,
-    actor: &EntityId,
+    attempt_count: u32,
 ) -> Result<()> {
-    let id = crate::inbox::notification_id(&park_release_notice_source(park))?;
-    let LiveEntityRow::Live { entity_type, body } =
-        live_entity_row_in_txn(&vault.store, &*wtxn, &id)?
-    else {
-        return Ok(());
-    };
-    if entity_type != ENTITY_TYPE_NOTIFICATION {
-        return Ok(());
+    let mut resolved = false;
+    for owner in crate::policy_model::owners_in_txn(vault, &*wtxn)? {
+        let id = crate::inbox::notification_id(&park_release_notice_source(
+            park,
+            attempt_count,
+            &owner,
+        ))?;
+        let LiveEntityRow::Live { entity_type, body } =
+            live_entity_row_in_txn(&vault.store, &*wtxn, &id)?
+        else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_NOTIFICATION {
+            continue;
+        }
+        let mut body = decode_notification_body(&body)?;
+        let reader = owner.to_hex();
+        body.seen_by.insert(reader.clone(), true);
+        body.acked_by.insert(reader, true);
+        vault.put_notification_in_txn(wtxn, &id, &body)?;
+        resolved = true;
     }
-    let mut body = decode_notification_body(&body)?;
-    let reader = actor.to_hex();
-    body.seen_by.insert(reader.clone(), true);
-    body.acked_by.insert(reader, true);
-    vault.put_notification_in_txn(wtxn, &id, &body)?;
-    crate::batch::queue_notification_change(vault, wtxn);
+    if resolved {
+        crate::batch::queue_notification_change(vault, wtxn);
+    }
     Ok(())
 }
 
