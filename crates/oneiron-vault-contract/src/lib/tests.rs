@@ -33,24 +33,48 @@ enum V1CtlResponse {
     },
 }
 
+/// A v3 vault's `Ping` (c66727bf2a7, #3266): `readiness` and the
+/// `vm_outbox_companion` slot are required; every build-floor field absent.
+fn ping_v3() -> CtlResponse {
+    CtlResponse::Ping {
+        ok: true,
+        vault: "v".into(),
+        pid: 42,
+        contract_version: CONTRACT_VERSION,
+        readiness: ManagedReadiness::Ready,
+        browser: None,
+        managed_backup: None,
+        settings_paths_revision: None,
+        artifact_internal_host_revision: None,
+        preview_origin_revision: None,
+        slim_recovery_revision: None,
+        vm_outbox_revision: None,
+        vm_outbox_companion: None,
+        relay_delete_revision: None,
+        engine_instance: None,
+        deletion: None,
+    }
+}
+
 fn ctl_response_fixtures() -> Vec<(CtlResponse, &'static str)> {
     vec![
         (
+            // The paged ledger (28c9b753f6d, #3940): prepare_reap names the
+            // frozen report's head, not its entries.
             CtlResponse::PrepareReap {
                 quiescent: false,
-                ledger_rev: 7,
-                next_wake: vec![],
+                ledger: LedgerReportHead {
+                    rev: 7,
+                    report_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                    total: 0,
+                    artifact_origins_total: 0,
+                },
             },
-            r#"{"quiescent":false,"ledger_rev":7,"next_wake":[]}"#,
+            r#"{"quiescent":false,"ledger":{"rev":7,"report_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","total":0,"artifact_origins_total":0}}"#,
         ),
         (
-            CtlResponse::Ping {
-                ok: true,
-                vault: "v".into(),
-                pid: 42,
-                contract_version: CONTRACT_VERSION,
-            },
-            r#"{"ok":true,"vault":"v","pid":42,"contract_version":2}"#,
+            ping_v3(),
+            r#"{"ok":true,"vault":"v","pid":42,"contract_version":3,"readiness":{"state":"ready"},"vm_outbox_companion":null}"#,
         ),
         (CtlResponse::Ok { ok: true }, r#"{"ok":true}"#),
         (CtlResponse::Ok { ok: false }, r#"{"ok":false}"#),
@@ -141,45 +165,76 @@ fn ctl_response_fixtures() -> Vec<(CtlResponse, &'static str)> {
 
 #[test]
 fn reap_flow_byte_identical() {
-    // A v1 conversation stays byte-identical apart from the advertised
-    // version in the Ping reply. The v1 response schema accepts v2 Ping.
-    for (request, reply) in [
-        (
-            r#"{"op":"ping"}"#,
-            r#"{"ok":true,"vault":"v","pid":42,"contract_version":1}"#,
-        ),
-        (
-            r#"{"op":"prepare_reap"}"#,
-            r#"{"quiescent":true,"ledger_rev":7,"next_wake":[{"id":"w1","at":{"kind":"exact","at":7},"reason_tag":"tag"}]}"#,
-        ),
-        (r#"{"op":"reap_abort"}"#, r#"{"ok":true}"#),
+    // A v1 conversation's requests stay byte-identical. Its replies no longer
+    // do, by ruling: contract v3 (c66727bf2a7, #3266) requires `readiness` on
+    // every Ping and keeps no reader of an older answer, and the paged ledger
+    // (28c9b753f6d, #3940) has prepare_reap answer `quiescent` and `ledger`.
+    for request in [
+        r#"{"op":"ping"}"#,
+        r#"{"op":"prepare_reap"}"#,
+        r#"{"op":"reap_abort"}"#,
     ] {
         let old_request: V1CtlRequest = serde_json::from_str(request).unwrap();
         let new_request: CtlRequest = serde_json::from_str(request).unwrap();
         new_request.validate().unwrap();
         assert_eq!(serde_json::to_string(&old_request).unwrap(), request);
         assert_eq!(serde_json::to_string(&new_request).unwrap(), request);
-
-        let old_reply: V1CtlResponse = serde_json::from_str(reply).unwrap();
-        let mut new_reply: CtlResponse = serde_json::from_str(reply).unwrap();
-        assert_eq!(serde_json::to_string(&old_reply).unwrap(), reply);
-        assert_eq!(serde_json::to_string(&new_reply).unwrap(), reply);
-        if let CtlResponse::Ping {
-            contract_version, ..
-        } = &mut new_reply
-        {
-            assert!(!supports_slim(*contract_version));
-            *contract_version = CONTRACT_VERSION;
-        }
-        new_reply.validate().unwrap();
-        let encoded = serde_json::to_string(&new_reply).unwrap();
-        assert_eq!(
-            encoded,
-            reply.replace("\"contract_version\":1", "\"contract_version\":2")
-        );
-        let v1_decoded: V1CtlResponse = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(serde_json::to_string(&v1_decoded).unwrap(), encoded);
     }
+
+    // reap_abort's reply is unchanged.
+    let ok = r#"{"ok":true}"#;
+    let old_ok: V1CtlResponse = serde_json::from_str(ok).unwrap();
+    let new_ok: CtlResponse = serde_json::from_str(ok).unwrap();
+    assert_eq!(serde_json::to_string(&old_ok).unwrap(), ok);
+    assert_eq!(serde_json::to_string(&new_ok).unwrap(), ok);
+    new_ok.validate().unwrap();
+
+    // Ruled (c66727bf2a7): a v1 Ping carries no readiness, so it is no Ping.
+    let v1_ping = r#"{"ok":true,"vault":"v","pid":42,"contract_version":1}"#;
+    let old_ping: V1CtlResponse = serde_json::from_str(v1_ping).unwrap();
+    assert_eq!(serde_json::to_string(&old_ping).unwrap(), v1_ping);
+    let V1CtlResponse::Ping {
+        contract_version, ..
+    } = old_ping
+    else {
+        panic!("a v1 Ping decodes as a v1 Ping");
+    };
+    assert!(!supports_slim(contract_version));
+    let new_ping: CtlResponse = serde_json::from_str(v1_ping).unwrap();
+    assert!(
+        !matches!(new_ping, CtlResponse::Ping { .. }),
+        "{new_ping:?}"
+    );
+
+    // Ruled (28c9b753f6d): a v1 prepare_reap reply names no ledger report and
+    // matches no variant.
+    let v1_reap = r#"{"quiescent":true,"ledger_rev":7,"next_wake":[{"id":"w1","at":{"kind":"exact","at":7},"reason_tag":"tag"}]}"#;
+    let old_reap: V1CtlResponse = serde_json::from_str(v1_reap).unwrap();
+    assert_eq!(serde_json::to_string(&old_reap).unwrap(), v1_reap);
+    assert!(serde_json::from_str::<CtlResponse>(v1_reap).is_err());
+
+    // A v3 vault's Ping is the v1 Ping apart from the advertised version and
+    // the fields v3 requires, and the v1 response schema still reads it.
+    let new_reply = ping_v3();
+    new_reply.validate().unwrap();
+    let encoded = serde_json::to_string(&new_reply).unwrap();
+    assert_eq!(
+        encoded,
+        v1_ping.replace(
+            "\"contract_version\":1}",
+            &format!(
+                "\"contract_version\":{CONTRACT_VERSION},\"readiness\":{{\"state\":\"ready\"}},\"vm_outbox_companion\":null}}"
+            )
+        )
+    );
+    let v1_decoded: V1CtlResponse = serde_json::from_str(&encoded).unwrap();
+    assert!(
+        matches!(
+            v1_decoded,
+            V1CtlResponse::Ping { contract_version, .. } if contract_version == CONTRACT_VERSION
+        ),
+        "{v1_decoded:?}"
+    );
 }
 
 #[test]
@@ -196,7 +251,8 @@ fn alarm_due_wire_bytes_unchanged() {
 #[test]
 fn ctl_version_gating() {
     assert_eq!(SLIM_CONTRACT_VERSION, 2);
-    assert_eq!(CONTRACT_VERSION, 2);
+    // v3 is the typed ctl refusal's (c66727bf2a7, #3266).
+    assert_eq!(CONTRACT_VERSION, 3);
     for (version, supported) in [
         (0, false),
         (1, false),
@@ -205,7 +261,11 @@ fn ctl_version_gating() {
         (u32::MAX, true),
     ] {
         assert_eq!(supports_slim(version), supported);
-        let wire = format!(r#"{{"ok":true,"vault":"v","pid":42,"contract_version":{version}}}"#);
+        // Since v3 (c66727bf2a7) a Ping carries `readiness` and the
+        // `vm_outbox_companion` slot; without them it is no Ping.
+        let wire = format!(
+            r#"{{"ok":true,"vault":"v","pid":42,"contract_version":{version},"readiness":{{"state":"ready"}},"vm_outbox_companion":null}}"#
+        );
         let CtlResponse::Ping {
             contract_version, ..
         } = serde_json::from_str(&wire).unwrap()
@@ -219,7 +279,11 @@ fn ctl_version_gating() {
         (ShedCause::MemoryPressure, "memory_pressure"),
     ] {
         for waited_secs in [0, 1, u64::MAX] {
-            let request = CtlRequest::Shed { cause, waited_secs };
+            let request = CtlRequest::Shed {
+                cause,
+                waited_secs,
+                wait_id: None,
+            };
             let wire =
                 format!(r#"{{"op":"shed","cause":"{spelling}","waited_secs":{waited_secs}}}"#);
             assert_eq!(serde_json::to_string(&request).unwrap(), wire);
@@ -229,7 +293,7 @@ fn ctl_version_gating() {
             assert_eq!(decoded.validate().is_ok(), waited_secs > 0);
             assert!(matches!(
                 decoded,
-                CtlRequest::Shed { cause: c, waited_secs: w } if c == cause && w == waited_secs
+                CtlRequest::Shed { cause: c, waited_secs: w, .. } if c == cause && w == waited_secs
             ));
         }
     }
@@ -331,13 +395,21 @@ fn max_valid_wake_list_fits_ctl_line() {
         reason_tag: "\"".repeat(MAX_REASON_TAG),
     };
     entry.validate().unwrap();
-    let entries = vec![entry; MAX_LEDGER_ENTRIES];
+    // The wake list travels in ledger pages since 28c9b753f6d (#3940, FIX
+    // 9549): a page holds at most MAX_LEDGER_PAGE_ENTRIES rows, and
+    // prepare_reap answers the report's head alone.
+    let entries = vec![entry; MAX_LEDGER_PAGE_ENTRIES];
     validate_wake_entries(&entries).unwrap();
+    let digest = "f".repeat(64);
 
     let resp = serde_json::to_string(&CtlResponse::PrepareReap {
         quiescent: false,
-        ledger_rev: u64::MAX,
-        next_wake: entries.clone(),
+        ledger: LedgerReportHead {
+            rev: u64::MAX,
+            report_digest: digest.clone(),
+            total: u64::MAX,
+            artifact_origins_total: u64::MAX,
+        },
     })
     .unwrap();
     assert!(
@@ -350,8 +422,21 @@ fn max_valid_wake_list_fits_ctl_line() {
         op: "ledger_update".into(),
         vault: "x".repeat(63),
         token: TokenHex::from_token(&[0xffu8; TOKEN_LEN]),
-        rev: u64::MAX,
-        entries,
+        page: LedgerPage {
+            rev: u64::MAX,
+            report_digest: digest,
+            total: u64::MAX,
+            artifact_origins_total: u64::MAX,
+            offset: u64::MAX - u64::MAX % MAX_LEDGER_PAGE_ENTRIES as u64,
+            entries,
+            artifact_origins: Vec::new(),
+            training: ManagedTrainingSetting {
+                on: true,
+                allow_opt_out: true,
+                revision: "f".repeat(64),
+                set_by: Some("f".repeat(32)),
+            },
+        },
     })
     .unwrap();
     assert!(
@@ -369,7 +454,10 @@ fn max_valid_wake_list_fits_ctl_line() {
 fn commitment_schedule_enum_is_nested_and_leaves_the_wake_ledger_alone() {
     use super::commitment::{QuotaWindow, Schedule as CommitmentSchedule};
 
-    assert_eq!(CONTRACT_VERSION, SLIM_CONTRACT_VERSION);
+    // SLIM (v2) and then the typed ctl refusal (v3, c66727bf2a7) account for
+    // the wire version; the recurrence enum moved none.
+    assert_eq!(SLIM_CONTRACT_VERSION, 2);
+    assert_eq!(CONTRACT_VERSION, 3);
 
     // Root fixtures, byte for byte.
     assert_eq!(

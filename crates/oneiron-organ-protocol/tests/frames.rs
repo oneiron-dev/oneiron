@@ -4,15 +4,64 @@
 //! to whatever the caller set on its socket.
 #![cfg(unix)]
 
-use std::io::Write;
+use std::cell::Cell;
+use std::io::{self, Write};
 use std::os::unix::net::UnixStream;
+use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
-    DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, MAX_FRAME_VALUES, Notes, Outcome, Proposal, Reply,
-    recv_frame, recv_frame_polled, recv_frame_until, send_frame, send_frame_until,
+    DEFAULT_FRAME_LIMIT, FrameBooking, FrameError, FromOrgan, Notes, Outcome, Proposal, Reply,
+    Value, recv_frame, recv_frame_polled, recv_frame_until, recv_frame_until_booked, send_frame,
+    send_frame_until,
 };
+
+/// The compact frame's nil count: one past the value cap protocol 1 refused
+/// at (`MAX_FRAME_VALUES`, 1 << 21). Protocol 2.0 (5b61e287afc, #4328) removed
+/// that cap: a receiver books what a message decodes to, before it builds it.
+const COMPACT_NILS: u32 = (1 << 21) + 1;
+
+/// A receiver's room, as the host's memory floor books it: a message whose
+/// bytes or decoded value outgrow it is refused before it is built. It
+/// records the largest value room it was asked for.
+struct Room {
+    left: u64,
+    largest_value: Rc<Cell<u64>>,
+}
+
+impl Room {
+    fn take(&mut self, bytes: u64) -> Result<(), FrameError> {
+        self.left = self.left.checked_sub(bytes).ok_or_else(|| {
+            FrameError::Io(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                format!("{bytes} bytes needed, {} available", self.left),
+            ))
+        })?;
+        Ok(())
+    }
+}
+
+impl FrameBooking for Room {
+    type Held = ();
+
+    fn body(&mut self, len: u64) -> Result<(), FrameError> {
+        self.take(len)
+    }
+
+    fn value(&mut self, (): &mut (), bytes: u64) -> Result<(), FrameError> {
+        self.largest_value.set(self.largest_value.get().max(bytes));
+        self.take(bytes)
+    }
+
+    fn scratch(&mut self, len: u64) -> Result<(), FrameError> {
+        self.take(len)
+    }
+
+    fn body_gone(&mut self, (): &mut (), len: u64) {
+        self.left = self.left.saturating_add(len);
+    }
+}
 
 /// A valid reply whose report is an array of `count` nils: one byte each on
 /// the wire, dozens each once decoded.
@@ -22,7 +71,7 @@ fn reply_of_nils(count: u32) -> Vec<u8> {
         outcome: Outcome::Proposal(Proposal {
             body: None,
             outputs: Vec::new(),
-            report: rmpv::Value::Nil,
+            report: Value::Nil,
             notes: Notes::default(),
         }),
     });
@@ -43,21 +92,37 @@ fn reply_of_nils(count: u32) -> Vec<u8> {
         .expect("len")
         .to_le_bytes()
         .to_vec();
+    // Protocol 2.0's header: the length, then the `more` flag (0: the
+    // message's last frame).
+    frame.push(0);
     frame.extend(body);
     frame
 }
 
 #[test]
 fn a_compact_frame_that_unfolds_into_millions_of_values_is_refused() {
+    // Rule 5 conversion (protocol 2.0, 5b61e287afc): no value cap refuses the
+    // frame; the receiver's room does, booked for the decoded value before a
+    // value is built. About 2 MiB on the wire, about 2 million values decoded.
     let (mut organ, engine) = UnixStream::pair().expect("pair");
-    let count = u32::try_from(MAX_FRAME_VALUES).expect("fits") + 1;
-    let frame = reply_of_nils(count);
+    let frame = reply_of_nils(COMPACT_NILS);
     let writer = std::thread::spawn(move || organ.write_all(&frame));
+    let largest_value = Rc::new(Cell::new(0));
+    let room = Room {
+        left: 16 * 1024 * 1024,
+        largest_value: Rc::clone(&largest_value),
+    };
     let started = Instant::now();
-    let refused = recv_frame::<FromOrgan>(&engine, 64 * 1024 * 1024);
+    let refused = recv_frame_until_booked::<FromOrgan, _>(&engine, 64 * 1024 * 1024, None, room);
     assert!(
-        matches!(refused, Err(FrameError::Protocol(_))),
-        "{refused:?}"
+        matches!(&refused, Err(FrameError::Io(err)) if err.kind() == io::ErrorKind::OutOfMemory),
+        "{:?}",
+        refused.map(|_| ())
+    );
+    assert!(
+        largest_value.get() >= u64::from(COMPACT_NILS) * std::mem::size_of::<Value>() as u64,
+        "the decoded value was booked before it was built: {}",
+        largest_value.get()
     );
     assert!(started.elapsed() < Duration::from_secs(5));
     drop(engine);

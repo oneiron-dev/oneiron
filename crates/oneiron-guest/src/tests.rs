@@ -3,6 +3,7 @@ use crate::{
     filesystem::Workspace,
     protocol::{MAX_COMPONENT, MAX_FILE, MAX_FRAME, MAX_SOURCE, Session, Snapshot},
 };
+use oneiron_sandbox_contract::GUEST_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -31,7 +32,7 @@ fn get(channel: &mut impl Read) -> Value {
 }
 
 fn start(length: usize) -> Value {
-    json!({"type":"start", "version":1, "vm_id":"localtest-1", "tier":"foreign",
+    json!({"type":"start", "version":GUEST_PROTOCOL_VERSION, "vm_id":"localtest-1", "tier":"foreign",
         "pids":2, "component_bytes":length, "source":""})
 }
 
@@ -175,33 +176,47 @@ fn start_refuses_authority_version_and_resource_escalation() {
         let mut bytes = Vec::new();
         put(&mut bytes, frame);
         let (transport, _) = channel(bytes);
-        assert!(Session::new(transport).receive().is_err());
+        let (_temp, root) = scratch();
+        let workspace = Workspace::open(&root).expect("workspace");
+        assert!(Session::new(transport).receive(&workspace).is_err());
     }
 }
 
 #[test]
 fn source_order_duplicates_paths_and_budgets_fail_closed() {
     let component = json!({"type":"component", "offset":0, "bytes":[0]});
-    let file = json!({"type":"file", "path":"/mnt/workspace/file", "bytes":[1]});
+    // A source file streams as file_open, its chunks, then file_close (#5006).
+    let file_frames = |path: &str, bytes: Vec<u8>| {
+        let mut frames = vec![json!({"type":"file_open", "path":path, "len":bytes.len()})];
+        if !bytes.is_empty() {
+            frames.push(json!({"type":"file_chunk", "bytes":bytes}));
+        }
+        frames.push(json!({"type":"file_close"}));
+        frames
+    };
+    let file = file_frames("/mnt/workspace/file", vec![1]);
     let cases = vec![
         vec![json!({"type":"ready"})],
-        vec![file.clone()],
+        file.clone(),
         vec![json!({"type":"component", "offset":1, "bytes":[0]})],
         vec![json!({"type":"component", "offset":0, "bytes":[]})],
         vec![component.clone(), component.clone()],
-        vec![component.clone(), file.clone(), file],
-        vec![
-            component.clone(),
-            json!({"type":"file", "path":"/mnt/workspace/../escape", "bytes":[]}),
-        ],
-        vec![
-            component.clone(),
-            json!({"type":"file", "path":"/mnt/uploads/file", "bytes":[]}),
-        ],
-        vec![
-            component,
-            json!({"type":"file", "path":"/mnt/workspace/file", "bytes":vec![0; MAX_FILE + 1]}),
-        ],
+        [vec![component.clone()], file.clone(), file].concat(),
+        [
+            vec![component.clone()],
+            file_frames("/mnt/workspace/../escape", vec![]),
+        ]
+        .concat(),
+        [
+            vec![component.clone()],
+            file_frames("/mnt/uploads/file", vec![]),
+        ]
+        .concat(),
+        [
+            vec![component],
+            file_frames("/mnt/workspace/file", vec![0; MAX_FILE + 1]),
+        ]
+        .concat(),
     ];
     for frames in cases {
         let mut bytes = Vec::new();
@@ -211,7 +226,9 @@ fn source_order_duplicates_paths_and_budgets_fail_closed() {
         }
         put(&mut bytes, json!({"type":"ready"}));
         let (transport, _) = channel(bytes);
-        assert!(Session::new(transport).receive().is_err());
+        let (_temp, root) = scratch();
+        let workspace = Workspace::open(&root).expect("workspace");
+        assert!(Session::new(transport).receive(&workspace).is_err());
     }
 }
 
@@ -223,8 +240,9 @@ fn descriptor_workspace_refuses_symlinks_hardlinks_and_special_files() {
     symlink(&outside, root.join("escape")).expect("symlink fixture");
     let workspace = Workspace::open(&root).expect("workspace");
     assert!(workspace.read("/mnt/workspace/escape/secret").is_err());
-    let proposal = Snapshot::from([("/mnt/workspace/escape/secret".into(), b"changed".to_vec())]);
-    assert!(workspace.apply(&proposal).is_err());
+    // A write lands only by create_seed since #5006 (16349c2258d): it cannot
+    // follow the planted symlink out of the workspace either.
+    assert!(workspace.create_seed("/mnt/workspace/escape/secret").is_err());
     assert!(workspace.snapshot().is_err());
     fs::remove_file(root.join("escape")).expect("remove symlink");
     fs::hard_link(outside.join("secret"), root.join("linked")).expect("hardlink fixture");
@@ -250,12 +268,15 @@ fn descriptor_walk_refuses_symlink_ancestors_and_conflicting_tree() {
     symlink(root.join("real"), root.join("alias")).expect("alias");
     assert!(Workspace::open(&root.join("alias")).is_err());
     let workspace = Workspace::open(&root.join("real")).expect("workspace");
-    let files = Snapshot::from([
-        ("/mnt/workspace/a".into(), vec![]),
-        ("/mnt/workspace/a/b".into(), vec![]),
-    ]);
-    assert!(workspace.seed(&files).is_err());
-    assert!(workspace.snapshot().expect("empty").is_empty());
+    // Seeding streams one file at a time since #5006 (16349c2258d): the file
+    // `a` lands, and the conflicting `a/b` is refused at the descriptor walk
+    // and writes nothing.
+    drop(workspace.create_seed("/mnt/workspace/a").expect("the first file"));
+    assert!(workspace.create_seed("/mnt/workspace/a/b").is_err());
+    assert_eq!(
+        workspace.snapshot().expect("the first file only"),
+        Snapshot::from([("/mnt/workspace/a".to_owned(), 0)])
+    );
 }
 
 fn real_foreign_component() -> Vec<u8> {
