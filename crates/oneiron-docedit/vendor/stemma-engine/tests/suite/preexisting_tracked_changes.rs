@@ -1155,6 +1155,7 @@ fn motivating_shape_replay_reaches_each_disposition_without_speculation() {
         .apply(&stemma::edit::EditTransaction {
             steps: vec![stemma::edit::EditStep::CommentCreate {
                 block_id: p.id.clone(),
+                story: None,
                 expect: "$150".to_string(),
                 occurrence: None,
                 semantic_hash: None,

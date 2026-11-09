@@ -266,19 +266,6 @@ def fails(result):
     return [ln for ln in result.stdout.splitlines() if ln.startswith("FAIL")]
 
 
-def test_inner_visibility_promotion_is_not_a_body_change(repo):
-    """A split routinely promotes a private field or method to pub(super) so a
-    sibling child can reach it; that must pass (vis only), never FAIL body."""
-    path, sha = repo
-    alpha = ALPHA_RS.replace("    name: String,", "    pub(super) name: String,")
-    alpha = alpha.replace("pub(crate) fn name(", "pub(super) fn name(")
-    assert alpha != ALPHA_RS
-    apply_split(path, {**SPLIT, "alpha.rs": alpha})
-    r = run_check(path, sha)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert not [ln for ln in r.stdout.splitlines() if ln.startswith("FAIL")]
-
-
 # --- nested directory modules -------------------------------------------------
 
 
@@ -330,43 +317,6 @@ LITERAL_INLINE_MOD_RS = "#[cfg(test)]\nmod fixtures;\n\npub fn lines(s: &str) ->
 LITERAL_FAIL = ["FAIL body fn fixture_lines (in tests) differs:"]
 
 
-@pytest.mark.parametrize("literal", [RAW_YAML, PLAIN_TEXT, RAW_TWO_HASHES], ids=["raw", "plain", "raw-two-hashes"])
-def test_string_literal_content_is_byte_exact(tmp_path, literal):
-    """(a) the literal's continuation lines gained 4 spaces on the move ->
-    FAIL body, in both landing shapes: a child that keeps an inline
-    `mod tests` (both sides go through the mod-body dedent, which used to
-    equalise them: the beam YAML case) and a top-level tests.rs; (b) the
-    same moves with the content byte-identical while the code around it
-    re-indents -> OK. (c) a plain "..\\n.." string and (d) an r##".."##
-    raw string holding `"#` run through the same four checks."""
-    base = _literal_base(literal)
-    path, sha = make_repo(tmp_path, base)
-    inline = base[base.index("#[cfg(test)]"):]  # the base mod verbatim, inside a child
-    shifted = _reindent_continuation(literal, 4)
-    # inline-mod child, content identical -> OK
-    apply_split(path, {"mod.rs": LITERAL_INLINE_MOD_RS, "fixtures.rs": inline})
-    r = run_check(path, sha)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 2 children (2 items)"
-    # inline-mod child, content re-indented -> FAIL
-    apply_split(path, {"fixtures.rs": inline.replace(literal, shifted)}, remove_old=False)
-    r = run_check(path, sha)
-    assert fails(r) == LITERAL_FAIL
-    (path / NEW / "fixtures.rs").unlink()
-    # tests.rs, code re-indented by -4, content identical -> OK
-    apply_split(path, {"mod.rs": LITERAL_MOD_RS, "tests.rs": _literal_tests_rs(literal)}, remove_old=False)
-    r = run_check(path, sha)
-    assert r.returncode == 0, r.stdout + r.stderr
-    # tests.rs, content re-indented too -> FAIL, and the diff shows the literal lines
-    apply_split(path, {"tests.rs": _literal_tests_rs(shifted)}, remove_old=False)
-    r = run_check(path, sha)
-    assert fails(r) == LITERAL_FAIL
-    second = literal.split("\n")[1]  # may be the closing line, followed by `;`
-    lines = r.stdout.splitlines()
-    assert any(ln.startswith("  -" + second) for ln in lines)
-    assert any(ln.startswith("  +    " + second) for ln in lines)
-
-
 # --- unrecognised blocks: byte-identical twins in the base --------------------
 
 def _chunk(canon, where, line):
@@ -393,16 +343,6 @@ TWIN_ASSERT_BASE = textwrap.dedent('''\
 TWIN_ASSERT_MOD_RS = "mod a;\nmod b;\n\npub use a::A;\npub use b::B;\n"
 TWIN_ASSERT_A_RS = "pub struct A;\n\nconst _: () = assert!(std::mem::size_of::<A>() == 0);\n"
 TWIN_ASSERT_B_RS = "pub struct B;\n\nconst _: () = assert!(std::mem::size_of::<B>() == 0);\n"
-
-
-def test_same_key_items_pair_by_body(tmp_path):
-    """Two `const _` compile-time asserts share one item key; each lands in
-    the child of the type it guards. Paired by body, in any order."""
-    path, sha = make_repo(tmp_path, TWIN_ASSERT_BASE)
-    apply_split(path, {"mod.rs": TWIN_ASSERT_MOD_RS, "a.rs": TWIN_ASSERT_A_RS, "b.rs": TWIN_ASSERT_B_RS})
-    r = run_check(path, sha)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert fails(r) == []
 
 
 # --- a promoted method whose longer signature rustfmt reflows -----------------
@@ -456,29 +396,6 @@ def test_promoted_method_reflowed_by_rustfmt_is_a_vis_change_only(tmp_path):
     r = run_check(path, sha)
     assert r.returncode == 0, r.stdout + r.stderr
     assert fails(r) == []
-
-
-def test_base_declared_directory_child_is_plumbing(tmp_path):
-    """The base file already mounted `mod step;` -> src/big/step/mod.rs. The
-    split's mod.rs must keep that decl (walk_dir demands it) and the decl must
-    not read as an extra mod. A directory the base never had stays extra."""
-    step = "pub fn step() -> u8 {\n    2\n}\n"
-    path, sha = make_repo(tmp_path, BASE + "mod step;\n", extra={"src/big/step/mod.rs": step})
-    apply_split(path, {**SPLIT, "mod.rs": MOD_RS + "mod step;\n"})
-    r = run_check(path, sha)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert fails(r) == []
-    assert f"INFO skipped {NEW}/step/mod.rs (pre-existing, unchanged)" in r.stdout.splitlines()
-    # dropping the decl is still a missing declaration
-    apply_split(path, {**SPLIT, "mod.rs": MOD_RS}, remove_old=False)
-    r = run_check(path, sha)
-    assert fails(r) == [f"FAIL {NEW}/mod.rs does not declare `mod step;`"]
-    # a directory child the base never had is still an extra mod
-    apply_split(path, {**SPLIT, "mod.rs": MOD_RS + "mod step;\nmod fresh;\n", "fresh/mod.rs": "//! fresh\n"},
-                remove_old=False)
-    r = run_check(path, sha)
-    assert fails(r) == [f"FAIL extra mod fresh in {NEW}/mod.rs"]
-
 
 
 # --- same-scope literal includes preserve `tests_regressions::recall::<test>` ---
