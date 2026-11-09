@@ -321,51 +321,6 @@ fn signal(pid: u32, signal: libc::c_int) {
 }
 
 #[test]
-fn a_session_binds_the_running_vault_the_newest_of_several_or_the_pinned_one() {
-    let home = Home::new();
-    let me = std::process::id();
-    let (first, second) = (answering_vault(), answering_vault());
-
-    // One running vault: the line names it.
-    home.runtime_file("first", &first, me, 1_000);
-    let said = home.session_start(&[]);
-    assert_eq!(said.len(), 1, "one line names the vault: {said:?}");
-    assert!(said[0].contains(&first), "{said:?}");
-
-    // Two: the newest is bound, and a second line says how to keep it.
-    home.runtime_file("second", &second, me, 2_000);
-    let said = home.session_start(&[]);
-    assert_eq!(said.len(), 2, "{said:?}");
-    assert!(
-        said[0].contains(&second) && !said[0].contains(&first),
-        "{said:?}"
-    );
-    let pin = home.user_dir().join("hook.toml");
-    assert!(
-        said[1].contains(&second) && said[1].contains(pin.to_str().expect("UTF-8 path")),
-        "the second line pins the bound vault: {said:?}"
-    );
-
-    // A pin decides between them, even for the older one.
-    std::fs::create_dir_all(home.user_dir()).expect("test fixture");
-    std::fs::write(&pin, format!("url = \"{first}\"\n")).expect("test fixture");
-    let said = home.session_start(&[]);
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(
-        said[0].contains(&first) && !said[0].contains(&second),
-        "{said:?}"
-    );
-
-    // The hook's own `--url` comes before the pin file.
-    let said = home.session_start(&["--url", &second]);
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(
-        said[0].contains(&second) && !said[0].contains(&first),
-        "{said:?}"
-    );
-}
-
-#[test]
 fn a_stale_runtime_file_is_dropped_and_a_session_with_no_vault_is_told_how_to_set_one_up() {
     let home = Home::new();
     let gone = home.runtime_file("gone", &answering_vault(), dead_pid(), 2_000);

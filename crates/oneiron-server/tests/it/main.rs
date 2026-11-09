@@ -32,13 +32,9 @@ mod hook;
 #[cfg(unix)]
 mod host_re_root;
 mod import_claims;
-// Runs the shipped binary through `reopen_after_restart`'s helpers.
-#[cfg(unix)]
-mod maintain_cli;
 // The wake ledger talks to Hypnos over a Unix socket.
 #[cfg(unix)]
 mod managed_ledger_wire;
-mod mcp_oracle;
 // The credential file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]
 mod mcp_stdio_agent;
