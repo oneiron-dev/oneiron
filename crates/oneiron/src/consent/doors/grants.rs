@@ -391,7 +391,8 @@ impl Vault {
     /// A re-mint of the same bound has the same grant ref, so the answer reads the current issuance only:
     /// its consent revoke receipt, else the record that revoked it without one (a graduation demotion's
     /// receipt, as `revoked_by`), else neither (an office-edit erase or an owner-less pack update, which
-    /// write no record that names the grant).
+    /// write no record that names the grant). The row, the owner proof, the issuance boundary and the
+    /// evidence come from one read snapshot, so a concurrent re-mint or revoke cannot split the answer.
     ///
     /// # Errors
     ///
@@ -402,63 +403,91 @@ impl Vault {
         grant_ref: &str,
     ) -> Result<ConsentRevocation> {
         let key = grant_ref.to_owned();
-        let mut wtxn = self.store.env.write_txn()?;
-        let from = GRANTS.get(&self.store, &wtxn, &key)?.map(|row| row.status);
-        match ConsentLifecycle::grant(from, GrantCommand::Revoke) {
-            GrantStep::Missing => Err(Error::Gate(GateError::ConsentGrantNotFound)),
-            GrantStep::AlreadyRevoked => {
-                owner.revalidate_in_txn(self, &*wtxn)?;
-                drop(wtxn);
-                // Newest first: the current issuance's revoke receipt comes before its creation record.
-                let mut issued = None;
-                for record in self.store.gate_decisions_for_grant_ref(grant_ref)? {
-                    if record.content_kind != CONSENT_CONTENT_KIND {
-                        continue;
-                    }
-                    let names =
-                        |reason: &str| record.reason_codes.iter().any(|code| code == reason);
-                    if names(crate::consent::CONSENT_REASON_REVOKED) {
-                        return Ok(ConsentRevocation {
-                            receipt: Some(ConsentReceipt::Revoked {
-                                decision_id: record.decision_id,
-                                grant_ref: grant_ref.to_owned(),
-                            }),
-                            already_revoked: true,
-                            revoked_by: None,
-                        });
-                    }
-                    if names(crate::consent::CONSENT_REASON_STANDING_CREATED)
-                        || names(crate::consent::CONSENT_REASON_BYPASS_CREATED)
-                    {
-                        issued = Some(record.decision_id);
-                        break;
-                    }
-                }
-                Ok(ConsentRevocation {
-                    receipt: None,
-                    already_revoked: true,
-                    revoked_by: crate::consent_graduation::demotion_revoking_grant(
-                        self, grant_ref, issued,
-                    )?,
-                })
+        loop {
+            let snapshot = self.store.custody_snapshot()?;
+            let from = GRANTS
+                .get(&self.store, &*snapshot, &key)?
+                .map(|row| row.status);
+            if ConsentLifecycle::grant(from, GrantCommand::Revoke) == GrantStep::AlreadyRevoked {
+                owner.revalidate_in_txn(self, &*snapshot)?;
+                return self.repeat_revocation_in_txn(&*snapshot, grant_ref);
             }
-            GrantStep::Write { .. } => {
-                if !revoke_standing_grant_in_txn(&self.store, &mut wtxn, grant_ref)? {
-                    return Err(Error::InvariantViolation("the grant table revoked nothing"));
+            drop(snapshot);
+            let mut wtxn = self.store.env.write_txn()?;
+            let from = GRANTS.get(&self.store, &wtxn, &key)?.map(|row| row.status);
+            match ConsentLifecycle::grant(from, GrantCommand::Revoke) {
+                GrantStep::Missing => return Err(Error::Gate(GateError::ConsentGrantNotFound)),
+                // Revoked since the snapshot: answer from a fresh one.
+                GrantStep::AlreadyRevoked => {}
+                GrantStep::Write { .. } => {
+                    if !revoke_standing_grant_in_txn(&self.store, &mut wtxn, grant_ref)? {
+                        return Err(Error::InvariantViolation("the grant table revoked nothing"));
+                    }
+                    let receipt = ConsentReceipt::Revoked {
+                        decision_id: crate::store::GateDecisionId::from_bytes(
+                            self.store.clock.ulid()?,
+                        ),
+                        grant_ref: grant_ref.to_owned(),
+                    };
+                    self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
+                    wtxn.commit()?;
+                    return Ok(ConsentRevocation {
+                        receipt: Some(receipt),
+                        already_revoked: false,
+                        revoked_by: None,
+                    });
                 }
-                let receipt = ConsentReceipt::Revoked {
-                    decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                    grant_ref: grant_ref.to_owned(),
-                };
-                self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-                wtxn.commit()?;
-                Ok(ConsentRevocation {
-                    receipt: Some(receipt),
-                    already_revoked: false,
-                    revoked_by: None,
-                })
             }
         }
+    }
+
+    /// The answer to a revoke of a grant that `txn` holds as revoked: the current issuance's consent revoke
+    /// receipt, else the graduation demotion that revoked it, else neither. Reads only.
+    fn repeat_revocation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<ConsentRevocation> {
+        // Newest first: the current issuance's revoke receipt comes before its creation record.
+        let mut issued = None;
+        for record in self
+            .store
+            .gate_decisions_for_grant_ref_in_txn(txn, grant_ref)?
+        {
+            if record.content_kind != CONSENT_CONTENT_KIND {
+                continue;
+            }
+            let names = |reason: &str| record.reason_codes.iter().any(|code| code == reason);
+            if names(crate::consent::CONSENT_REASON_REVOKED) {
+                return Ok(ConsentRevocation {
+                    receipt: Some(ConsentReceipt::Revoked {
+                        decision_id: record.decision_id,
+                        grant_ref: grant_ref.to_owned(),
+                    }),
+                    already_revoked: true,
+                    revoked_by: None,
+                });
+            }
+            if names(crate::consent::CONSENT_REASON_STANDING_CREATED)
+                || names(crate::consent::CONSENT_REASON_BYPASS_CREATED)
+            {
+                issued = Some(record.decision_id);
+                break;
+            }
+        }
+        // With no creation record (retention swept it) the issuance boundary is unknown, so no demotion is
+        // proven to belong to the current issuance.
+        let revoked_by = match issued {
+            Some(issued) => {
+                crate::consent_graduation::demotion_revoking_grant(self, txn, grant_ref, issued)?
+            }
+            None => None,
+        };
+        Ok(ConsentRevocation {
+            receipt: None,
+            already_revoked: true,
+            revoked_by,
+        })
     }
 
     /// [`Self::revoke_consent_grant`] as one step of a larger owner act in
