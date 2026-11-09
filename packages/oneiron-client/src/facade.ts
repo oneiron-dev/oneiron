@@ -590,7 +590,7 @@ export interface FacadeInputs {
   "vault.embedding_spaces.probes.list": Facade.EmptyRequest;
   "vault.embedding_spaces.probes.put": Facade.EmbeddingSpaceProbePutRequest;
   "vault.embedding_spaces.retire": Facade.EmbeddingSpaceRequest;
-  "vault.engine.controls.changes": Facade.EngineControlChangesRequest;
+  "vault.engine.controls.changes": Facade.EmptyRequest;
   "vault.entities.look_before_mint": Facade.IdentityLookupRequest;
   "vault.entities.mention": Facade.EntityMentionRequest;
   "vault.esign.create": Facade.EsignCreateRequest;
@@ -5765,7 +5765,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       engine: {
         controls: {
           /** The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first. */
-          changes: (input: Facade.EngineControlChangesRequest, options?: O): FacadeReturns<"vault.engine.controls.changes">[K] => invoke("vault.engine.controls.changes", input, options, newInvocation()),
+          changes: (input: Facade.EmptyRequest, options?: O): FacadeReturns<"vault.engine.controls.changes">[K] => invoke("vault.engine.controls.changes", input, options, newInvocation()),
         },
       },
       entities: {
