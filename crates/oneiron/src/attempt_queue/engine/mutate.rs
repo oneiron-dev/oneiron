@@ -8,6 +8,7 @@ use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR
 use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptPause, AttemptRecord,
@@ -303,86 +304,94 @@ impl AttemptQueue<'_> {
         };
         let mut record = decode_record(&raw_record, input.id)?;
 
+        // RunLifecycle (slice 5.0c) answers what the intervention does in the
+        // row's state; this writer keeps the guards and the side writes.
+        let row = RunRow::of(&record);
         let effect = match input.kind {
             AttemptInterventionKind::Redirect => {
                 return Err(invalid_transition("redirect", "missing placement"));
             }
-            AttemptInterventionKind::Interrupt => match record.state {
-                AttemptState::Queued
-                | AttemptState::Leased
-                | AttemptState::Paused
-                | AttemptState::Scheduled
-                // A landing row is still live work, so it can still be handed
-                // an operator note; interrupt changes no claimability.
-                | AttemptState::Landing => {
-                    append_attempt_event(
-                        &mut record,
-                        input.kind,
-                        input.actor,
-                        input.note,
-                        input.now,
-                    )?;
-                    // A landing has one bounded lease window. An operator
-                    // note must not become a hidden heartbeat that extends
-                    // that window; only accepting the landing starts it.
-                    if record.state != AttemptState::Landing {
-                        record.updated_at = input.now;
+            AttemptInterventionKind::Interrupt => {
+                match RunLifecycle::step(row, RunEvent::Interrupt) {
+                    RunStep::Note { clock } => {
+                        append_attempt_event(
+                            &mut record,
+                            input.kind,
+                            input.actor,
+                            input.note,
+                            input.now,
+                        )?;
+                        // A landing's note moves no clock: only accepting the
+                        // landing starts its one bounded lease window.
+                        if clock {
+                            record.updated_at = input.now;
+                        }
+                        AttemptInterventionEffect::Interrupted
                     }
-                    AttemptInterventionEffect::Interrupted
+                    RunStep::Move { .. } | RunStep::Replay | RunStep::Keep | RunStep::Refuse => {
+                        return Err(invalid_transition(input.kind.as_str(), row.state.as_str()));
+                    }
                 }
-                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
-            },
-            AttemptInterventionKind::Pause => match record.state {
-                // A person's pause takes over any engine hold (FIX 9579), so
-                // no hold's release resumes the row: only a resume does.
-                AttemptState::Paused
-                    if input.actor != ANNOTATION_HOLD_ACTOR
-                        && record
-                            .active_pause
-                            .is_some_and(AttemptPause::is_engine_hold) =>
-                {
-                    append_attempt_event(
-                        &mut record,
-                        input.kind,
-                        input.actor,
-                        input.note,
-                        input.now,
-                    )?;
-                    record.active_pause = Some(AttemptPause::Person);
-                    record.updated_at = input.now;
-                    crate::attempt_queue::index::delete_annotation_hold_in_txn(
-                        self.store, wtxn, record.id,
-                    )?;
-                    AttemptInterventionEffect::Paused
-                }
-                AttemptState::Paused => AttemptInterventionEffect::AlreadyPaused,
-                // A paused row keeps its readiness instant so resume can restore
-                // the exact schedule instead of pulling the try forward.
-                AttemptState::Queued | AttemptState::Scheduled => {
-                    self.delete_ready_entry_for_record(wtxn, &record)?;
-                    let pause = held_pause(&input.actor, input.note.as_deref());
-                    append_attempt_event(
-                        &mut record,
-                        input.kind,
-                        input.actor,
-                        input.note,
-                        input.now,
-                    )?;
-                    record.state = AttemptState::Paused;
-                    record.active_pause = Some(pause);
-                    record.lease_owner = None;
-                    record.updated_at = input.now;
-                    if matches!(pause, AttemptPause::Annotation { .. }) {
-                        crate::attempt_queue::index::put_annotation_hold_in_txn(
+            }
+            AttemptInterventionKind::Pause => {
+                let pause = held_pause(&input.actor, input.note.as_deref());
+                let by_hold_actor = input.actor == ANNOTATION_HOLD_ACTOR;
+                match RunLifecycle::step(
+                    row,
+                    RunEvent::Pause {
+                        pause,
+                        by_hold_actor,
+                    },
+                ) {
+                    // A person's pause takes over an engine hold (FIX 9579):
+                    // the row is already paused and out of the ready index.
+                    RunStep::Move { to, pause } if row.state == AttemptState::Paused => {
+                        append_attempt_event(
+                            &mut record,
+                            input.kind,
+                            input.actor,
+                            input.note,
+                            input.now,
+                        )?;
+                        record.state = to;
+                        record.active_pause = pause;
+                        record.updated_at = input.now;
+                        crate::attempt_queue::index::delete_annotation_hold_in_txn(
                             self.store, wtxn, record.id,
                         )?;
+                        AttemptInterventionEffect::Paused
                     }
-                    AttemptInterventionEffect::Paused
+                    // A paused row keeps its readiness instant so resume can
+                    // restore the exact schedule instead of pulling the try
+                    // forward.
+                    RunStep::Move { to, pause } => {
+                        self.delete_ready_entry_for_record(wtxn, &record)?;
+                        append_attempt_event(
+                            &mut record,
+                            input.kind,
+                            input.actor,
+                            input.note,
+                            input.now,
+                        )?;
+                        record.state = to;
+                        record.active_pause = pause;
+                        record.lease_owner = None;
+                        record.updated_at = input.now;
+                        if matches!(pause, Some(AttemptPause::Annotation { .. })) {
+                            crate::attempt_queue::index::put_annotation_hold_in_txn(
+                                self.store, wtxn, record.id,
+                            )?;
+                        }
+                        AttemptInterventionEffect::Paused
+                    }
+                    RunStep::Replay => AttemptInterventionEffect::AlreadyPaused,
+                    RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                        return Err(invalid_transition(input.kind.as_str(), row.state.as_str()));
+                    }
                 }
-                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
-            },
-            AttemptInterventionKind::Resume => match record.state {
-                AttemptState::Paused => {
+            }
+            AttemptInterventionKind::Resume => match RunLifecycle::step(row, RunEvent::Resume) {
+                RunStep::Move { to, pause } => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_attempt_event(
                         &mut record,
@@ -391,14 +400,11 @@ impl AttemptQueue<'_> {
                         input.note,
                         input.now,
                     )?;
-                    // Restoring a still-deferred row as Queued would render it
-                    // as runnable-now on every read surface; keep it honest.
-                    record.state = if record.scheduled_at.is_some() {
-                        AttemptState::Scheduled
-                    } else {
-                        AttemptState::Queued
-                    };
-                    record.active_pause = None;
+                    // The table restores Scheduled while the row keeps its
+                    // scheduled instant, so no read surface renders a
+                    // still-deferred row as runnable now.
+                    record.state = to;
+                    record.active_pause = pause;
                     record.lease_owner = None;
                     record.updated_at = input.now;
                     crate::attempt_queue::index::delete_annotation_hold_in_txn(
@@ -410,14 +416,14 @@ impl AttemptQueue<'_> {
                         .put(wtxn, &ready_key, record.id.as_bytes())?;
                     AttemptInterventionEffect::Resumed
                 }
-                AttemptState::Queued | AttemptState::Leased | AttemptState::Scheduled => {
-                    AttemptInterventionEffect::AlreadyResumed
+                RunStep::Replay => AttemptInterventionEffect::AlreadyResumed,
+                RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                    return Err(invalid_transition(input.kind.as_str(), row.state.as_str()));
                 }
-                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
             },
-            AttemptInterventionKind::Cancel => match record.state {
-                AttemptState::Cancelled => AttemptInterventionEffect::AlreadyCancelled,
-                AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
+            AttemptInterventionKind::Cancel => match RunLifecycle::step(row, RunEvent::Cancel) {
+                RunStep::Replay => AttemptInterventionEffect::AlreadyCancelled,
+                RunStep::Move { to, pause } => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     let actor = input.actor.clone();
                     append_attempt_event(
@@ -427,8 +433,8 @@ impl AttemptQueue<'_> {
                         input.note,
                         input.now,
                     )?;
-                    record.state = AttemptState::Cancelled;
-                    record.active_pause = None;
+                    record.state = to;
+                    record.active_pause = pause;
                     record.lease_owner = None;
                     record.scheduled_at = None;
                     record.backoff_until = None;
@@ -446,7 +452,9 @@ impl AttemptQueue<'_> {
                     )?;
                     AttemptInterventionEffect::Cancelled
                 }
-                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
+                RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                    return Err(invalid_transition(input.kind.as_str(), row.state.as_str()));
+                }
             },
         };
 
@@ -541,12 +549,14 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("release", "missing"));
         };
         let mut record = decode_record(&raw_record, id)?;
-        if record.state != AttemptState::Leased
-            || record.lease_owner.as_deref() != Some(lease_owner)
-        {
+        let lease_holder = record.lease_owner.as_deref() == Some(lease_owner);
+        let RunStep::Move { to, pause } =
+            RunLifecycle::step(RunRow::of(&record), RunEvent::Release { lease_holder })
+        else {
             return Ok(false);
-        }
-        record.state = AttemptState::Queued;
+        };
+        record.state = to;
+        record.active_pause = pause;
         record.lease_owner = None;
         record.scheduled_at = None;
         record.backoff_until = None;
