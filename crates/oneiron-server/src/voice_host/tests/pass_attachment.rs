@@ -442,8 +442,9 @@ async fn either_shutdown_owner_cancels_voice_and_stops_existing_supervisor() {
         let factory = consolidation_factory(&fx).with_pass_attachment(Box::new(config));
         let token = host.open("pending".to_owned()).unwrap();
         let work = host.prepare(&token, 1, "text".to_owned(), false).unwrap();
-        let (ticks, _wake, _hint) =
-            PushTick::channel(oneiron_driver::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+        // The coalesce floor at the vault's shipped `session_idle_floor_seconds`
+        // (1,200 s): the driver's constant became that policy row (db6e935657e).
+        let (ticks, _wake, _hint) = PushTick::channel(1_200 * 1_000);
         let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
         let handle = supervisor.shutdown_handle();
         let (result, report, call) = tokio::join!(work.run(), supervisor.run(), async {
