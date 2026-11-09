@@ -51,15 +51,18 @@ impl OfferLadder {
 
     /// Why the attempt's offer is parked: a spent window with its reset, or
     /// spent credit, which only the owner brings back, each after the owner
-    /// is asked; else the walk's own end, a rate limit with when the offer
-    /// is back or an outage.
+    /// is asked; an offer resting for its health, or on probation with its
+    /// request out, with when it is back (FIX 11226); else the walk's own
+    /// end, a rate limit with when the offer is back.
     fn parked_refusal(&self, call: Call<'_>, walk: Walk) -> LlmError {
         let spent = walk
             .parked(self.rungs.len())
             .and_then(|parked| parked.first().map(|(_, rest)| *rest))
             .and_then(|rest| Some((rest, rest.spent?)));
         let Some(((rest, kind), now)) = spent.zip(self.rests.now()) else {
-            return self.unanswered(call, walk);
+            return self
+                .health_rest(&walk)
+                .unwrap_or_else(|| self.unanswered(call, walk));
         };
         self.ask_parked(&walk, call.needs, call.run.principal());
         let (retry_after, resets_at) = match rest.source {
@@ -72,5 +75,30 @@ impl OfferLadder {
             resets_at,
         }
         .into()
+    }
+
+    /// The health park of an attempt held unsent (FIX 11226): its offer
+    /// rests for its provider's health, with when it is back, or is on
+    /// probation with its one request out, whose end says that. The
+    /// attempt's retry owner waits for it without spending an attempt; the
+    /// rest keeps every other call off the offer as before. `None` when the
+    /// offer is held for anything else.
+    fn health_rest(&self, walk: &Walk) -> Option<LlmError> {
+        if walk.last.is_some() || !walk.outage() || walk.kept() {
+            return None;
+        }
+        let (retry_after, resets_at) = walk
+            .back()
+            .zip(self.rests.now())
+            .map_or((None, Vec::new()), |((_, back), now)| {
+                (Some(back.saturating_sub(now)), vec![back])
+            });
+        Some(
+            RetryableLlmError::HealthRest {
+                retry_after,
+                resets_at,
+            }
+            .into(),
+        )
     }
 }
