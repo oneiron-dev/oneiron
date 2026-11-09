@@ -320,8 +320,25 @@ impl Vault {
         validate_reference_shape(&reference)?;
         {
             if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
-                return Ok(validate_row(row, &reference)?.proposal);
+                let row = validate_row(row, &reference)?;
+                // An identical refiling writes nothing (the widen table: File on a stored row).
+                return match crate::consent::ConsentLifecycle::widen(
+                    Some(widen_state(&row)),
+                    crate::consent::WidenCommand::File,
+                ) {
+                    crate::consent::WidenStep::Unchanged => Ok(row.proposal),
+                    _ => Err(Error::InvariantViolation(
+                        "the widen table rewrote a filed proposal",
+                    )),
+                };
             }
+            let crate::consent::WidenStep::Write(crate::consent::WidenState::Filed) =
+                crate::consent::ConsentLifecycle::widen(None, crate::consent::WidenCommand::File)
+            else {
+                return Err(Error::InvariantViolation(
+                    "the widen table refused a filing",
+                ));
+            };
             // The grants this widening replaces, as they stand at filing.
             let predecessors = match decode_delta(&canonical_delta)? {
                 WidenDelta::Bound(bound) => predecessors_at_filing(self, txn, &bound, &owner_ref)?,
@@ -481,11 +498,14 @@ impl Vault {
         let key = reference.to_owned();
         self.with_write_txn_grouped(|txn| {
             let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
-            if row.resolved {
+            let crate::consent::WidenStep::Write(to) = crate::consent::ConsentLifecycle::widen(
+                Some(widen_state(&row)),
+                crate::consent::WidenCommand::Reject,
+            ) else {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "widen proposal is already resolved",
                 )));
-            }
+            };
             if matches!(
                 decode_delta(&row.proposal.canonical_delta)?,
                 WidenDelta::ContactDisclosure(_)
@@ -496,7 +516,7 @@ impl Vault {
             }
             let receipt =
                 self.deny_consent_in_txn(txn, owner, widen_rejection_digest(&row.proposal))?;
-            row.resolved = true;
+            row.resolved = to == crate::consent::WidenState::Settled;
             row.settlement = Some(StoredSettlement {
                 verdict: WIDEN_REJECTED.to_owned(),
                 decision_id: receipt.decision_id().as_bytes(),
@@ -591,8 +611,14 @@ impl Vault {
                 "the lineage that opened an offer cannot settle it",
             )));
         }
-        if row.resolved || proposal.expires_at <= now || proposal.canonical_delta != expected_delta
-        {
+        let settles = matches!(
+            crate::consent::ConsentLifecycle::widen(
+                Some(widen_state(&row)),
+                crate::consent::WidenCommand::SettleOffer
+            ),
+            crate::consent::WidenStep::Write(crate::consent::WidenState::Settled)
+        );
+        if !settles || proposal.expires_at <= now || proposal.canonical_delta != expected_delta {
             return Err(Error::Gate(GateError::InvalidConsentBound(
                 "widen proposal is stale, changed, or resolved",
             )));
@@ -618,7 +644,15 @@ impl Vault {
             .get(&self.store, &*txn, &key)?
             .ok_or_else(invalid_row)?;
         let mut row = validate_row(row, reference)?;
-        row.resolved = true;
+        let crate::consent::WidenStep::Write(to) = crate::consent::ConsentLifecycle::widen(
+            Some(widen_state(&row)),
+            crate::consent::WidenCommand::SettleOffer,
+        ) else {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "widen proposal is stale, changed, or resolved",
+            )));
+        };
+        row.resolved = to == crate::consent::WidenState::Settled;
         row.settlement = Some(StoredSettlement {
             verdict: verdict.to_owned(),
             decision_id: decision_id.as_bytes(),
@@ -708,5 +742,14 @@ impl Vault {
             .settlement
             .filter(|_| resolved)
             .map(|settlement| (settlement.verdict, settlement.decision_id)))
+    }
+}
+
+/// The widen table's state of a stored proposal row: settled once resolved.
+const fn widen_state(row: &StoredProposal) -> crate::consent::WidenState {
+    if row.resolved {
+        crate::consent::WidenState::Settled
+    } else {
+        crate::consent::WidenState::Filed
     }
 }

@@ -65,7 +65,14 @@ pub(in crate::consent) fn forget_widen_predecessor_in_txn(
 ) -> Result<()> {
     let mut changed = Vec::new();
     for (reference, mut row) in WIDEN_PROPOSALS.scan(&vault.store, &*wtxn)? {
-        if !row.resolved && row.predecessors.iter().any(|listed| listed == grant_ref) {
+        let open = matches!(
+            crate::consent::ConsentLifecycle::widen(
+                Some(super::widen_state(&row)),
+                crate::consent::WidenCommand::ForgetPredecessor
+            ),
+            crate::consent::WidenStep::Write(crate::consent::WidenState::Filed)
+        );
+        if open && row.predecessors.iter().any(|listed| listed == grant_ref) {
             row.predecessors.retain(|listed| listed != grant_ref);
             changed.push((reference, row));
         }

@@ -55,6 +55,16 @@ mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
+mod lifecycle_table_imports {
+    pub(super) use super::{
+        ConsentLifecycle, GrantCommand, GrantStep, MarkerCommand, MarkerRefusal, MarkerState,
+    };
+}
+/// The consent lifecycle owner: one transition table per axis (oneiron-consent-state).
+pub use oneiron_consent_state::consent::lifecycle_table::{
+    CodeWaitCommand, CodeWaitEdgeRefused, ConsentLifecycle, GrantCommand, GrantStep, MarkerCommand,
+    MarkerRefusal, MarkerState, WidenCommand, WidenState, WidenStep,
+};
 pub(crate) mod code_settlement;
 pub mod code_wait_state;
 mod codec;
@@ -99,7 +109,8 @@ pub use self::contact_clearance::{
     contact_disclosure_voice_channel,
 };
 pub use self::doors::{
-    AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,
+    AuthenticatedOwner, ConsentEvaluation, ConsentRevocation, bound_catastrophe_class,
+    load_active_standing_grants,
 };
 pub(crate) use self::effect::CATASTROPHE_FLOOR_ROW_KEY;
 pub use self::effect::{

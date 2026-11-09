@@ -14,6 +14,7 @@ use super::grant::{
     CONSENT_CONTENT_KIND, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp,
     ConsentReceipt, StandingConsentGrant,
 };
+use super::lifecycle_table_imports::*;
 use super::registry::{ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow};
 use super::support::{
     APPROVE_ONCE_MARKERS, ApproveOnceMarker, CONSENT_APPROVE_ONCE_AVAILABLE,
@@ -448,16 +449,16 @@ impl Vault {
         digest: &EffectDigest,
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        if APPROVE_ONCE_MARKERS
+        let from = APPROVE_ONCE_MARKERS
             .get(&self.store, &*wtxn, digest.as_bytes())?
-            .is_some()
-        {
+            .map(|marker| marker_state(&marker));
+        let Ok(to) = ConsentLifecycle::marker(from, MarkerCommand::Approve) else {
             return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
                 "this op digest already carries an approve-once receipt",
             )));
-        }
+        };
         let marker = ApproveOnceMarker {
-            state: CONSENT_APPROVE_ONCE_AVAILABLE,
+            state: marker_byte(to),
             decision_id,
         };
         APPROVE_ONCE_MARKERS.put(&self.store, wtxn, digest.as_bytes(), &marker)?;
@@ -719,13 +720,46 @@ pub(crate) fn revoke_standing_grant_in_txn(
     let Some(mut row) = GRANTS.get(store, &*wtxn, &key)? else {
         return Ok(false);
     };
-    if !row.is_active() {
+    let GrantStep::Write {
+        status,
+        retire_reason_rules,
+        ..
+    } = ConsentLifecycle::grant(Some(row.status), GrantCommand::Revoke)
+    else {
         return Ok(false);
-    }
-    row.status = ConsentGrantStatus::Revoked;
+    };
+    row.status = status;
     GRANTS.put(store, wtxn, &key, &row)?;
-    super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
+    if retire_reason_rules {
+        super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
+    }
     Ok(true)
+}
+
+/// A revoke's receipt, and whether the grant was already revoked (no write: the original receipt).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentRevocation {
+    /// The revoke receipt: this act's, or the original one when the grant was already revoked.
+    pub receipt: ConsentReceipt,
+    /// The grant was already revoked; nothing was written.
+    pub already_revoked: bool,
+}
+
+/// The marker table's state of a stored marker row (its state byte).
+pub(super) const fn marker_state(marker: &ApproveOnceMarker) -> MarkerState {
+    match marker.state {
+        CONSENT_APPROVE_ONCE_AVAILABLE => MarkerState::Available,
+        CONSENT_APPROVE_ONCE_SPENT => MarkerState::Spent,
+        _ => MarkerState::Unreadable,
+    }
+}
+
+/// The stored state byte of a marker the table wrote.
+pub(super) const fn marker_byte(state: MarkerState) -> u8 {
+    match state {
+        MarkerState::Available => CONSENT_APPROVE_ONCE_AVAILABLE,
+        MarkerState::Spent | MarkerState::Unreadable => CONSENT_APPROVE_ONCE_SPENT,
+    }
 }
 
 /// Reads one approve-once marker from the caller's transaction.
@@ -775,21 +809,31 @@ pub(crate) fn spend_approve_once_in_txn(
     authorization: &ApproveOnceAuthorization,
 ) -> Result<()> {
     let key = *authorization.effect_digest.as_bytes();
-    let Some(marker) = APPROVE_ONCE_MARKERS.get(store, &*wtxn, &key)? else {
-        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-            "approve-once authorization has no live marker",
-        )));
+    let stored = APPROVE_ONCE_MARKERS.get(store, &*wtxn, &key)?;
+    let to = match ConsentLifecycle::marker(stored.as_ref().map(marker_state), MarkerCommand::Spend)
+    {
+        Ok(to) => to,
+        Err(MarkerRefusal::AlreadySpent) => {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this approve-once authorization already delivered its effect",
+            )));
+        }
+        Err(MarkerRefusal::Unreadable) => {
+            return Err(Error::CorruptedIndex("consent approve-once marker state"));
+        }
+        Err(_) => {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "approve-once authorization has no live marker",
+            )));
+        }
     };
-    if marker.state == CONSENT_APPROVE_ONCE_SPENT {
-        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-            "this approve-once authorization already delivered its effect",
-        )));
-    }
-    if marker.state != CONSENT_APPROVE_ONCE_AVAILABLE {
-        return Err(Error::CorruptedIndex("consent approve-once marker state"));
-    }
+    let Some(marker) = stored else {
+        return Err(Error::InvariantViolation(
+            "the marker table spent an absent marker",
+        ));
+    };
     let spent = ApproveOnceMarker {
-        state: CONSENT_APPROVE_ONCE_SPENT,
+        state: marker_byte(to),
         decision_id: marker.decision_id,
     };
     APPROVE_ONCE_MARKERS.put(store, wtxn, &key, &spent)?;

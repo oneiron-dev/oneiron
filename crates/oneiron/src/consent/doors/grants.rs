@@ -258,17 +258,35 @@ impl Vault {
         };
 
         let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
+        let from = GRANTS
+            .get(&self.store, &*wtxn, &grant_ref)?
+            .map(|stored| stored.status);
+        let GrantStep::Write {
+            status,
+            retire_reason_rules,
+            forget_widen_predecessor,
+        } = ConsentLifecycle::grant(from, GrantCommand::Mint)
+        else {
+            return Err(Error::InvariantViolation(
+                "the grant table refused a standing-grant mint",
+            ));
+        };
+        let row = ConsentGrantRow { status, ..row };
         // A same-bound re-mint is a NEW issuance, even with the same
         // AuthenticatedOwner. Its predecessor's reason and undo must not
         // authorize or revoke this replacement.
-        super::super::owner_reason::retire_owner_reason_rules_in_txn(
-            &self.store,
-            wtxn,
-            &grant_ref,
-        )?;
+        if retire_reason_rules {
+            super::super::owner_reason::retire_owner_reason_rules_in_txn(
+                &self.store,
+                wtxn,
+                &grant_ref,
+            )?;
+        }
         // Nor may an open widening filed over the predecessor revoke it
         // (FIX 9740).
-        super::super::widen::forget_widen_predecessor_in_txn(self, wtxn, &grant_ref)?;
+        if forget_widen_predecessor {
+            super::super::widen::forget_widen_predecessor_in_txn(self, wtxn, &grant_ref)?;
+        }
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and its door still lands the receipt so the act is
         // audit-visible.
@@ -356,25 +374,71 @@ impl Vault {
         owner: &AuthenticatedOwner,
         grant_ref: &str,
     ) -> Result<ConsentReceipt> {
+        self.consent_revocation(owner, grant_ref)
+            .map(|revocation| revocation.receipt)
+    }
+
+    /// [`Self::revoke_consent_grant`] with whether the grant was already revoked.
+    ///
+    /// The grant table decides (ConsentLifecycle, `Revoke`): a live grant flips to Revoked with its receipt;
+    /// a missing grant is not found; a revoked grant writes nothing and returns its original revoke receipt
+    /// with `already_revoked` (lead 10:31, 9 Nov: a repeat revoke is idempotent, where this door used to
+    /// write a second receipt). A revoked grant with no revoke receipt to return (a graduation demotion, an
+    /// erase or a pack update revoked it, and those write none) is refused as revoked; nothing is written.
+    ///
+    /// # Errors
+    ///
+    /// `ConsentGrantNotFound`, `ConsentGrantRevoked`, a stale owner proof, or a store error.
+    pub fn consent_revocation(
+        &self,
+        owner: &AuthenticatedOwner,
+        grant_ref: &str,
+    ) -> Result<ConsentRevocation> {
         let key = grant_ref.to_owned();
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(mut row) = GRANTS.get(&self.store, &wtxn, &key)? else {
-            return Err(Error::Gate(GateError::ConsentGrantNotFound));
-        };
-        row.status = ConsentGrantStatus::Revoked;
-        GRANTS.put(&self.store, &mut wtxn, &key, &row)?;
-        super::super::owner_reason::retire_owner_reason_rules_in_txn(
-            &self.store,
-            &mut wtxn,
-            grant_ref,
-        )?;
-        let receipt = ConsentReceipt::Revoked {
-            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            grant_ref: grant_ref.to_owned(),
-        };
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-        wtxn.commit()?;
-        Ok(receipt)
+        let from = GRANTS.get(&self.store, &wtxn, &key)?.map(|row| row.status);
+        match ConsentLifecycle::grant(from, GrantCommand::Revoke) {
+            GrantStep::Missing => Err(Error::Gate(GateError::ConsentGrantNotFound)),
+            GrantStep::AlreadyRevoked => {
+                owner.revalidate_in_txn(self, &*wtxn)?;
+                drop(wtxn);
+                let receipt = self
+                    .store
+                    .gate_decisions_for_grant_ref(grant_ref)?
+                    .into_iter()
+                    .find(|record| {
+                        record.content_kind == CONSENT_CONTENT_KIND
+                            && record
+                                .reason_codes
+                                .iter()
+                                .any(|code| code == crate::consent::CONSENT_REASON_REVOKED)
+                    })
+                    .map(|record| ConsentReceipt::Revoked {
+                        decision_id: record.decision_id,
+                        grant_ref: grant_ref.to_owned(),
+                    })
+                    .ok_or(Error::Gate(GateError::ConsentGrantRevoked))?;
+                Ok(ConsentRevocation {
+                    receipt,
+                    already_revoked: true,
+                })
+            }
+            GrantStep::Write { .. } => {
+                if !revoke_standing_grant_in_txn(&self.store, &mut wtxn, grant_ref)? {
+                    return Err(Error::InvariantViolation("the grant table revoked nothing"));
+                }
+                let receipt = ConsentReceipt::Revoked {
+                    decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
+                    grant_ref: grant_ref.to_owned(),
+                };
+                self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
+                wtxn.commit()?;
+                Ok(ConsentRevocation {
+                    receipt,
+                    already_revoked: false,
+                })
+            }
+        }
     }
 
     /// [`Self::revoke_consent_grant`] as one step of a larger owner act in

@@ -224,7 +224,12 @@ pub(crate) fn consume_code_consent_wait_in_txn(
     // is the settlement it names (CALLS: a consumption's actor class).
     vault.append_code_wait_receipt_in_txn(txn, &receipt, None)?;
     row.consumption = Some(resumed.consumption(receipt_id));
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::Consume,
+    )?;
     Ok(true)
 }
 

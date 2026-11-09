@@ -126,6 +126,10 @@ pub struct ConsentActReceipt {
     pub grant_ref: Option<String>,
     /// The Gate receipt's exact effect/bound handle bytes.
     pub diff_handle: Vec<u8>,
+    /// A revoke of a grant that was already revoked: nothing was written, and this is the original revoke
+    /// receipt (a repeat revoke is idempotent). Absent on every other act.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub already_revoked: bool,
 }
 
 impl From<ConsentReceipt> for ConsentActReceipt {
@@ -136,6 +140,7 @@ impl From<ConsentReceipt> for ConsentActReceipt {
             reason_code: receipt.reason_code().to_owned(),
             grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
             diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
+            already_revoked: false,
         }
     }
 }
@@ -183,7 +188,11 @@ pub fn revoke(
     input: RevokeGrantRequest,
 ) -> MemoryResult<ConsentActReceipt> {
     let grant = parse_digest(&input.grant, "grant")?.to_hex();
-    Ok(vault.revoke_consent_grant(owner, &grant)?.into())
+    let revocation = vault.consent_revocation(owner, &grant)?;
+    Ok(ConsentActReceipt {
+        already_revoked: revocation.already_revoked,
+        ..revocation.receipt.into()
+    })
 }
 
 pub(super) fn parse_digest(value: &str, field: &str) -> MemoryResult<EffectDigest> {
