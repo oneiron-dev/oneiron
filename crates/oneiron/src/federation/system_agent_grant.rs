@@ -73,7 +73,7 @@ pub(crate) fn holds_system_agent_grant(actor: EntityId) -> bool {
 /// none (revoked, withdrawn, rewritten or never there). A Steward grant has
 /// no expiry, so it stands until revoked.
 pub(crate) fn standing_steward_verbs_in(
-    store: &impl EntityStoreRead,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     grant: EntityId,
     agent: EntityId,
