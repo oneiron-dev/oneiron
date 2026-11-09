@@ -369,26 +369,33 @@ impl Vault {
     /// Revokes a standing grant. Revocation is immediate: the row flips to
     /// [`ConsentGrantStatus::Revoked`] in the same transaction as its receipt,
     /// so no in-flight read can observe a revoked row as live.
+    ///
+    /// [`Self::consent_revocation`] for a caller that needs the receipt: a grant whose current issuance was
+    /// revoked without a consent receipt has none to return and is refused as revoked.
     pub fn revoke_consent_grant(
         &self,
         owner: &AuthenticatedOwner,
         grant_ref: &str,
     ) -> Result<ConsentReceipt> {
-        self.consent_revocation(owner, grant_ref)
-            .map(|revocation| revocation.receipt)
+        self.consent_revocation(owner, grant_ref)?
+            .receipt
+            .ok_or(Error::Gate(GateError::ConsentGrantRevoked))
     }
 
     /// [`Self::revoke_consent_grant`] with whether the grant was already revoked.
     ///
     /// The grant table decides (ConsentLifecycle, `Revoke`): a live grant flips to Revoked with its receipt;
-    /// a missing grant is not found; a revoked grant writes nothing and returns its original revoke receipt
-    /// with `already_revoked` (lead 10:31, 9 Nov: a repeat revoke is idempotent, where this door used to
-    /// write a second receipt). A revoked grant with no revoke receipt to return (a graduation demotion, an
-    /// erase or a pack update revoked it, and those write none) is refused as revoked; nothing is written.
+    /// a missing grant is not found; a revoked grant succeeds with `already_revoked` and writes nothing (lead
+    /// 10:31, 9 Nov: a repeat revoke is idempotent, where this door used to write a second receipt).
+    ///
+    /// A re-mint of the same bound has the same grant ref, so the answer reads the current issuance only:
+    /// its consent revoke receipt, else the record that revoked it without one (a graduation demotion's
+    /// receipt, as `revoked_by`), else neither (an office-edit erase or an owner-less pack update, which
+    /// write no record that names the grant).
     ///
     /// # Errors
     ///
-    /// `ConsentGrantNotFound`, `ConsentGrantRevoked`, a stale owner proof, or a store error.
+    /// `ConsentGrantNotFound`, a stale owner proof, or a store error.
     pub fn consent_revocation(
         &self,
         owner: &AuthenticatedOwner,
@@ -402,25 +409,37 @@ impl Vault {
             GrantStep::AlreadyRevoked => {
                 owner.revalidate_in_txn(self, &*wtxn)?;
                 drop(wtxn);
-                let receipt = self
-                    .store
-                    .gate_decisions_for_grant_ref(grant_ref)?
-                    .into_iter()
-                    .find(|record| {
-                        record.content_kind == CONSENT_CONTENT_KIND
-                            && record
-                                .reason_codes
-                                .iter()
-                                .any(|code| code == crate::consent::CONSENT_REASON_REVOKED)
-                    })
-                    .map(|record| ConsentReceipt::Revoked {
-                        decision_id: record.decision_id,
-                        grant_ref: grant_ref.to_owned(),
-                    })
-                    .ok_or(Error::Gate(GateError::ConsentGrantRevoked))?;
+                // Newest first: the current issuance's revoke receipt comes before its creation record.
+                let mut issued = None;
+                for record in self.store.gate_decisions_for_grant_ref(grant_ref)? {
+                    if record.content_kind != CONSENT_CONTENT_KIND {
+                        continue;
+                    }
+                    let names =
+                        |reason: &str| record.reason_codes.iter().any(|code| code == reason);
+                    if names(crate::consent::CONSENT_REASON_REVOKED) {
+                        return Ok(ConsentRevocation {
+                            receipt: Some(ConsentReceipt::Revoked {
+                                decision_id: record.decision_id,
+                                grant_ref: grant_ref.to_owned(),
+                            }),
+                            already_revoked: true,
+                            revoked_by: None,
+                        });
+                    }
+                    if names(crate::consent::CONSENT_REASON_STANDING_CREATED)
+                        || names(crate::consent::CONSENT_REASON_BYPASS_CREATED)
+                    {
+                        issued = Some(record.decision_id);
+                        break;
+                    }
+                }
                 Ok(ConsentRevocation {
-                    receipt,
+                    receipt: None,
                     already_revoked: true,
+                    revoked_by: crate::consent_graduation::demotion_revoking_grant(
+                        self, grant_ref, issued,
+                    )?,
                 })
             }
             GrantStep::Write { .. } => {
@@ -434,8 +453,9 @@ impl Vault {
                 self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
                 wtxn.commit()?;
                 Ok(ConsentRevocation {
-                    receipt,
+                    receipt: Some(receipt),
                     already_revoked: false,
+                    revoked_by: None,
                 })
             }
         }

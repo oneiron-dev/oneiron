@@ -9,8 +9,9 @@
 //! The tables encode the transitions the writers made before the owner existed, including those outside the
 //! plain chains: a standing grant returns to Active when the owner re-affirms it, a decision slot is taken
 //! already spent, refiling an identical widen proposal writes nothing, and a code wait can settle with no seal
-//! or no answer. The one deliberate change is the repeat revoke (lead 10:31, 9 Nov): it writes nothing and
-//! reports the grant as already revoked, where the owner door used to write a second receipt.
+//! or no answer. The one deliberate change is the repeat revoke (lead 10:31, 9 Nov; Engine 12:32): it succeeds,
+//! writes nothing and reports the grant as already revoked, whatever revoked it, where the owner door used to
+//! write a second receipt.
 
 use crate::consent::code_wait_state::CodeConsentWaitState;
 use crate::consent::grant::ConsentGrantStatus;
@@ -119,8 +120,11 @@ pub enum GrantStep {
     /// No row: nothing is written. The owner door refuses (not found); the in-transaction revokes report
     /// that nothing was revoked.
     Missing,
-    /// The grant is already revoked: nothing is written. The owner door returns the original revoke receipt
-    /// with `already_revoked`; the in-transaction revokes report that nothing was revoked.
+    /// The grant is already revoked: nothing is written, and the owner door succeeds with `already_revoked`
+    /// whatever revoked the current issuance. Its answer carries that issuance's consent revoke receipt; with
+    /// no consent receipt (a graduation demotion, an office-edit erase or an owner-less pack update revoked
+    /// it), the record that revoked it as `revoked_by` where that path writes one, else neither. The
+    /// in-transaction revokes report that nothing was revoked.
     AlreadyRevoked,
 }
 
@@ -132,6 +136,9 @@ impl ConsentLifecycle {
     /// | absent | Active, retire rules, forget predecessor | Active | Missing |
     /// | Active | Active (new issuance), retire rules, forget predecessor | Active | Revoked, retire rules |
     /// | Revoked | Active (owner re-affirmation), retire rules, forget predecessor | Active | AlreadyRevoked |
+    ///
+    /// Revoked -> Revoke is AlreadyRevoked for every revoker, the ones that write no consent receipt included:
+    /// the door succeeds, writes nothing and answers with what the ledgers hold (see [`GrantStep::AlreadyRevoked`]).
     #[must_use]
     pub const fn grant(from: Option<ConsentGrantStatus>, command: GrantCommand) -> GrantStep {
         match (command, from) {

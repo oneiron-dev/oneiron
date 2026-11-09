@@ -736,13 +736,19 @@ pub(crate) fn revoke_standing_grant_in_txn(
     Ok(true)
 }
 
-/// A revoke's receipt, and whether the grant was already revoked (no write: the original receipt).
+/// A revoke's answer: its receipt, whether the grant was already revoked (no write), and what revoked it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsentRevocation {
-    /// The revoke receipt: this act's, or the original one when the grant was already revoked.
-    pub receipt: ConsentReceipt,
+    /// The consent revoke receipt: this act's, or the current issuance's original one when the grant was
+    /// already revoked. `None` when the current issuance was revoked without a consent receipt (a graduation
+    /// demotion, an office-edit erase or an owner-less pack update).
+    pub receipt: Option<ConsentReceipt>,
     /// The grant was already revoked; nothing was written.
     pub already_revoked: bool,
+    /// The record that revoked the current issuance without a consent receipt, where that path writes one: a
+    /// graduation demotion's receipt id. An office-edit erase and an owner-less pack update write no record
+    /// that names the grant.
+    pub revoked_by: Option<String>,
 }
 
 /// The marker table's state of a stored marker row (its state byte).

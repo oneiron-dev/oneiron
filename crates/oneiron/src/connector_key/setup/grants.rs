@@ -47,7 +47,7 @@ impl Vault {
             withdrawn
         };
         for grant_ref in &withdrawn {
-            self.revoke_consent_grant(owner, grant_ref)?;
+            self.consent_revocation(owner, grant_ref)?;
         }
         self.with_write_txn_grouped(|txn| {
             let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();

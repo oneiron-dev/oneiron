@@ -97,7 +97,7 @@ pub(crate) use self::fold::{
     ramp_stats_in_txn, record_door_ramp_outcome_in_txn, record_ramp_outcome_in_txn,
     reset_ramp_streak_in_txn,
 };
-pub(crate) use self::receipts::ramp_receipts;
+pub(crate) use self::receipts::{demotion_revoking_grant, ramp_receipts};
 
 pub(crate) mod tables;
 #[cfg(test)]

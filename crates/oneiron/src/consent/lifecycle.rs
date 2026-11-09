@@ -120,7 +120,10 @@ pub struct RevokeGrantRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentActReceipt {
-    pub decision_ref: String,
+    /// The Gate decision of the receipt. Absent only on a repeat revoke whose grant was revoked without a
+    /// consent receipt (a graduation demotion, an office-edit erase or an owner-less pack update).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_ref: Option<String>,
     pub outcome: String,
     pub reason_code: String,
     pub grant_ref: Option<String>,
@@ -130,17 +133,22 @@ pub struct ConsentActReceipt {
     /// receipt (a repeat revoke is idempotent). Absent on every other act.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub already_revoked: bool,
+    /// On a repeat revoke with no consent receipt to return: the record that revoked the grant, where that
+    /// path writes one (a graduation demotion's receipt id). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_by: Option<String>,
 }
 
 impl From<ConsentReceipt> for ConsentActReceipt {
     fn from(receipt: ConsentReceipt) -> Self {
         Self {
-            decision_ref: receipt.decision_id().to_hex(),
+            decision_ref: Some(receipt.decision_id().to_hex()),
             outcome: receipt.gate_outcome().to_owned(),
             reason_code: receipt.reason_code().to_owned(),
             grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
             diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             already_revoked: false,
+            revoked_by: None,
         }
     }
 }
@@ -189,9 +197,22 @@ pub fn revoke(
 ) -> MemoryResult<ConsentActReceipt> {
     let grant = parse_digest(&input.grant, "grant")?.to_hex();
     let revocation = vault.consent_revocation(owner, &grant)?;
-    Ok(ConsentActReceipt {
-        already_revoked: revocation.already_revoked,
-        ..revocation.receipt.into()
+    Ok(match revocation.receipt {
+        Some(receipt) => ConsentActReceipt {
+            already_revoked: revocation.already_revoked,
+            ..receipt.into()
+        },
+        // Revoked without a consent receipt: the act's revoke outcome and the row it names (a revoke
+        // receipt's handle is its grant ref), with no Gate decision to name.
+        None => ConsentActReceipt {
+            decision_ref: None,
+            outcome: "revoked".to_owned(),
+            reason_code: crate::consent::CONSENT_REASON_REVOKED.to_owned(),
+            diff_handle: grant.as_bytes().to_vec(),
+            grant_ref: Some(grant),
+            already_revoked: revocation.already_revoked,
+            revoked_by: revocation.revoked_by,
+        },
     })
 }
 

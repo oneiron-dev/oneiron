@@ -4398,7 +4398,7 @@ export type HostedRelayDecision = { service_identity: string; verdict?: PolicyCl
 /** `oneiron::consent::lifecycle::ApproveOnceRequest` */
 export type ApproveOnceRequest = { effect_digest: string }
 /** `oneiron::consent::lifecycle::ConsentActReceipt` */
-export type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] }
+export type ConsentActReceipt = { decision_ref?: string | null; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[]; already_revoked?: boolean; revoked_by?: string | null }
 /** `oneiron::campaign::enrollment::held::CampaignEnrollmentHeldCall` */
 export type CampaignEnrollmentHeldCall = { call_ref: EntityId; consequence_ref: EntityId; call_seq: number; campaign_ref: EntityId; program_ref: EntityId; step_ref: EntityId; member_ref: EntityId; owner_actor: EntityId; frozen_event_ref: EntityId; attempt_ref: string; approval_digest: string; approval_actor?: EntityId | null; envelope_hash: string; held_at_ms: number; owner_ask_seq?: number | null; approved_redrive?: string | null }
 /** `oneiron::verbs::campaign_enrollment::CampaignEnrollmentApproveOnceRequest` */

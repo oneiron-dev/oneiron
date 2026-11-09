@@ -11146,11 +11146,13 @@ class HostedRelayDecision(TypedDict):
 class ApproveOnceRequest(TypedDict):
     effect_digest: str
 class ConsentActReceipt(TypedDict):
-    decision_ref: str
+    decision_ref: NotRequired[str | None]
     outcome: str
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+    already_revoked: NotRequired[bool]
+    revoked_by: NotRequired[str | None]
 class CampaignEnrollmentHeldCall(TypedDict):
     call_ref: EntityId
     consequence_ref: EntityId
