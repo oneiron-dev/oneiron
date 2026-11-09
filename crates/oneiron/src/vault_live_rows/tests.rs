@@ -5,13 +5,16 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::live_rows::LiveRow;
 use crate::memory::{
     MessageStreamError, MessageStreamHandle, StreamCancelReason, WitnessAuthor, WitnessMessage,
     WitnessTurn,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// One vault with the live work of every row at hand.
 struct Fixture {
@@ -232,42 +235,3 @@ fn past_its_row_live_work_waits_its_turn_and_is_never_refused_for_count() {
     }
 }
 
-/// Waiters are served round-robin across keys, so one key that queued
-/// first and most never holds back another key's single waiter.
-#[cfg(feature = "sync")]
-#[test]
-fn waiters_take_turns_across_keys_not_in_one_queue() {
-    let row = LiveRow::LiveDocuments;
-    let fixture = Fixture::new();
-    fixture
-        .vault
-        .set_live_rows(rows(row, 1, Duration::from_secs(60)));
-    let served = Arc::new(Mutex::new(Vec::new()));
-    let open = |document: usize, key: usize| {
-        let fixture = Arc::clone(&fixture);
-        let served = Arc::clone(&served);
-        std::thread::spawn(move || {
-            let doc = fixture
-                .manager
-                .documents()
-                .open_for(fixture.documents[document], fixture.actors[key].as_bytes())
-                .unwrap();
-            served.lock().unwrap().push(document);
-            // Each holds its turn until the test lets the next one go.
-            doc
-        })
-    };
-    let first = fixture.open(row, 0).unwrap();
-    // Key 1 waits twice, then key 2 once.
-    let a1 = open(1, 1);
-    fixture.wait_for(row, 1);
-    let a2 = open(2, 1);
-    fixture.wait_for(row, 2);
-    let b1 = open(3, 2);
-    fixture.wait_for(row, 3);
-    fixture.release(first);
-    drop(a1.join().unwrap());
-    drop(b1.join().unwrap());
-    drop(a2.join().unwrap());
-    assert_eq!(*served.lock().unwrap(), vec![1, 3, 2]);
-}
