@@ -53,7 +53,7 @@ pub(crate) fn scrub_erased_in_session_stores(vault: &Vault, ids: &[EntityId]) {
         .off_record_sessions
         .live_overlay_handles()
         .into_iter()
-        .chain(vault.verb_hook_state.session.overlays());
+        .chain(vault.runtime().verb_hook_state().session.overlays());
     for overlay in stores {
         if let Err(error) = scrub_store(vault, &overlay, ids) {
             tracing::warn!(
