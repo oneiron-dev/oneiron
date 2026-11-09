@@ -102,7 +102,10 @@ fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: "hi".into(), signature: None }],
+            content: vec![ContentPart::Text {
+                text: "hi".into(),
+                signature: None,
+            }],
         }],
         tools: Vec::new(),
         params: BTreeMap::new(),

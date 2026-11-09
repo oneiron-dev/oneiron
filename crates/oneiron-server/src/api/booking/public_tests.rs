@@ -484,10 +484,7 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
         .commit(std::slice::from_ref(&input))
         .expect("per-claim outcome");
     assert!(
-        matches!(
-            outcomes[0],
-            oneiron::memory::CommitOutcome::Refused { .. }
-        ),
+        matches!(outcomes[0], oneiron::memory::CommitOutcome::Refused { .. }),
         "{outcomes:?}"
     );
     let path = format!("/public/booking/{}", fixture.token);

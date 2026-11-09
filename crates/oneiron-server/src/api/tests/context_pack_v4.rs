@@ -377,8 +377,12 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         "unauthorized context board must not leak companion relationship metadata"
     );
 
-    let grant =
-        oneiron::AccessGrant::companion_profile_read(principal_ref, person_ref, Some(persona_ref), 12);
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        principal_ref,
+        person_ref,
+        Some(persona_ref),
+        12,
+    );
     server
         .vault
         .create_access_grant(&grant_id, &grant)

@@ -166,7 +166,14 @@ pub(crate) mod tests {
         let rows = default_booking_anti_abuse_rows(page(), event_type, &owner_config())
             .expect("seed rows");
         for row in rows {
-            apply_rule_amendment(&server.vault, &crate::test_credentials::embedded_owner(&server.vault), 0, row, None).expect("install row");
+            apply_rule_amendment(
+                &server.vault,
+                &crate::test_credentials::embedded_owner(&server.vault),
+                0,
+                row,
+                None,
+            )
+            .expect("install row");
         }
     }
 

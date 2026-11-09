@@ -6,8 +6,8 @@ use super::*;
 #[tokio::test]
 async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
     use oneiron::context_board::{
-        BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule,
-        BriefWorkingSet, CommunicationLimits, SelfBriefState,
+        BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule, BriefWorkingSet,
+        CommunicationLimits, SelfBriefState,
     };
     use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
     use oneiron::memory::CanEffectVerdict;
@@ -128,8 +128,12 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
     let budget = state.budget.as_mut().expect("budget");
     budget.remaining_units = 20;
     budget.reserved_units = 15;
-    state.class_verdicts.as_mut().expect("class verdicts").verdicts[0].inside =
-        CanEffectVerdict::Deny;
+    state
+        .class_verdicts
+        .as_mut()
+        .expect("class verdicts")
+        .verdicts[0]
+        .inside = CanEffectVerdict::Deny;
     server
         .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
         .await

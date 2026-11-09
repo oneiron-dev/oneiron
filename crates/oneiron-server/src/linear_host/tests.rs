@@ -253,8 +253,7 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
     // each admits the scheduler and the TASK's writer before any request.
     let mut bridge = LinearBridge {
         client: Client::builder().build().unwrap(),
-        base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap()))
-            .unwrap(),
+        base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap(),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
         request_timeout: Duration::from_secs(3),
         rate_wait: Duration::ZERO,
