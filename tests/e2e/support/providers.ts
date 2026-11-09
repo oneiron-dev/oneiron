@@ -107,6 +107,8 @@ export class ScriptedProviders {
   private readonly pending=new Map<string,ProviderStep[]>();
   private readonly standing=new Map<string,ProviderStep[]>();
   private readonly seen:SeenFixtureCall[]=[];
+  /** HTTP request headers by seen sequence, joined into SeenFixtureCall on read. */
+  private readonly headers=new Map<number,Readonly<Record<string,string>>>();
   private readonly violations:string[]=[];
   private readonly barriers=new Map<string,{promise:Promise<void>;release:()=>void}>();
   private readonly released=new Set<string>();
@@ -171,7 +173,11 @@ export class ScriptedProviders {
     if(!exchange||!accepted) throw new ProviderScriptError(`Unexpected WS provider message: ${state.script.id}`);
     for(const part of exchange.replies) {if(part.barrier) await this.hold(part.barrier);send(part.data)}
   }
-  get seenFixtureCalls():readonly SeenFixtureCall[] {return structuredClone(this.seen)}
+  get seenFixtureCalls():readonly SeenFixtureCall[] {return structuredClone(this.seen.map(call=>this.withHeaders(call)))}
+  private withHeaders(call:SeenFixtureCall):SeenFixtureCall {
+    const headers=this.headers.get(call.sequence);
+    return headers?{...call,headers}:call;
+  }
   releaseBarrier(name:string):void {
     this.released.add(name);this.barriers.get(name)?.release();
   }
@@ -213,10 +219,11 @@ export class ScriptedProviders {
       else if(codec&&codec!=="identity") throw new ProviderScriptError(`Unsupported declared request codec ${codec}`);
       if(bytes.length) {const raw=new TextDecoder().decode(bytes);try{body=JSON.parse(raw)}catch{body=bytes}}
       const path=new URL(request.url).pathname;
-      const headers=requestHeaders(request);
+      // Both seen.push calls below take this sequence: nothing between here and them awaits.
+      this.headers.set(this.seen.length,requestHeaders(request));
       const standing=this.standing.get(origin)?.find(candidate=>matches(candidate,request.method,path,body));
       if(standing) {
-        this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true,headers});
+        this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true});
         if(standing.barrier) await this.hold(standing.barrier);
         const standingReply=standing.response;
         if(standingReply.kind==="json") return Response.json(standingReply.body,{status:standingReply.status??200,...(standingReply.headers?{headers:standingReply.headers}:{})});
@@ -229,7 +236,7 @@ export class ScriptedProviders {
       }
       const step=this.pending.get(origin)?.shift();
       const accepted=step&&matches(step,request.method,path,body);
-      this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body,headers});
+      this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body});
       if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`);
       if(step.barrier) await this.hold(step.barrier);
       const reply=step.response;
@@ -254,7 +261,7 @@ export class ScriptedProviders {
     const unconsumed=[...this.pending.values()].flat().map(step=>step.id)
       .concat([...this.sockets.values()].flat().map(script=>script.id))
       .concat(this.socketStates.filter(state=>state.index<state.script.exchanges.length).map(state=>state.script.id));
-    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen.map(persistedCall)),violations:this.violations,unconsumed,standing:[...this.standing.values()].flat().map(step=>step.id)});
+    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen.map(call=>persistedCall(this.withHeaders(call)))),violations:this.violations,unconsumed,standing:[...this.standing.values()].flat().map(step=>step.id)});
     if(this.violations.length||unconsumed.length) throw new ProviderScriptError(`${this.scenario.id}: ${this.violations.join("; ")}; unconsumed: ${unconsumed.join(", ")}`);
   }
 }
