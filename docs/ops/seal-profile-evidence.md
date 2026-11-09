@@ -172,9 +172,10 @@ complete genuine coverage it is disregarded, and the material passes. A vouched
 key's CRL is about the chain it vouches for: its listing of a covered certificate
 is a revocation, and fails. When a timestamp's root is unavailable, the retry that
 treats covered certificates as provisional roots first re-reads the material
-under the real anchors at the retry's time; a shadow found there, even one an
-earlier failure hid, is reported as possible tampering, never as a missing trust
-root.
+under the real anchors at the retry's time. A failure there stands. A shadow
+found there, even one an earlier failure hid, is reported as possible tampering,
+and an authenticated `unknown` about a covered certificate as unknown; neither is
+reported as a missing trust root.
 
 Validation material decides only B-LT and B-LTA. A failed or `not_run`
 validation-material check never takes away the B-B or B-T profile the signature
