@@ -129,6 +129,12 @@ the verb table (`types.md`, `facade-types.md`, `verbs.md`) is published from mai
 https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build keeps a local copy in
 `target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
 
+Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
+
+- Default: dev and test builds use `debug = "line-tables-only"`, so backtraces and panics still show file and line.
+- Perf work: `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling` builds release code with full debug information and no LTO into `target/profiling`.
+- One run with full debug information: `CARGO_PROFILE_DEV_DEBUG=full cargo test ...`, or `cargo test --config 'profile.dev.debug="full"' ...`.
+
 ## Web frontend
 
 The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
