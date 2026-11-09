@@ -7,7 +7,6 @@ Remote refusals use no server and must occur before HTTP dispatch.
 import pytest
 
 from oneiron import Oneiron, OneironError
-from oneiron import _translate  # noqa: PLC2701 — the error seam under test
 
 
 INVALID_COUNTS = [

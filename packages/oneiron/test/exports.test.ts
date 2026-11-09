@@ -9,22 +9,7 @@
 
 import { describe, expect, test } from "bun:test"
 
-import { readdirSync, readFileSync } from "node:fs"
-
 import * as pkg from "../src/index.js"
-
-/** The whole public runtime surface, spelled once. */
-const PUBLIC_EXPORTS = ["Oneiron", "OneironError"]
-
-/** Names that must never become reachable from the package entry. */
-const FORBIDDEN_EXPORTS = [
-  "NativeClient",
-  "VaultBridge",
-  "ActorScopedVault",
-  "NapiVault",
-  "Vault",
-  "OneironClient",
-]
 
 describe("export census", () => {
   test("retired task names are absent", () => {
