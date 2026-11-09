@@ -503,6 +503,7 @@ impl RunGuests {
         let (pre, mut decided) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::browser_row_pre(
                 memory,
+                &oneiron::verbs::VERB_TABLE,
                 call.verb.as_str(),
                 call.input.clone(),
             )
