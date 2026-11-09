@@ -8,8 +8,8 @@ use super::machine_write::denied;
 use super::slip_vault::require_host;
 use super::{
     AuthorityAttestation, AuthorityKey, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite,
-    AuthorityTier, DeviceAuthority, FrontierSigner, HostSlipIssuer, MAX_PARENTS, ROLE_AGENT,
-    authority_entry_hash, authority_transcript, invalid_authority,
+    AuthorityTier, AuthorityView, DeviceAuthority, FrontierSigner, HostSlipIssuer, MAX_PARENTS,
+    ROLE_AGENT, authority_entry_hash, authority_transcript, invalid_authority,
 };
 
 /// Bind an existing MACHINE row to a fresh per-vault Ed25519 authority key.
@@ -74,6 +74,38 @@ impl Vault {
         {
             return Err(denied());
         }
+        self.land_actor_key_in_txn(
+            txn,
+            issuer,
+            fold,
+            machine,
+            "system",
+            public_key,
+            transport_key_binding,
+            sign_binding,
+        )
+    }
+
+    /// Enrolls `public_key` as a ROLE_AGENT software key and binds `actor` as
+    /// `actor_class` under it, the host root signing both in `txn` and the key
+    /// cosigning its own binding. The caller has checked the actor, the host
+    /// root (`fold`) and that no roster row or binding names the key.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's actor, its class, its key and the key's binding proof"
+    )]
+    pub(super) fn land_actor_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        fold: AuthorityView,
+        actor: EntityId,
+        actor_class: &str,
+        public_key: [u8; 32],
+        transport_key_binding: [u8; 32],
+        sign_binding: impl FnOnce(&[u8]) -> Result<[u8; 64]>,
+    ) -> Result<()> {
+        let key = AuthorityKey::Ed25519(public_key);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Host(issuer);
         let fold = self
@@ -112,8 +144,8 @@ impl Vault {
             vec![enroll_hash],
             AuthorityOp::BindActor {
                 authority_key: key.clone(),
-                actor_ref: machine,
-                actor_class: "system".into(),
+                actor_ref: actor,
+                actor_class: actor_class.into(),
                 epoch: 1,
             },
             now,
