@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.body.deck.oracle",
+  "description": "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.",
+  "input": "crate::office_body::DeckOracleRequest",
+  "output": "crate::office_body::DeckGateView",
+  "call": "memory.artifacts_body_deck_oracle(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Records the deck oracle's receipt for its export profile.\n",
+      "ts": "/** Records the deck oracle's receipt for its export profile. */",
+      "py": "Records the deck oracle's receipt for its export profile."
+    }
+  }
+}

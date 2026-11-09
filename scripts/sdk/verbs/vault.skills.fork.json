@@ -1,0 +1,17 @@
+{
+  "name": "vault.skills.fork",
+  "description": "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
+  "input": "SkillLibraryForkRequest",
+  "output": "crate::task_verb::sdk::SkillLibraryView",
+  "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "skill_forker"
+}

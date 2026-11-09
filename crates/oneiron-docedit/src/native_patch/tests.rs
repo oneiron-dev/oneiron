@@ -2,6 +2,7 @@ use super::*;
 use crate::deck::fixture::{NS, archive, limits};
 use crate::design_plan::{Column, ColumnKind};
 use crate::ooxml::XmlTree;
+use crate::resource::Resources;
 use std::io::Write;
 
 const SLIDE: &str = "ppt/slides/slide1.xml";
@@ -17,6 +18,7 @@ fn deck() -> Package {
     Package::open(
         &archive(&[("[Content_Types].xml", types.to_owned()), (SLIDE, slide)]),
         limits(),
+        &Resources::measuring(),
     )
     .unwrap()
 }
@@ -30,11 +32,13 @@ fn dataset(columns: &[(&str, ColumnKind, Option<&str>)], rows: Vec<Vec<Cell>>) -
                 name: (*name).into(),
                 kind: *kind,
                 unit: unit.map(Into::into),
+                format: None,
             })
             .collect(),
         rows,
         missing: Some("not reported".into()),
         sources: vec!["source".into()],
+        merges: Vec::new(),
     }
 }
 
@@ -70,7 +74,12 @@ fn frame(id: u32) -> Frame<'static> {
 }
 
 fn reopen(package: &Package) -> Package {
-    Package::open(&package.export().unwrap(), limits()).unwrap()
+    Package::open(
+        &package.export().unwrap(),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap()
 }
 
 fn with_chart() -> Package {
@@ -126,7 +135,12 @@ fn with_date_chart() -> Package {
 
 /// One part of the embedded workbook, as text.
 fn book_part(package: &Package, part: &str) -> String {
-    let book = Package::open(&package.part(BOOK).unwrap().unwrap(), limits()).unwrap();
+    let book = Package::open(
+        &package.part(BOOK).unwrap().unwrap(),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap();
     String::from_utf8(book.part(part).unwrap().unwrap()).unwrap()
 }
 
@@ -154,7 +168,12 @@ fn edit_chart(package: &mut Package, from: &str, to: &str) {
 
 /// Rewrite one part of the embedded workbook, or add a part to it.
 fn edit_workbook(package: &mut Package, part: &str, body: impl Fn(String) -> String) {
-    let inner = Package::open(&package.part(BOOK).unwrap().unwrap(), limits()).unwrap();
+    let inner = Package::open(
+        &package.part(BOOK).unwrap().unwrap(),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap();
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let mut names: Vec<String> = inner.names().map(str::to_owned).collect();
     if !names.iter().any(|name| name == part) {
@@ -231,7 +250,7 @@ fn tables_write_merge_anchors_and_refuse_continuation_writes() {
     assert_eq!(report.changed_parts, [SLIDE]);
     let package = &mut reopen(&package);
     let slide = package.part(SLIDE).unwrap().unwrap();
-    let tree = XmlTree::parse(&slide, limits().xml).unwrap();
+    let tree = XmlTree::parse(&slide, &Resources::measuring()).unwrap();
     let cells: Vec<_> = tree
         .nodes
         .iter()
@@ -271,16 +290,11 @@ fn tables_write_merge_anchors_and_refuse_continuation_writes() {
     };
     native_patch(package, &write(1, 1, "4", "4.5\nrevised")).unwrap();
     native_patch(package, &write(1, 1, "4.5\nrevised", "5")).unwrap();
-    refuses(
-        package,
-        &write(2, 1, "", "x"),
-        &NativeRefusal::MergedContinuationCell,
-    );
-    refuses(
-        package,
-        &write(2, 2, "", "x"),
-        &NativeRefusal::MergedContinuationCell,
-    );
+    // A cell a merge covers keeps its own text under the merge, as
+    // PowerPoint keeps it (#3460, FIX 6525; Engine call
+    // T0H-STALE-RULED-REFUSALS): a write that names that text lands.
+    native_patch(package, &write(2, 1, "not reported", "x")).unwrap();
+    native_patch(package, &write(2, 2, "not reported", "x")).unwrap();
     refuses(
         package,
         &write(1, 1, "4", "6"),
@@ -665,6 +679,7 @@ fn formula_backed_external_and_shared_sources_refuse() {
             ("ppt/charts/_rels/chart1.xml.rels", rels.to_owned()),
         ]),
         limits(),
+        &Resources::measuring(),
     )
     .unwrap();
     refuses(

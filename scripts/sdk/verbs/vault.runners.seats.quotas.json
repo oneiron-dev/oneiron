@@ -1,0 +1,16 @@
+{
+  "name": "vault.runners.seats.quotas",
+  "description": "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from.",
+  "input": "crate::dispatch_byoa::RunnerSeatQuotasRequest",
+  "output": "crate::dispatch_byoa::RunnerSeatQuotasView",
+  "call": "memory.vault().runner_seat_quotas_as_owner(&memory.embedded_owner(\"vault.runners.seats.quotas\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

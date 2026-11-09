@@ -29,6 +29,7 @@ mod reader_table;
 #[cfg(feature = "sync")]
 mod response_bodies;
 mod retrieval_trace_key;
+mod runtime_handle;
 mod search_retrieval;
 mod tagging_arm;
 mod transactions;
@@ -73,6 +74,7 @@ pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+pub use self::runtime_handle::RuntimeHandle;
 #[cfg(feature = "sync")]
 pub(crate) use self::transactions::MAX_SYNC_STATE_KEYS;
 pub(crate) use self::vector_evidence::NoMatchFloors;

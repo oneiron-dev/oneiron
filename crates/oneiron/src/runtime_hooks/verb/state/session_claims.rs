@@ -25,7 +25,7 @@ impl SessionInvocationClaims {
         // Keep the original vault-wide in-flight exclusion: hooks distinguish
         // nested work from concurrent requests through this same claim.
         let entry = claim_in(
-            &vault.verb_hook_state.claims,
+            &vault.runtime().verb_hook_state().claims,
             invocation,
             body,
             Some(Arc::clone(&self.held)),

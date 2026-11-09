@@ -1,0 +1,17 @@
+{
+  "name": "ai.voice.asr.hypothesis",
+  "description": "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt.",
+  "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+  "output": "crate::task_verb::sdk::AsrHypothesisReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.hypothesis\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

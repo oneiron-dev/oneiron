@@ -1,0 +1,14 @@
+{
+  "name": "vault.diagnostics.get",
+  "description": "Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt.",
+  "input": "crate::memory::DiagnosticsGetRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>",
+  "call": "memory.diagnostics_get(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

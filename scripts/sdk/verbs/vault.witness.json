@@ -1,0 +1,32 @@
+{
+  "name": "vault.witness",
+  "description": "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.",
+  "input": "crate::memory::WitnessTurn",
+  "output": "crate::memory::WitnessReceipt",
+  "call": "memory.witness(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "admission": {
+    "validate": "crate::memory::caps::check_witness_turn(&input)?;"
+  },
+  "section": false,
+  "binding": {
+    "args": [
+      {
+        "name": "turn",
+        "kind": "witness"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Witnesses one conversational turn.\n    ///\n    /// `turn.occurred_at` is already stamped by the caller through\n    /// [`stamp_occurred_at`], because the engine DTO's field is required and a\n    /// backend cannot tell an omitted `0` from a deliberate one.\n",
+      "ts": "/**\n   * Witnesses one conversational turn.\n   *\n   * Omitting `occurredAt` stamps the current wall clock, in Unix seconds, at\n   * the call boundary.\n   */",
+      "py": "Witnesses one conversational turn.\n\n        Omitting ``occurred_at`` stamps the current wall clock, in Unix\n        seconds, at the call boundary.\n        "
+    }
+  },
+  "uniffi": {
+    "args": {
+      "turn": "WitnessTurn"
+    },
+    "output": "WitnessReceipt"
+  }
+}

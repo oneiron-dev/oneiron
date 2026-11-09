@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.snapshots.get",
+  "description": "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant.",
+  "input": "crate::memory::codebase_doors::CodeSnapshotRequest",
+  "output": "Option<crate::memory::codebase_doors::CodeSnapshotView>",
+  "call": "memory.code_snapshot_get_as(&memory.embedded_owner(\"vault.code.snapshots.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -27,8 +27,8 @@ use crate::lens::{
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
 use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::CUSTODY_VALUE_ROWS;
 use crate::task_verb::sdk::RunVerb;
-use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -274,7 +274,7 @@ impl ActionRegistry {
             verb.is_facade()
                 && !super::live_run::is_live_run_verb(verb.as_str())
                 && !RunVerb::from_name(verb.as_str())
-                    .is_some_and(|run| super::run_verb_call::MEMORY_RUN_VERBS.contains(&run))
+                    .is_some_and(|run| RunVerb::MEMORY_RUN.contains(&run))
                 && !CUSTODY_VALUE_ROWS.contains(&verb.as_str())
         }) {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
@@ -299,7 +299,7 @@ impl ActionRegistry {
     /// checked, with the credential's read key, and claims and edges meet
     /// their own gates.
     pub fn register_memory_run_verbs(&mut self) -> Result<()> {
-        self.register_run_verbs(&super::run_verb_call::MEMORY_RUN_VERBS)
+        self.register_run_verbs(&RunVerb::MEMORY_RUN)
     }
     /// Offers the run rows that act on their caller's live agent run
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
@@ -311,7 +311,7 @@ impl ActionRegistry {
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
     /// own: its parent, actor and lease are the run's, never the body's.
     pub fn register_live_run_verbs(&mut self) -> Result<()> {
-        self.register_run_verbs(&super::run_verb_call::LIVE_RUN_VERBS)
+        self.register_run_verbs(&RunVerb::LIVE_RUN)
     }
     fn register_run_verbs(&mut self, verbs: &[RunVerb]) -> Result<()> {
         for verb in verbs.iter().copied() {

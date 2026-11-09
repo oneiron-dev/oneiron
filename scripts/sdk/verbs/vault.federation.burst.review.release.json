@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.burst.review.release",
+  "description": "The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority.",
+  "input": "crate::sync::federation_burst::FederationBurstReviewRequest",
+  "output": "crate::sync::federation_burst::FederationBurstReviewReceipt",
+  "call": "crate::task_verb::sdk::release_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.release\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

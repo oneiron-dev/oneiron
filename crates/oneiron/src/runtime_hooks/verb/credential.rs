@@ -434,7 +434,7 @@ pub(super) fn retain_in_txn(
         forget_in_txn(vault, txn, key)?;
         return Ok(resume.cloned());
     };
-    let check = vault.verb_hook_state.credential_check();
+    let check = vault.runtime().verb_hook_state().credential_check();
     let (Some(check), Some(binding)) = (check, witness) else {
         forget_in_txn(vault, txn, key)?;
         return Ok(None);
@@ -474,7 +474,7 @@ pub(super) fn resume(
     args: Value,
     reference: VerbAskCredentialRef,
 ) -> Result<VerbAskResumed> {
-    let Some(check) = vault.verb_hook_state.credential_check() else {
+    let Some(check) = vault.runtime().verb_hook_state().credential_check() else {
         return Ok(VerbAskResumed::Refused(
             VerbAskRefusal::CredentialUnavailable,
         ));

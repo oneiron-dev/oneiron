@@ -114,6 +114,27 @@ published package or release binary. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 
+## Building from source
+
+Python 3 must be on `PATH` (as `python3`; `python` on Windows; or name it in `ONEIRON_PYTHON`). The SDK's
+generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
+`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`) run `scripts/sdk/generate.py` from
+their build scripts, once per change of the verb table (`scripts/sdk/verbs/`) or the Rust types it names, into
+the target directory. It uses the Python standard library only. A Rust port of the generator, which ends this
+requirement, is the first change after the untangle.
+
+The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron`, `bun run
+prepare` in `packages/oneiron-client`, and `maturin build` for `oneiron-py`. The agent-SDK reference generated from
+the verb table (`types.md`, `facade-types.md`, `verbs.md`) is published from main at
+https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build keeps a local copy in
+`target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
+
+Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
+
+- Default: dev and test builds use `debug = "line-tables-only"`, so backtraces and panics still show file and line.
+- Perf work: `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling` builds release code with full debug information and no LTO into `target/profiling`.
+- One run with full debug information: `CARGO_PROFILE_DEV_DEBUG=full cargo test ...`, or `cargo test --config 'profile.dev.debug="full"' ...`.
+
 ## Web frontend
 
 The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
@@ -188,6 +209,13 @@ cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
 ```
 
 The second command runs the `sync` build with the slow set included.
+
+Some integration tests reach crate-private items through `oneiron::test_doors`,
+which builds only under `--cfg oneiron_test_support` (never a cargo feature):
+
+```sh
+RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test <file>
+```
 
 - [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
 - [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,

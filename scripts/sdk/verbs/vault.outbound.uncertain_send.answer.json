@@ -1,0 +1,16 @@
+{
+  "name": "vault.outbound.uncertain_send.answer",
+  "description": "The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent.",
+  "input": "crate::task_verb::sdk::UncertainSendAnswer",
+  "output": "crate::task_verb::sdk::UncertainSendAnswered",
+  "call": "crate::task_verb::sdk::answer_uncertain_send_as(memory.vault(), &memory.embedded_owner(\"vault.outbound.uncertain_send.answer\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

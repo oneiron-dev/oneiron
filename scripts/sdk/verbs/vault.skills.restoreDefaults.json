@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.restoreDefaults",
+  "description": "The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::skill_hub::HubImportReceipt>",
+  "call": "crate::task_verb::sdk::skill_restore_defaults_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restoreDefaults\")?, &_input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

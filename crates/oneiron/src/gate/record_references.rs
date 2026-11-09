@@ -4,7 +4,7 @@
 //! created, or cites, really exist; refuse invented ones and log the refusal.
 //!
 //! A verb-table row declares its typed ref slots as JSON pointers (`refs` in
-//! `scripts/sdk/agent-verbs.json`, where `*` takes every item of an array).
+//! `scripts/sdk/verbs/`, where `*` takes every item of an array).
 //! The row's generated engine fn calls [`admit_row_references`] before the
 //! engine call, so every door that reaches the row (the HTTP facade, the MCP
 //! dispatch, code mode and the SDK) meets this check once, and no door

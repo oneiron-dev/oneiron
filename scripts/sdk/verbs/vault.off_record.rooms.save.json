@@ -1,0 +1,16 @@
+{
+  "name": "vault.off_record.rooms.save",
+  "description": "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential.",
+  "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+  "output": "crate::task_verb::sdk::OffRecordRoomSaved",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record_room"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "vault.tagging.tags",
+  "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt.",
+  "refs": [
+    "/turn_ref"
+  ],
+  "input": "crate::tagging::TaggingTurnRequest",
+  "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>",
+  "call": "memory.tagging_tags(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "turn_ref"
+    ]
+  },
+  "section": false,
+  "openapi": true
+}

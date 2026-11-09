@@ -1,0 +1,20 @@
+{
+  "name": "vault.claims.upsert",
+  "description": "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance.",
+  "refs": [
+    "/subject_ref",
+    "/evidence_turn_refs/*"
+  ],
+  "input": "crate::memory::ScopedClaimInput",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.claim_upsert_scoped(&input)?",
+  "scope": "Write",
+  "proposes": true,
+  "admission": {
+    "claim_record_scope": true
+  },
+  "section": false,
+  "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
+  "mcp_scope": "filtered",
+  "overlay_write": true
+}

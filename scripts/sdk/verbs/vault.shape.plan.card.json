@@ -1,0 +1,12 @@
+{
+  "name": "vault.shape.plan.card",
+  "description": "The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read.",
+  "input": "crate::vault_shape::ShapePlanRequest",
+  "output": "crate::memory::ShapePlanCardView",
+  "call": "memory.shape_plan_card_view(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

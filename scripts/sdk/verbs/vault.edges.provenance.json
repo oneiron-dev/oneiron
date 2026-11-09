@@ -1,0 +1,18 @@
+{
+  "name": "vault.edges.provenance",
+  "description": "Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle.",
+  "input": "crate::memory::EdgeProvenanceRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>",
+  "call": "memory.edge_provenance(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

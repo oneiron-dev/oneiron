@@ -1,0 +1,15 @@
+{
+  "name": "vault.packs.setup.get",
+  "description": "A pack's guided setup as it stands, for the owner or an agent acting for the owner.",
+  "input": "PackSetupRequest",
+  "output": "crate::task_verb::sdk::PackSetupReceipt",
+  "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "packs_setup"
+}
