@@ -109,7 +109,7 @@ impl Admission {
             self.baseline,
         )?;
         vault.approve_marketplace_activation(&ask, &self.owner)?;
-        let replay = Replay::new(self.owner.actor());
+        let replay = Replay::new(self.owner.actor_for_read(vault)?);
         let HubAdmissionDisposition::Ruled(receipt) =
             vault.admit_marketplace_skill(&ask, &replay, at(now), now)?
         else {
@@ -160,6 +160,11 @@ impl HeldOutReplayNotes for Replay {
                     model: "fixture-queue".into(),
                     version: "1".into(),
                 },
+                ask_to: None,
+                paired: None,
+                person: None,
+                presence: None,
+                correlation: None,
             },
             principal: self.principal,
             dial: DecisionDial {
@@ -222,6 +227,9 @@ impl DecisionProvider for Judge {
             }),
             probability: Some(1.0),
             paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
         })
     }
 }

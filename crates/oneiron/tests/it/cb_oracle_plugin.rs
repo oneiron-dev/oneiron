@@ -773,8 +773,11 @@ mod plugin_fixture {
             image: &std::path::Path,
             destination: &std::path::Path,
         ) -> oneiron::Result<()> {
+            // An open vault gives its own checkpoint key (df0d637eb95).
+            let key = self.vault.checkpoint_key()?;
             Vault::restore_checkpoint_keeping_authority(
                 image,
+                &key,
                 destination,
                 Self::config(),
                 &self.vault,
@@ -1071,6 +1074,7 @@ mod plugin_fixture {
                 header: &header,
                 legend: &legend,
                 sections: &sections,
+                you: None,
             };
             let rendered = render_board_block(
                 &frame,
@@ -1227,6 +1231,7 @@ mod plugin_fixture {
             self.vault
                 .inbox_groups(InboxQuery::at(6_000, 32))
                 .expect("project inbox groups")
+                .groups
                 .into_iter()
                 .flat_map(|group| {
                     let group_key = group.group_key.clone();
@@ -1349,9 +1354,17 @@ mod plugin_fixture {
         ));
         entries.push((
             Value::from("scopeRelationshipId"),
-            body.rel.map_or_else(
+            // A relationship scope is a set of ids (a816c661035), written as
+            // the engine writes it: `all`, or every id in set order.
+            body.rel.as_ref().map_or_else(
                 || Value::from("all"),
-                |id| Value::Array(vec![Value::Binary(id.as_bytes().to_vec())]),
+                |ids| {
+                    Value::Array(
+                        ids.iter()
+                            .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                            .collect(),
+                    )
+                },
             ),
         ));
         let subject = match body.subject {

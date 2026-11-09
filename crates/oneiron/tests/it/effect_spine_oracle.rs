@@ -16,6 +16,22 @@
 
 use oneiron::{HnswConfig, Vault, VaultConfig};
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
@@ -153,12 +169,14 @@ mod seam {
                 trigger_ref: "effect-spine:es02".to_owned(),
                 job_ref: None,
                 occurred_at: Some(100),
+                mention: None,
             })
             .expect("schedule connector-send task");
         let grant_id = oneiron::EntityId::from_bytes([0x72; 16]).expect("grant id");
         vault
             .mint_standing_outbound_grant(
-                &grant_id,
+                &super::owner_proof(vault),
+                grant_id,
                 &oneiron::genui::GrantMintIntent {
                     principal_ref: actor.to_hex(),
                     origin_component_id: "effect_spine_oracle".to_owned(),
@@ -168,7 +186,6 @@ mod seam {
                         channel: channel.to_owned(),
                     },
                 },
-                100,
             )
             .expect("mint executor grant");
     }
@@ -722,7 +739,9 @@ mod seam {
     /// Read-time confidence: f(claim confidence, actor.confidence_prior).
     pub(crate) fn effective_confidence(vault: &Vault, claim_ref: &str) -> f32 {
         let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
-        oneiron::provider_confidence::effective_confidence(vault, &claim_ref).unwrap()
+        oneiron::provider_confidence::effective_confidence(vault, &claim_ref)
+            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
+            .unwrap()
     }
 
     /// Stored (unmodified) claim confidence — read-time wiring must never
@@ -948,7 +967,8 @@ mod calendar_invite_fixture {
 
         vault
             .mint_standing_outbound_grant(
-                &id(0x94),
+                &super::owner_proof(&vault),
+                id(0x94),
                 &oneiron::genui::GrantMintIntent {
                     principal_ref: actor.to_hex(),
                     origin_component_id: "effect_spine_oracle".to_owned(),
@@ -958,7 +978,6 @@ mod calendar_invite_fixture {
                         contact_ref: RECIPIENT.to_owned(),
                     },
                 },
-                100,
             )
             .expect("mint booking grant");
 
@@ -997,6 +1016,7 @@ mod calendar_invite_fixture {
             sequence: 0,
             ics_blob_ref: blob_ref.to_owned(),
             recipient: RECIPIENT.to_owned(),
+            mention: None,
         }
     }
 
@@ -1375,7 +1395,9 @@ mod one1891 {
     }
 
     pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
-        oneiron::provider_confidence::effective_confidence(vault, claim).expect("effective")
+        oneiron::provider_confidence::effective_confidence(vault, claim)
+            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
+            .expect("effective")
     }
 
     pub(super) fn decide(
@@ -1854,10 +1876,13 @@ mod one1891_ruling {
                 cached.then_some(prior.as_bytes()),
             );
             let before = f::counts(&vault);
-            assert_stranded(oneiron::provider_confidence::effective_confidence(
-                &vault,
-                &candidate.confidence_claim_ref,
-            ));
+            assert_stranded(
+                oneiron::provider_confidence::effective_confidence(
+                    &vault,
+                    &candidate.confidence_claim_ref,
+                )
+                .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error),
+            );
             assert_eq!(f::counts(&vault), before);
             assert_stranded(oneiron::provider_confidence::write_provider_prior(
                 &vault,
@@ -1870,10 +1895,13 @@ mod one1891_ruling {
                 vault.get_claim(&prior).unwrap().unwrap().subject,
                 ClaimSubject::Entity(actor),
             );
-            assert_stranded(oneiron::provider_confidence::effective_confidence(
-                &vault,
-                &candidate.confidence_claim_ref,
-            ));
+            assert_stranded(
+                oneiron::provider_confidence::effective_confidence(
+                    &vault,
+                    &candidate.confidence_claim_ref,
+                )
+                .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error),
+            );
             assert_eq!(f::counts(&vault), before);
         }
     }

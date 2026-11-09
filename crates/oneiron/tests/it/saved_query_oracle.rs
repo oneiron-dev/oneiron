@@ -18,15 +18,16 @@ use oneiron::campaign::claims::{
     encode_campaign_member_value,
 };
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::error::RegistryError;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::saved_query::{
     SAVED_QUERY_SCHEMA_VERSION, commit_membership_plan, membership_events, next_membership_epoch,
-    put_pack_migration_map, repair_pack_drift,
+    put_pack_migration_map, repair_pack_drift, sweep_owner_read,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId, Error,
-    Result, TimeRange, Vault, VaultConfig, saved_query::ClaimComparison,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EdgeKind,
+    EntityId, Error, Result, TimeRange, Vault, VaultConfig, saved_query::ClaimComparison,
     saved_query::CreateSavedQueryRequest, saved_query::EvalMode, saved_query::EvalPolicy,
     saved_query::EvaluationRequest, saved_query::FilterAst, saved_query::MatchVerdict,
     saved_query::MatcherSpec, saved_query::MembershipCause, saved_query::MembershipCommitOutcome,
@@ -179,6 +180,15 @@ fn create_request(filter: FilterAst, matcher: MatcherSpec) -> CreateSavedQueryRe
     }
 }
 
+/// The owner's read key, as the sweep resolves it (`sweep_owner_read`): the
+/// vault's owner reads all of its vault, so `owner_grants` alone narrows what
+/// a query reaches.
+fn owner_read(vault: &Vault, owner: EntityId) -> ScopedReadActorKey {
+    sweep_owner_read(vault, owner, EdgeActorClass::Human)
+        .unwrap()
+        .expect("the owner has a usable read")
+}
+
 fn evaluation(record: &SavedQueryRecord, entity_ref: EntityId) -> EvaluationRequest<'_> {
     EvaluationRequest {
         query_ref: record.query_ref,
@@ -210,7 +220,13 @@ fn concurrent_updates_cannot_both_win_the_version_cas() -> Result<()> {
             expression: FilterAst::All { terms: Vec::new() },
         },
     );
-    let created = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
+    let created = oneiron::saved_query::create_saved_query(
+        &vault,
+        owner,
+        EdgeActorClass::Human,
+        &request,
+        10,
+    )?;
 
     let vault = Arc::new(vault);
     let update = |predicate: &'static str| {
@@ -273,7 +289,13 @@ fn saved_query_write_boundary_binds_authenticated_owner() -> Result<()> {
         },
     );
 
-    let created = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
+    let created = oneiron::saved_query::create_saved_query(
+        &vault,
+        owner,
+        EdgeActorClass::Human,
+        &request,
+        10,
+    )?;
     assert_eq!(
         created.definition.owner_actor, owner,
         "create binds the owner from the authenticated principal"
@@ -316,7 +338,12 @@ fn saved_query_write_boundary_binds_authenticated_owner() -> Result<()> {
 #[test]
 fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (owner, person, world) = (test_id(0x4B), test_id(0x4C), test_id(0x4D));
+    // The evaluator reads through the owner's own read (86da2088979): the
+    // query's owner is the vault's owner.
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let (person, world) = (test_id(0x4C), test_id(0x4D));
     put_person(&vault, &person);
     place_in_world(&vault, &person, &world);
     put_claim(&vault, &test_id(0x4E), person, SENIORITY, "director");
@@ -336,7 +363,14 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
         worlds: vec![world, base],
         facets: Vec::new(),
     };
-    let record = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
+    let record = oneiron::saved_query::create_saved_query(
+        &vault,
+        owner,
+        EdgeActorClass::Human,
+        &request,
+        10,
+    )?;
+    let read = owner_read(&vault, owner);
 
     // Two different viewers read the SAME stored query and get the same
     // membership: the evaluator takes no viewer principal.
@@ -348,6 +382,7 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
         SavedQueryEvaluator {
             vault: &vault,
             owner_grants: &in_reach,
+            owner_read: &read,
             judge: None,
         }
         .evaluate_entity(&evaluation(&record, person)),
@@ -364,6 +399,7 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
         SavedQueryEvaluator {
             vault: &vault,
             owner_grants: &out_of_reach,
+            owner_read: &read,
             judge: None,
         }
         .evaluate_entity(&evaluation(&record, person)),
@@ -390,6 +426,7 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
             SavedQueryEvaluator {
                 vault: &vault,
                 owner_grants: &in_reach,
+                owner_read: &read,
                 judge: None,
             }
             .evaluate_entity(&evaluation(&record, person)),
@@ -408,8 +445,10 @@ fn owner_actor_is_the_only_evaluation_principal() -> Result<()> {
 #[test]
 fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (owner, world, elsewhere, person) =
-        (test_id(0x90), test_id(0x91), test_id(0x92), test_id(0x93));
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let (world, elsewhere, person) = (test_id(0x91), test_id(0x92), test_id(0x93));
     put_person(&vault, &person);
     place_in_world(&vault, &person, &world);
     put_world(&vault, &elsewhere);
@@ -433,7 +472,14 @@ fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
         worlds: vec![world, base],
         facets: Vec::new(),
     };
-    let record = oneiron::saved_query::create_saved_query(&vault, owner, &request, 10)?;
+    let record = oneiron::saved_query::create_saved_query(
+        &vault,
+        owner,
+        EdgeActorClass::Human,
+        &request,
+        10,
+    )?;
+    let read = owner_read(&vault, owner);
     let grants = QueryScope {
         worlds: vec![world, base],
         facets: Vec::new(),
@@ -441,6 +487,7 @@ fn out_of_scope_claim_evidence_does_not_satisfy_the_filter() -> Result<()> {
     let evaluator = SavedQueryEvaluator {
         vault: &vault,
         owner_grants: &grants,
+        owner_read: &read,
         judge: None,
     };
     assert_eq!(
@@ -577,7 +624,7 @@ fn membership_epoch_floor_survives_a_promoted_node_with_no_local_watermark() -> 
     );
 
     assert_eq!(
-        next_membership_epoch(&vault, query, person)?,
+        next_membership_epoch(&vault, query, campaign, person)?,
         6,
         "the replicated claim chain is the epoch floor"
     );
@@ -635,6 +682,7 @@ fn drifting_query(vault: &Vault, owner: EntityId) -> Result<SavedQueryRecord> {
     oneiron::saved_query::create_saved_query(
         vault,
         owner,
+        EdgeActorClass::Human,
         &create_request(
             claim_term(SENIORITY, ClaimComparison::Exists, Value::Null),
             MatcherSpec::Hard {

@@ -123,4 +123,3 @@ fn account_vaults_share_rows_artifact_bytes_and_producer_provenance() {
         Err(BuildCacheError::AccountMismatch)
     ));
 }
-

@@ -10,7 +10,7 @@ use oneiron::code_symbol::{
     CodeChunk, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision,
     code_symbol_entity_id, derive_symbol_fingerprint,
 };
-use oneiron::codebase::RepoRef;
+use oneiron::codebase::{RepoIdentity, RepoRef};
 use oneiron::deletion::DeleteReason;
 use oneiron::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, decode_consolidation_evidence, encode_consolidation_evidence,
@@ -129,8 +129,11 @@ fn graph() -> (CodeSymbolGraph, Vec<EntityId>) {
             )
         })
         .collect();
+    // A repository with no standing portable id is keyed by its location.
+    let repo_identity = RepoIdentity::from_location(&repo);
     let manifest = CodeSymbolManifest::new(
         repo,
+        repo_identity,
         Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
         chunks,
         symbols,
@@ -139,7 +142,7 @@ fn graph() -> (CodeSymbolGraph, Vec<EntityId>) {
     let symbols = manifest
         .symbols
         .iter()
-        .map(|symbol| code_symbol_entity_id(&manifest.repo_ref, symbol).expect("symbol id"))
+        .map(|symbol| code_symbol_entity_id(&manifest.repo_identity, symbol).expect("symbol id"))
         .collect::<Vec<_>>();
     let graph = CodeSymbolGraph::new(
         manifest,

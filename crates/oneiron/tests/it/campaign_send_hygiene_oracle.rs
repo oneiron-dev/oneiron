@@ -40,6 +40,22 @@ use oneiron::{
     outbound::OutboundIntentTrigger,
 };
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 const CHANNEL: &str = "email";
 const VERB: &str = "send";
 const COUNTERPARTY: &str = "mika@example.com";
@@ -117,7 +133,8 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
     put_person(&vault, actor);
     vault
         .mint_standing_outbound_grant(
-            &test_id(SEND_GRANT_SEED),
+            &owner_proof(&vault),
+            test_id(SEND_GRANT_SEED),
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -127,7 +144,6 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
                     verb_class: VERB.to_owned(),
                 },
             },
-            1,
         )
         .unwrap();
     (dir, vault, actor)

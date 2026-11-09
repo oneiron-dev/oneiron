@@ -152,4 +152,3 @@ fn a_daily_cap_binds_at_confirm_and_a_move_never_charges_itself() {
     ));
     expect_confirmed(run(&fixture, &config, BookingVerbRequest::Confirm(second)));
 }
-

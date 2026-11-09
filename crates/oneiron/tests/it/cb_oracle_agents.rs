@@ -26,152 +26,6 @@
 //        kill · ONE-1709 team-lead · ONE-1710 peer-answer trust)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_a {
-    /// One rendered AGENTS-section row.
-    struct AgentRow {
-        /// Actor handle (children: run/agent id; peers: connection-keyed).
-        id: String,
-        /// "child" or "peer".
-        lane: String,
-        /// Exact rendered text of the row.
-        line: String,
-        /// Harness label carried on peer rows (a label, never the identity).
-        harness_label: Option<String>,
-    }
-
-    struct AgentsSectionRender {
-        rows: Vec<AgentRow>,
-    }
-
-    /// ONE-1697 fixture: children `child_a` + `child_b` (running, M8 driver
-    /// state) + 2 peer connections of the SAME vendor/harness ("claude-code")
-    /// registered under two different config dirs whose owner-assigned actor
-    /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
-    /// render the AGENTS section collapsed.
-    fn arm_render_agents_section() -> AgentsSectionRender {
-        use oneiron::agent_run_status::AgentRunStatus;
-        use oneiron::context_board::{ChildAgentPresence, PeerPresence};
-        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
-
-        let node = RunTreeNode {
-            attempt_id: "child_a".to_owned(),
-            run_id: None,
-            parent_id: None,
-            worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
-            worker: None,
-            agent_id: None,
-            status: RunTreeStatus::Running,
-            result_ref: None,
-            timestamps: RunTreeTimestamps {
-                created_at: 1,
-                updated_at: 1,
-            },
-            failure: None,
-            events: Vec::new(),
-            children: Vec::new(),
-        };
-        let children = [
-            ChildAgentPresence::from_run_tree_node(&node)
-                .expect("running driver node must produce child presence"),
-            ChildAgentPresence {
-                id: "child_b".to_owned(),
-                status: AgentRunStatus::Working,
-                label: None,
-                role: "worker".to_owned(),
-            },
-        ];
-        let peers = [
-            PeerPresence {
-                actor_handle: "cc-main".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(1),
-            },
-            PeerPresence {
-                actor_handle: "cc-second".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(2),
-            },
-        ];
-
-        let section = oneiron::context_board::render_agents_section(&children, &peers);
-        let rows = section
-            .rows
-            .into_iter()
-            .map(|row| AgentRow {
-                id: row.id,
-                lane: row.lane.as_str().to_string(),
-                line: row.line,
-                harness_label: row.harness_label,
-            })
-            .collect();
-        AgentsSectionRender { rows }
-    }
-
-    /// Outcome of a zero-config spawn.
-    struct DefaultPresetSpawn {
-        spawned_children: usize,
-        /// Logical id the spawn RESOLVED to, read back off the stored row the
-        /// dispatch named (engine-observed output, never a caller-side flag —
-        /// G6 vacuous-pass hazard).
-        resolved_logical_id: String,
-        /// Logical id the engine registers as its default base agent.
-        system_default_logical_id: String,
-    }
-
-    /// ONE-1698 fixture: call `agents.spawn` with NO agent definition and a
-    /// plain task prompt; observe the RESOLVED logical id of the spawned child
-    /// and, separately, the registered system-default base logical id.
-    fn arm_zero_config_spawn() -> DefaultPresetSpawn {
-        use oneiron::agent_dispatch::{
-            AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
-        };
-        use oneiron::dreamer_runner::{
-            DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
-        };
-        use oneiron::{AttemptQueue, Vault, VaultConfig};
-
-        let dir = tempfile::tempdir().expect("temp dir");
-        let mut config = VaultConfig::device();
-        config.map_size = 16 * 1024 * 1024;
-        config.dimensions = 4;
-        config.embedding_model = None;
-        let vault = Vault::open(dir.path(), config).expect("open vault");
-        let dispatcher = AgentDispatcher::new(&vault);
-        let AgentDispatchOutcome::Dispatched(status) = dispatcher
-            .dispatch_default_base(None, None, None, 1)
-            .expect("zero-config dispatch")
-        else {
-            panic!("expected one fresh spawn");
-        };
-        let resolved_id = status
-            .input
-            .target
-            .agent_definition_ref()
-            .expect("agent target");
-        let resolved_logical_id = vault
-            .get_agent_definition(&resolved_id)
-            .expect("read the resolved row")
-            .expect("the resolved row exists")
-            .logical_id
-            .expect("a seeded row carries a logical id");
-        let spawned_children = AttemptQueue::new(&vault)
-            .list()
-            .expect("observe dispatch attempts")
-            .into_iter()
-            .filter(|attempt| {
-                attempt.kind == DREAMER_RUNNER_ATTEMPT_KIND
-                    && decode_dreamer_attempt_payload(&attempt.payload).is_ok_and(|payload| {
-                        payload.attempt_type == oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
-                    })
-            })
-            .count();
-
-        DefaultPresetSpawn {
-            spawned_children,
-            resolved_logical_id,
-            system_default_logical_id: DEFAULT_BASE_LOGICAL_ID.to_owned(),
-        }
-    }
-
     /// Kill-authority matrix over one spawn tree.
     struct KillMatrix {
         /// Spawner kills its own spawn → effects.
@@ -827,6 +681,7 @@ mod cb_a {
                                 evidence_refs: vec![ConsultPayloadRef::Turn(result_ref)],
                             },
                             completed_at: super::LEAD_NOW + 10,
+                            measured_spend: None,
                         },
                     )
                     .expect("a panel member answers");
@@ -887,6 +742,7 @@ mod cb_a {
                             .collect(),
                     },
                     completed_at: super::LEAD_NOW + 20,
+                    measured_spend: None,
                 },
             )
             .expect("the judge ranks the answers");
@@ -915,6 +771,7 @@ mod cb_a {
                             .collect(),
                     },
                     completed_at: super::LEAD_NOW + 30,
+                    measured_spend: None,
                 },
             )
             .expect("the synthesist writes the final answer");
@@ -949,83 +806,6 @@ mod cb_a {
         assert_eq!(panel.members_with_cross_visibility, 0);
         assert_eq!(panel.judge_passes, 1);
         assert_eq!(panel.syntheses_delivered, 1);
-    }
-
-    /// Landing + consolidation observations for one peer answer.
-    struct PeerAnswerLanding {
-        /// Turns stored for the answer (storage never gated).
-        stored_turns: usize,
-        /// Human gate prompts raised by STORAGE of the answer.
-        storage_gate_prompts: usize,
-        /// Claims the Dreamer derived from the answer.
-        derived_claims: usize,
-        /// Of those, claims carrying source = tool_output.
-        claims_with_source_tool_output: usize,
-        /// Of those, claims carrying a confidence value.
-        claims_with_confidence: usize,
-        /// Answer-turn hops present in the provenance chain (required kind).
-        chain_answer_turn_hops: usize,
-        /// Consult-task hops present in the provenance chain (required kind).
-        chain_consult_task_hops: usize,
-        /// Total provenance chain length. 08b r15 requires the CHAIN, not a
-        /// fixed length — richer conforming chains (e.g. + actor-signature
-        /// hop) must pass (F23 canon correction).
-        provenance_chain_len: usize,
-    }
-
-    /// ONE-1710 fixture: a peer answers one consult; the Dreamer
-    /// consolidates the answer into exactly one derived claim.
-    fn arm_peer_answer_landing() -> PeerAnswerLanding {
-        use oneiron::ClaimSource;
-        use oneiron::dreamer_consolidation::ConsolidationProvenanceHopKind;
-
-        let fixture = super::peer_fixture::PeerFixture::open();
-        // §1 order: the answer TURN and the consult TASK result land FIRST,
-        // through the ordinary ledger doors, before any consolidation
-        // decision exists to make.
-        let answer = fixture.land_peer_answer("ACME");
-        let stored_turns = usize::from(fixture.entity_exists(answer.answer_turn_ref));
-        let storage_gate_prompts = fixture.pending_gate_consents();
-
-        let (outcome, _) = fixture.consolidate_peer_answer(&answer, "ACME", 0.7, None);
-        let derived_claims = outcome.landed.len();
-
-        let bodies: Vec<_> = outcome.landed.iter().map(|id| fixture.claim(*id)).collect();
-        let claims_with_source_tool_output = bodies
-            .iter()
-            .filter(|body| body.source == Some(ClaimSource::ToolOutput))
-            .count();
-        let claims_with_confidence = bodies
-            .iter()
-            .filter(|body| body.confidence.is_finite() && body.confidence > 0.0)
-            .count();
-
-        let chains: Vec<_> = bodies
-            .iter()
-            .map(super::peer_fixture::stored_chain)
-            .collect();
-        let chain_answer_turn_hops = chains
-            .iter()
-            .flatten()
-            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::AnswerTurn)
-            .count();
-        let chain_consult_task_hops = chains
-            .iter()
-            .flatten()
-            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::ConsultTask)
-            .count();
-        let provenance_chain_len = chains.iter().map(Vec::len).sum();
-
-        PeerAnswerLanding {
-            stored_turns,
-            storage_gate_prompts,
-            derived_claims,
-            claims_with_source_tool_output,
-            claims_with_confidence,
-            chain_answer_turn_hops,
-            chain_consult_task_hops,
-            provenance_chain_len,
-        }
     }
 
     /// The same valid candidate fails without the Generated lineage permit,
@@ -1275,61 +1055,6 @@ mod cb_a {
         );
         assert_eq!(forgery.forged_label_claims_stored, 0);
     }
-
-    /// Trust-surface observations after a conflicting peer answer.
-    struct TrustSurfaces {
-        /// Human digest entries for the landing.
-        human_digest_entries: usize,
-        /// conflict.open surfacings for the contradiction.
-        conflict_open_surfacings: usize,
-        /// Writes needed to correct the wrong note (one supersede).
-        correction_writes: usize,
-        /// True iff read-time resolution ranks the HIGHER-confidence claim
-        /// above the contradicting lower-confidence peer claim (ticket:
-        /// "read-time confidence weighting" — F24 confidence half).
-        higher_confidence_ranked_first_at_read: bool,
-    }
-
-    /// ONE-1710 fixture: a peer answer contradicting an existing first-party
-    /// note lands (at lower confidence than the note) and is consolidated;
-    /// read back the contradicted fact; then the owner corrects it.
-    fn arm_trust_surfaces() -> TrustSurfaces {
-        let fixture = super::peer_fixture::PeerFixture::open();
-
-        // A first-party note the owner already trusts, at HIGH confidence.
-        let note = fixture.owner_note("Globex", 0.9);
-
-        // The peer answers the same question differently, at LOWER
-        // confidence. Storage is ungated and consolidation lands the claim.
-        let answer = fixture.land_peer_answer("ACME");
-        let (outcome, candidate) = fixture.consolidate_peer_answer(&answer, "ACME", 0.4, None);
-        let peer_claim = *outcome
-            .landed
-            .first()
-            .expect("the peer answer lands as one claim");
-
-        // Wrong-note protection is the EXISTING conflict machinery: one open
-        // conflict over the contradicted identity, both claims still
-        // legible, and one informational digest line.
-        let (conflict_open_surfacings, conflict_open_ref) =
-            fixture.detect_open_conflict(&candidate, note.claim_id);
-        let human_digest_entries = fixture.surface_digest(&answer, peer_claim, conflict_open_ref);
-
-        // Read-time confidence weighting ranks the higher-confidence head
-        // first WHILE the contradiction stands.
-        let ranked = fixture.read_ranked_heads();
-        let higher_confidence_ranked_first_at_read = ranked.first() == Some(&note.claim_id);
-
-        // One superseding write corrects the wrong note.
-        let correction = fixture.correct_with_supersession(&answer, peer_claim, "Globex", 0.9);
-
-        TrustSurfaces {
-            human_digest_entries,
-            conflict_open_surfacings,
-            correction_writes: correction,
-            higher_confidence_ranked_first_at_read,
-        }
-    }
 }
 
 /// Local ONE-1710 fixture support. Deliberately NOT in `cb_oracle_common`:
@@ -1339,10 +1064,8 @@ mod peer_fixture {
     use oneiron::claim::{ClaimBody, ClaimSubject};
     use oneiron::config::VaultConfig;
     use oneiron::dreamer_consolidation::{
-        ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, PeerAnswerLineage,
-        PeerTrustDigestLine, PeerTrustDigestSink, PriorHead, conflict_open_marker_id,
-        decode_consolidation_evidence, detect_conflicts, evidence_chain_source,
-        peer_answer_provenance_chain, surface_peer_answer_digest,
+        ConsolidationProvenanceHopKind, PeerAnswerLineage, PeerTrustDigestLine,
+        PeerTrustDigestSink, evidence_chain_source, peer_answer_provenance_chain,
     };
     use oneiron::edge::EdgeActorClass;
     use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
@@ -1350,7 +1073,6 @@ mod peer_fixture {
     use oneiron::{
         AttemptId, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange,
         Vault, dreamer_consolidation::PromotionCandidate, dreamer_promotion::DreamerRunContext,
-        dreamer_promotion::PromotionOutcome, dreamer_promotion::promote_consolidated_claims,
         task_verb::TaskAssignee, task_verb::TaskCreateSpec, task_verb::TaskResultInput,
         task_verb::TaskTerminalDisposition,
     };
@@ -1388,10 +1110,6 @@ mod peer_fixture {
     pub(crate) struct LandedPeerAnswer {
         pub(crate) answer_turn_ref: EntityId,
         pub(crate) consult_task_ref: EntityId,
-    }
-
-    pub(crate) struct OwnerNote {
-        pub(crate) claim_id: EntityId,
     }
 
     pub(crate) struct ForgeryAttempt {
@@ -1781,6 +1499,7 @@ mod peer_fixture {
                     end: PEER_NOW,
                 },
                 learned_at: PEER_NOW,
+                decisions: Vec::new(),
             }
         }
 
@@ -1798,209 +1517,6 @@ mod peer_fixture {
                 Value::from("public"),
             )]));
             candidate
-        }
-
-        pub(crate) fn consolidate_peer_answer(
-            &self,
-            answer: &LandedPeerAnswer,
-            value: &str,
-            confidence: f32,
-            supersedes: Option<EntityId>,
-        ) -> (PromotionOutcome, PromotionCandidate) {
-            let candidate = self.peer_candidate(answer, value, confidence, supersedes);
-            let outcome =
-                promote_consolidated_claims(&self.vault, &self.run(), vec![candidate.clone()])
-                    .expect("promotion runs");
-            assert!(
-                outcome.rejected.is_empty(),
-                "peer consolidation must not be rejected: {:?}",
-                outcome.rejected
-            );
-            if supersedes.is_some() {
-                // W7 contradiction closure holds attributed revisions until
-                // owner confirmation; peer storage itself needs no review.
-                assert!(outcome.landed.is_empty());
-                assert_eq!(outcome.pended, vec![candidate.claim_id]);
-            } else {
-                assert!(outcome.pended.is_empty(), "new peer facts need no approval");
-            }
-            (outcome, candidate)
-        }
-
-        /// One owner-authored first-party note, written through the ordinary
-        /// public claim door.
-        pub(crate) fn owner_note(&self, value: &str, confidence: f32) -> OwnerNote {
-            let claim_id = EntityId::from_bytes([0xC6; 16]).expect("note id");
-            let envelope = WriteEnvelope::new(
-                WriteActor::new(self.owner, EdgeActorClass::Human),
-                ClaimSource::UserStated,
-                WriteProvenance::new(Value::from("cb-b-1710-owner-note")).expect("provenance"),
-                // The owner's own note takes direct effect: `user_stated`
-                // needs no explicit auto permit, and the default manifest
-                // already grants the human class Auto. Requesting anything
-                // narrower would mint the very approval row this arm counts.
-                ClaimApprovalStatus::Auto,
-            );
-            self.vault
-                .batch()
-                .claim_candidate(
-                    &claim_id,
-                    ClaimCandidate::new(
-                        PEER_PREDICATE,
-                        ClaimSubject::Entity(self.subject),
-                        Value::from(value),
-                        confidence,
-                    ),
-                    &envelope,
-                    TimeRange {
-                        start: PEER_NOW - 10,
-                        end: PEER_NOW - 10,
-                    },
-                    PEER_NOW - 10,
-                )
-                .commit()
-                .expect("the owner's own note lands");
-            OwnerNote { claim_id }
-        }
-
-        /// Routes the contradiction through the EXISTING consolidation
-        /// conflict path and returns `(surfacings, marker)` — no peer-specific
-        /// review state is minted.
-        pub(crate) fn detect_open_conflict(
-            &self,
-            candidate: &PromotionCandidate,
-            note: EntityId,
-        ) -> (usize, Option<EntityId>) {
-            let prior = PriorHead {
-                claim_id: note,
-                body: self.claim(note),
-            };
-            let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
-                .expect("conflict detection runs");
-            let marker = conflicts.first().map(|conflict| {
-                conflict_open_marker_id(conflict, self.attempt).expect("marker id derives")
-            });
-            (conflicts.len(), marker)
-        }
-
-        pub(crate) fn surface_digest(
-            &self,
-            answer: &LandedPeerAnswer,
-            claim_ref: EntityId,
-            conflict_open_ref: Option<EntityId>,
-        ) -> usize {
-            let mut sink = CountingDigestSink::default();
-            surface_peer_answer_digest(
-                &mut sink,
-                PeerTrustDigestLine {
-                    consult_task_ref: answer.consult_task_ref,
-                    answer_turn_ref: answer.answer_turn_ref,
-                    claim_ref,
-                    conflict_open_ref,
-                },
-            )
-            .expect("the digest line is informational and always accepted");
-            sink.lines.len()
-        }
-
-        /// Read-time resolution over the contradicted fact: the surfaceable
-        /// active heads, ordered by the ordinary confidence weighting.
-        pub(crate) fn read_ranked_heads(&self) -> Vec<EntityId> {
-            let mut heads: Vec<(EntityId, f32)> = self
-                .vault
-                .claims_for_subject(&self.subject)
-                .expect("read the subject's claims")
-                .into_iter()
-                .filter_map(|id| {
-                    let body = self.claim(id);
-                    let surfaceable = matches!(
-                        body.approval,
-                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                    ) && body.lifecycle == ClaimLifecycleStatus::Active
-                        && !body.stale
-                        && body.predicate == PEER_PREDICATE;
-                    surfaceable.then_some((id, body.confidence))
-                })
-                .collect();
-            heads.sort_by(|left, right| {
-                right
-                    .1
-                    .partial_cmp(&left.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            heads.into_iter().map(|(id, _)| id).collect()
-        }
-
-        /// ONE superseding write corrects the wrong note.
-        pub(crate) fn correct_with_supersession(
-            &self,
-            answer: &LandedPeerAnswer,
-            wrong: EntityId,
-            value: &str,
-            confidence: f32,
-        ) -> usize {
-            let (outcome, candidate) =
-                self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
-            assert_eq!(self.claim(wrong).lifecycle, ClaimLifecycleStatus::Active);
-            assert_eq!(
-                self.claim(candidate.claim_id).approval,
-                ClaimApprovalStatus::Proposed
-            );
-            let pending = self
-                .vault
-                .pending_gate_consents(1_000)
-                .expect("read correction and annotation consents");
-            assert!(
-                pending
-                    .iter()
-                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
-            );
-            assert!(
-                pending
-                    .iter()
-                    .filter(|row| row.claim_id != *candidate.claim_id.as_bytes())
-                    .all(|row| self
-                        .claim(EntityId::from_bytes(row.claim_id).expect("stored pending claim id"))
-                        .predicate
-                        == "core.conflict.open")
-            );
-            let proposed = self
-                .vault
-                .get(&candidate.claim_id)
-                .expect("read proposed correction")
-                .expect("proposal bytes");
-            self.vault
-                .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
-                .expect("owner confirms attributed correction");
-            let pending = self
-                .vault
-                .pending_gate_consents(1_000)
-                .expect("read correction and annotation consents");
-            assert!(
-                !pending
-                    .iter()
-                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
-            );
-            assert!(pending.iter().all(|row| {
-                matches!(
-                    self.claim(
-                        EntityId::from_bytes(row.claim_id).expect("stored pending claim id")
-                    )
-                    .predicate
-                    .as_str(),
-                    "core.conflict.open" | "core.supersession.provenance"
-                )
-            }));
-            assert_eq!(
-                self.claim(candidate.claim_id).approval,
-                ClaimApprovalStatus::Approved
-            );
-            assert_eq!(
-                self.claim(wrong).lifecycle,
-                ClaimLifecycleStatus::Superseded,
-                "the wrong note is superseded, never deleted"
-            );
-            outcome.pended.len()
         }
 
         /// Attempts the SAME tool_output-lineage → generated restamp through
@@ -2134,22 +1650,6 @@ mod peer_fixture {
                 .to_string()
                 .contains("claim source widens beyond evidence lineage")
         })
-    }
-
-    /// The typed chain read back off a landed claim's structured evidence.
-    pub(crate) fn stored_chain(body: &ClaimBody) -> Vec<ConsolidationProvenanceHop> {
-        let Some(Value::Map(evidence)) = &body.evidence else {
-            panic!("a promoted claim carries the envelope evidence map");
-        };
-        let candidate_evidence = evidence
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
-            .map(|(_, value)| value)
-            .expect("candidate_evidence entry");
-        decode_consolidation_evidence(candidate_evidence)
-            .expect("the evidence envelope decodes")
-            .expect("a consolidation claim carries the typed envelope")
-            .chain
     }
 
     fn turn_body(text: &str) -> Vec<u8> {
@@ -2362,7 +1862,7 @@ mod lead_fixture {
                 .run_id
         }
 
-        pub(crate) fn persisted_depth(&self, attempt: AttemptId) -> Option<u8> {
+        pub(crate) fn persisted_depth(&self, attempt: AttemptId) -> Option<u64> {
             let record = AttemptQueue::new(&self.vault)
                 .get(attempt)
                 .expect("read the attempt")
@@ -2490,48 +1990,6 @@ mod lead_fixture {
 // CB-X — agent run status registry mints (ONE-1711)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_x {
-    /// AgentRunStatus contract observations.
-    struct AgentRunStatusContract {
-        /// The status states, in contract order.
-        states: Vec<String>,
-        /// Illegal transitions attempted by the fixture: spawned→archived,
-        /// spawned→delivered, working→spawned, delivered→working,
-        /// archived→working (F25 matrix).
-        illegal_transitions_attempted: usize,
-        /// Of those, rejected by the contract (must be all).
-        illegal_transitions_rejected: usize,
-        /// Of those, accepted (must be none).
-        illegal_transitions_accepted: usize,
-    }
-
-    /// ONE-1711 fixture: enumerate the AgentRunStatus contract and attempt
-    /// FIVE illegal transitions: spawned→archived, spawned→delivered,
-    /// working→spawned, delivered→working, archived→working.
-    fn arm_agent_run_status_contract() -> AgentRunStatusContract {
-        use oneiron::agent_run_status::{AgentRunStatus, validate_agent_run_status_transition};
-        let states = AgentRunStatus::RATIFIED_FLOW
-            .iter()
-            .map(|status| status.as_str().to_owned())
-            .collect();
-        let attempts = [
-            (AgentRunStatus::Spawned, AgentRunStatus::Archived),
-            (AgentRunStatus::Spawned, AgentRunStatus::Delivered),
-            (AgentRunStatus::Working, AgentRunStatus::Spawned),
-            (AgentRunStatus::Delivered, AgentRunStatus::Working),
-            (AgentRunStatus::Archived, AgentRunStatus::Working),
-        ];
-        let rejected = attempts
-            .iter()
-            .filter(|(from, to)| validate_agent_run_status_transition(*from, *to).is_err())
-            .count();
-        AgentRunStatusContract {
-            states,
-            illegal_transitions_attempted: attempts.len(),
-            illegal_transitions_rejected: rejected,
-            illegal_transitions_accepted: attempts.len() - rejected,
-        }
-    }
-
     /// needs_input round-trip observations (EF-049 lineage → OF twin).
     struct NeedsInputRoundTrip {
         /// Runs sitting in needs_input after the agent asks.
@@ -2621,7 +2079,9 @@ mod cb_x {
             .park_attempt(ParkDreamerAttempt {
                 attempt_id,
                 reason: "human response".to_owned(),
+                cause: oneiron::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
+                carried_spend: None,
                 now: 1,
             })
             .expect("park");

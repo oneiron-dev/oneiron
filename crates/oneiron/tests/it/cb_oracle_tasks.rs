@@ -326,9 +326,22 @@ mod cb_t {
             ))
             .expect("create other-owned task");
         let cancel_grant_ref = EntityId::from_bytes([0xD1; 16]).expect("cancel grant id");
+        // A standing outbound grant is the vault owner's act (FIX 11874).
+        let owner_id = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
+        let owner_proof = vault
+            .authenticate_owner(
+                owner_id,
+                "principal:owner",
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("owner proof");
         vault
             .mint_standing_outbound_grant(
-                &cancel_grant_ref,
+                &owner_proof,
+                cancel_grant_ref,
                 &GrantMintIntent {
                     principal_ref: agent_a.to_hex(),
                     origin_component_id: "tasks".to_owned(),
@@ -338,7 +351,6 @@ mod cb_t {
                         verb_class: "cancel".to_owned(),
                     },
                 },
-                120,
             )
             .expect("mint cancel grant");
         let own_cancel = facade
@@ -453,9 +465,22 @@ mod human_fixture {
                     b"owner",
                 )
                 .expect("store owner");
+            // A standing outbound grant is the vault owner's act (FIX 11874).
+            let owner_id = vault
+                .ensure_embedded_owner_actor()
+                .expect("the vault's owner");
+            let owner_proof = vault
+                .authenticate_owner(
+                    owner_id,
+                    "principal:owner",
+                    true,
+                    oneiron::store::GateDecisionId::now(),
+                )
+                .expect("owner proof");
             vault
                 .mint_standing_outbound_grant(
-                    &EntityId::from_bytes([0x7B; 16]).expect("grant id"),
+                    &owner_proof,
+                    EntityId::from_bytes([0x7B; 16]).expect("grant id"),
                     &GrantMintIntent {
                         principal_ref: owner.to_hex(),
                         origin_component_id: "tasks".to_owned(),
@@ -465,7 +490,6 @@ mod human_fixture {
                             verb_class: "send".to_owned(),
                         },
                     },
-                    super::CONSULT_NOW,
                 )
                 .expect("mint outbound grant");
 
@@ -1007,6 +1031,7 @@ mod cb_a {
                     &ConsultResultInput {
                         kind,
                         completed_at: super::CONSULT_NOW + 10,
+                        measured_spend: None,
                     },
                 )
                 .expect("peer lands its own result");
@@ -1170,7 +1195,9 @@ mod cb_a {
                 .park_attempt(ParkDreamerAttempt {
                     attempt_id,
                     reason: "peer result".to_owned(),
+                    cause: oneiron::dreamer_runner::DreamerParkCause::Signal,
                     park_owner: trap_park_owner(&trap.trap_claim_id),
+                    carried_spend: None,
                     now: NOW,
                 })
                 .expect("park the suspended step");
@@ -1450,7 +1477,9 @@ mod cb_a {
             .park_attempt(ParkDreamerAttempt {
                 attempt_id,
                 reason: "human response".to_owned(),
+                cause: oneiron::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
+                carried_spend: None,
                 now: NOW,
             })
             .expect("park the suspended step");
