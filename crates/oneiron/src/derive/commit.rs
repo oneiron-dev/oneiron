@@ -13,10 +13,12 @@ use crate::{EntityId, Vault};
 /// What one item came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ItemOutcome {
-    /// It landed `rows`; a claim item at `approval`.
+    /// It landed `rows`; a claim item at `approval`. An item the derive
+    /// verdict judged keeps the receipt naming the grant it was judged by.
     Landed {
         rows: Vec<EntityId>,
         approval: Option<ClaimApprovalStatus>,
+        receipt: Option<GateDecisionId>,
     },
     /// It was refused for `reasons`, receipted by `receipt`.
     Refused {
@@ -106,6 +108,9 @@ impl Vault {
                     DerivationItem::Claim(claim) => {
                         super::claim::stage_in_txn(self, txn, &context, claim)?
                     }
+                    DerivationItem::Supersede(supersede) => {
+                        super::supersede::stage_in_txn(self, txn, &context, supersede)?
+                    }
                 }
             };
             match &outcome {
@@ -147,9 +152,9 @@ impl Vault {
 
 /// Appends the refusal receipt of one item of the batch in `context`: an
 /// engine record in the gate's decision ledger, naming the actor, the
-/// refused row (`about`, when the item minted one), the reason tokens and
-/// the policy frontier the item was judged under. Its diff handle is the
-/// batch's id, which links the receipt to the batch record.
+/// refused row (`about`, when the item minted or names one), the reason
+/// tokens and the policy frontier the item was judged under. Its diff
+/// handle is the batch's id, which links the receipt to the batch record.
 pub(super) fn refusal_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -157,13 +162,50 @@ pub(super) fn refusal_receipt_in_txn(
     about: Option<EntityId>,
     reasons: &[String],
 ) -> Result<GateDecisionId> {
-    let actor = context.stamp.actor;
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
-    let record = GateDecisionRecord {
+    let record = item_receipt(context, about, "deny", reasons, None, frontier);
+    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    Ok(record.decision_id)
+}
+
+/// Appends the receipt of one landed item the derive verdict judged
+/// (settlement, supersession, artifact, archive): the grant it was judged
+/// by and the frontier it was judged under, beside the item's reason
+/// tokens.
+pub(super) fn allowance_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    context: &ItemContext<'_>,
+    about: Option<EntityId>,
+    reasons: &[String],
+    allowance: &crate::gate::DeriveAllowance,
+) -> Result<GateDecisionId> {
+    let record = item_receipt(
+        context,
+        about,
+        "approved",
+        reasons,
+        Some(allowance.grant_ref.clone()),
+        allowance.frontier,
+    );
+    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    Ok(record.decision_id)
+}
+
+fn item_receipt(
+    context: &ItemContext<'_>,
+    about: Option<EntityId>,
+    outcome: &str,
+    reasons: &[String],
+    grant_ref: Option<String>,
+    frontier: [u8; 32],
+) -> GateDecisionRecord {
+    let actor = context.stamp.actor;
+    GateDecisionRecord {
         version: crate::store::GATE_DECISION_LEDGER_VERSION,
         decision_id: GateDecisionId::now(),
         created_at: context.now,
-        outcome: "deny".to_owned(),
+        outcome: outcome.to_owned(),
         reason_codes: reasons.to_vec(),
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
@@ -172,14 +214,12 @@ pub(super) fn refusal_receipt_in_txn(
         content_kind: super::DERIVE_ITEM_CONTENT_KIND.to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: about.map(|id| *id.as_bytes()),
-        grant_ref: None,
+        grant_ref,
         diff_handle: context.batch.as_bytes().to_vec(),
         read_frontier_hash: frontier,
         context: GateDecisionContext::default(),
         redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(record.decision_id)
+    }
 }
 
 fn batch_record(
@@ -195,14 +235,18 @@ fn batch_record(
         items: items
             .iter()
             .map(|item| match &item.outcome {
-                ItemOutcome::Landed { rows, approval } => ItemRecord {
+                ItemOutcome::Landed {
+                    rows,
+                    approval,
+                    receipt,
+                } => ItemRecord {
                     local: item.local.clone(),
                     kind: item.kind.to_owned(),
                     landed: true,
                     rows: rows.clone(),
                     approval: approval.map(|approval| approval.as_str().to_owned()),
                     reasons: Vec::new(),
-                    receipt: None,
+                    receipt: receipt.map(GateDecisionId::as_bytes),
                 },
                 ItemOutcome::Refused { reasons, receipt } => ItemRecord {
                     local: item.local.clone(),

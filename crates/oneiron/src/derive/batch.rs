@@ -51,11 +51,25 @@ pub(crate) struct DerivedClaim {
     pub(crate) evidence: Vec<ItemRef>,
 }
 
+/// A supersession an agent derived: the claim `new` replaces the claim
+/// `old`, which the agent's grant reaches.
+#[derive(Debug, Clone)]
+pub(crate) struct DerivedSupersede {
+    /// The item's name inside its batch.
+    pub(crate) local: String,
+    /// The claim that stands.
+    pub(crate) new: ItemRef,
+    /// The claim it replaces.
+    pub(crate) old: ItemRef,
+}
+
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
 pub(crate) enum DerivationItem {
     /// A `Generated` claim (kind 1).
     Claim(DerivedClaim),
+    /// A supersession (kind 3).
+    Supersede(DerivedSupersede),
 }
 
 impl DerivationItem {
@@ -63,6 +77,7 @@ impl DerivationItem {
     pub(crate) fn local(&self) -> &str {
         match self {
             Self::Claim(claim) => &claim.local,
+            Self::Supersede(supersede) => &supersede.local,
         }
     }
 
@@ -70,6 +85,7 @@ impl DerivationItem {
     pub(crate) const fn kind(&self) -> &'static str {
         match self {
             Self::Claim(_) => "claim",
+            Self::Supersede(_) => "supersede",
         }
     }
 
@@ -79,6 +95,7 @@ impl DerivationItem {
             Self::Claim(claim) => std::iter::once(&claim.subject)
                 .chain(claim.evidence.iter())
                 .collect(),
+            Self::Supersede(supersede) => vec![&supersede.new, &supersede.old],
         }
     }
 }

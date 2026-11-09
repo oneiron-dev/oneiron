@@ -24,11 +24,17 @@ mod batch;
 mod claim;
 mod commit;
 mod record;
+mod supersede;
 mod tables;
 
-pub(crate) use batch::{DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, ItemRef};
+pub(crate) use batch::{
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSupersede, ItemRef,
+};
 pub(crate) use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
-pub(crate) use record::{DerivationBatchRecord, ItemRecord, batch_record_in_txn, batches_of_actor_in_txn};
+pub(crate) use record::{
+    DerivationBatchRecord, ItemRecord, batch_record_in_txn, batches_of_actor_in_txn,
+};
+pub(crate) use supersede::{SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE};
 
 /// The provenance `surface` a derivation commit stamps on every row it
 /// lands. The gate reads it as a derivation-class write.

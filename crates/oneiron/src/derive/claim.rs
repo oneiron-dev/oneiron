@@ -70,6 +70,7 @@ pub(super) fn stage_in_txn(
                 return Ok(ItemOutcome::Landed {
                     rows: vec![id],
                     approval: Some(approval),
+                    receipt: None,
                 });
             }
             Err(Error::Gate(GateError::GateWriteRejected {
