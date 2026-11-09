@@ -164,6 +164,30 @@ silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
 
+### Device peers and the sync link
+
+`await engine.startDevicePeer({id, ownership?, homeOrigin?, serverConfig?, serverLog?})` runs a second
+server process of the **same logical vault** on this host, in its own root, port and keystore. It
+initialises an empty peer vault (no `token bootstrap`), waits until the home's authority checkpoint is
+attested (`GET /v1/owner/checkpoint-policy/roots`), has the owner issue one machine pairing link
+(`token pair --url <homeOrigin ?? engine.url> --principal-ref <owner> --actor-class human --machine
+<ownership ?? "yours">`), runs `device enrol <peer vault> --config <peer toml>` on the stopped peer with
+the link on stdin, and serves it. The returned `DevicePeer` has `url`, `root`, `enrolment` (the
+parsed `device enrol` output), `client` and `cli` (the **home owner's own paired credential**, pointed
+at the peer; the test mints nothing), `kill()`, `restart()` and `close()`. It is ready when the peer
+serves and admits the owner (`self.actor` answers 200), not when a first sync round has finished: a
+case waits on the public read it asserts. The server build needs the `mesh` feature (the shared
+artifact set builds it).
+
+`await SyncLinkProxy.start({target: engine.url})` (support/sync_link.ts) relays TCP between the device
+and its home; pass its `url` as `homeOrigin` so the link names it and the device dials it. Plain HTTP
+and every WebSocket handshake pass byte for byte. After an upgrade it acts on whole data messages per
+direction (`to_home`, `to_device`): `drop(direction, n)`, `duplicate(direction, n)`,
+`hold(direction)` with `release(direction, {order: "fifo" | "reverse"})`; `cut()` closes the relayed
+sockets and refuses new upgrades until `heal()`. `counts(direction)` gives seen, forwarded (a duplicate
+counts twice), dropped, duplicated and held; `awaitSeen(direction, n)` is a barrier. Counters report
+what the relay did, never convergence. Control frames always pass. The proxy is an owned resource.
+
 ## Request and startup diagnostics
 
 HTTP, CLI and SDK calls persist redacted request-start records before the call,
