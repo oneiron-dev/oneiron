@@ -231,7 +231,12 @@ impl HostSelfDispatcher<'_> {
             return;
         };
         let key = (lease.attempt, lease.generation, lease.owner.clone());
-        self.activity = Some(vault.attempt_activity.register(&vault.store.clock, key));
+        self.activity = Some(
+            vault
+                .runtime()
+                .attempt_activity()
+                .register(&vault.store.clock, key),
+        );
     }
 
     /// Holds one call of this run open as a running tool until the guard
