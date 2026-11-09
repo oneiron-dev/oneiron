@@ -1,8 +1,6 @@
 use super::*;
 
-use crate::llm::{
-    DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
-};
+use crate::llm::{DispatchBinding, DispatchRefused};
 
 const ROUTE: &str = "fake@https://model.test:443";
 

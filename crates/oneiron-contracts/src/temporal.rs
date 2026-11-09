@@ -1038,10 +1038,10 @@ impl TemporalGranularity {
 
 #[cfg(test)]
 mod tests {
-    use super::TemporalHintStatus::{Future, Unresolved, Used};
+    use super::TemporalHintStatus::{Unresolved, Used};
     use super::{
-        QueryTemporalHints, TEMPORAL_MAX_REFERENCE_SECS, TemporalExpressionParseError,
-        TemporalHintReport, TimeRange, parse_temporal_expression, temporal_hints_from_query,
+        QueryTemporalHints, TEMPORAL_MAX_REFERENCE_SECS, TemporalExpressionParseError, TimeRange,
+        parse_temporal_expression, temporal_hints_from_query,
     };
 
     const FROZEN_NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z

@@ -11,9 +11,8 @@ use oneiron_model::extraction_eval::{
 };
 use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable,
-    CallPurpose, DreamerFailureClass, DreamerFailurePrecedence, DreamerFailureRule, FinishReason,
-    LlmMessage, LlmMessageRole, LlmResponse, LlmUsage, decide_failure, dynamic_model_id,
-    fallback_failure_class, parse_failure_rules,
+    DreamerFailureClass, DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
+    parse_failure_rules,
 };
 use rmpv::Value;
 

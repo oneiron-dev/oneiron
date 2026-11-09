@@ -1,27 +1,10 @@
 use super::*;
-use crate::overlay_db::OverlayDb;
-use heed::types::Bytes;
-use heed::{Database, DatabaseFlags, Env, EnvOpenOptions};
 use oneiron_contracts::error::OffRecordError;
 use oneiron_contracts::temporal::TimeRange;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant};
 
 const CONCURRENCY_TIMEOUT: Duration = Duration::from_secs(1);
-
-fn put_op(data: Vec<u8>) -> BatchOp {
-    BatchOp::Put {
-        id: EntityId::now(),
-        entity_type: 1,
-        occurred: TimeRange { start: 1, end: 1 },
-        learned_at: 1,
-        row_version: None,
-        data,
-        allow_maintenance: false,
-        allow_reserved_predicate: false,
-        hub_sync_imported: false,
-    }
-}
 
 /// A journal entry carrying the role and timestamps a witness write would
 /// preserve; the budget/atomicity tests care about bytes, not the tag.
@@ -34,29 +17,6 @@ fn journal_entry(scope: JournalScope, role: JournalRole, op: BatchOp) -> Journal
         op,
         source_run: None,
     }
-}
-
-fn dupsort_test_db() -> (tempfile::TempDir, Env, Database<Bytes, Bytes>) {
-    let dir = tempfile::tempdir().expect("session overlay test temp dir");
-    // SAFETY: this test owns the freshly created directory and opens it
-    // exactly once; the returned directory outlives the environment.
-    let env = unsafe {
-        EnvOpenOptions::new()
-            .map_size(16 * 1024 * 1024)
-            .max_dbs(1)
-            .open(dir.path())
-            .expect("open session overlay test env")
-    };
-    let mut wtxn = env.write_txn().expect("open setup write txn");
-    let db = env
-        .database_options()
-        .types::<Bytes, Bytes>()
-        .name("rows")
-        .flags(DatabaseFlags::DUP_SORT)
-        .create(&mut wtxn)
-        .expect("create session overlay test database");
-    wtxn.commit().expect("commit session overlay setup");
-    (dir, env, db)
 }
 
 #[test]

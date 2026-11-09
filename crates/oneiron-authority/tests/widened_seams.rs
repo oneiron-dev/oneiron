@@ -7,14 +7,14 @@ use oneiron_authority::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmKind, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier,
     CONFIRM_KIND_ACCEPT, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
-    DeviceAuthority, FederationLifecycleAction, FederationLifecycleKind, FoldedDevice,
-    GenesisRecoveryStep, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT,
-    ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_transcript,
-    canonical_p256_key_bytes, decode_entry_value, decode_hash, decode_hash_array, decode_key,
-    decode_op, decode_optional_hash, decode_signature_array, decode_slip_mint, decode_tier,
-    entry_value, folded_device_can_authority_consent, folded_host_device_can_consent,
-    folded_peer_device_is_consent_root, is_terminal_federation_lifecycle, key_value, required,
-    roster_has_live_owner, slip_mint_value, validate_op, verify_entry_signatures,
+    DeviceAuthority, FederationLifecycleKind, FoldedDevice, GenesisRecoveryStep,
+    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_transcript, canonical_p256_key_bytes,
+    decode_entry_value, decode_hash, decode_hash_array, decode_key, decode_op, decode_optional_hash,
+    decode_signature_array, decode_slip_mint, decode_tier, entry_value,
+    folded_device_can_authority_consent, folded_host_device_can_consent,
+    folded_peer_device_is_consent_root, key_value, required, roster_has_live_owner, slip_mint_value,
+    validate_op, verify_entry_signatures,
 };
 use oneiron_authority::credential_door::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, names_a_floor};
 use oneiron_authority::federation::codec::{
