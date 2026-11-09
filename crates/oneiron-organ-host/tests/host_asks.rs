@@ -23,8 +23,7 @@ use oneiron_organ_host::{
     HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, PROTOCOL,
-    ProtocolVersion, touch_fold,
+    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, Value,
 };
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -53,12 +52,12 @@ fn host(spec: OrganSpec) -> OrganHost {
     host
 }
 
-fn ask_call(verb: &str, value: rmpv::Value, times: u64, deadline: Duration) -> OrganCall {
+fn ask_call(verb: &str, value: Value, times: u64, deadline: Duration) -> OrganCall {
     OrganCall {
         organ: "probe".into(),
         verb: "probe.ask".into(),
         schema: 1,
-        args: rmpv::Value::Map(vec![
+        args: Value::Map(vec![
             ("verb".into(), verb.into()),
             ("value".into(), value),
             ("times".into(), times.into()),
@@ -71,7 +70,7 @@ fn ask_call(verb: &str, value: rmpv::Value, times: u64, deadline: Duration) -> O
     }
 }
 
-fn field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
+fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value
         .as_map()?
         .iter()
@@ -81,12 +80,12 @@ fn field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
 
 /// What the probe saw for each of its asks: the answer's value, or the
 /// refusal code's name.
-fn lines(report: &rmpv::Value) -> Vec<rmpv::Value> {
+fn lines(report: &Value) -> Vec<Value> {
     report.as_array().expect("one line per ask").clone()
 }
 
-fn refused(line: &rmpv::Value) -> Option<&str> {
-    field(line, "refused").and_then(rmpv::Value::as_str)
+fn refused(line: &Value) -> Option<&str> {
+    field(line, "refused").and_then(Value::as_str)
 }
 
 /// Answers with a value and `bytes` bytes, counting its runs.
@@ -134,7 +133,7 @@ fn an_ungranted_ask_is_refused_and_the_call_goes_on() {
     let outcome = host_without_grant
         .call_with(
             &vault,
-            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(10)),
             Vec::new(),
             &asks,
         )
@@ -147,7 +146,7 @@ fn an_ungranted_ask_is_refused_and_the_call_goes_on() {
     let outcome = host_without_handler
         .call(
             &vault,
-            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(10)),
         )
         .expect("the organ goes on past a refusal");
     assert_eq!(refused(&lines(&outcome.report)[0]), Some("not_granted"));
@@ -164,7 +163,7 @@ fn an_ask_past_the_deadline_is_cancelled_and_the_organ_lives() {
     let started = Instant::now();
     let result = host.call_with(
         &vault,
-        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_millis(200)),
+        ask_call(ANSWER, Value::Nil, 1, Duration::from_millis(200)),
         Vec::new(),
         &asks,
     );
@@ -181,7 +180,7 @@ fn an_ask_past_the_deadline_is_cancelled_and_the_organ_lives() {
     let asks = AskHandlers::none().with(ANSWER, &fast);
     host.call_with(
         &vault,
-        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+        ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(10)),
         Vec::new(),
         &asks,
     )
@@ -245,7 +244,7 @@ fn a_handler_that_panics_frees_its_call() {
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         host.call_with(
             &vault,
-            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(10)),
             Vec::new(),
             &asks,
         )
@@ -261,7 +260,7 @@ fn a_handler_that_panics_frees_its_call() {
     let asks = AskHandlers::none().with(ANSWER, &fast);
     host.call_with(
         &vault,
-        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(5)),
+        ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(5)),
         Vec::new(),
         &asks,
     )
@@ -303,7 +302,7 @@ fn an_organ_that_keeps_asking_is_refused_once_then_cut_off() {
     let started = Instant::now();
     let result = host.call_with(
         &vault,
-        ask_call(ANSWER, rmpv::Value::Nil, 100_000, Duration::from_secs(30)),
+        ask_call(ANSWER, Value::Nil, 100_000, Duration::from_secs(30)),
         Vec::new(),
         &asks,
     );
@@ -316,7 +315,7 @@ fn an_organ_that_keeps_asking_is_refused_once_then_cut_off() {
         OrganCall {
             verb: "organ.echo".into(),
             args: 1.into(),
-            ..ask_call(ANSWER, rmpv::Value::Nil, 0, Duration::from_secs(10))
+            ..ask_call(ANSWER, Value::Nil, 0, Duration::from_secs(10))
         },
     )
     .expect("the next call runs");
@@ -455,7 +454,7 @@ fn serve(to: Option<String>) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
 }
 
 /// A fetch ask as an organ sends it: named fields, enums by name.
-fn fetch(url: &str) -> rmpv::Value {
+fn fetch(url: &str) -> Value {
     let bytes = rmp_serde::to_vec_named(&FetchAsk {
         purpose: "test".into(),
         method: FetchMethod::Get,
@@ -464,7 +463,7 @@ fn fetch(url: &str) -> rmpv::Value {
         body: None,
     })
     .expect("fetch encodes");
-    rmpv::decode::read_value(&mut bytes.as_slice()).expect("fetch value")
+    oneiron_organ_protocol::from_slice::<Value>(&bytes).expect("fetch value")
 }
 
 #[test]
@@ -490,11 +489,8 @@ fn a_granted_fetch_reaches_only_its_allowlist() {
     let outcome = run(format!("http://127.0.0.1:{port}/ok"));
     let line = &lines(&outcome.report)[0];
     let answer = field(line, "answered").expect("answered");
-    assert_eq!(
-        field(answer, "status").and_then(rmpv::Value::as_u64),
-        Some(200)
-    );
-    assert_eq!(field(line, "len").and_then(rmpv::Value::as_u64), Some(5));
+    assert_eq!(field(answer, "status").and_then(Value::as_u64), Some(200));
+    assert_eq!(field(line, "len").and_then(Value::as_u64), Some(5));
     let target = outcome.receipt.asks[0].fetch.clone().expect("target");
     assert_eq!(target.origin, format!("http://127.0.0.1:{port}"));
     assert_eq!(target.status, 200);
@@ -660,7 +656,7 @@ fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
             body: Some(ByteBuf::from(b"query".to_vec())),
         })
         .expect("fetch encodes");
-        let post = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fetch value");
+        let post = oneiron_organ_protocol::from_slice::<Value>(&bytes).expect("fetch value");
         let outcome = host
             .call_with(
                 &vault,
@@ -672,7 +668,7 @@ fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
         let line = &lines(&outcome.report)[0];
         let answer = field(line, "answered").expect("answered");
         assert_eq!(
-            field(answer, "status").and_then(rmpv::Value::as_u64),
+            field(answer, "status").and_then(Value::as_u64),
             Some(200),
             "{code}"
         );
@@ -1028,7 +1024,7 @@ fn a_failed_call_keeps_its_ask_lines() {
     let handler = bytes(16);
     let asks = AskHandlers::none().with(ANSWER, &handler);
     let mut call = ask_call(ANSWER, "hi".into(), 1, Duration::from_secs(10));
-    if let rmpv::Value::Map(args) = &mut call.args {
+    if let Value::Map(args) = &mut call.args {
         args.push(("fail".into(), true.into()));
     }
     let result = host.call_with(&vault, call, Vec::new(), &asks);

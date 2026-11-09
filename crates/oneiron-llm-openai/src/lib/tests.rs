@@ -85,11 +85,14 @@ fn request() -> LlmRequest {
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: "label this pair".to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -140,6 +143,7 @@ fn an_option_the_adapter_rejects_is_refused_before_the_permit_starts() {
         catalog_revision: None,
         custody: KeyCustody::T0,
         rates: Vec::new(),
+        payer_person: None,
     };
     let gated = run.gate(backend, &offer);
     let mut bad = request();

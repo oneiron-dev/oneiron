@@ -115,7 +115,7 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
             let mut reader = BufReader::new(&mut stream);
             let mut first = String::new();
             reader.read_line(&mut first).unwrap();
-            assert!(first.starts_with("POST /v1/core/facade/export HTTP/1.1"));
+            assert!(first.starts_with("POST /v1/core/facade/vault.export HTTP/1.1"));
             let mut length = 0;
             loop {
                 let mut line = String::new();
@@ -157,10 +157,10 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
     });
     let client = crate::OneironClient::connect(&origin, "local-secret").unwrap();
     let generic = client
-        .agent_verb("export", serde_json::json!({"format":"json"}))
+        .agent_verb("vault.export", serde_json::json!({"format":"json"}))
         .unwrap();
     assert_eq!(generic["rendered"], "xxxx");
-    let large = client.export(Some("json")).unwrap();
+    let large = client.vault_export(Some("json")).unwrap();
     assert_eq!(large.format, "json");
     assert_eq!(large.rendered.len(), MAX_REMOTE_RESPONSE_BYTES + 1);
     assert!(large.rendered.bytes().all(|byte| byte == b'x'));
