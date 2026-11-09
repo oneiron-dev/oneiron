@@ -181,10 +181,13 @@ impl LlmBackend for OracleCodeBackend {
                     role: LlmMessageRole::Assistant,
                     content: vec![ContentPart::Text {
                         text: "const found = await self.memory.search(\"board\");".to_owned(),
+                        signature: None,
                     }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -318,6 +321,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
     > {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -367,6 +371,9 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             task,
             run_id,
             verbs: Arc::new(OracleNoVerbs),
+            off_record_session: None,
+            consent_origin: None,
+            brief: None,
         })
         .await
         .expect("the durable run enters");
@@ -381,6 +388,9 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             task,
             run_id,
             verbs: Arc::new(OracleNoVerbs),
+            off_record_session: None,
+            consent_origin: None,
+            brief: None,
         })
         .await
         .expect("the persisted run re-enters");
