@@ -449,7 +449,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         attempt: &AttemptRecord,
     ) -> Result<Option<(AttemptId, PartialResultHold)>> {
-        let lists = |hold: &PartialResultHold| hold.held.iter().any(|held| held.attempt == attempt.id);
+        let lists =
+            |hold: &PartialResultHold| hold.held.iter().any(|held| held.attempt == attempt.id);
         if let Some(hold) = PLAN_HOLD.get(&self.vault.store, txn, &attempt.id)?
             && lists(&hold)
         {

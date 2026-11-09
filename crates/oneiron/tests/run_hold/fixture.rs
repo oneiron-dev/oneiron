@@ -14,10 +14,10 @@ use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-pub const KIND: &str = "test.run_hold";
-pub const WORKER: &str = "worker:run-hold";
+pub(crate) const KIND: &str = "test.run_hold";
+pub(crate) const WORKER: &str = "worker:run-hold";
 
-pub fn open() -> (tempfile::TempDir, Vault) {
+pub(crate) fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = VaultConfig::device();
     config.dimensions = 4;
@@ -26,21 +26,21 @@ pub fn open() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-pub fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after 1970")
         .as_secs()
 }
 
-pub fn at(time: u64) -> TimeRange {
+pub(crate) fn at(time: u64) -> TimeRange {
     TimeRange {
         start: time,
         end: time,
     }
 }
 
-pub fn person(vault: &Vault, now: u64) -> EntityId {
+pub(crate) fn person(vault: &Vault, now: u64) -> EntityId {
     let id = EntityId::now();
     vault
         .put_entity(&id, ENTITY_TYPE_PERSON, at(now), now, b"operator")
@@ -48,14 +48,14 @@ pub fn person(vault: &Vault, now: u64) -> EntityId {
     id
 }
 
-pub fn enqueued(outcome: EnqueueOutcome) -> AttemptRecord {
+pub(crate) fn enqueued(outcome: EnqueueOutcome) -> AttemptRecord {
     let EnqueueOutcome::Enqueued(record) = outcome else {
         panic!("a fresh row is enqueued");
     };
     record
 }
 
-pub fn claim(queue: &AttemptQueue<'_>, kind: &str, now: u64) -> ClaimOutcome {
+pub(crate) fn claim(queue: &AttemptQueue<'_>, kind: &str, now: u64) -> ClaimOutcome {
     queue
         .claim_kind(
             kind,
@@ -67,14 +67,19 @@ pub fn claim(queue: &AttemptQueue<'_>, kind: &str, now: u64) -> ClaimOutcome {
         .expect("claim")
 }
 
-pub fn claimed(outcome: ClaimOutcome) -> AttemptRecord {
+pub(crate) fn claimed(outcome: ClaimOutcome) -> AttemptRecord {
     let ClaimOutcome::Claimed(record) = outcome else {
         panic!("the ready row is claimed");
     };
     record
 }
 
-pub fn resume(queue: &AttemptQueue<'_>, id: AttemptId, actor: &str, now: u64) -> InterveneOutcome {
+pub(crate) fn resume(
+    queue: &AttemptQueue<'_>,
+    id: AttemptId,
+    actor: &str,
+    now: u64,
+) -> InterveneOutcome {
     queue
         .intervene(InterveneAttempt {
             id,
@@ -86,17 +91,17 @@ pub fn resume(queue: &AttemptQueue<'_>, id: AttemptId, actor: &str, now: u64) ->
         .expect("a resume is admitted")
 }
 
-pub fn read(queue: &AttemptQueue<'_>, id: AttemptId) -> AttemptRecord {
+pub(crate) fn read(queue: &AttemptQueue<'_>, id: AttemptId) -> AttemptRecord {
     queue.get(id).expect("get").expect("row")
 }
 
-pub fn last_note(record: &AttemptRecord) -> Option<&str> {
+pub(crate) fn last_note(record: &AttemptRecord) -> Option<&str> {
     record.events.last().and_then(|event| event.note.as_deref())
 }
 
 /// A row of a comment's task that the claim parked while its comment is
 /// unattached, and the person who wrote the comment.
-pub fn annotation_held_row(
+pub(crate) fn annotation_held_row(
     vault: &Vault,
     queue: &AttemptQueue<'_>,
     now: u64,
