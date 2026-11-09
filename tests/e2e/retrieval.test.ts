@@ -671,15 +671,15 @@ interface Retrieval04HydrateBatch {
   }[];
 }
 interface Retrieval04Refusal {
-  readonly error: { readonly code: string; readonly message: string; readonly receipt_ref?: string };
+  readonly error: { readonly code: string; readonly message: string; readonly receiptRef?: string };
   readonly narrowing?: ReadReceipt;
   readonly value?: unknown;
 }
 
-// Promise: A world-limited reader stays clamped across restart on recall, point, lexical and graph reads, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world.
-// Doors: owner facade writes and HTTP edge action; reader facade recall/get/hydrate/BM25/neighbors, HTTP query/context-pack/batch hydrate; owner hydration and neighbor controls; restart.
+// Promise: A world-limited reader stays clamped across restart on claim recall, point and lexical reads and on graph reads from a readable TASK anchor, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world.
+// Doors: owner facade claim writes and structural TASK/about-edge setup; reader facade recall/get/hydrate/BM25/neighbors, HTTP query/context-pack/batch hydrate; owner hydration, neighbor/pack controls and refusal-receipt read-back; restart.
 // Unproved: legacy vector/entity/edges row clamps need grant-admitting legacy read doors; MCP caveated-reader parity needs registered caveated-reader admission; proposed/stale/deleted/superseded lifecycle rows remain unexercised (producers exist); a world axis on receipts needs a public receipt field, not an invented narrowed_axes value.
-suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across restart on recall, point, lexical and graph reads, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world", async () => {
+suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across restart on claim recall, point and lexical reads and on graph reads from a readable TASK anchor, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world", async () => {
   const fixture = await scenario<{
     rows: { label: string }[];
     edges: { from: string; kind: string; to: string }[];
@@ -730,6 +730,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const token = "retrievalclampquartz";
     const graphToken = "retrievalgraphquartz";
     const readableText = `${token} ${graphToken} readable`;
+    const graphText = `${graphToken} readable graph anchor`;
     const hiddenText = `${token} private`;
     // claim() observes each commit receipt and hydrates the write as owner.
     const readable = await claim(engine, scope, {
@@ -744,16 +745,16 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(readable.ref).toMatch(/^[^:]+:[a-f0-9]{2}$/);
     expect(hidden.ref).toMatch(/^[^:]+:[a-f0-9]{2}$/);
     const forbidden = [hiddenText, hidden.id, hidden.ref, hidden.ref.split(":")[0]!, hiddenWorld.id_hex, hiddenWorldName];
-    // This public memory action needs no live run and writes the exact CLAIM -> CLAIM edge.
-    const linked = await engine.client.raw<{ readonly outcome: { readonly kind: string } }>(
-      "POST", "/v1/core/actions/vault.edges.put", {
-        args: [{ kind: "json", value: { src: readable.id, kind: edge.kind, tgt: hidden.id, weight: 0.5 } }],
-        idempotencyKey: "retrieval-04-private-edge",
-      });
-    expect(linked.status).toBe(200);
-    expect(linked.body.outcome.kind).toBe("memory_edge_write");
+    // The structural door atomically writes an indexed base-world TASK and its about edge.
+    // The readable CLAIM also matches the graph token, retaining a base CLAIM for the pack world-share cap.
+    const graphAnchor = await task(engine, graphText, at, [
+      { edge_kind: edge.kind, target_ref: hidden.id, weight: 0.5 },
+    ]);
+    const ownerAnchor = await engine.client.call("vault.get", { entity_ref: graphAnchor.id_hex });
+    expect(ownerAnchor.value?.id_hex).toBe(graphAnchor.id_hex);
+    expect(ownerAnchor.value?.body).toMatchObject({ title: graphText, role: 1 });
     const neighborInput: FacadeInput<"vault.neighbors"> = {
-      entity_ref: readable.id, opts: { edge_kind: edge.kind, limit: 20 }, filter: { include_stale: true },
+      entity_ref: graphAnchor.id_hex, opts: { edge_kind: edge.kind, limit: 20 }, filter: { include_stale: true },
     };
     const ownerEdges = await engine.client.call("vault.neighbors", neighborInput);
     expect(ownerEdges.value.some(row => row.record?.id === hidden.id
@@ -762,7 +763,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(sorted(ownerLexical.value.map(hit => hit.record!.id))).toEqual(sorted([readable.id, hidden.id]));
     const recallInput: FacadeInput<"vault.recall"> = {
       query: token, effort: "medium", limit: 20, format: "md", token_budget: 8192,
-      scope: { worlds: { kind: "all" }, kinds: ["semantic"] }, filter: { include_stale: true },
+      scope: { worlds: { kind: "all" }, kinds: ["CLAIM"] }, filter: { include_stale: true },
     };
     async function checkReader() {
       const recalled = await reader.call("vault.recall", recallInput);
@@ -783,11 +784,18 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       expect(lexical.value.map(hit => hit.record?.id)).toEqual([readable.id]);
       retrieval04Receipt(lexical.narrowing);
       retrieval04Absent(lexical, forbidden);
+      const anchor = await reader.call("vault.get", {
+        entity_ref: graphAnchor.id_hex, filter: { include_stale: true },
+      });
+      expect(anchor.value?.id_hex).toBe(graphAnchor.id_hex);
+      expect(anchor.value?.body).toMatchObject({ title: graphText, role: 1 });
+      retrieval04Receipt(anchor.narrowing);
+      retrieval04Absent(anchor, forbidden);
       const neighbors = await reader.call("vault.neighbors", neighborInput);
       expect(neighbors.value).toEqual([]);
       retrieval04Receipt(neighbors.narrowing);
       retrieval04Absent(neighbors, forbidden);
-      return { recalled, visible, absent, lexical, neighbors };
+      return { recalled, visible, absent, lexical, anchor, neighbors };
     }
     const before = await checkReader();
     const visibleHydrate = await reader.call("vault.hydrate", { refs: [readable.ref], filter: { include_stale: true } });
@@ -840,20 +848,26 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const packInput = { query: graphToken, limit: 20, hydrate: true, include_edges: true,
       edge_hop: 1, max_neighbors: 20, view: "full", budget: { token_budget: 8192 },
       filter: { include_stale: true } };
-    const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
-    expect(ownerPack.status).toBe(200);
-    expect(ownerPack.body.results.map(row => row.id)).toContain(readable.id);
-    expect(ownerPack.body.neighbors.map(row => row.id)).toContain(hidden.id);
-    const pack = await reader.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
-    expect(pack.status).toBe(200);
-    expect(pack.body.results.map(row => row.id)).toContain(readable.id);
-    expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
-    retrieval04Receipt(pack.body.narrowing);
-    retrieval04Absent(pack.body, forbidden);
-    expect(pack.body.stats.claims_suppressed).toBe(0);
-    expect(pack.body.stats.candidates_considered).toBe(pack.body.results.length);
-    expect(pack.body.stats.entities_hydrated).toBe(pack.body.results.length);
-    expect(pack.body.stats.neighbors_hydrated).toBe(pack.body.neighbors.length);
+    async function retrieval04CheckPacks() {
+      const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
+      expect(ownerPack.status).toBe(200);
+      expect(ownerPack.body.results.map(row => row.id)).toContain(readable.id);
+      expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+      expect(ownerPack.body.neighbors.map(row => row.id)).toContain(hidden.id);
+      const pack = await reader.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
+      expect(pack.status).toBe(200);
+      expect(pack.body.results.map(row => row.id)).toContain(readable.id);
+      expect(pack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+      expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
+      retrieval04Receipt(pack.body.narrowing);
+      retrieval04Absent(pack.body, forbidden);
+      expect(pack.body.stats.claims_suppressed).toBe(0);
+      expect(pack.body.stats.candidates_considered).toBe(pack.body.results.length);
+      expect(pack.body.stats.entities_hydrated).toBe(pack.body.results.length);
+      expect(pack.body.stats.neighbors_hydrated).toBe(pack.body.neighbors.length);
+      return { ownerPack, pack };
+    }
+    const { ownerPack, pack } = await retrieval04CheckPacks();
     const refused = await reader.raw<Retrieval04Refusal>("POST", "/v1/core/facade/vault.claims.upsert", {
       subject_ref: engine.pairedActor.principalRef, predicate: "profile.retrieval_forbidden",
       value: "retrievalforbiddenquartz", confidence: 0.875, source: "user_stated",
@@ -862,10 +876,21 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(refused.status).toBe(403);
     expect(refused.body.error.code).toBe("FORBIDDEN");
     expect(refused.body.narrowing).toBeUndefined();
-    expect(refused.body.error.receipt_ref).toBeUndefined();
+    expect(refused.body.error.receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+    expect(refused.headers.get("x-oneiron-receipt-ref")).toBe(refused.body.error.receiptRef!);
+    const refusedReceipt = await engine.client.call("vault.receipts.get", {
+      receipt_ref: refused.body.error.receiptRef!,
+    });
+    expect(refusedReceipt).not.toBeNull();
+    expect(refusedReceipt!.receipt_ref).toBe(refused.body.error.receiptRef!);
+    expect(refusedReceipt!.actor_ref).toBe(guestId);
+    expect(refusedReceipt!.actor_class).toBe("human");
+    expect(refusedReceipt!.transport).toBe("http_facade");
+    expect(refusedReceipt!.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
     await engine.restart();
     // Reuse the exact reader and credential; do not re-pair or re-attenuate after restart.
     const after = await checkReader();
+    const afterPacks = await retrieval04CheckPacks();
     const durable = await engine.client.call("vault.hydrate", { refs: [readable.ref, hidden.ref] });
     expect(durable.value.map(row => row.id_hex)).toEqual([readable.id, hidden.id]);
     expect(durable.value[0]!.body).toMatchObject({ val: readableText, life: "active" });
@@ -879,7 +904,8 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(claimsAfterRefusal.some(row => row.predicate === "profile.retrieval_forbidden")).toBe(false);
     await engine.artifacts.json("retrieval-world-clamp.json", { before, after, visibleHydrate,
       withheld: withheld.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
-      pack: pack.body, refused: refused.body, durable, durableEdges, claimsAfterRefusal });
+      pack: pack.body, afterPacks: { ownerPack: afterPacks.ownerPack.body, pack: afterPacks.pack.body },
+      graphAnchor, ownerAnchor, refused: refused.body, refusedReceipt, durable, durableEdges, claimsAfterRefusal });
   } catch (error) {
     primaryFailed = true;
     primary = error;
@@ -1730,14 +1756,14 @@ async function retrieval11OwnerRefusal(engine: EngineFixture, client: PublicHttp
 }
 
 /* RETRIEVAL-11
- * Promise: An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control corroborates, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.
+ * Promise: An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control is corroboration-eligible, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.
  * Doors: agent upsert -> owner review/settle -> claims.list/evidence; review/settle/evidence refuse the agent, evidence refuses an attenuated owner, restart preserves the matrix, recall runs last.
  * Unproved: host-stamped Generated/Auto needs a genuine Dreamer run through vault.agents.spawn -> owned leased vault.agents.spawn.get -> self.run.attach -> vault.consolidation.promote, with its Auto grant/checker; a declared external source is not that producer.
  * Unproved: pending-critical Generated/Proposed needs a qualified public producer and vault.writes.critical_confirm.pending binding; Proposed alone is not an attached confirmation.
  * Unproved: consuming promotion/root accounting needs vault.consolidation.promote output evidence or vault.consolidation.pin/frontier/accounting under its grant; this case inspects eligibility only.
  * Unproved: outbound authority from prose needs vault.policy.outbound.decide and the consuming connector.call consent/grant door; effector_evidence_eligible is not permission to send.
  */
-suite.test(test, "RETRIEVAL-11", "An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control corroborates, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.", async () => {
+suite.test(test, "RETRIEVAL-11", "An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control is corroboration-eligible, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.", async () => {
   const fixture = await scenario<{
     readonly sources: { readonly label: string; readonly source: string }[];
   }>("RETRIEVAL-11");
