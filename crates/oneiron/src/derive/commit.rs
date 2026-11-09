@@ -127,6 +127,12 @@ impl Vault {
                     DerivationItem::Settle(settle) => {
                         super::settle::stage_in_txn(self, txn, &context, settle)?
                     }
+                    DerivationItem::PersonAbout(about) => {
+                        super::artifact::stage_about_in_txn(self, txn, &context, about)?
+                    }
+                    DerivationItem::PsychProfile(profile) => {
+                        super::artifact::stage_profile_in_txn(self, txn, &context, profile)?
+                    }
                     DerivationItem::Archive(archive) => {
                         super::archive::stage_in_txn(self, txn, &context, archive)?
                     }

@@ -21,6 +21,7 @@
 //! own: a new kind adds an arm and touches no other (S69-C-ITEMS).
 
 mod archive;
+mod artifact;
 mod batch;
 mod claim;
 mod commit;
@@ -30,9 +31,13 @@ mod supersede;
 pub(crate) mod tables;
 
 pub use archive::{ARCHIVE_NEEDS_ATTEMPT, ARCHIVE_NOT_A_CLAIM, ARCHIVE_SCORE_NOT_BELOW_POLICY};
+pub use artifact::{
+    PROFILE_MALFORMED, PROFILE_SOURCE_UNREAD, PROFILE_SUBJECT_UNREAD, PersonAboutFacts,
+};
 pub use batch::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedArchive, DerivedClaim, DerivedSettle,
-    DerivedSettlement, DerivedSupersede, ItemRef, MAX_BATCH_ITEMS,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
+    DerivedClaim, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle, DerivedSettlement,
+    DerivedSupersede, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
 pub use record::{DerivationBatchRecord, ItemRecord};
