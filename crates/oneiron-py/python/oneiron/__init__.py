@@ -1799,6 +1799,9 @@ class Oneiron:
         def slim(self) -> "Oneiron._VaultSlimVerbs":
             return Oneiron._VaultSlimVerbs(self._client)
         @property
+        def snapshot(self) -> "Oneiron._VaultSnapshotVerbs":
+            return Oneiron._VaultSnapshotVerbs(self._client)
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs":
             return Oneiron._VaultStandingBlocksVerbs(self._client)
         @property
@@ -6081,6 +6084,9 @@ class Oneiron:
         def models(self) -> "Oneiron._VaultSettingsModelsVerbs":
             return Oneiron._VaultSettingsModelsVerbs(self._client)
         @property
+        def snapshot_read(self) -> "Oneiron._VaultSettingsSnapshotReadVerbs":
+            return Oneiron._VaultSettingsSnapshotReadVerbs(self._client)
+        @property
         def wake_policy(self) -> "Oneiron._VaultSettingsWakePolicyVerbs":
             return Oneiron._VaultSettingsWakePolicyVerbs(self._client)
         @property
@@ -6131,6 +6137,15 @@ class Oneiron:
         def set(self, spec):
             """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
             return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_set(json.dumps(spec))))
+    class _VaultSettingsSnapshotReadVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the owner's bounds on snapshot handles: open handles per actor, the default and the most lifetime, rows and bytes per page, and rows per handle. Unset reads as the defaults."""
+            return json.loads(_translate(lambda: self._client.vault_settings_snapshot_read(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the owner's bounds on snapshot handles under the owner proof; a zero bound, or a default lifetime above the most lifetime, is refused. The next page reads the new bounds."""
+            return json.loads(_translate(lambda: self._client.vault_settings_snapshot_read_replace(json.dumps(spec))))
     class _VaultSettingsWakePolicyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6657,6 +6672,15 @@ class Oneiron:
         def state(self, spec):
             """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
             return json.loads(_translate(lambda: self._client.vault_slim_state(json.dumps(spec))))
+    class _VaultSnapshotVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens a snapshot handle over kinds of rows for the caller: it pins the caller, the kinds, a read filter and an end, never a storage snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_snapshot_open(json.dumps(spec))))
+        def page(self, spec):
+            """Reads the next page of a snapshot handle: the rows that read for the caller at this call, each with its source version; a row born or changed since the open is marked changed_since_open."""
+            return json.loads(_translate(lambda: self._client.vault_snapshot_page(json.dumps(spec))))
     class _VaultStandingBlocksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

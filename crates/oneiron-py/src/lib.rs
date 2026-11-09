@@ -10086,6 +10086,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_snapshot_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.snapshot_read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.snapshot_read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_snapshot_read_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.snapshot_read.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.snapshot_read.replace", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_settings_wake_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.settings.wake_policy.set")?;
         let output = py
@@ -11027,6 +11048,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.slim.state")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.slim.state", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_snapshot_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.snapshot.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.snapshot.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_snapshot_page(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.snapshot.page")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.snapshot.page", input))
             .map_err(raise)?;
         encode(&output)
     }

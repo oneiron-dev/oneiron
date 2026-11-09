@@ -18,6 +18,7 @@ pub use oneiron_store::settings::model_pack;
 pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
+pub mod snapshot_read;
 pub use oneiron_store::settings::web_connector;
 
 pub use destination::{

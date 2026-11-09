@@ -1292,6 +1292,8 @@ class Oneiron:
         @property
         def slim(self) -> "Oneiron._VaultSlimVerbs": ...
         @property
+        def snapshot(self) -> "Oneiron._VaultSnapshotVerbs": ...
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs": ...
         @property
         def step_up(self) -> "Oneiron._VaultStepUpVerbs": ...
@@ -3795,6 +3797,8 @@ class Oneiron:
         @property
         def models(self) -> "Oneiron._VaultSettingsModelsVerbs": ...
         @property
+        def snapshot_read(self) -> "Oneiron._VaultSettingsSnapshotReadVerbs": ...
+        @property
         def wake_policy(self) -> "Oneiron._VaultSettingsWakePolicyVerbs": ...
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
@@ -3823,6 +3827,11 @@ class Oneiron:
             """Reads the owner's Responses store switch from the serving vault."""
         def set(self, spec: Facade.ModelResponsesStoreSettings) -> Facade.ModelResponsesStoreSettings:
             """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
+    class _VaultSettingsSnapshotReadVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> Facade.SnapshotReadSettings:
+            """Reads the owner's bounds on snapshot handles: open handles per actor, the default and the most lifetime, rows and bytes per page, and rows per handle. Unset reads as the defaults."""
+        def replace(self, spec: Facade.SnapshotReadSettings) -> Facade.SnapshotReadSettings:
+            """Replaces the owner's bounds on snapshot handles under the owner proof; a zero bound, or a default lifetime above the most lifetime, is refused. The next page reads the new bounds."""
     class _VaultSettingsWakePolicyVerbs:
         def set(self, spec: Facade.WakePolicySetRequest) -> Facade.PolicyActionOutcome:
             """The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."""
@@ -4134,6 +4143,11 @@ class Oneiron:
             """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
         def state(self, spec: Facade.EmptyRequest) -> Facade.SlimStateSnapshot:
             """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+    class _VaultSnapshotVerbs:
+        def open(self, spec: Facade.SnapshotOpenRequest) -> Facade.SnapshotHandle:
+            """Opens a snapshot handle over kinds of rows for the caller: it pins the caller, the kinds, a read filter and an end, never a storage snapshot."""
+        def page(self, spec: Facade.SnapshotPageRequest) -> Facade.ScopedReadResult[Facade.SnapshotPage]:
+            """Reads the next page of a snapshot handle: the rows that read for the caller at this call, each with its source version; a row born or changed since the open is marked changed_since_open."""
     class _VaultStandingBlocksVerbs:
         def configure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
             """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""

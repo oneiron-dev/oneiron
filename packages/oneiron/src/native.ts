@@ -1136,6 +1136,8 @@ vaultSettingsModelPack(input: unknown): unknown
 vaultSettingsModelPackReplace(input: unknown): unknown
 vaultSettingsModelsResponsesStoreRead(input: unknown): unknown
 vaultSettingsModelsResponsesStoreSet(input: unknown): unknown
+vaultSettingsSnapshotRead(input: unknown): unknown
+vaultSettingsSnapshotReadReplace(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
 vaultSettingsWebConnectorReplace(input: unknown): unknown
@@ -1243,6 +1245,8 @@ vaultSlimPolicy(input: unknown): unknown
 vaultSlimResume(input: unknown): unknown
 vaultSlimResumeStep(input: unknown): unknown
 vaultSlimState(input: unknown): unknown
+vaultSnapshotOpen(input: unknown): unknown
+vaultSnapshotPage(input: unknown): unknown
 vaultStandingBlocksConfigure(input: unknown): unknown
 vaultStandingBlocksGet(input: unknown): unknown
 vaultStandingBlocksList(input: unknown): unknown

@@ -4,9 +4,9 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1354 facade rows, 4867 declarations.
-Inputs: 1274 of 1354 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1168 of 1354 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Census: 1358 facade rows, 4874 declarations.
+Inputs: 1278 of 1358 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1171 of 1358 fully typed, 170 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 20.
 """
 
@@ -21802,6 +21802,13 @@ class LearningSettingPut(TypedDict):
     task_type: NotRequired[str | None]
 class ModelResponsesStoreSettings(TypedDict):
     responses_store: bool
+class SnapshotReadSettings(TypedDict):
+    open_per_actor: int
+    default_lifetime_secs: int
+    max_lifetime_secs: int
+    page_rows: int
+    page_bytes: int
+    handle_rows: int
 class WakePolicySetRequest(TypedDict):
     policy: Any
     idempotency_key: str
@@ -23079,6 +23086,33 @@ SlimStateView = SlimStateViewFull | SlimStateViewSlim
 class SlimStateSnapshot(TypedDict):
     process_id: int
     state: SlimStateView
+class SnapshotKindEntityBody(TypedDict):
+    entity_type: int
+class SnapshotKindEntity(TypedDict):
+    entity: SnapshotKindEntityBody
+SnapshotKind = Literal["claim", "turn", "message", "note"] | SnapshotKindEntity
+class SnapshotOpenRequest(TypedDict):
+    kinds: list[SnapshotKind]
+    filter: NotRequired[ReadFilterInput | None]
+    lifetime_secs: NotRequired[int | None]
+class SnapshotHandle(TypedDict):
+    handle: EntityId
+    opened_at: int
+    expires_at: int
+    kinds: list[SnapshotKind]
+class SnapshotPageRequest(TypedDict):
+    handle: EntityId
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class SnapshotRow(TypedDict):
+    view: EntityView
+    version: SourceVersion
+    changed_since_open: bool
+    text: NotRequired[str | None]
+class SnapshotPage(TypedDict):
+    rows: list[SnapshotRow]
+    next: NotRequired[str | None]
+    served: int
 class StandingBlockConfigureRequest(TypedDict):
     agent_ref: EntityId
     world_ref: EntityId
