@@ -14,6 +14,32 @@ use crate::task_verb::sdk::RunVerb;
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Error, Result, TimeRange};
 use serde_json::Value;
 
+/// `vault.claims.put`'s typed call, `now` in unix seconds: the same call on
+/// code mode and the credential-bound run door.
+pub(crate) fn claim_put_call(args: MemoryClaimInput, now: u64) -> Result<SelfMemoryPutClaimCall> {
+    let confidence = args.confidence.map(js_f32).transpose()?;
+    let occurred = args.occurred.unwrap_or(MemoryTimeRange {
+        start: now,
+        end: now,
+    });
+    let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
+    if start > end {
+        return Err(failure("invalid claim time range"));
+    }
+    let candidate = ClaimCandidate::new(
+        args.predicate,
+        ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
+        json_value(args.value),
+        confidence.unwrap_or(1.0),
+    );
+    Ok(SelfMemoryPutClaimCall::new(
+        EntityId::from_hex(&args.id)?,
+        candidate,
+        TimeRange { start, end },
+        args.learned_at.map_or(Ok(now), js_time)?,
+    ))
+}
+
 /// The typed `self.*` call a run row makes, `now` in unix seconds: the call,
 /// effect and gate the row had as a hand-written import. Every row has its
 /// arm here, so a run row is never served undecoded, and the component
@@ -30,30 +56,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 .with_read_filter(args.filter),
             )
         }
-        RunVerb::VaultClaimsPut => {
-            let args: MemoryClaimInput = decode(input)?;
-            let confidence = args.confidence.map(js_f32).transpose()?;
-            let occurred = args.occurred.unwrap_or(MemoryTimeRange {
-                start: now,
-                end: now,
-            });
-            let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
-            if start > end {
-                return Err(failure("invalid claim time range"));
-            }
-            let candidate = ClaimCandidate::new(
-                args.predicate,
-                ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
-                json_value(args.value),
-                confidence.unwrap_or(1.0),
-            );
-            SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-                EntityId::from_hex(&args.id)?,
-                candidate,
-                TimeRange { start, end },
-                args.learned_at.map_or(Ok(now), js_time)?,
-            ))
-        }
+        RunVerb::VaultClaimsPut => SelfCall::MemoryPutClaim(claim_put_call(decode(input)?, now)?),
         RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(args.into_call()?)
