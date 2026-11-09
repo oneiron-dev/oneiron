@@ -84,7 +84,7 @@ pub(crate) use self::claim_materialization::{
     ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
