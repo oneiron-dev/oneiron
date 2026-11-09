@@ -135,7 +135,7 @@ First-party code gets one async method per SDK verb-table row the host
 serves, at the row's full path (`vault.recall(input)`, `tasks.create(input)`,
 `self.focus.refresh(input)`, a bare `describe(input)`).
 Bootstrap builds them from the hidden `self.verbs` imports and then deletes
-`self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
+`self.verbs`, so a row added to `scripts/sdk/verbs/` reaches the guest
 with no component rebuild. The memory reads and writes the run answers itself
 (`vault.search`, `vault.claims.put`, `vault.claims.supersede`,
 `vault.edges.put`) are rows of the same table, so they arrive the same way. A

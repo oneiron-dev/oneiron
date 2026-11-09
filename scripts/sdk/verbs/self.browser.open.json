@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.open",
+  "description": "Opens a URL in the run's browser and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, notes why none loaded; a blocked page is the cue to switch_engine.",
+  "input": "crate::task_verb::sdk::BrowserOpenInput",
+  "output": "crate::task_verb::sdk::BrowserObservationPage",
+  "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.open(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
+    "description": "Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

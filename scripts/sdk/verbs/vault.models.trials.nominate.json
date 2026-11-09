@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.trials.nominate",
+  "description": "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority.",
+  "input": "crate::llm::catalog_doors::ModelTrialNominate",
+  "output": "crate::llm::catalog_doors::ModelTrialView",
+  "call": "memory.vault().nominate_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.nominate\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

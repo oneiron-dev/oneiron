@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.rsi.top_up",
+  "description": "The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself.",
+  "input": "crate::llm::RsiTopUp",
+  "output": "crate::llm::rsi_doors::RsiLineView",
+  "call": "crate::llm::rsi_doors::top_up_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.top_up\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

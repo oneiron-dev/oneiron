@@ -1,0 +1,20 @@
+{
+  "name": "vault.esign.seal.get",
+  "description": "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error.",
+  "refs": [
+    "/document_ref"
+  ],
+  "input": "crate::blob_artifact::esign::EsignSealGetRequest",
+  "output": "crate::blob_artifact::esign::EsignSealView",
+  "call": "memory.esign_seal_get(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

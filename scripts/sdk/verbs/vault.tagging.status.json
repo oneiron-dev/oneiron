@@ -1,0 +1,19 @@
+{
+  "name": "vault.tagging.status",
+  "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt.",
+  "refs": [
+    "/turn_ref"
+  ],
+  "input": "crate::tagging::TaggingTurnRequest",
+  "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>",
+  "call": "memory.tagging_status(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "turn_ref"
+    ]
+  },
+  "section": false,
+  "openapi": true
+}

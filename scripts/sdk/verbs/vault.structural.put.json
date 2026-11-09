@@ -1,0 +1,25 @@
+{
+  "name": "vault.structural.put",
+  "description": "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.",
+  "refs": [
+    "/edges/*/target_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "input": "StructuralPutInput"
+    },
+    "output": "EntityRefReceipt"
+  },
+  "input": "crate::memory::StructuralPutInput",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.put_structural(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

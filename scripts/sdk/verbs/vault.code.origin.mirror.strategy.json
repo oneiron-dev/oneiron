@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.mirror.strategy",
+  "description": "Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses.",
+  "input": "crate::memory::origin_doors::OriginMirrorStrategyRequest",
+  "output": "crate::origin::mirror::OriginMirrorTarget",
+  "call": "memory.origin_mirror_strategy_as(&memory.embedded_owner(\"vault.code.origin.mirror.strategy\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

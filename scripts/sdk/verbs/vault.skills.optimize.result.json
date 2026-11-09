@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.result",
+  "description": "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal.",
+  "input": "SkillOptimizeResultRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+  "call": "crate::task_verb::sdk::skill_optimize_result_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.result\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

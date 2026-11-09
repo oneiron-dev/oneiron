@@ -414,8 +414,8 @@ class UniffiTypes:
         out += '// the engine type\'s own wire shape; a row converts at its boundary through\n'
         out += '// that shape (crate::codec::lower_record / lift_record).\n'
         out += ''.join(f'// {line}\n' for line in census)
-        out += ('#![allow(\n    clippy::large_enum_variant,\n    clippy::enum_variant_names,\n    clippy::upper_case_acronyms,\n'
-                '    reason = "each type mirrors one engine type, its names and its variants"\n)]\n\n')
+        # The lints these mirrors allow sit on the `mod` that includes this file (oneiron-uniffi lib.rs).
+        out += '\n'
         return out + '\n'.join(self.items)
 
 

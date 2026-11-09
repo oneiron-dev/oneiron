@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.select",
+  "description": "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.",
+  "input": "crate::task_verb::sdk::BrowserSelectInput",
+  "output": "crate::task_verb::sdk::BrowserObservationPage",
+  "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.select(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSelectInput>",
+    "description": "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

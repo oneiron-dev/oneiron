@@ -1,0 +1,17 @@
+{
+  "name": "vault.writes.critical_confirm.pending",
+  "description": "The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline.",
+  "input": "crate::memory::CriticalWriteConfirmPendingRequest",
+  "output": "Option<crate::memory::CriticalWriteConfirmPending>",
+  "call": "memory.critical_write_confirm_pending_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.pending\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

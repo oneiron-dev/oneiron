@@ -1,0 +1,18 @@
+{
+  "name": "self.identity.answer",
+  "description": "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically.",
+  "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest",
+  "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
+  "call": "memory.identity_answer_with_evidence_as_owner(&memory.embedded_owner(\"self.identity.answer\")?, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

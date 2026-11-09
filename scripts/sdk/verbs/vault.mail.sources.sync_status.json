@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.sources.sync_status",
+  "description": "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers.",
+  "input": "crate::mail_pack::MailSourceRef",
+  "output": "crate::mail_pack::MailSyncStatusView",
+  "call": "memory.mail_sources_sync_status(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

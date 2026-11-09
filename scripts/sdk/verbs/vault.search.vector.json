@@ -1,0 +1,19 @@
+{
+  "name": "vault.search.vector",
+  "description": "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit.",
+  "input": "crate::memory::VectorSearchRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>",
+  "call": "memory.query_vector(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

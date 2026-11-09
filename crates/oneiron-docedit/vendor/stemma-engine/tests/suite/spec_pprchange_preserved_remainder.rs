@@ -126,6 +126,7 @@ fn unrelated_edit_txn(target_block: stemma::domain::NodeId) -> EditTransaction {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target_block,
             expect: "Confidential".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,

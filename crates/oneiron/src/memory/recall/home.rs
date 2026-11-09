@@ -302,7 +302,7 @@ impl HomeRecallAsk {
             as_of: request.as_of,
             limit: request
                 .limit
-                .unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
+                .unwrap_or(crate::verb_names::VAULT_RECALL_LIMIT_DEFAULT),
             answerable: home_answers(request, room_turn),
             filter: request.filter.clone(),
         }

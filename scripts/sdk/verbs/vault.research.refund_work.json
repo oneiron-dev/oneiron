@@ -1,0 +1,12 @@
+{
+  "name": "vault.research.refund_work",
+  "description": "Refunds a work reservation nothing was spent on.",
+  "input": "crate::task_verb::sdk::ResearchRefundWire",
+  "output": "crate::autoreason_campaign::research::ResearchReservation",
+  "call": "crate::task_verb::sdk::research_refund_work(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.shared.owner_change_wait.set",
+  "description": "One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds.",
+  "input": "crate::task_verb::sdk::SharedOwnerChangeWaitSetRequest",
+  "output": "Option<u64>",
+  "call": "crate::task_verb::sdk::set_shared_owner_change_wait(memory.vault(), &memory.embedded_owner(\"vault.shared.owner_change_wait.set\")?, input)?",
+  "host_door": true,
+  "host_door_precheck": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

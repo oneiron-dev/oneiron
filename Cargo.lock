@@ -5575,6 +5575,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8001,6 +8010,7 @@ dependencies = [
  "memmap2",
  "ocrs",
  "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-authority",
  "oneiron-base",
  "oneiron-browser",
@@ -8021,6 +8031,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-sdk-build",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8083,6 +8094,29 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "libc",
+ "oneiron",
+ "oneiron-container",
+ "oneiron-contracts",
+ "oneiron-sandbox-contract",
+ "oneiron-spawn",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "wasmtime",
 ]
 
 [[package]]
@@ -8219,6 +8253,7 @@ name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "oneiron-sdk-build",
  "oneiron-spawn",
  "serde",
  "serde_json",
@@ -8643,6 +8678,7 @@ dependencies = [
  "napi-derive",
  "oneiron",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-server",
  "serde",
  "serde_json",
@@ -8714,6 +8750,7 @@ version = "1.0.0"
 dependencies = [
  "oneiron",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-server",
  "pyo3",
  "pyo3-build-config",
@@ -8729,6 +8766,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "serde",
@@ -8774,6 +8812,10 @@ dependencies = [
 
 [[package]]
 name = "oneiron-sandbox-contract"
+version = "0.1.0"
+
+[[package]]
+name = "oneiron-sdk-build"
 version = "0.1.0"
 
 [[package]]
@@ -8848,6 +8890,7 @@ dependencies = [
  "objc2-core-ml",
  "objc2-foundation",
  "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -8867,6 +8910,7 @@ dependencies = [
  "oneiron-organ-host",
  "oneiron-organ-protocol",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8974,6 +9018,7 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-server",
  "oneiron-vault-contract",
  "serde",
@@ -10381,6 +10426,7 @@ version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
 dependencies = [
+ "inventory",
  "libc",
  "once_cell",
  "portable-atomic",

@@ -347,7 +347,7 @@ pub(super) fn run(
     let _draining = DrainScope::enter(invocation);
     Ok(match room {
         Some(room) => match memory.for_room_turn(room) {
-            Ok(turn) => turn.invoke_with_notice(verb, args),
+            Ok(turn) => turn.invoke_with_notice(&crate::verbs::VERB_TABLE, verb, args),
             Err(error) => (Err(error), None),
         },
         None => crate::task_verb::sdk::invoke_with_notice(&memory, verb, args),

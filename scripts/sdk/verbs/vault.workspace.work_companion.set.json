@@ -1,0 +1,16 @@
+{
+  "name": "vault.workspace.work_companion.set",
+  "description": "The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person.",
+  "input": "WorkCompanionSetRequest",
+  "output": "crate::workspace_roster::WorkCompanionPolicy",
+  "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

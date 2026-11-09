@@ -1848,6 +1848,7 @@ fn tracked_run_formatting_remembers_previous_marks_across_save_and_reopen() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target,
             expect: "Italic clause text".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,
@@ -1997,6 +1998,7 @@ fn session_split_keeps_a_pre_existing_run_change_intact() {
                 steps: vec![EditStep::SetRunFormatting {
                     block_id: first_para,
                     expect: "Italic clause text".to_string(),
+                    occurrence: None,
                     semantic_hash: None,
                     marks: InlineMarkSet {
                         bold: true,
@@ -2145,6 +2147,7 @@ fn a_partial_resolution_leaves_a_surviving_run_change_intact() {
                     EditStep::SetRunFormatting {
                         block_id: first,
                         expect: "Italic clause text".to_string(),
+                        occurrence: None,
                         semantic_hash: None,
                         marks: InlineMarkSet {
                             bold: true,
@@ -2287,6 +2290,7 @@ fn a_second_author_formatting_a_run_keeps_the_first_change_previous_state() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: block,
             expect: "Italic clause text".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: !underline,
@@ -2393,6 +2397,7 @@ fn an_rpr_change_recording_unchanged_marks_survives_persistence() {
                     steps: vec![EditStep::SetRunFormatting {
                         block_id: fixture.para_ids[0].clone(),
                         expect: "Form".to_string(),
+                        occurrence: None,
                         semantic_hash: None,
                         marks: InlineMarkSet::default(),
                         style: RunStyleEdit {

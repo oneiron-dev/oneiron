@@ -186,6 +186,19 @@ pub enum FederationGrantRole {
     Owner,
     /// Administrative privileges without owner transfer semantics.
     Admin,
+    /// A Steward looks after the vault's memory for its owners: it can read
+    /// and organise everything in this vault, but it can only suggest who
+    /// joins or what role they get, and it can never give itself more access.
+    ///
+    /// ARCH-0043's seventh role, between Admin and Member; a person or an
+    /// agent holds it. Its preset reads and derives across this vault root,
+    /// archives inside the grant and deletes in scope
+    /// ([`super::grant_scope::membership_preset`]). It is never
+    /// administrative ([`Self::is_admin`] is false), so it cannot add or
+    /// remove members, assign roles, parent a delegate, widen any grant or
+    /// do an owner act; a private member vault is another root it never
+    /// holds a grant in.
+    Steward,
     /// Read/write member privileges.
     Member,
     /// Read-only member privileges.
@@ -210,6 +223,7 @@ impl FederationGrantRole {
         match self {
             Self::Owner => "owner",
             Self::Admin => "admin",
+            Self::Steward => "steward",
             Self::Member => "member",
             Self::Viewer => "viewer",
             Self::Auditor => "viewer",
@@ -224,6 +238,7 @@ impl FederationGrantRole {
         match value {
             "owner" => Some(Self::Owner),
             "admin" => Some(Self::Admin),
+            "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "viewer" => Some(Self::Viewer),
             "auditor" => Some(Self::Viewer),
@@ -254,6 +269,9 @@ pub enum FederationGrantPreset {
     Owner,
     /// Admin-grade capability envelope.
     Admin,
+    /// The Steward's envelope: read and derive across the vault root, archive
+    /// and delete in scope, never an admin power.
+    Steward,
     /// Read/write member capability envelope.
     Member,
     /// Read-only capability envelope.
@@ -273,6 +291,7 @@ impl FederationGrantPreset {
         match self {
             Self::Owner => "owner",
             Self::Admin => "admin",
+            Self::Steward => "steward",
             Self::Member => "member",
             Self::ReadOnly => "read_only",
             Self::Audit => "read_only",
@@ -287,6 +306,7 @@ impl FederationGrantPreset {
         match value {
             "owner" => Some(Self::Owner),
             "admin" => Some(Self::Admin),
+            "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "read_only" => Some(Self::ReadOnly),
             "audit" => Some(Self::ReadOnly),
@@ -302,20 +322,26 @@ impl FederationGrantPreset {
     /// only the Delegate role, and the Delegate role rides only the Delegate
     /// preset — including under Owner, which is otherwise universal. Letting
     /// the Owner envelope carry a Delegate role would hand a delegate the owner
-    /// capability set while it still reads as attenuated.
+    /// capability set while it still reads as attenuated. Steward is a 1:1
+    /// pair for the same reason: an Owner or Admin envelope would hand a
+    /// Steward admin-grade capability while it still reads as a Steward.
     #[must_use]
     pub const fn permits_role(self, role: FederationGrantRole) -> bool {
         match self {
             Self::Owner => !matches!(
                 role,
-                FederationGrantRole::Delegate | FederationGrantRole::Guest
+                FederationGrantRole::Steward
+                    | FederationGrantRole::Delegate
+                    | FederationGrantRole::Guest
             ),
             Self::Admin => !matches!(
                 role,
                 FederationGrantRole::Owner
+                    | FederationGrantRole::Steward
                     | FederationGrantRole::Delegate
                     | FederationGrantRole::Guest
             ),
+            Self::Steward => matches!(role, FederationGrantRole::Steward),
             Self::Member => matches!(
                 role,
                 FederationGrantRole::Member

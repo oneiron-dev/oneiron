@@ -1,0 +1,13 @@
+{
+  "name": "vault.flush_stream",
+  "description": "Publishes the current partial at once when streamed visibility allows it; atomic mode stays private.",
+  "input": "crate::memory::MessageStreamRequest",
+  "output": "()",
+  "call": "memory.messages_flush_stream(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1559,9 +1559,22 @@ fn a_dollar_row_with_no_schema_is_not_advertised() {
 
 #[test]
 fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
-    let manifest: Value =
-        serde_json::from_str(include_str!("../../../../scripts/sdk/agent-verbs.json"))
-            .expect("manifest");
+    let verbs_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/sdk/verbs");
+    let mut files: Vec<_> = std::fs::read_dir(&verbs_dir)
+        .expect("verb table")
+        .map(|entry| entry.expect("verb file").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    let rows: Vec<Value> = files
+        .iter()
+        .map(|path| {
+            serde_json::from_str(&std::fs::read_to_string(path).expect("verb file"))
+                .expect("verb row")
+        })
+        .collect();
+    let manifest = serde_json::json!({ "verbs": rows });
     let surface = McpRegisteredSurface::register(McpSurfaceMode::ToolFirst).expect("surface");
     for row in manifest["verbs"].as_array().expect("verb rows") {
         let name = row["name"].as_str().expect("verb name");

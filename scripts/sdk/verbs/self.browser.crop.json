@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.crop",
+  "description": "Crops a held image to a rectangle.",
+  "input": "crate::task_verb::sdk::BrowserCropInput",
+  "output": "crate::task_verb::sdk::BrowserImageOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.crop(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserCropInput>",
+    "description": "Crops a held image to a rectangle.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

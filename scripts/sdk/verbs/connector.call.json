@@ -1,0 +1,16 @@
+{
+  "name": "connector.call",
+  "description": "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data.",
+  "input": "crate::outbound_consent::ConnectorCallRequest",
+  "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
+  "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

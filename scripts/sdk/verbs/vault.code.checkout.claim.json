@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.checkout.claim",
+  "description": "Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence.",
+  "input": "crate::memory::checkout_doors::CheckoutClaimInput",
+  "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.claim\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}

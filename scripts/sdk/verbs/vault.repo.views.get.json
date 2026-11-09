@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.views.get",
+  "description": "Reads the attached run's own work, as it was opened.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoViewsGetInput>",
+  "output": "crate::memory::repo_doors::RepoViewsGetOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.views.get\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.policy.get",
+  "description": "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins.",
+  "input": "EmptyRequest",
+  "output": "crate::task_verb::sdk::RetrievalPolicyView",
+  "call": "crate::task_verb::sdk::retrieval_policy_get_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.get\")?, _input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
