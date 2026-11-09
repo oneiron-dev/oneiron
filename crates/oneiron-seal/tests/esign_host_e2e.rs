@@ -16,12 +16,15 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use oneiron::blob_artifact::esign::render::{PdfPreparation, PreparedEsignPdf};
 use oneiron::blob_artifact::esign::{
     DocumentKind, DocumentStatus, ESIGN_NOTICE_ATTEMPT_KIND, ESIGN_SEAL_ATTEMPT_KIND,
-    EsignAuditActor, EsignCapability, EsignDocument, EsignItem, EsignNotice, EsignRecipient,
-    EsignSealError, EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignVerdict, RecipientRole, SealProfile, SealVerdict, SigningAction, SigningOutcome,
+    EsignAuditActor, EsignCapability, EsignDocument, EsignInputBudget, EsignItem, EsignNotice,
+    EsignRecipient, EsignSealError, EsignSealInput, EsignSealProducer, EsignSealRequest,
+    EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, RecipientRole, SealProfile,
+    SealVerdict, SigningAction, SigningOutcome,
 };
+use oneiron::office_body::Resources;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_organ_host::seal::{
     ASK_SIGN, HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings,
@@ -117,10 +120,10 @@ struct RejectVerify<'a>(&'a dyn EsignSealer);
 impl EsignSealer for RejectVerify<'_> {
     fn seal(
         &self,
-        input: &EsignSealInput,
         request: &EsignSealRequest,
-    ) -> Result<EsignSealed, EsignSealerError> {
-        self.0.seal(input, request)
+        producer: &mut dyn EsignSealProducer,
+    ) -> Result<EsignSealed, EsignSealError> {
+        self.0.seal(request, producer)
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
@@ -129,6 +132,40 @@ impl EsignSealer for RejectVerify<'_> {
         verdict.reasons.push("digest_mismatch".to_owned());
         verdict.self_verify_ok = false;
         Ok(verdict)
+    }
+
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: &[String],
+    ) -> Result<Option<PreparedEsignPdf>, EsignSealerError> {
+        self.0.prepare_esign_pdf(original, request, chain, trail)
+    }
+}
+
+/// Lends one prepared input, written before the call, to the sealer's
+/// dispatch, under the budget the sealer's admitted call books for it.
+struct LentInput<'a>(&'a EsignSealInput);
+
+impl EsignSealProducer for LentInput<'_> {
+    fn source_bytes(&self) -> u64 {
+        u64::try_from(self.0.pdf.len()).unwrap_or(u64::MAX)
+    }
+
+    fn with_input(
+        &mut self,
+        resources: &Resources,
+        planned_bytes: u64,
+        measured_bytes: u64,
+        dispatch: &mut dyn FnMut(
+            &EsignSealInput,
+            &EsignInputBudget,
+        ) -> Result<EsignSealed, EsignSealError>,
+    ) -> Result<EsignSealed, EsignSealError> {
+        let budget = EsignInputBudget::new(resources, planned_bytes, measured_bytes)?;
+        dispatch(self.0, &budget)
     }
 }
 
@@ -220,6 +257,7 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         title: "Agreement".into(),
         sequential: false,
         expires_at: now + 3600,
+        token_expires_at: None,
         items: vec![EsignItem {
             artifact_ref: id.to_hex(),
             original_version: 1,
@@ -233,10 +271,12 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
             expires_at: now + 3600,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: vec![],
         full_trail_appendix: true,
         lifecycle: None,
+        project: None,
     };
     let actor = EsignAuditActor {
         actor: owner.to_hex(),
@@ -604,7 +644,7 @@ fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult 
         let sealer = HostedSealer::new(&host, &vault, &lost, settings);
         let before = keys.signed().len();
         let sealed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            sealer.seal(&input, &request)
+            sealer.seal(&request, &mut LentInput(&input))
         }));
         assert!(!matches!(sealed, Ok(Ok(_))), "panics: {panics}");
         let signed = keys.signed()[before..].to_vec();
@@ -647,13 +687,17 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
         profile: SealProfile::BaselineB,
     };
     let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-    assert!(sealer.seal(&input, &request).is_err());
+    assert!(sealer.seal(&request, &mut LentInput(&input)).is_err());
     assert!(!sealer.asked().is_empty());
     let mut bad = input;
     bad.revisions.clear();
-    let refused = sealer.seal(&bad, &request);
+    let refused = sealer.seal(&request, &mut LentInput(&bad));
     assert!(
-        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_revision"),
+        matches!(
+            &refused,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "invalid_revision"
+        ),
         "{refused:?}"
     );
     assert!(sealer.asked().is_empty());
@@ -679,9 +723,14 @@ fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
         operation_id: "op".to_owned(),
         profile: SealProfile::BaselineT,
     };
-    let refused = sealer.seal(&EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?, &request);
+    let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+    let refused = sealer.seal(&request, &mut LentInput(&input));
     assert!(
-        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_configuration"),
+        matches!(
+            &refused,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "invalid_configuration"
+        ),
         "{refused:?}"
     );
     assert_eq!(host.status("seal").map(|status| status.spawns), Some(0));
@@ -763,8 +812,12 @@ mod hostile {
         }
     }
 
-    fn unbound(result: &Result<EsignSealed, EsignSealerError>) -> bool {
-        matches!(result, Err(EsignSealerError::Fatal { code, .. }) if code == "unbound_output")
+    fn unbound(result: &Result<EsignSealed, EsignSealError>) -> bool {
+        matches!(
+            result,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "unbound_output"
+        )
     }
 
     /// Astra's witness on #1379: the organ asks the key to sign an
@@ -779,7 +832,7 @@ mod hostile {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        assert!(sealer.seal(&input, &request()).is_err());
+        assert!(sealer.seal(&request(), &mut LentInput(&input)).is_err());
         assert!(keys.signed().is_empty());
         let signs: Vec<_> = sealer
             .asked()
@@ -849,7 +902,7 @@ mod hostile {
             let sealer = HostedSealer::new(&host, &vault, &keys, settings);
             let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
             let before = keys.signed().len();
-            let refused = sealer.seal(&input, &request());
+            let refused = sealer.seal(&request(), &mut LentInput(&input));
             assert!(unbound(&refused), "{mode}: {refused:?}");
             let signed = keys.signed()[before..].to_vec();
             assert_eq!(signed.len(), 1, "{mode}");
@@ -875,7 +928,7 @@ mod hostile {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        let refused = sealer.seal(&input, &request());
+        let refused = sealer.seal(&request(), &mut LentInput(&input));
         assert!(unbound(&refused), "{refused:?}");
         assert_eq!(keys.signed().len(), 1);
         Ok(())
@@ -907,7 +960,7 @@ mod hostile {
             let sealer =
                 HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
             let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-            let result = sealer.seal(&input, &request());
+            let result = sealer.seal(&request(), &mut LentInput(&input));
             if !unbound(&result) {
                 admitted.push(format!("{mode}: {:?}", result.as_ref().err()));
             }
@@ -931,12 +984,12 @@ mod hostile {
         let settings = SealSettings::new(vec![cert], "seal");
         let sealer = HostedSealer::new(&honest, &vault, &keys, settings);
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        sealer.seal(&input, &request())?;
+        sealer.seal(&request(), &mut LentInput(&input))?;
 
         let (keys, cert) = synthetic_keys_with_chain()?;
         let host = rogue_host("leaf-only");
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
-        let refused = sealer.seal(&input, &request());
+        let refused = sealer.seal(&request(), &mut LentInput(&input));
         assert!(unbound(&refused), "{:?}", refused.as_ref().err());
         assert_eq!(keys.signed().len(), 1);
         Ok(())
