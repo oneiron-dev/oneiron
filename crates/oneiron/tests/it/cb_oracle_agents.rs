@@ -2706,9 +2706,12 @@ mod cb_x {
     /// ONE-1711 fixture: a run asks for input (→ needs_input), the owner
     /// answers, the run resumes and delivers.
     fn arm_needs_input_round_trip() -> NeedsInputRoundTrip {
-        use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
-        use oneiron::agent_run_status::{AgentRunStatus, project_agent_run_status};
-        use oneiron::context_board::{ChildAgentPresence, render_agents_section};
+        use oneiron::agent_dispatch::{
+            AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatcher,
+        };
+        use oneiron::agent_run_status::{
+            AgentRunStatus, project_agent_run_status, project_agent_run_status_with_park,
+        };
         use oneiron::dreamer_runner::{DreamerRunnerStore, ParkDreamerAttempt};
         use oneiron::llm::{
             DurableStepContext, consume_trap_signal, open_trap, register_wait,
@@ -2797,14 +2800,13 @@ mod cb_x {
             .expect("render tree")
             .roots
             .remove(0);
-        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
-            .expect("parked child presence");
-        let waiting = render_agents_section(&[presence], &[]);
-        let runs_in_needs_input_after_ask = waiting
-            .rows
-            .iter()
-            .filter(|row| row.line.ends_with(AgentRunStatus::NeedsInput.as_str()))
-            .count();
+        // The AGENTS board section that rendered this presence was removed by
+        // the PEOPLE ruling (6bef6393118, ARCH-0067); the status it rendered is
+        // the park-aware projection of the run-tree node.
+        assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
+        let waiting = project_agent_run_status_with_park(node.status, is_parked);
+        assert!(waiting.is_live_presence(), "parked child presence");
+        let runs_in_needs_input_after_ask = usize::from(waiting == AgentRunStatus::NeedsInput);
         let signal = oneiron::llm::send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 2)
             .expect("send signal");
         let _ = signal;
@@ -2822,14 +2824,10 @@ mod cb_x {
             .expect("render resumed tree")
             .roots
             .remove(0);
-        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
-            .expect("working child presence");
-        let resumed = render_agents_section(&[presence], &[]);
-        let resumed_to_working_after_input = resumed
-            .rows
-            .iter()
-            .filter(|row| row.line.ends_with(AgentRunStatus::Working.as_str()))
-            .count();
+        assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
+        let resumed = project_agent_run_status_with_park(node.status, is_parked);
+        assert!(resumed.is_live_presence(), "working child presence");
+        let resumed_to_working_after_input = usize::from(resumed == AgentRunStatus::Working);
         let completed_record = AttemptQueue::new(&vault)
             .get(attempt_id)
             .expect("read completion attempt")

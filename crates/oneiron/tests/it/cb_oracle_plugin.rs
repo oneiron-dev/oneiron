@@ -519,8 +519,8 @@ mod plugin_fixture {
         propose_plugin_section_install, render_board_block, render_plugin_sections,
     };
     use oneiron::context_board::{
-        AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow, pending_plugin_proposal_rows,
-        render_plugin_proposal_section,
+        ApprovedPluginIdentity, AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow,
+        pending_plugin_proposal_rows, render_plugin_proposal_section,
     };
     use oneiron::dreamer_plugin_suggest::{
         PackCandidate, PluginSuggestJob, PluginSuggestionDisposition, TestPackCatalog,
@@ -631,6 +631,7 @@ mod plugin_fixture {
             &self,
             vault: &Vault,
             target: &PluginInstallTarget,
+            _approved: &ApprovedPluginIdentity,
             _approved_claim_id: &EntityId,
             now: u64,
         ) -> PluginResult<EntityId> {

@@ -9,11 +9,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, DecisionTime, HumanAskReason,
-    HumanDecisionQueue, HumanDecisionRequest, PairedAnswer, ProviderDecision, ProviderPin,
-    Reasoning, ReasoningCause, RemoteDecisionSeat, Reversibility, SeatAnswer, SeatFuture,
-    SeatPhase, SeatRequest, StopCause, TypedDecision, decide_at_remote_seat,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionClass,
+    DecisionDial, DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, DecisionTime,
+    HumanAskReason, HumanDecisionQueue, HumanDecisionRequest, PairedAnswer, ProviderDecision,
+    ProviderPin, Reasoning, ReasoningCause, RemoteDecisionSeat, Reversibility, SeatAnswer,
+    SeatFuture, SeatPhase, SeatRequest, StopCause, TypedDecision, decide_at_remote_seat,
 };
 use oneiron::retrieval_depth::{RetrievalDeadline, still_deadline_clock_for_test};
 use oneiron::{
@@ -137,17 +137,12 @@ impl DecisionProvider for Rung {
         pin(self.rung)
     }
 
-    fn decide(
-        &self,
-        _: &DecisionQuestion,
-        _: &[EntityId],
-        deadline: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.seen
             .lock()
             .expect("reads")
-            .push(deadline.decision_time_left());
-        deadline.spend_for_test(self.spend);
+            .push(call.deadline.decision_time_left());
+        call.deadline.spend_for_test(self.spend);
         self.reply
             .clone()
             .ok_or_else(|| Error::InvalidConfig("the provider failed".into()))
