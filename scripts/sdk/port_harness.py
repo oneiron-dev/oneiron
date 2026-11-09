@@ -5,11 +5,15 @@ Each subcommand dumps generate.py's state the way `oneiron-sdk-generator port-ha
 port's, so a `diff` of the two files proves the port:
   rows --out <file>      generate.py's module-level row sets and constants (the tree is this file's grandparent)
   unicode --out <file>   every character property and case mapping the port's py::text reproduces
-  record --log <file> --out-dir <dir> [--marker-out-dir <dir>]
+  record --log <file> --out-dir <dir> [--marker-out-dir <dir>] [--dump-at <name>#<n>=<dir>]... [--outputs-dir <dir>]
                          runs outputs() (FORMAT=False) with every Inventory call logged, then dumps each
-                         inventory's state; `port-harness replay <log>` replays the log and dumps the same
+                         inventory's state; `port-harness replay <log>` replays the log and dumps the same.
+                         The log also marks each emitter outputs() runs (enter and leave lines, DESIGN 9.3);
+                         --dump-at dumps the inventories again where `<name>#<n>` leaves, and --outputs-dir
+                         writes the outputs() it ran (to compare with `generate.py --out-dir`)
 '''
 import argparse
+import inspect
 import json
 import sys
 import zlib
@@ -198,7 +202,92 @@ def dump(out_dir, instances, calls, call):
     (out / 'calls.jsonl').write_text(''.join(json.dumps(entry) + '\n' for entry in calls))
 
 
-def record(log_path, out_dir, marker_dir):
+# ---------------------------------------------------------------- the emitter markers (G4a, DESIGN 9.3)
+
+# The top-level generate.py functions outputs() calls, itself or through one of them (http_facade calls verb_tree).
+# Each call is logged as ["enter", name, n] before it runs and ["leave", name, n, <its return value>] once it has
+# returned (a tuple as a list); n counts the calls of that name from 1. A call that raises leaves no leave line.
+MARKED_FUNCTIONS = ('facade_dispatch', 'remote_boundary', 'native_boundary', 'ts_native_signature', 'uniffi_facade',
+                    'http_facade', 'run_catalog', 'core_verb_names', 'host_door_rows', 'mcp_dispatch', 'verb_tree',
+                    'ts_facade_module', 'python_facade_module', 'ts_native_module', 'catalog_fragment')
+# The Inventory methods outputs() calls itself: the five extra roots, the census and its two renderings. Such a call
+# is marked as well as logged; a call from anywhere else (an emitter, UniffiTypes, catalog_fragment) is only logged.
+MARKED_METHODS = ('root_ir', 'census', 'typescript', 'python')
+# The inline segments of outputs() (DESIGN 9.2): (name, the statement it begins with, the statement after its end,
+# the expression its leave line logs). The recorder runs a copy of outputs() in which each such statement is
+# prefixed, on its own line, by the marker calls, so every line keeps its number; record --outputs-dir writes the
+# copy's outputs, which the emitters driver compares with `generate.py --out-dir`'s.
+SEGMENTS = (
+    ('core', 'core = HEADER', 'server, dispatch = facade_dispatch(', 'core'),
+    ('remote', 'remote = HEADER + ', 'long_napi = ', 'remote'),
+    ('napi_py', 'long_napi = ', 'ts = HEADER + AGENT_VERBS_TS', '[napi, py]'),
+    # `custody` as the positions of its rows in ROWS.
+    ('catalog', 'variants = {', 'uniffi, uniffi_types = uniffi_facade(',
+     '[catalog, [at for at, row in enumerate(ROWS) if any(row is chosen for chosen in custody)]]'),
+)
+SEGMENT_CALL = '_port_harness_segment'
+
+
+class Markers:
+    'The enter and leave lines of the log, counted per name, and the dumps asked for at a leave.'
+
+    def __init__(self, log, dump_at, dump):
+        self.log, self.dump_at, self.dump, self.counts = log, dump_at, dump, {}
+
+    def enter(self, name):
+        n = self.counts[name] = self.counts.get(name, 0) + 1
+        self.log.write(json.dumps(['enter', name, n]) + '\n')
+        self.log.flush()   # a call that raises still leaves its enter line
+        return n
+
+    def leave(self, name, n, value):
+        self.log.write(json.dumps(['leave', name, n, value]) + '\n')
+        self.log.flush()
+        where = self.dump_at.get(f'{name}#{n}')
+        if where:
+            self.dump(where)
+
+    def function(self, name, function):
+        'A top-level function, marked.'
+        def marked(*args, **kwargs):
+            n = self.enter(name)
+            result = function(*args, **kwargs)
+            self.leave(name, n, result)
+            return result
+        return marked
+
+    def segment(self, phase, name, value=None):
+        'The call a segment anchor carries in the copy of outputs(); a segment runs once per outputs().'
+        if phase == 'enter':
+            self.enter(name)
+        else:
+            self.leave(name, self.counts[name], value)
+
+
+def mark_outputs(generate, markers):
+    'Rebinds generate.outputs to a copy of itself whose segment anchors carry the marker calls (same line numbers).'
+    lines, first = inspect.getsourcelines(generate.outputs)
+    calls = {}
+    for name, begin, end, value in SEGMENTS:
+        for anchor, call in ((begin, f'{SEGMENT_CALL}("enter", {name!r}); '),
+                             (end, f'{SEGMENT_CALL}("leave", {name!r}, {value}); ')):
+            at = [i for i, line in enumerate(lines) if line.strip().startswith(anchor)]
+            if len(at) != 1:
+                raise SystemExit(f'port_harness: outputs() has {len(at)} statements beginning {anchor!r}, not one')
+            calls.setdefault(at[0], []).append(call)
+    marked = list(lines)
+    for i, prefix in calls.items():
+        body = lines[i].lstrip()
+        marked[i] = lines[i][:len(lines[i]) - len(body)] + ''.join(prefix) + body
+    # The copy is the original once the marker calls are taken out again.
+    if [line.replace(''.join(calls.get(i, [])), '', 1) for i, line in enumerate(marked)] != lines:
+        raise SystemExit('port_harness: the marked copy of outputs() is not the original plus its marker calls')
+    namespace = vars(generate)
+    namespace[SEGMENT_CALL] = markers.segment
+    exec(compile('\n' * (first - 1) + ''.join(marked), generate.__file__, 'exec'), namespace)
+
+
+def record(log_path, out_dir, marker_dir, dump_at=None, outputs_dir=None):
     'Runs outputs() with each top-level Inventory call logged as [method, [inventory, args...]], then dumps.'
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import facade_types
@@ -271,7 +360,28 @@ def record(log_path, out_dir, marker_dir):
         finally:
             state['depth'] -= 1
 
+    # The emitter markers (G4a): the Inventory methods outputs() calls itself, then (once generate is imported) the
+    # top-level functions and the inline segments.
+    markers = Markers(log, dump_at or {}, lambda where: dump(where, instances, calls, unlogged))
+    marked_code = {}
+
+    def marked_method(name, method):
+        def call(self, *args):
+            if sys._getframe(1).f_code is not marked_code.get('outputs'):
+                return method(self, *args)
+            n = markers.enter(name)
+            result = method(self, *args)
+            markers.leave(name, n, result)
+            return result
+        return call
+    for name in MARKED_METHODS:
+        setattr(Inventory, name, marked_method(name, getattr(Inventory, name)))
+
     import generate
+    for name in MARKED_FUNCTIONS:
+        setattr(generate, name, markers.function(name, getattr(generate, name)))
+    mark_outputs(generate, markers)
+    marked_code['outputs'] = generate.outputs.__code__
     uniffi_facade = generate.uniffi_facade
 
     def marked(*args, **kwargs):
@@ -281,8 +391,16 @@ def record(log_path, out_dir, marker_dir):
         return uniffi_facade(*args, **kwargs)
     generate.uniffi_facade = marked
     generate.FORMAT = False
-    generate.outputs()
+    files = generate.outputs()
     log.close()
+    if outputs_dir:
+        # As `generate.py --out-dir` writes them.
+        for path, text in files.items():
+            if text is None:
+                continue
+            target = Path(outputs_dir) / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
     dump(out_dir, instances, calls, unlogged)
 
 
@@ -297,13 +415,16 @@ def main():
     record_parser.add_argument('--log', required=True)
     record_parser.add_argument('--out-dir', required=True)
     record_parser.add_argument('--marker-out-dir')
+    record_parser.add_argument('--dump-at', action='append', default=[], metavar='<name>#<n>=<dir>')
+    record_parser.add_argument('--outputs-dir')
     args = parser.parse_args()
     if args.command == 'rows':
         rows_dump(args.out)
     elif args.command == 'unicode':
         unicode_dump(args.out)
     elif args.command == 'record':
-        record(args.log, args.out_dir, args.marker_out_dir)
+        dump_at = dict(spec.split('=', 1) for spec in args.dump_at)
+        record(args.log, args.out_dir, args.marker_out_dir, dump_at, args.outputs_dir)
 
 
 if __name__ == '__main__':
