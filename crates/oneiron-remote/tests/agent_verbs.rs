@@ -44,14 +44,14 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
         )
     };
     let rich = TaskAskRequest::Rich(Box::new(spec));
-    let receipt = client.tasks_ask(&rich).unwrap();
-    assert_eq!(client.tasks_ask(&rich).unwrap().handle, receipt.handle);
+    let receipt = client.ask(&rich).unwrap();
+    assert_eq!(client.ask(&rich).unwrap().handle, receipt.handle);
     let wait = TaskWaitRequest {
         handle: receipt.handle,
         step_key: "step-one".into(),
     };
     assert!(matches!(
-        client.tasks_wait(&wait).unwrap(),
+        client.wait(&wait).unwrap(),
         TaskAskWait::Pending { .. }
     ));
     let answer = client
@@ -62,7 +62,7 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
             ),
         })
         .unwrap();
-    let expected = client.tasks_wait(&wait).unwrap();
+    let expected = client.wait(&wait).unwrap();
     let TaskAskWait::Ready(result) = &expected else {
         panic!("settled wait")
     };
@@ -71,7 +71,7 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
         oneiron::task_verb::TaskAskDecision::First(answer)
     );
     assert!(result.coverage.met);
-    assert_eq!(client.tasks_wait(&wait).unwrap(), expected);
+    assert_eq!(client.wait(&wait).unwrap(), expected);
 
     // The same generated Rust client also admits the four-field short shape
     // without a second verb or a caller-supplied retry key.
@@ -83,18 +83,15 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
         until: Some(u64::MAX),
         default: oneiron::task_verb::TaskAskDefault::Hold,
     }));
-    let short_receipt = client.tasks_ask(&short).unwrap();
+    let short_receipt = client.ask(&short).unwrap();
     assert_ne!(short_receipt.handle, receipt.handle);
-    assert_eq!(
-        client.tasks_ask(&short).unwrap().handle,
-        short_receipt.handle
-    );
+    assert_eq!(client.ask(&short).unwrap().handle, short_receipt.handle);
     let short_wait = TaskWaitRequest {
         handle: short_receipt.handle,
         step_key: "step-short".into(),
     };
     assert!(matches!(
-        client.tasks_wait(&short_wait).unwrap(),
+        client.wait(&short_wait).unwrap(),
         TaskAskWait::Pending { .. }
     ));
     let short_answer = client
@@ -105,7 +102,7 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
             ),
         })
         .unwrap();
-    let TaskAskWait::Ready(short_result) = client.tasks_wait(&short_wait).unwrap() else {
+    let TaskAskWait::Ready(short_result) = client.wait(&short_wait).unwrap() else {
         panic!("short ask settled");
     };
     assert_eq!(
@@ -178,8 +175,12 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 2,
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .unwrap();
         let roster = memory.room_roster(room).unwrap();
@@ -194,7 +195,7 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
     assert_eq!(client.actor_ref().unwrap(), owner.to_hex());
     let history = serde_json::json!({"room_ref": room.to_hex()});
     let page = client
-        .agent_verb("rooms.messages", history.clone())
+        .agent_verb("vault.rooms.messages", history.clone())
         .unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     let applied: oneiron::federation::Scope =
@@ -202,7 +203,9 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
     assert_eq!(applied, expected);
     let mut supplied = history;
     supplied["roster"] = serde_json::json!([owner.to_hex()]);
-    let refusal = client.agent_verb("rooms.messages", supplied).unwrap_err();
+    let refusal = client
+        .agent_verb("vault.rooms.messages", supplied)
+        .unwrap_err();
     assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_BAD_REQUEST);
 }
 
@@ -231,12 +234,12 @@ fn embedded_room_turn_handle_runs_verbs_inside_the_room() {
     let turn = client.in_room_turn(&room.to_hex()).unwrap();
     let page = turn
         .agent_verb(
-            "rooms.messages",
+            "vault.rooms.messages",
             serde_json::json!({"room_ref": room.to_hex()}),
         )
         .unwrap();
     assert!(page["scope"].is_object());
-    for verb in ["export", "receipts"] {
+    for verb in ["vault.export", "vault.receipts"] {
         let refusal = turn.agent_verb(verb, serde_json::json!({})).unwrap_err();
         assert_eq!(
             refusal.code,

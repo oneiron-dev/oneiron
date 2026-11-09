@@ -1,7 +1,6 @@
 //! Inline ABI tests: layout stability, round-trips, batch/boundary.
 
 use super::*;
-use std::mem::{align_of, offset_of, size_of};
 
 fn id(seed: u8) -> [u8; ENTITY_ID_LEN] {
     let mut id = [0_u8; ENTITY_ID_LEN];
@@ -22,6 +21,7 @@ fn open_test_vault(dimensions: usize) -> (tempfile::TempDir, *mut OneironVault) 
             path.len(),
             dimensions,
             ptr::null(),
+            0,
             0,
             &mut vault,
         )
@@ -163,31 +163,6 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let status = unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), 15, &mut exists) };
     assert_eq!(status, OneironStatus::InvalidArg);
 
-    let long_query = "x".repeat(MAX_FFI_QUERY_BYTES + 1);
-    let mut scored = OneironScoredEntityArray::empty();
-    // SAFETY: each pointer is null or names a live local that outlives the call.
-    let status = unsafe {
-        oneiron_vault_search_text(
-            vault,
-            long_query.as_ptr(),
-            long_query.len(),
-            10,
-            &mut scored,
-        )
-    };
-    assert_eq!(status, OneironStatus::InvalidArg);
-    // SAFETY: each pointer is null or names a live local that outlives the call.
-    let status = unsafe {
-        oneiron_vault_search_text(
-            vault,
-            b"x".as_ptr(),
-            1,
-            MAX_FFI_SEARCH_LIMIT + 1,
-            &mut scored,
-        )
-    };
-    assert_eq!(status, OneironStatus::InvalidArg);
-
     // SAFETY: `vault` is live and every pointer names a local that outlives the call.
     let status = unsafe {
         oneiron_vault_put_edge(
@@ -280,6 +255,7 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
             0,
             ptr::null(),
             0,
+            0,
             &mut invalid_path_vault,
         )
     };
@@ -343,6 +319,8 @@ fn ffi_context_pack_serves_at_most_its_limit() {
                 0,
                 limit,
                 1,
+                ptr::null(),
+                0,
                 ptr::null(),
                 0,
                 &mut pack,

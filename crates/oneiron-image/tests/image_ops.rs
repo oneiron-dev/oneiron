@@ -15,9 +15,8 @@ use oneiron_image::{
     VERB_INSPECT, VERB_OPEN, VERB_RESIZE, overlay_locator,
 };
 use oneiron_organ_protocol::{
-    Answer, CallContext, ErrorCode, InputBytes, Limits, Organ, OrganError, TypedBody,
+    Answer, CallContext, ErrorCode, InputBytes, Limits, Organ, OrganError, TypedBody, Value,
 };
-use rmpv::Value;
 
 const LIMITS: Limits = Limits {
     threads: 1,
@@ -55,7 +54,7 @@ fn body(answer: &Answer) -> TypedBody {
 }
 
 fn parsed(body: &TypedBody) -> ImageBody {
-    ImageBody::from_typed(Some(body)).expect("the body reads back")
+    ImageBody::from_typed(Some(body), &|| Ok(())).expect("the body reads back")
 }
 
 fn crop(x: u32, y: u32, w: u32, h: u32) -> Value {

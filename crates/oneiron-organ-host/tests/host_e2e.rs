@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::{
-    BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
-    OrganState, Unavailable,
+    CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganState,
+    SightedInput, Unavailable,
 };
-use oneiron_organ_protocol::{FrameError, Hash32, MAX_FRAME_DEPTH, MAX_FRAME_VALUES, touch_fold};
+use oneiron_organ_protocol::Value;
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -85,28 +86,35 @@ fn host() -> OrganHost {
     host
 }
 
-fn call(verb: &str, args: rmpv::Value, inputs: Vec<OrganInput>, grant: &str) -> OrganCall {
+fn call(verb: &str, args: Value, inputs: Vec<OrganInput>, grant: &str) -> OrganCall {
     OrganCall {
         organ: "probe".into(),
         verb: verb.into(),
         schema: 1,
         args,
         body: None,
-        inputs,
+        // The test's vault holds no secret marks, so every sight reads the stored bytes.
+        inputs: inputs
+            .into_iter()
+            .map(|input| SightedInput {
+                input,
+                sight: SecretSight::Owner,
+            })
+            .collect(),
         class: CallClass::Agent,
         deadline: Duration::from_secs(10),
         grant: grant.into(),
     }
 }
 
-fn sleep_args(ms: u64, obey_cancel: bool) -> rmpv::Value {
-    rmpv::Value::Map(vec![
+fn sleep_args(ms: u64, obey_cancel: bool) -> Value {
+    Value::Map(vec![
         ("ms".into(), ms.into()),
         ("obey_cancel".into(), obey_cancel.into()),
     ])
 }
 
-fn report_u64(report: &rmpv::Value, key: &str) -> Option<u64> {
+fn report_u64(report: &Value, key: &str) -> Option<u64> {
     report
         .as_map()?
         .iter()
@@ -131,7 +139,7 @@ fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
     let echoed = host
         .call(&vault, call("organ.echo", "after".into(), Vec::new(), "g"))
         .expect("a fresh process answers");
-    assert_eq!(echoed.report, rmpv::Value::from("after"));
+    assert_eq!(echoed.report, Value::from("after"));
     let status = host.status("probe").expect("installed");
     assert_eq!(status.spawns, 2);
     assert_eq!(status.recent_crashes, 0, "a deadline kill is not a crash");
@@ -146,7 +154,7 @@ fn a_deadline_past_the_clock_is_answered_not_a_panic() {
     let mut patient = call("organ.echo", "patient".into(), Vec::new(), "g");
     patient.deadline = Duration::MAX;
     let echoed = host.call(&vault, patient).expect("a far deadline answers");
-    assert_eq!(echoed.report, rmpv::Value::from("patient"));
+    assert_eq!(echoed.report, Value::from("patient"));
 }
 
 #[test]
@@ -186,10 +194,7 @@ fn crashes_back_off_then_quarantine() {
     let mut crashes = 0;
     let deadline = Instant::now() + Duration::from_secs(60);
     while crashes < 5 && Instant::now() < deadline {
-        match host.call(
-            &vault,
-            call("probe.crash", rmpv::Value::Nil, Vec::new(), "g"),
-        ) {
+        match host.call(&vault, call("probe.crash", Value::Nil, Vec::new(), "g")) {
             Err(HostError::Crashed(_)) => crashes += 1,
             Err(HostError::Backoff { retry_after, .. }) => thread::sleep(retry_after),
             other => panic!("unexpected {other:?}"),
@@ -212,10 +217,7 @@ fn the_grant_refuses_what_it_does_not_name() {
     let (_dir, vault) = vault();
     let host = host();
     let png = put_blob(&vault, b"not granted", "image/png");
-    let refused = host.call(
-        &vault,
-        call("organ.touch", rmpv::Value::Nil, vec![png], "g"),
-    );
+    let refused = host.call(&vault, call("organ.touch", Value::Nil, vec![png], "g"));
     assert!(
         matches!(refused, Err(HostError::MediaTypeNotGranted(_))),
         "{refused:?}"
@@ -383,7 +385,7 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
     // frame carries at most 16.
     let (_dir, vault) = vault();
     let host = host();
-    let args = rmpv::Value::Map(vec![
+    let args = Value::Map(vec![
         ("count".into(), 17.into()),
         ("bytes".into(), (70 * 1024).into()),
     ]);
@@ -407,4 +409,3 @@ fn running(pid: i64) -> bool {
             .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
     })
 }
-

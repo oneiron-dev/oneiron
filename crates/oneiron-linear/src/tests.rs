@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use oneiron::{EntityId, LinearChangeSource, LinearEgress, LinearSyncError, MirroredTaskFields};
+use oneiron::{EntityId, LinearEgress, LinearSyncError, MirroredTaskFields};
 use serde_json::{Value, json};
 
 use crate::{
-    GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearHostChangeSource, LinearHostEgress,
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, GraphQlValue, LinearHostEgress,
     LinearTrackerConfig,
 };
 
@@ -33,43 +33,44 @@ fn fields() -> MirroredTaskFields {
     }
 }
 
-impl<T: GraphQlExecutor + ?Sized> GraphQlExecutor for &mut T {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
-        (**self).execute(call)
-    }
-}
-struct StubReader {
-    replies: Vec<Value>,
-    calls: Rc<RefCell<Vec<GraphQlCall>>>,
-}
-impl GraphQlExecutor for StubReader {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
-        self.calls.borrow_mut().push(call.clone());
-        if self.replies.is_empty() {
-            return Err(GraphQlTransportError::Uncertain);
-        }
-        Ok(self.replies.remove(0))
-    }
-}
-
 struct JournalTransport {
     writes: Rc<RefCell<usize>>,
     calls: Rc<RefCell<usize>>,
     failure: Option<GraphQlTransportError>,
 }
 impl GraphQlExecutor for JournalTransport {
-    fn execute(&mut self, _: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
+    fn execute(&mut self, _: &GraphQlCall) -> Result<GraphQlValue, GraphQlTransportError> {
         *self.calls.borrow_mut() += 1;
         if let Some(failure) = self.failure {
             return Err(failure);
         }
         *self.writes.borrow_mut() += 1;
         Ok(json!({"data":{"issueCreate":{"success":true,
-            "issue":issue("created","2026-09-26T00:00:00Z","New title")}}}))
+            "issue":issue("created","2026-09-26T00:00:00Z","New title")}}})
+        .into())
     }
+}
+
+/// A vault holding one live TASK: since FIX 8609 (cfe21b93cbd) the journal keeps a
+/// call's request and response bodies in custody under the TASK the call mutates.
+fn journal_vault() -> (tempfile::TempDir, oneiron::Vault, EntityId) {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
+    let task = EntityId::from_bytes([0x6a; 16]).expect("task");
+    vault
+        .put_entity(
+            &task,
+            oneiron::registry::ENTITY_TYPE_TASK,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"task",
+        )
+        .expect("task");
+    (dir, vault, task)
 }
 #[test]
 fn response_journal_replays_success_and_never_retries_ambiguous_send() {
+    let (_vault_dir, vault, task) = journal_vault();
     let dir = tempfile::tempdir().expect("journal dir");
     let writes = Rc::new(RefCell::new(0));
     let call = GraphQlCall {
@@ -78,6 +79,7 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
     };
     let make = |failure| {
         crate::journal::LinearResponseJournal::new(
+            &vault,
             JournalTransport {
                 writes: writes.clone(),
                 calls: Rc::new(RefCell::new(0)),
@@ -88,18 +90,22 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
         .expect("journal")
     };
     let mut first = make(None);
-    let response = first.dispatch([1; 32], &call).expect("first");
+    first.stage_request(&[1; 32], task, &call).expect("stage");
+    let response = first.dispatch([1; 32], task, &call).expect("first");
     drop(first);
     let mut restarted = make(None);
     assert_eq!(
-        restarted.dispatch([1; 32], &call).expect("replay"),
+        restarted.dispatch([1; 32], task, &call).expect("replay"),
         response
     );
     assert_eq!(*writes.borrow(), 1);
+    // The operation id binds its request when it is staged (FIX 8609), so a
+    // reuse for another request is refused there.
     assert!(
         restarted
-            .dispatch(
-                [1; 32],
+            .stage_request(
+                &[1; 32],
+                task,
                 &GraphQlCall {
                     query: call.query,
                     variables: json!({"input":{"teamId":"other"}})
@@ -109,12 +115,12 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
     );
     let mut uncertain = make(Some(GraphQlTransportError::Uncertain));
     assert_eq!(
-        uncertain.dispatch([2; 32], &call),
+        uncertain.dispatch([2; 32], task, &call),
         Err(GraphQlTransportError::Uncertain)
     );
     let mut recovered = make(None);
     assert_eq!(
-        recovered.dispatch([2; 32], &call),
+        recovered.dispatch([2; 32], task, &call),
         Err(GraphQlTransportError::Uncertain)
     );
     assert_eq!(*writes.borrow(), 1);
@@ -122,6 +128,7 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
 
 #[test]
 fn definitely_unsent_request_can_retry_after_restart() {
+    let (_vault_dir, vault, task) = journal_vault();
     let dir = tempfile::tempdir().expect("journal dir");
     let writes = Rc::new(RefCell::new(0));
     let call = GraphQlCall {
@@ -129,6 +136,7 @@ fn definitely_unsent_request_can_retry_after_restart() {
         variables: json!({"input":{"teamId":"team-1"}}),
     };
     let mut offline = crate::journal::LinearResponseJournal::new(
+        &vault,
         JournalTransport {
             writes: writes.clone(),
             calls: Rc::new(RefCell::new(0)),
@@ -138,11 +146,12 @@ fn definitely_unsent_request_can_retry_after_restart() {
     )
     .expect("journal");
     assert_eq!(
-        offline.dispatch([3; 32], &call),
+        offline.dispatch([3; 32], task, &call),
         Err(GraphQlTransportError::NotSent)
     );
     drop(offline);
     let mut online = crate::journal::LinearResponseJournal::new(
+        &vault,
         JournalTransport {
             writes: writes.clone(),
             calls: Rc::new(RefCell::new(0)),
@@ -151,7 +160,7 @@ fn definitely_unsent_request_can_retry_after_restart() {
         dir.path().to_path_buf(),
     )
     .expect("journal");
-    online.dispatch([3; 32], &call).expect("safe retry");
+    online.dispatch([3; 32], task, &call).expect("safe retry");
     assert_eq!(*writes.borrow(), 1);
 }
 
@@ -659,6 +668,7 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
         variables: json!({"input":{"teamId":"team-1"}}),
     };
     let journal = crate::journal::LinearResponseJournal::new(
+        &vault,
         JournalTransport {
             writes: writes.clone(),
             calls: calls.clone(),
@@ -670,7 +680,7 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     // Interrupt the exact staging path after writing only part of its
     // temporary file, leaving an orphan as a process crash would. The final
     // request name must not exist; no gate or transport has run.
-    let interrupted = journal.stage_request_with(&op, &call, |staged| {
+    let interrupted = journal.stage_request_with(&op, actor, &call, |staged| {
         staged.as_file_mut().write_all(b"{").expect("partial write");
         staged.as_file().sync_all().expect("partial sync");
         std::fs::hard_link(
@@ -684,9 +694,11 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     });
     assert!(interrupted.is_err());
     let reference = format!("linear:request:v1:{}", blake3::Hash::from(op).to_hex());
-    assert_eq!(
-        journal.read_request(&reference).expect("request lookup"),
-        None
+    assert!(
+        journal
+            .read_request(&reference)
+            .expect("request lookup")
+            .is_none()
     );
     assert_eq!(*calls.borrow(), 0);
     drop(journal);

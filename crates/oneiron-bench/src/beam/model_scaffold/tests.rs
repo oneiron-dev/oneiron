@@ -27,7 +27,7 @@ impl LlmBackend for FixtureBackend {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let ContentPart::Text { text: user } = &request.messages[1].content[0] else {
+            let ContentPart::Text { text: user, .. } = &request.messages[1].content[0] else {
                 panic!("text")
             };
             let input: serde_json::Value = serde_json::from_str(user).unwrap_or_default();
@@ -60,14 +60,14 @@ impl LlmBackend for FixtureBackend {
                 _ => "tulip".to_owned(),
             };
             if request.envelope.purpose == CallPurpose::ToolRouting {
-                let ContentPart::Text { text } = &request.messages[0].content[0] else {
+                let ContentPart::Text { text, .. } = &request.messages[0].content[0] else {
                     panic!("text")
                 };
                 self.routing_prompts.lock().unwrap().push(text.clone());
             }
             if request.envelope.purpose == CallPurpose::AnswerGen && input.get("trace").is_none() {
                 let input = match &request.messages[1].content[0] {
-                    ContentPart::Text { text } => text,
+                    ContentPart::Text { text, .. } => text,
                     _ => panic!("text"),
                 };
                 let fields: serde_json::Value = serde_json::from_str(input).unwrap();
@@ -79,7 +79,10 @@ impl LlmBackend for FixtureBackend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text }],
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage {
@@ -92,8 +95,11 @@ impl LlmBackend for FixtureBackend {
                         reasoning: 0,
                     },
                     raw_provider: serde_json::json!({"prompt_tokens":100,"completion_tokens":3}),
+                    call_metadata: None,
                 },
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -203,6 +209,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         ],
         amortized_question_count: 1,
         chroma: None,
+        model_families: Default::default(),
     };
     let session = ModelSession::with_backend(
         Box::new(FixtureBackend::default()),
@@ -580,4 +587,3 @@ fn trajectory_arm_sees_only_its_own_steps_and_zero_memory_wins_ties() {
         (0.0, 0.0)
     );
 }
-
