@@ -22,7 +22,7 @@ its public path. No generated output is in git (untangle slice 4.3):
   includes one calls `crates/oneiron-sdk-build` from its build script, which runs
   the generator's Rust port (`crates/oneiron-sdk-generator`, the same `--out-dir`
   outputs) in-process once per input digest and copies the crate's own outputs
-  into its `OUT_DIR`, where `include!` reads them. The build needs no Python
+  into its `OUT_DIR`, where `include!` reads them. No Python runs for this
   (README.md, "Building from source").
 - The package outputs (`PACKAGE_OUTPUTS`) are made by each package's build:
   `oneiron` and `@oneiron/client` run the Rust port's `--package` from their npm

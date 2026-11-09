@@ -119,8 +119,8 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 The SDK's generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
 `oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`) run the SDK generator
 (`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
-(`scripts/sdk/verbs/`), the Rust types it names or the generator itself, into the target directory. The build
-needs no Python.
+(`scripts/sdk/verbs/`), the Rust types it names or the generator itself, into the target directory. No Python
+runs for this.
 
 The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron` and
 `bun run prepare` in `packages/oneiron-client` (each runs the generator with `cargo run`), and `maturin build`
