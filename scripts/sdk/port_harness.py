@@ -4,7 +4,8 @@
 Each subcommand dumps generate.py's state the way `oneiron-sdk-generator port-harness <subcommand>` dumps the Rust
 port's, so a `diff` of the two files proves the port:
   rows --out <file>      generate.py's module-level row sets and constants (the tree is this file's grandparent)
-  unicode --out <file>   every character property and case mapping the port's py::text reproduces
+  unicode --out <file>   every character property and case mapping the port's py::text reproduces, and Python's \\b
+  floats --out <file>    repr of a fixed corpus of floats
   record --log <file> --out-dir <dir> [--marker-out-dir <dir>] [--dump-at <name>#<n>=<dir>]... [--outputs-dir <dir>]
                          runs outputs() (FORMAT=False) with every Inventory call logged, then dumps each
                          inventory's state; `port-harness replay <log>` replays the log and dumps the same.
@@ -15,6 +16,8 @@ port's, so a `diff` of the two files proves the port:
 import argparse
 import inspect
 import json
+import re
+import struct
 import sys
 import zlib
 from pathlib import Path
@@ -123,8 +126,39 @@ def unicode_dump(out):
     dump += mappings('lower', chars, str.lower)
     dump += mappings('title', chars, str.title)
     dump += ranges('repr_plain', chars, lambda c: repr(c) == f"'{c}'")
+    after, before, capitalised = re.compile(r'a\b'), re.compile(r'\ba'), re.compile(r'\b([A-Z]\w*)\b')
+    dump += ranges('boundary_after', chars, lambda c: after.search('a' + c) is not None)
+    dump += ranges('boundary_before', chars, lambda c: before.search(c + 'a') is not None)
+    dump += ranges('capitalised_word', chars, lambda c: capitalised.findall('A' + c) == ['A' + c])
     with open(out, 'w', encoding='utf-8') as f:
         f.write(dump)
+
+
+def floats_dump(out):
+    '''repr of a fixed corpus of floats: every power of two and its two neighbours, decimal sweeps across every
+    exponent, and 200,000 floats from a 64-bit linear congruential generator (Knuth's MMIX constants, seed 20261110);
+    one line per finite float: its bits in hex and its repr.'''
+    lines = []
+
+    def line(bits):
+        f = struct.unpack('<d', struct.pack('<Q', bits))[0]
+        if f == f and f not in (float('inf'), float('-inf')):
+            lines.append(f'{bits:016x} {f!r}\n')
+
+    for k in range(-1074, 1024):
+        bits = (k + 1023) << 52 if k >= -1022 else 1 << (k + 1074)
+        line(bits - 1)
+        line(bits)
+        line(bits + 1)
+    for exponent in range(-330, 311):
+        for mantissa in ('1', '2', '5', '9.999999999999999', '1.2345678901234567', '4.35', '0.1', '3.0000000000000004'):
+            line(struct.unpack('<Q', struct.pack('<d', float(f'{mantissa}e{exponent}')))[0])
+    state = 20261110
+    for _ in range(200000):
+        state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        line(state)
+    with open(out, 'w', encoding='utf-8') as f:
+        f.write(''.join(lines))
 
 
 # ---------------------------------------------------------------- record (G1b, brief 8.3)
@@ -417,6 +451,8 @@ def main():
     record_parser.add_argument('--marker-out-dir')
     record_parser.add_argument('--dump-at', action='append', default=[], metavar='<name>#<n>=<dir>')
     record_parser.add_argument('--outputs-dir')
+    floats_parser = sub.add_parser('floats')
+    floats_parser.add_argument('--out', required=True)
     args = parser.parse_args()
     if args.command == 'rows':
         rows_dump(args.out)
@@ -425,6 +461,8 @@ def main():
     elif args.command == 'record':
         dump_at = dict(spec.split('=', 1) for spec in args.dump_at)
         record(args.log, args.out_dir, args.marker_out_dir, dump_at, args.outputs_dir)
+    elif args.command == 'floats':
+        floats_dump(args.out)
 
 
 if __name__ == '__main__':

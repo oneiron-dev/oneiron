@@ -2,6 +2,7 @@
 //! point, as `scripts/sdk/port_harness.py unicode` prints them from Python.
 
 use crate::error::GenerateError;
+use crate::py::re::PyRegex;
 use crate::py::text;
 
 const USAGE: &str = "usage: oneiron-sdk-generator port-harness unicode --out <file>";
@@ -77,6 +78,26 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     dump.push_str(&mappings("title", &chars, text::title));
     dump.push_str(&ranges("repr_plain", &chars, |c| {
         text::repr_str(&c.to_string()) == format!("'{c}'")
+    }));
+    // Python's `\b` through `PyRegex` (Sol's G1a review, P1-6): after a word character, before one, and around a
+    // capitalised word.
+    let after = PyRegex::new(r"a\b");
+    let before = PyRegex::new(r"\ba");
+    let capitalised = PyRegex::new(r"\b([A-Z]\w*)\b");
+    dump.push_str(&ranges("boundary_after", &chars, |c| {
+        after.is_match(&format!("a{c}"))
+    }));
+    dump.push_str(&ranges("boundary_before", &chars, |c| {
+        before.is_match(&format!("{c}a"))
+    }));
+    dump.push_str(&ranges("capitalised_word", &chars, |c| {
+        let text = format!("A{c}");
+        let found: Vec<&str> = capitalised
+            .captures_iter(&text)
+            .iter()
+            .filter_map(|groups| groups[1].map(|(start, end)| &text[start..end]))
+            .collect();
+        found == [text.as_str()]
     }));
     super::write(out, &dump)
 }
