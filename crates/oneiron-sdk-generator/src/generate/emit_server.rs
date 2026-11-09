@@ -143,3 +143,42 @@ pub(crate) fn host_door_rows(
     out += &format!("    {test}\n}}\n");
     Ok(out)
 }
+
+/// Port of generate.py:357 (SERVER_RECALL_DOC): the doc comment of the server's `vault.recall` door.
+pub(crate) const SERVER_RECALL_DOC: &str = "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
+/// every server transport shares (`POST /v1/core/facade/vault.recall`, and
+/// the held socket's `rpc.req`): it embeds the query whenever the vault's
+/// embedder is serving.
+///
+/// The lease is not a client input, and a bearer slip is not one. At high,
+/// xhigh and max the door admits the recall on a line of its own and
+/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,
+/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no
+/// reranker route the recall runs unreranked and reports
+/// `skipped / no_reranker` in `retrieval_meta.rerank`.
+///
+/// On a device that syncs only what it opened, the door then asks the home
+/// under the call's own caller (FIX 2905): its references ride in
+/// `residence`, apart from the local items; without them the pack is
+/// local-only and `partial`.
+";
+
+/// Port of generate.py:360 (HOME_SERVER_DOORS): FIX 2905, the server doors that also ask an opened device's home, by
+/// row, with the caller the call (or the MCP actor) admitted as the last argument.
+pub(crate) const HOME_SERVER_DOORS: &[(&str, &str)] = &[("vault.recall", "recall_home_listing")];
+
+/// Port of generate.py:366-367 (CALL_HOME_DOORS): FIX 3876, the rows whose page is read on the transport's own caller
+/// surface, then completed by the opened device's home: `(row, its facade door, its MCP home step)`.
+pub(crate) const CALL_HOME_DOORS: &[(&str, &str, &str)] = &[(
+    "vault.search.bm25",
+    "super::search_home_doors::vault_search_bm25",
+    "crate::api::search::complete_bm25_with_home",
+)];
+
+/// Port of generate.py:370 (HOOK_DECISION_ROWS): FIX 10425, the facade host-door rows whose answer counts its hooks'
+/// verdict decisions among its own (`model_free`). A set, read for membership.
+pub(crate) const HOOK_DECISION_ROWS: &[&str] = &["self.browser.batch", "self.browser.library.run"];
+
+/// Port of generate.py:375 (SOURCE_FEEDBACK_DOORS): FIX 10389, a host door that runs its caller's program answers a
+/// failure that keeps the program's type feedback beside its typed refusal. A set, read for membership.
+pub(crate) const SOURCE_FEEDBACK_DOORS: &[&str] = &["execute_code"];
