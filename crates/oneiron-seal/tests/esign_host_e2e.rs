@@ -392,14 +392,16 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     assert_eq!(receipt.revision, Some(0));
     assert!(receipt.signature_sha256.is_some());
     assert!(lines[0].refused.is_none() && lines[0].unanswered.is_none());
-    // Each verification runs in a process of its own: the warm seal
-    // process stays as it was, and one more process starts and ends.
-    let warm = host.status("seal").ok_or("not installed")?;
-    assert_eq!(warm.state, OrganState::Warm);
+    // Each verification runs in a process of its own: one more process
+    // starts and ends. Rule 5 conversion (ab3e569e3ae, #3193): every seal
+    // call is sized by what it lends and runs in a process of its own that
+    // ends with it, so no warm seal process stays before or after.
+    let before = host.status("seal").ok_or("not installed")?;
+    assert_eq!((before.state, before.pid), (OrganState::Cold, None));
     assert!(vault.verify_esign_item(id, 0, &sealer)?.valid());
     let after = host.status("seal").ok_or("not installed")?;
-    assert_eq!(after.spawns, warm.spawns + 1);
-    assert_eq!((after.state, after.pid), (OrganState::Warm, warm.pid));
+    assert_eq!(after.spawns, before.spawns + 1);
+    assert_eq!((after.state, after.pid), (OrganState::Cold, None));
     let notices = AttemptQueue::new(&vault).list()?;
     let completion = notices
         .iter()
