@@ -310,8 +310,8 @@ pub(crate) struct Catalog {
 pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
     let rows = generator.rows.select(&generator.callable_rows);
     let variants = variants(&rows)?;
-    let mut catalog = HEADER.to_owned()
-        + "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum AgentVerb { ";
+    let mut catalog =
+        HEADER.to_owned() + "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum AgentVerb { ";
     catalog += &variants.values().cloned().collect::<Vec<_>>().join(",");
     catalog += " }\nimpl AgentVerb {\n";
     catalog += "pub const ALL: &[Self] = &[";
@@ -351,9 +351,8 @@ pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
         ("argument_fields", "mcp_fields"),
         ("required_fields", "mcp_required_fields"),
     ] {
-        catalog += &format!(
-            "pub const fn {method}(self) -> &'static [&'static str] {{ match self {{\n"
-        );
+        catalog +=
+            &format!("pub const fn {method}(self) -> &'static [&'static str] {{ match self {{\n");
         for row in &rows {
             // `r.get(field, r['mcp_fields'])`: the default is read first, as Python evaluates it.
             let fields = item(row, "mcp_fields")?;
@@ -372,10 +371,7 @@ pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
         let description = row
             .get("description")
             .map_or_else(|| json(&Value::Str(String::new())), json);
-        catalog += &format!(
-            "Self::{} => {description},\n",
-            variant_of(&variants, row)?
-        );
+        catalog += &format!("Self::{} => {description},\n", variant_of(&variants, row)?);
     }
     catalog += "} }\n";
     let custody = custody_rows(generator);
@@ -439,8 +435,8 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("is_section", |_, row| Ok(item(row, "section")?.truthy())),
     ("continuable", |_, row| {
         // `r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))`: the default is evaluated first.
-        let default = row.contains_key("page")
-            || text(row, "output", "startswith")?.starts_with("Vec<");
+        let default =
+            row.contains_key("page") || text(row, "output", "startswith")?.starts_with("Vec<");
         Ok(row.get("mcp_page").map_or(default, Value::truthy))
     }),
     ("filtered_read", |_, row| {
@@ -599,7 +595,8 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
     // A board row's facade door takes its host projection, not the board shape `input_schema` states for MCP and
     // code mode: the OpenAPI document reads the facade shape from here.
     core += "/// The JSON schema of the input a verb's facade route takes; a board\n/// verb's host projection where it has one, else [`input_schema`].\n";
-    core += "pub fn facade_input_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n";
+    core +=
+        "pub fn facade_input_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n";
     for row in store.select(&generator.board_host_rows) {
         core += &format!(
             "{} => crate::code_run::vault_read::request_schema::<{}>(),\n",
@@ -708,7 +705,8 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
             shown(row, "input")?
         );
     }
-    core += "_ => return Err(MemoryError::bad_request(\"a browser verb is required\")), } Ok(()) }\n";
+    core +=
+        "_ => return Err(MemoryError::bad_request(\"a browser verb is required\")), } Ok(()) }\n";
     // ARCH-0080 §3: every door that runs a row by name crosses its verb hooks here, once; no caller of `invoke`
     // wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n";
@@ -818,7 +816,8 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
             continue;
         }
         let checks = super::row_access::admission_text(row, "validate", None)?;
-        let prose = prose_links_check(row)?.replace("let unlinked_prose =", "let _unlinked_prose =");
+        let prose =
+            prose_links_check(row)?.replace("let unlinked_prose =", "let _unlinked_prose =");
         core += &format!(
             "{} => {{ let input: {} = decode(value)?; {checks} {prose}{}}}\n",
             json_item(row, "name")?,

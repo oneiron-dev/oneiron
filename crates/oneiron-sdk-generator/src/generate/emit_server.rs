@@ -10,7 +10,8 @@ use crate::py::json::dumps_str;
 use crate::py::value::{Dict, Value, set_add};
 
 /// Port of generate.py:2123-2128 (HOST_DOOR_ROWS_DOC).
-pub(crate) const HOST_DOOR_ROWS_DOC: &str = "// The host-door rows whose door checks its caller before the row's verb
+pub(crate) const HOST_DOOR_ROWS_DOC: &str =
+    "// The host-door rows whose door checks its caller before the row's verb
 // hooks run (FIX 1763), one variant each, named as `AgentVerb` names it, and
 // the proof each names (`host_door_proof`), which `host_doors::door_admits`
 // matches with no catch-all arm. A row whose table entry says
@@ -19,7 +20,9 @@ pub(crate) const HOST_DOOR_ROWS_DOC: &str = "// The host-door rows whose door ch
 
 /// generate.py:2132 `variant`: a row's `AgentVerb` variant.
 fn row_variant(row: &crate::py::value::Dict) -> Result<String, GenerateError> {
-    Ok(variant_name(super::row_access::text(row, "name", "replace")?))
+    Ok(variant_name(super::row_access::text(
+        row, "name", "replace",
+    )?))
 }
 
 /// generate.py:2148 `proof_variant`: `''.join(part.title() for part in kind.split('_'))`.
@@ -91,7 +94,8 @@ pub(crate) fn host_door_rows(
         kind.check_hashable("a dict key")?;
         set_add(&mut kinds, kind)?;
     }
-    out += "/// The proof a checked host door runs before its hooks (`host_door_proof` on the row).\n";
+    out +=
+        "/// The proof a checked host door runs before its hooks (`host_door_proof` on the row).\n";
     out += "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorProof {\n";
     for kind in &kinds {
         out += &format!("    {},\n", proof_variant(kind)?);
@@ -131,8 +135,13 @@ pub(crate) fn host_door_rows(
         .iter()
         .filter(|name| !credential.iter().any(|credential| credential.py_eq(name)))
         .collect();
-    let alternatives =
-        |names: &[&Value]| names.iter().map(|name| json(name)).collect::<Vec<_>>().join(" | ");
+    let alternatives = |names: &[&Value]| {
+        names
+            .iter()
+            .map(|name| json(name))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
     out += "/// Whether `verb` is an MCP row whose handler takes the caller's credential\n/// before it runs: every host door and every owner-grade row. A call that\n/// carries none is refused before the row's pre hooks (FIX 4794).\n";
     out += "#[must_use]\npub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {\n";
     let mut test = "HostDoorRow::from_verb(verb).is_some()".to_owned();
@@ -147,7 +156,8 @@ pub(crate) fn host_door_rows(
 }
 
 /// Port of generate.py:357 (SERVER_RECALL_DOC): the doc comment of the server's `vault.recall` door.
-pub(crate) const SERVER_RECALL_DOC: &str = "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
+pub(crate) const SERVER_RECALL_DOC: &str =
+    "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
 /// every server transport shares (`POST /v1/core/facade/vault.recall`, and
 /// the held socket's `rpc.req`): it embeds the query whenever the vault's
 /// embedder is serving.
@@ -186,7 +196,8 @@ pub(crate) const HOOK_DECISION_ROWS: &[&str] = &["self.browser.batch", "self.bro
 pub(crate) const SOURCE_FEEDBACK_DOORS: &[&str] = &["execute_code"];
 
 /// Port of generate.py:1732-1738 (DISPATCH_DOC).
-pub(crate) const DISPATCH_DOC: &str = "// The facade's one admission and typed call per verb-table row (OF-489).
+pub(crate) const DISPATCH_DOC: &str =
+    "// The facade's one admission and typed call per verb-table row (OF-489).
 // Every server transport runs a facade verb here: each HTTP route through
 // `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
 // transport hands a row its [`FacadeCall`] and the input as it decoded it;

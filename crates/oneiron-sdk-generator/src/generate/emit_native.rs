@@ -95,8 +95,7 @@ pub(crate) fn native_boundary(
         args.push(NativeArg { arg, name, kind });
     }
     let row_name = shown(row, "name")?;
-    let head;
-    if language == "napi" {
+    let head = if language == "napi" {
         if !binding.as_ref().is_some_and(Value::truthy) {
             // FIX 2884: a JS number reads as the typed decode behind it does (`js_json` in client.rs: safe whole
             // numbers back to integers).
@@ -115,7 +114,7 @@ pub(crate) fn native_boundary(
         } else {
             "String".to_owned()
         };
-        head = format!("#[napi] pub fn {method}(&self, {declaration}) -> napi::Result<{output}> {{");
+        format!("#[napi] pub fn {method}(&self, {declaration}) -> napi::Result<{output}> {{")
     } else {
         let mut declaration = Vec::new();
         for arg in &args {
@@ -146,11 +145,11 @@ pub(crate) fn native_boundary(
             "&self, py: Python<'_>"
         };
         let params = count + if count > 5 { 1 } else { 2 };
-        head = format!(
+        format!(
             "{annotation} {}fn {method}({receiver}, {declaration}) -> PyResult<String> {{",
             long_signature(params)
-        );
-    }
+        )
+    };
     let row = &generator.rows[id];
     let (mut setup, mut call);
     if typed {
@@ -198,7 +197,10 @@ pub(crate) fn native_boundary(
         };
         format!("{setup} let output = {call}.map_err(facade_error)?; {tail}")
     } else {
-        let encode_output = if row.get("name").is_some_and(|name| name.is_str("vault.recall")) {
+        let encode_output = if row
+            .get("name")
+            .is_some_and(|name| name.is_str("vault.recall"))
+        {
             "encode_recall(&output)"
         } else {
             "encode(&output)"
