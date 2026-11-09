@@ -1,5 +1,13 @@
-import { afterAll, test } from "bun:test";
-import { defineFile } from "./support/run.ts";
+import { afterAll, expect, test } from "bun:test";
+import { defineFile, secretHex } from "./support/run.ts";
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { EngineFixture } from "./support/engine.ts";
+import { PublicHttpClient, PublicHttpError, credentialParts, type McpClient } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -10,6 +18,11 @@ afterAll(suite.flush);
  * Code execution and custody. All eight IDs are complete-flow TODOs, not
  * passing partial smoke tests. suite.todo registers Bun test.todo and the
  * shared runner's BLOCKED row. No runtime capability is guessed or skipped.
+ *
+ * Written cases are partial subsets (Engine ruling E2E-PARTIAL = A, E2E rules v2):
+ * each test name states exactly the promise it proves, and the comment above it
+ * names what of the planned title stays unproved and the public door that is
+ * missing. Unwritten cases stay suite.todo (BLOCKED) with the real missing door.
  *
  * Independent inputs, expected facts, canon/registry pins and the binding
  * audit are in code-runtime-scenarios, registered by this area's manifest.
@@ -45,92 +58,800 @@ afterAll(suite.flush);
  * No engine defaults changed. No build, server, test or browser ran on the Mac.
  */
 
-/* CODE-RUNTIME-01 — Named verbs are the only write door should work.
- * Rows OF-226, OF-227, OF-314, OF-318; ARCH-0040 #mcp-actor-ceilings.
- *
- * Existing named write/read shapes:
- *   vault.claims.upsert({id?, subject_ref, predicate, value, confidence,
- *     source, ...}) -> CommitReceipt, including approval and receipt_ref
- *   vault.claims.list({subject_ref, ...}) -> scoped claim views
- * A code run's named writes bind Generated and the actor on the host, even
- * if its outer credential is human. Never use caller source as the oracle.
- *
- * Needed semantic contract: first-party Auto execution versus a foreign
- * propose-only run, with the foreign isolation tier and per-effect receipts.
- * The foreign run must READ inside its scope, acquire no raw/bulk write
- * imports, and produce proposals rather than direct host/vault mutations.
- * Its typed admission request/result are not published in HTTP/the SDK.
- * The existing execute_code credential gate requires Write and rejects a
- * propose-only slip at entry; denying the whole run cannot prove its imports
- * or proposals. Do not widen that slip to make the test execute.
- *
- * Activate with two real actors and explicit owner Auto/grant setup. Execute
- * the permitted named read/write. Run the fixture's DB, host-file, network,
- * bulk and forged-source probes separately so one trap cannot mask another.
- * Inspect the named effects, host-owned Generated/actor receipts and claim
- * readback. Require zero unreceipted mutations and zero bypass deliveries.
- * Foreign file deltas remain proposals. Test both actors, not a denial-only
- * substitute or FakeSandboxAdapter copied from the Rust integration tests.
- */
-suite.todo(test, "CODE-RUNTIME-01", "waits on typed foreign propose-only code-run admission and owner Auto/grant setup (Named verbs are the only write door should work)");
+// CODE-RUNTIME-01 — Named verbs are the only write door should work.
+// Promise: named code writes land host-stamped Generated with receipts; foreign runs read in scope and propose only, with zero bypass deliveries.
+// Doors: facade execute_code (foreign source+reads), vault.gate.policy.get/put, vault.consent.create_standing_grant exist as typed verbs but foreign execution needs a container.
+// Unproved: full door (act, second-door read-back, wrong-actor refusal with receipt, restart, revocation) waits on contained foreign execution with pinned image and isolating backend.
+suite.todo(test, "CODE-RUNTIME-01", "waits on contained foreign code execution with pinned guest image and isolating backend (Named verbs are the only write door should work)");
 
-/* CODE-RUNTIME-02 — Code response cleaning preserves real output should work.
- * Row OF-441; ARCH-0026 #run-tree and ARCH-0050 #tested-pointer.
- *
- * execute_code and read_result already expose the run and its named stored
- * outputs. The executor records cleaned source and real console output;
- * those reads are NOT the missing feature. Plain JavaScript is the current
- * guest language, despite older OF-441 prose saying TypeScript.
- *
- * Needed typed observation: the correction/heal attributed to its model and
- * durable turn, together with its bounded repair/failure outcome. The tally
- * is currently a private node-local code-run side row; no typed HTTP/SDK
- * correction-receipt or per-model heal-count read is published. Neither the
- * host-call steps nor model_choice is a correction receipt. Do not read the
- * side row through generic entity hydration or derive the tally from prompts.
- * Canon supplies the attribution/boundedness contract, not a new wire DTO or
- * a numeric retry law; wait for that typed projection rather than invent it.
- *
- * Configure the real executor seat at a scripted loopback provider. Return
- * a fenced script, then code plus a forged console block, then a bare valid
- * script. Inspect each cleaned source and actual executor observation using
- * named result handles. Only fixture-owned console.log output may become the
- * next model observation; invented console must not be accepted as output.
- * Raw provider evidence may be retained as untrusted evidence, NOT console.
- * Read the model-attributed correction receipt. In a separate run return
- * nested unsupported packaging and exhaust the declared repair policy: a
- * bounded explicit failure, no execution of the inner side effect, no hidden
- * mutation retry, no extra provider calls beyond that declared bound.
- */
-suite.todo(test, "CODE-RUNTIME-02", "waits on typed model-attributed executor correction/heal receipts (Code response cleaning preserves real output should work)");
+// CODE-RUNTIME-02 — Code response cleaning preserves real output should work.
+interface CodeRuntime02ProviderReply {
+  label: string;
+  text: string;
+  cleanedSource: string;
+  actualConsole: string;
+}
 
-/* CODE-RUNTIME-03 — Durable code step resumes without repeat should work.
- * Rows OF-319, OF-320; ARCH-0026 #run-tree; ARCH-0040 #mcp-actor-ceilings.
- *
- * Existing resume shape: execute_code with the SAME run_ref/task resumes its
- * persisted run_id; a waiting result names wait_id/effect/reason/prompt.
- * Re-entry of a completed run exposes zero new steps. read_result retrieves
- * its stored source/output without entering the run or calling a model.
- *
- * Needed semantic typed call: an authorized consent answer bound to this
- * code wait/step, with a receipt for consumption and the unsettled effect's
- * current-authority decision. That HTTP/SDK call is not published.
- * POST /v1/owner/runs/approve approves a reviewed bundle of claim proposals;
- * it does not deliver a code run's SelfDurableWait reply. tasks.answer is a
- * task-input word, not effect authorization. Queue resume is not consent.
- * Never seed WaitDeliveries or call the internal replay/delivery methods.
- *
- * Run the fixture program: commit one keyed named effect, then await consent
- * for another. Observe its public waiting result AND first effect receipt
- * before restart. Approve through the missing typed wait door and re-enter
- * with identical run_ref/task. Compare stored source/results and sink attempts:
- * no completed LLM/code step or first effect repeats, even if the sink itself
- * deduplicates. Retry approval and terminal re-entry: no extra settlement.
- * Repeat the wait with the unsettled effect's grant revoked before approval;
- * current authority must prevent that effect, while the completed first step
- * and its result remain. A same-run resume is not browser-library reuse.
+interface CodeRuntime02Scenario {
+  id: string;
+  inputs: {
+    wireModel: string;
+    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    providerReplies: CodeRuntime02ProviderReply[];
+    exhaustionReply: string;
+  };
+  expected: {
+    actualConsoleValues: string[];
+  };
+}
+
+interface CodeRuntime02Scenarios {
+  scenarios: CodeRuntime02Scenario[];
+}
+
+interface CodeRuntime02Tool {
+  name: string;
+  inputSchema: { properties: { schema_version: { const: string } } };
+}
+
+interface CodeRuntime02Tools {
+  tools: CodeRuntime02Tool[];
+}
+
+interface CodeRuntime02ToolResult<T> {
+  isError: boolean;
+  structuredContent: T;
+}
+
+interface CodeRuntime02ExecuteContent {
+  run_id: string;
+  run_ref: string;
+  steps_run: number;
+  result: { status: string };
+}
+
+interface CodeRuntime02McpErrorData {
+  kind: string;
+  error_code: string;
+  recovery_suggestions: string[];
+}
+
+function codeRuntime02ToolArguments(tools: CodeRuntime02Tools, name: string, fields: Record<string, unknown>): Record<string, unknown> {
+  const tool = tools.tools.find(item => item.name === name);
+  if (!tool) throw new Error(`Required public MCP tool not registered: ${name}`);
+  return {
+    schema_version: tool.inputSchema.properties.schema_version.const,
+    consent: { policy_ref: "policy:code-runtime02", purpose: "code response cleaning preserves real output" },
+    ...fields,
+  };
+}
+
+async function codeRuntime02Execute(engine: EngineFixture, tools: CodeRuntime02Tools, runRef: string, task: string): Promise<CodeRuntime02ExecuteContent> {
+  const reply = await engine.mcp.callTool("execute_code",
+    codeRuntime02ToolArguments(tools, "execute_code", { run_ref: runRef, task })) as CodeRuntime02ToolResult<CodeRuntime02ExecuteContent>;
+  expect(reply.isError).toBe(false);
+  expect(reply.structuredContent.run_ref).toBe(runRef);
+  expect(reply.structuredContent.result.status).toBe("complete");
+  expect(reply.structuredContent.run_id).toMatch(/^[a-f0-9]{32}$/);
+  return reply.structuredContent;
+}
+
+function codeRuntime02ProviderMessages(body: unknown): string {
+  if (!body || typeof body !== "object" || !("messages" in body) || !Array.isArray(body.messages)) {
+    throw new Error("Expected an OpenAI chat request with messages");
+  }
+  return body.messages.map((message: unknown) => {
+    if (!message || typeof message !== "object" || !("content" in message)) {
+      throw new Error("Expected OpenAI chat message content");
+    }
+    const content: unknown = message.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) throw new Error("Expected text-only OpenAI chat content");
+    return content.map((part: unknown) => {
+      if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text"
+        || !("text" in part) || typeof part.text !== "string") {
+        throw new Error("Expected an OpenAI text content part");
+      }
+      return part.text;
+    }).join("\n");
+  }).join("\n");
+}
+
+function codeRuntime02ExpectAbsent(value: unknown): void {
+  if (value !== null && value !== undefined) throw new Error(`Expected an absent optional body, saw ${JSON.stringify(value)}`);
+}
+
+async function codeRuntime02OwnerRefused(owner: PublicHttpClient, actorRef: string, act: () => Promise<unknown>): Promise<void> {
+  let failure: unknown;
+  try { await act(); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  expect(failure.reply.status).toBe(403);
+  expect(failure.error?.code).toBe("FORBIDDEN");
+  const receiptRef = failure.error?.receiptRef;
+  if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
+  if (!receipt) throw new Error("Refusal receipt is not publicly readable by the owner");
+  expect(receipt.receipt_ref).toBe(receiptRef);
+  expect(receipt.transport).toBe("http_facade");
+  expect(receipt.verb).toContain("vault.code.corrections");
+  expect(receipt.actor_ref).toBe(actorRef);
+  expect(receipt.actor_class).toBe("agent");
+  expect(receipt.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
+}
+
+/* Promise: healing fenced and forged-console replies keeps the real program output, attributes each repair to its model under a bounded policy, and fails nested packaging explicitly without executing it.
+ * Doors: MCP execute_code; vault.code.corrections, vault.code.step_evidence, vault.code.model_heal_count; vault.agents.create with pairActor; vault.receipts.get; restart; ScriptedProviders transcripts.
+ * Unproved: off-record session heal-count delta; raw provider evidence retention (no typed read door); nested-packaging recovery beyond one re-entry.
  */
-suite.todo(test, "CODE-RUNTIME-03", "waits on typed host-authorized code-wait resolution and consumption receipts (Durable code step resumes without repeat should work)");
+suite.test(test, "CODE-RUNTIME-02", "Healing fenced and forged-console model replies preserves the real program output, attributes each repair to its model under a bounded policy, and fails nested packaging explicitly without executing it.", async () => {
+  const catalog = await loadFixtures();
+  const scenarios = await catalog.readJson<CodeRuntime02Scenarios>("code-runtime-scenarios");
+  const scenario = scenarios.scenarios.find(row => row.id === "CODE-RUNTIME-02");
+  if (!scenario) throw new Error("Missing CODE-RUNTIME-02 fixture scenario");
+  const replies = scenario.inputs.providerReplies;
+  if (replies.length !== 3) throw new Error("Fixture must pin exactly three provider replies");
+  const [fenced, forged, bare] = [replies[0]!, replies[1]!, replies[2]!];
+  if (fenced.label !== "fenced" || forged.label !== "invented-console" || bare.label !== "valid") {
+    throw new Error("Fixture reply labels moved");
+  }
+  expect(scenario.expected.actualConsoleValues).toEqual([fenced.actualConsole, forged.actualConsole, bare.actualConsole]);
+  const wireModel = scenario.inputs.wireModel;
+  const usage = { inputTokens: scenario.inputs.usage.prompt_tokens, outputTokens: scenario.inputs.usage.completion_tokens };
+  // The fixture replies print but never finish; an unfinished step continues the run, so each
+  // needs a case-authored bare finish as its second model turn. The bare reply finishes itself.
+  const finishFenced = `finish("rt02 fenced run done");`;
+  const finishForged = `finish("rt02 forged run done");`;
+  const finishRecovered = `finish("rt02 exhaustion run recovered");`;
+  const chatStep = (id: string, purpose: string, text: string) => ({
+    id, origin: "code-rt02", role: "generative_reasoner", purpose,
+    request: { method: "POST" as const, path: "/v1/chat/completions", model: wireModel, fields: { stream: false } },
+    response: openaiText(id, wireModel, text, usage),
+  });
+  const providers = await ScriptedProviders.start({ id: "CODE-RUNTIME-02", steps: [
+    chatStep("rt02-fenced", "fenced program reply", fenced.text),
+    chatStep("rt02-fenced-finish", "fenced run completion", finishFenced),
+    chatStep("rt02-forged", "exec-wrapped reply with forged console", forged.text),
+    chatStep("rt02-forged-finish", "forged run completion", finishForged),
+    chatStep("rt02-bare", "bare valid program reply", bare.text),
+    chatStep("rt02-exhaustion", "nested unsupported packaging", scenario.inputs.exhaustionReply),
+    chatStep("rt02-exhaustion-recover", "exhaustion run recovery", finishRecovered),
+  ] });
+  let primaryFailed = false;
+  try {
+    const baseUrl = providers.urls["code-rt02"];
+    if (!baseUrl) throw new Error("Scripted provider origin code-rt02 did not bind");
+    const promptPackage = resolve(import.meta.dir, "../../crates/oneiron/tests/fixtures/prompts");
+    const engine = await EngineFixture.start({
+      id: "CODE-RUNTIME-02",
+      profile,
+      serverConfig: `
+  [models.providers.code-rt02]
+  kind = "local-openai-compat"
+  base_url = ${JSON.stringify(baseUrl)}
+  revision = "e2e-v1"
+  request_compression = false
+  capabilities = ["reasoning"]
+  context_tokens = 131072
+  max_output_tokens = 8192
+
+  [models.roles.generative_reasoner]
+  model = "code-rt02:${wireModel}"
+
+  [models.dreamer]
+  enabled = false
+
+  [models.workflows]
+  enabled = false
+
+  [models.code_mode]
+  prompt_package = ${JSON.stringify(promptPackage)}
+  budget_units = 10000000
+  max_runs = 1
+
+  [models.code_mode.compaction]
+  enabled = false
+
+  [models.code_mode.check]
+  mode = "off"
+  `,
+    });
+    try {
+      const owner = engine.client;
+      const engineModelId = `code-rt02/${wireModel}@e2e-v1`;
+      const policy = { normalization_passes: 1, model_repair_retries: 0 };
+      await engine.mcp.initialize();
+      const tools = await engine.mcp.listTools() as CodeRuntime02Tools;
+      if (!tools.tools.some(tool => tool.name === "execute_code")) throw new Error("execute_code is not listed on this server");
+
+      const first = await codeRuntime02Execute(engine, tools, "rt02-fenced", "Print the fenced executor marker with console.log.");
+      expect(first.steps_run).toBe(2);
+      const second = await codeRuntime02Execute(engine, tools, "rt02-forged", "Print the real executor marker with console.log.");
+      expect(second.steps_run).toBe(2);
+      const third = await codeRuntime02Execute(engine, tools, "rt02-bare", "Print the bare executor marker and finish.");
+      expect(third.steps_run).toBe(1);
+
+      // Exhaustion: nested packaging is refused before any program runs, with no silent retry.
+      const exhaustedArgs = codeRuntime02ToolArguments(tools, "execute_code",
+        { run_ref: "rt02-exhausted", task: "Print the nested executor marker with console.log." });
+      const exhaustedReply = await engine.mcp.rpc("tools/call",
+        { name: "execute_code", arguments: exhaustedArgs, _meta: { "oneiron/invocation": secretHex(16) } });
+      if (!("error" in exhaustedReply)) throw new Error("Nested packaging executed instead of failing explicitly");
+      expect(exhaustedReply.error.code).toBe(-32603);
+      const exhaustedData = exhaustedReply.error.data as CodeRuntime02McpErrorData;
+      expect(exhaustedData.kind).toBe("code_run_failed");
+      expect(exhaustedData.error_code).toBe("code_run_failed");
+      expect(exhaustedData.recovery_suggestions.length).toBeGreaterThan(0);
+      expect(providers.seenFixtureCalls).toHaveLength(6);
+
+      // The bounded failure ends the attempt; the caller's re-entry asks the model again.
+      const recovered = await codeRuntime02Execute(engine, tools, "rt02-exhausted", "Print the nested executor marker with console.log.");
+      expect(recovered.steps_run).toBe(1);
+      expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual([
+        "rt02-fenced", "rt02-fenced-finish", "rt02-forged", "rt02-forged-finish", "rt02-bare",
+        "rt02-exhaustion", "rt02-exhaustion-recover",
+      ]);
+
+      // Second door: each run's correction records, attributed to the configured model.
+      const firstCorrections = await owner.call("vault.code.corrections", { run_ref: first.run_id });
+      expect(firstCorrections.run_ref).toBe(first.run_id);
+      expect(firstCorrections.policy).toEqual(policy);
+      expect(firstCorrections.records).toHaveLength(2);
+      codeRuntime02ExpectAbsent(firstCorrections.next_after_step);
+      const firstHealed = firstCorrections.records[0]!;
+      expect(firstHealed.run_id).toBe(first.run_id);
+      expect(firstHealed.step).toBe(0);
+      expect(firstHealed.attempt).toBe(0);
+      expect(firstHealed.model_id).toBe(engineModelId);
+      expect(firstHealed.repairs).toEqual({
+        trimmed_transport_whitespace: false, stripped_code_fence: true,
+        stripped_exec_wrapper: false, discarded_console_blocks: 0,
+      });
+      expect(firstHealed.outcome).toEqual({ kind: "normalized" });
+      expect(firstHealed.policy).toEqual(policy);
+      expect(firstHealed.model_repair_retries_used).toBe(0);
+      expect(firstHealed.exhausted).toBe(false);
+      if (!firstHealed.checkpoint) throw new Error("Healed step committed no checkpoint");
+      expect(firstHealed.checkpoint.step).toBe(0);
+      expect(firstHealed.checkpoint.state_hash).toMatch(/^[a-f0-9]{64}$/);
+      const firstClean = firstCorrections.records[1]!;
+      expect(firstClean.step).toBe(1);
+      expect(firstClean.attempt).toBe(0);
+      expect(firstClean.model_id).toBe(engineModelId);
+      expect(firstClean.repairs).toEqual({
+        trimmed_transport_whitespace: false, stripped_code_fence: false,
+        stripped_exec_wrapper: false, discarded_console_blocks: 0,
+      });
+      expect(firstClean.outcome).toEqual({ kind: "clean" });
+      expect(firstClean.exhausted).toBe(false);
+      if (!firstClean.checkpoint) throw new Error("Follow-up step committed no checkpoint");
+
+      const secondCorrections = await owner.call("vault.code.corrections", { run_ref: second.run_id });
+      expect(secondCorrections.records).toHaveLength(2);
+      const secondHealed = secondCorrections.records[0]!;
+      expect(secondHealed.step).toBe(0);
+      expect(secondHealed.attempt).toBe(0);
+      expect(secondHealed.model_id).toBe(engineModelId);
+      expect(secondHealed.repairs).toEqual({
+        trimmed_transport_whitespace: false, stripped_code_fence: false,
+        stripped_exec_wrapper: true, discarded_console_blocks: 1,
+      });
+      expect(secondHealed.outcome).toEqual({ kind: "normalized" });
+      expect(secondHealed.exhausted).toBe(false);
+      if (!secondHealed.checkpoint) throw new Error("Forged-console step committed no checkpoint");
+      expect(secondCorrections.records[1]!.outcome).toEqual({ kind: "clean" });
+
+      const thirdCorrections = await owner.call("vault.code.corrections", { run_ref: third.run_id });
+      expect(thirdCorrections.records).toHaveLength(1);
+      const thirdClean = thirdCorrections.records[0]!;
+      expect(thirdClean.step).toBe(0);
+      expect(thirdClean.attempt).toBe(0);
+      expect(thirdClean.model_id).toBe(engineModelId);
+      expect(thirdClean.outcome).toEqual({ kind: "clean" });
+      expect(thirdClean.exhausted).toBe(false);
+      if (!thirdClean.checkpoint) throw new Error("Bare step committed no checkpoint");
+
+      const fourthCorrections = await owner.call("vault.code.corrections", { run_ref: recovered.run_id });
+      expect(fourthCorrections.run_ref).toBe(recovered.run_id);
+      expect(fourthCorrections.records).toHaveLength(2);
+      const rejected = fourthCorrections.records[0]!;
+      expect(rejected.step).toBe(0);
+      expect(rejected.attempt).toBe(0);
+      expect(rejected.model_id).toBe(engineModelId);
+      expect(rejected.repairs).toEqual({
+        trimmed_transport_whitespace: false, stripped_code_fence: false,
+        stripped_exec_wrapper: true, discarded_console_blocks: 0,
+      });
+      if (rejected.outcome.kind !== "rejected") throw new Error("Nested packaging was not recorded as rejected");
+      expect(rejected.outcome.reason.length).toBeGreaterThan(0);
+      expect(rejected.outcome.reason).not.toContain("MUST-NOT-EXECUTE");
+      expect(rejected.policy).toEqual(policy);
+      expect(rejected.model_repair_retries_used).toBe(0);
+      expect(rejected.exhausted).toBe(true);
+      codeRuntime02ExpectAbsent(rejected.checkpoint);
+      const recoveredClean = fourthCorrections.records[1]!;
+      expect(recoveredClean.step).toBe(0);
+      expect(recoveredClean.attempt).toBe(1);
+      expect(recoveredClean.outcome).toEqual({ kind: "clean" });
+      if (!recoveredClean.checkpoint) throw new Error("Recovery step committed no checkpoint");
+
+      // Second door: stored step bodies hold the cleaned program and the real console only.
+      const firstEvidence = await owner.call("vault.code.step_evidence", { run_ref: first.run_id });
+      if (!firstEvidence) throw new Error("First run kept no step evidence");
+      expect(firstEvidence.run_ref).toBe(first.run_id);
+      expect(firstEvidence.completed_steps).toBe(2);
+      expect(firstEvidence.policy).toEqual(policy);
+      expect(firstEvidence.steps).toHaveLength(2);
+      codeRuntime02ExpectAbsent(firstEvidence.next_after_step);
+      const firstStep = firstEvidence.steps[0]!;
+      expect(firstStep.step).toBe(0);
+      if (!firstStep.state_hash) throw new Error("First step committed no state hash");
+      expect(firstStep.state_hash).toMatch(/^[a-f0-9]{64}$/);
+      if (!firstStep.source) throw new Error("First step kept no source");
+      expect(firstStep.source.text).toBe(fenced.cleanedSource);
+      expect(firstStep.source.withheld).toBe(false);
+      expect(firstStep.source.complete).toBe(true);
+      codeRuntime02ExpectAbsent(firstStep.executed_js);
+      if (!firstStep.observation) throw new Error("First step kept no observation");
+      expect(firstStep.observation.text).toContain(fenced.actualConsole);
+      expect(firstStep.observation.withheld).toBe(false);
+      codeRuntime02ExpectAbsent(firstStep.console);
+      expect(firstStep.corrections).toHaveLength(1);
+      const firstFollowUp = firstEvidence.steps[1]!;
+      if (!firstFollowUp.source || !firstFollowUp.observation) throw new Error("Follow-up step kept no bodies");
+      expect(firstFollowUp.source.text).toBe(finishFenced);
+      expect(firstFollowUp.observation.text).toContain("rt02 fenced run done");
+      codeRuntime02ExpectAbsent(firstFollowUp.console);
+
+      const secondEvidence = await owner.call("vault.code.step_evidence", { run_ref: second.run_id });
+      if (!secondEvidence) throw new Error("Second run kept no step evidence");
+      expect(secondEvidence.completed_steps).toBe(2);
+      const secondStep = secondEvidence.steps[0]!;
+      if (!secondStep.source || !secondStep.observation) throw new Error("Forged-console step kept no bodies");
+      expect(secondStep.source.text).toBe(forged.cleanedSource);
+      expect(secondStep.observation.text).toContain(forged.actualConsole);
+      expect(secondStep.observation.text).not.toContain("INVENTED-CONSOLE-999");
+      codeRuntime02ExpectAbsent(secondStep.console);
+      expect(JSON.stringify(secondEvidence)).not.toContain("INVENTED-CONSOLE-999");
+
+      const thirdEvidence = await owner.call("vault.code.step_evidence", { run_ref: third.run_id });
+      if (!thirdEvidence) throw new Error("Third run kept no step evidence");
+      expect(thirdEvidence.completed_steps).toBe(1);
+      const thirdStep = thirdEvidence.steps[0]!;
+      if (!thirdStep.source || !thirdStep.observation || !thirdStep.console) throw new Error("Bare step kept no bodies");
+      expect(thirdStep.source.text).toBe(bare.cleanedSource);
+      expect(thirdStep.observation.text).toContain("cleaned journey done");
+      expect(thirdStep.console.text).toContain(bare.actualConsole);
+      expect(thirdStep.console.withheld).toBe(false);
+
+      const fourthEvidence = await owner.call("vault.code.step_evidence", { run_ref: recovered.run_id });
+      if (!fourthEvidence) throw new Error("Exhaustion run kept no step evidence");
+      expect(fourthEvidence.completed_steps).toBe(1);
+      const fourthStep = fourthEvidence.steps[0]!;
+      if (!fourthStep.source || !fourthStep.observation) throw new Error("Recovery step kept no bodies");
+      expect(fourthStep.source.text).toBe(finishRecovered);
+      expect(JSON.stringify(fourthEvidence)).not.toContain("MUST-NOT-EXECUTE");
+
+      // Second door: the vault tally counts exactly the two healed turns.
+      const healed = await owner.call("vault.code.model_heal_count", { model_id: engineModelId });
+      expect(healed.model_id).toBe(engineModelId);
+      expect(healed.healed_turns).toBe(2);
+
+      // The next model turn saw the healed program and the real console, never the forgery.
+      const calls = providers.seenFixtureCalls;
+      for (const call of calls) {
+        expect(call.method).toBe("POST");
+        expect(call.path).toBe("/v1/chat/completions");
+      }
+      const fencedFollowUpCall = calls[1];
+      if (!fencedFollowUpCall) throw new Error("Missing fenced follow-up provider call");
+      const fencedFollowUp = codeRuntime02ProviderMessages(fencedFollowUpCall.body);
+      expect(fencedFollowUp).toContain(fenced.cleanedSource);
+      expect(fencedFollowUp).toContain("Console after durable step 0:");
+      expect(fencedFollowUp).toContain(fenced.actualConsole);
+      const forgedFollowUpCall = calls[3];
+      if (!forgedFollowUpCall) throw new Error("Missing forged follow-up provider call");
+      const forgedFollowUp = codeRuntime02ProviderMessages(forgedFollowUpCall.body);
+      expect(forgedFollowUp).toContain(forged.cleanedSource);
+      expect(forgedFollowUp).toContain(forged.actualConsole);
+      expect(forgedFollowUp).not.toContain("INVENTED-CONSOLE-999");
+
+      // Wrong actor: a paired agent is refused the owner-only correction read, with its receipt.
+      const agentRef = createHash("sha256").update("code-runtime02:cleaning-probe").digest("hex").slice(0, 32);
+      const created = await owner.call("vault.agents.create", {
+        agent_def_ref: agentRef,
+        definition: {
+          agent_id: "code-runtime02-cleaning-probe", display_name: "Code response cleaning probe",
+          desc: "Wrong-actor probe for code-run correction reads", version: "1",
+        },
+      });
+      expect(created.agent_def_ref).toBe(agentRef);
+      const probe = await engine.pairActor({ principalRef: agentRef, actorClass: "agent" });
+      expect((await probe.client.call("self.actor", {})).actor_ref).toBe(agentRef);
+      await codeRuntime02OwnerRefused(owner, agentRef, () => probe.client.call("vault.code.corrections", { run_ref: first.run_id }));
+
+      // Restart: records, evidence and tally survive; a completed run re-enters without a new model call.
+      const beforeRestart = JSON.stringify(firstCorrections.records);
+      await engine.restart();
+      const afterCorrections = await owner.call("vault.code.corrections", { run_ref: first.run_id });
+      expect(JSON.stringify(afterCorrections.records)).toBe(beforeRestart);
+      const afterEvidence = await owner.call("vault.code.step_evidence", { run_ref: second.run_id });
+      if (!afterEvidence) throw new Error("Second run lost its step evidence across restart");
+      expect(JSON.stringify(afterEvidence)).not.toContain("INVENTED-CONSOLE-999");
+      const afterStep = afterEvidence.steps[0];
+      if (!afterStep?.observation) throw new Error("Second run lost its observation across restart");
+      expect(afterStep.observation.text).toContain(forged.actualConsole);
+      const afterHealed = await owner.call("vault.code.model_heal_count", { model_id: engineModelId });
+      expect(afterHealed.healed_turns).toBe(2);
+      const reentered = await codeRuntime02Execute(engine, tools, "rt02-fenced", "Print the fenced executor marker with console.log.");
+      expect(reentered.run_id).toBe(first.run_id);
+      expect(providers.seenFixtureCalls).toHaveLength(7);
+      await engine.artifacts.json("code-runtime02-corrections.json", { first: firstCorrections, healed });
+    } finally {
+      await engine.close();
+    }
+  } catch (error) {
+    primaryFailed = true;
+    throw error;
+  } finally {
+    try { await providers.close(); } catch (error) { if (!primaryFailed) throw error; }
+  }
+});
+
+// CODE-RUNTIME-03 — Durable code step resumes without repeat should work.
+interface CodeRuntime03ScenarioInput {
+  runRef: string;
+  task: string;
+  effects: { key: string; body: string; result: string }[];
+  negativeRunRef: string;
+  consent: string;
+}
+interface CodeRuntime03Scenario {
+  id: string;
+  inputs: CodeRuntime03ScenarioInput;
+}
+interface CodeRuntime03Scenarios {
+  scenarios: CodeRuntime03Scenario[];
+}
+interface CodeRuntime03Tool {
+  name: string;
+  inputSchema: { properties: { schema_version: { const: string } } };
+}
+interface CodeRuntime03Tools {
+  surfaceMode: string;
+  tools: CodeRuntime03Tool[];
+}
+interface CodeRuntime03ToolResult<T> {
+  isError: boolean;
+  structuredContent: T;
+}
+interface CodeRuntime03RunStep {
+  seq: number;
+  effect: string;
+  outcome: unknown;
+}
+interface CodeRuntime03RunCard {
+  handle: string;
+  name: string | null;
+  preview: string;
+  bytes: number;
+}
+interface CodeRuntime03ExecuteContent {
+  run_ref: string;
+  run_id: string;
+  resume: { tool: string; run_ref: string; run_id: string; terminal: boolean };
+  steps_run: number;
+  bridge_calls: number;
+  steps: CodeRuntime03RunStep[];
+  result: {
+    status: string;
+    wait?: { kind: string; wait_id: string; effect: string; reason: string; prompt: string | null };
+  };
+  results: CodeRuntime03RunCard[];
+  resultsCount: number;
+}
+interface CodeRuntime03ReadContent {
+  run_ref: string;
+  run_id: string;
+  ref: string;
+  facet: string;
+  result: unknown;
+}
+
+const codeRuntime03Hex = /^[0-9a-f]{32}$/;
+
+function codeRuntime03ToolArguments(
+  tools: CodeRuntime03Tools,
+  name: string,
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const tool = tools.tools.find(item => item.name === name);
+  if (!tool) throw new Error(`Required public MCP tool not registered: ${name}`);
+  return {
+    schema_version: tool.inputSchema.properties.schema_version.const,
+    consent: { policy_ref: "policy:code-runtime-03", purpose: "durable code step resume without repeat" },
+    ...fields,
+  };
+}
+
+async function codeRuntime03CallTool<T>(
+  mcp: McpClient,
+  tools: CodeRuntime03Tools,
+  name: string,
+  fields: Record<string, unknown>,
+): Promise<T> {
+  const reply = await mcp.callTool(name, codeRuntime03ToolArguments(tools, name, fields)) as CodeRuntime03ToolResult<T>;
+  expect(reply.isError).toBe(false);
+  expect(reply.structuredContent).toBeDefined();
+  return reply.structuredContent;
+}
+
+function codeRuntime03SliceText(content: CodeRuntime03ReadContent): string {
+  if (typeof content.result !== "object" || content.result === null || !("output" in content.result)) {
+    throw new Error(`read_result slice refused: ${JSON.stringify(content.result)}`);
+  }
+  const output = (content.result as { output: unknown }).output;
+  if (typeof output !== "object" || output === null || !("text" in output)) {
+    throw new Error(`read_result slice has no text page: ${JSON.stringify(output)}`);
+  }
+  const text = (output as { text: unknown }).text;
+  if (typeof text !== "string") throw new Error("read_result slice text is not a string");
+  return text;
+}
+
+function codeRuntime03AskProgram(ownerHex: string, turnHex: string, firstMarker: string): string {
+  const spec = {
+    intent_key: "code-runtime-03/second-parcel",
+    who: { people: [ownerHex] },
+    what: {
+      reference: { turn: turnHex },
+      revision: 1,
+      options: {
+        deliver: { label: "Deliver the second parcel", then: null },
+        hold: { label: "Hold the second parcel", then: null },
+      },
+      context_refs: [],
+      label: "Deliver the second parcel?",
+      outcome_binding: null,
+    },
+    rec: null,
+    decide: "first",
+  };
+  return `console.log(${JSON.stringify(firstMarker)}); const asked = await ask(${JSON.stringify(spec)}); const group = asked.output.handle.group_ref; await wait({ handle: { group_ref: group }, step_key: "code-runtime-03-question" });`;
+}
+
+function codeRuntime03ResumeProgram(groupHex: string, secondMarker: string): string {
+  return `const settled = await wait(${JSON.stringify({ handle: { group_ref: groupHex }, step_key: "code-runtime-03-question" })}); const ready = settled.output.Ready; finish(JSON.stringify({ picked: ready.picked, marker: ${JSON.stringify(secondMarker)} }));`;
+}
+
+/* CODE-RUNTIME-03 — promise: a code run parked on a question resumes after the
+ * owner's answer without repeating completed steps. Doors: MCP execute_code
+ * (act + re-enter), MCP read_result (stored-output read-back), facade
+ * tasks.answer (owner word + wrong-actor refusal), facade vault.receipts.get
+ * (refusal receipt), CLI token agent (second principal), engine kill/restart.
+ * Stays unproved: the CodeConsent connector-effect approval/consumption path
+ * (vault.code.waits.resolve/receipt exist but no loopback connector-pack plus
+ * scripted MCP-wire fixture exists in the suite); grant revocation before
+ * approval (same fixture; this subset touches no grant).
+ */
+suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question without repeating completed steps", async () => {
+  const catalog = await loadFixtures();
+  const scenarios = await catalog.readJson<CodeRuntime03Scenarios>("code-runtime-scenarios");
+  const scenario = scenarios.scenarios.find(row => row.id === "CODE-RUNTIME-03");
+  if (!scenario) throw new Error("CODE-RUNTIME-03 scenario missing from code-runtime-scenarios");
+  const runRef = scenario.inputs.runRef;
+  const task = scenario.inputs.task;
+  const firstEffect = scenario.inputs.effects[0];
+  const secondEffect = scenario.inputs.effects[1];
+  if (!firstEffect || !secondEffect) throw new Error("CODE-RUNTIME-03 fixture effects missing");
+  const firstMarker = `first parcel recorded: ${firstEffect.body}`;
+  const secondMarker = secondEffect.body;
+  const optionDeliver = "deliver";
+
+  const providers = await ScriptedProviders.start({ id: "code-runtime-03", origins: ["codegen"], steps: [] });
+  let primaryFailed = false;
+  try {
+    const baseUrl = providers.urls["codegen"];
+    if (!baseUrl) throw new Error("Scripted provider codegen origin did not bind");
+    const engine = await EngineFixture.start({ id: "CODE-RUNTIME-03", profile, serverConfig: `
+  [models.providers.codegen]
+  kind = "local-openai-compat"
+  base_url = ${JSON.stringify(baseUrl)}
+  revision = "e2e-v1"
+  request_compression = false
+  capabilities = ["reasoning"]
+  context_tokens = 131072
+  max_output_tokens = 8192
+  [models.roles.generative_reasoner]
+  model = "codegen:code-runtime-03"
+  [models.code_mode]
+  prompt_package = ${JSON.stringify(resolve(import.meta.dir, "../../crates/oneiron/tests/fixtures/prompts"))}
+  budget_units = 10000000
+  max_runs = 1
+  [models.code_mode.compaction]
+  enabled = false
+  [models.code_mode.check]
+  mode = "off"
+  [models.workflows]
+  enabled = false
+  [models.dreamer]
+  enabled = false
+  ` });
+    try {
+      const witnessed = await engine.client.call("vault.witness", {
+        conversation_ref: "03101010101010101010101010101010",
+        turn_ref: "03202020202020202020202020202020",
+        messages: [{ author: "user", message_type: "dialogue",
+          content: "Record the first parcel, then ask before delivering the second.", is_visible: true, order: 0 }],
+      } satisfies FacadeInput<"vault.witness">);
+      const turnHex = witnessed.turn_id;
+      expect(turnHex).toMatch(codeRuntime03Hex);
+      const ownerHex = engine.pairedActor.principalRef;
+      const messageRef = witnessed.message_short_ids[0];
+      if (!messageRef) throw new Error("Witness returned no message reference");
+      const message = await engine.client.call("vault.get", { entity_ref: messageRef });
+      expect(message.value?.kind).toBe("MESSAGE");
+      expect(message.value?.body).toEqual(expect.objectContaining({
+        content: "Record the first parcel, then ask before delivering the second.",
+      }));
+
+      await engine.mcp.initialize();
+      const tools = await engine.mcp.request<CodeRuntime03Tools>("tools/list");
+      expect(tools.tools.map(tool => tool.name)).toContain("execute_code");
+      expect(tools.tools.map(tool => tool.name)).toContain("read_result");
+
+      providers.enqueue({ id: "code-runtime-03-step-1", origin: "codegen", role: "generative_reasoner",
+        purpose: "ask then wait for the second parcel",
+        request: { method: "POST" as const, path: "/v1/chat/completions", model: "code-runtime-03", fields: { stream: false } },
+        response: openaiText("code-runtime-03-step-1", "code-runtime-03",
+          codeRuntime03AskProgram(ownerHex, turnHex, firstMarker), { inputTokens: 512, outputTokens: 128 }) });
+
+      const parked = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
+      expect(parked.run_ref).toBe(runRef);
+      expect(parked.run_id).toMatch(codeRuntime03Hex);
+      expect(parked.resume.terminal).toBe(false);
+      expect(parked.resume.run_ref).toBe(runRef);
+      expect(parked.steps_run).toBe(1);
+      expect(parked.result.status).toBe("waiting");
+      const wait = parked.result.wait;
+      expect(wait).toBeDefined();
+      expect(wait!.kind).toBe("durable_wait");
+      expect(wait!.wait_id).toMatch(codeRuntime03Hex);
+      expect(wait!.effect).toBe("tasks.wait");
+      expect(wait!.reason).toBe("peer_result");
+      const groupHex = wait!.wait_id;
+      const parkedAsks = parked.steps.filter(row => row.effect === "tasks.ask");
+      expect(parkedAsks).toHaveLength(1);
+      expect(JSON.stringify(parkedAsks[0]!.outcome)).toContain(groupHex);
+      expect(parked.resultsCount).toBe(1);
+      expect(parked.results).toHaveLength(1);
+      const firstCard = parked.results[0]!;
+      const firstRef = firstCard.name ?? firstCard.handle;
+      expect(firstCard.bytes).toBeGreaterThan(0);
+      const firstSlice = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: firstRef, facet: "slice", input: { bytes: [0] } });
+      expect(firstSlice.run_id).toBe(parked.run_id);
+      const firstText = codeRuntime03SliceText(firstSlice);
+      expect(firstText).toContain(firstMarker);
+
+      // SIGKILL plus restart at the wait boundary doubles as the wrong-actor setup: mint the agent while stopped.
+      await engine.kill();
+      const agentKey = await engine.cli.run(["token", "agent", "--name", "code-runtime-03-outsider", "--tier", "full-access",
+        "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, "code-runtime-03-outsider.credential")],
+        undefined, undefined, true);
+      expect(agentKey.exitCode).toBe(0);
+      const minted = JSON.parse(agentKey.stdout) as { principal_ref: string; actor_class: string };
+      expect(minted.actor_class).toBe("agent");
+      expect(minted.principal_ref).toMatch(codeRuntime03Hex);
+      await engine.restart();
+      const outsider = await engine.pairActor({ principalRef: minted.principal_ref, actorClass: "agent",
+        scope: ["core:read", "core:propose", "core:write"] });
+
+      const waitingAgain = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
+      expect(waitingAgain.result.status).toBe("waiting");
+      expect(waitingAgain.result.wait!.wait_id).toBe(groupHex);
+      expect(waitingAgain.steps_run).toBe(0);
+      expect(waitingAgain.run_id).toBe(parked.run_id);
+      const againAsks = waitingAgain.steps.filter(row => row.effect === "tasks.ask");
+      expect(againAsks).toHaveLength(1);
+      expect(JSON.stringify(againAsks[0]!.outcome)).toContain(groupHex);
+      expect(providers.seenFixtureCalls).toHaveLength(1);
+
+      // Wrong actor: a non-member agent answers, the engine refuses, and the owner reads the refusal receipt.
+      let refusal: PublicHttpError | undefined;
+      try {
+        await outsider.client.call("tasks.answer", { handle: { group_ref: groupHex },
+          word: { result_ref: turnHex, option: "hold" } });
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        refusal = error;
+      }
+      expect(refusal).toBeDefined();
+      expect(refusal!.reply.status).toBe(400);
+      expect(refusal!.error?.code).toBe("BAD_REQUEST");
+      const receiptRef = refusal!.error?.receiptRef;
+      if (typeof receiptRef !== "string") throw new Error("Refusal carries no receiptRef");
+      expect(refusal!.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+      const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
+      expect(receipt).not.toBeNull();
+      expect(receipt!.verb).toBe("v1/core/facade/tasks.answer");
+      expect(receipt!.actor_class).toBe("agent");
+      expect(receipt!.actor_ref).toBe(minted.principal_ref);
+      expect(receipt!.outcome).toEqual({ refused: { code: "BAD_REQUEST" } });
+
+      // The refused word changed nothing: still waiting on the same wait.
+      const stillWaiting = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
+      expect(stillWaiting.result.status).toBe("waiting");
+      expect(stillWaiting.result.wait!.wait_id).toBe(groupHex);
+      expect(stillWaiting.steps_run).toBe(0);
+
+      providers.enqueue({ id: "code-runtime-03-step-2", origin: "codegen", role: "generative_reasoner",
+        purpose: "read the delivered answer and finish",
+        request: { method: "POST" as const, path: "/v1/chat/completions", model: "code-runtime-03", fields: { stream: false } },
+        response: openaiText("code-runtime-03-step-2", "code-runtime-03",
+          codeRuntime03ResumeProgram(groupHex, secondMarker), { inputTokens: 512, outputTokens: 128 }) });
+      const answer = await engine.client.call("tasks.answer", { handle: { group_ref: groupHex },
+        word: { result_ref: turnHex, option: optionDeliver } });
+      expect(answer.actor_ref).toBe(ownerHex);
+      expect(answer.word_ref).toMatch(codeRuntime03Hex);
+
+      const resumed = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
+      expect(resumed.result.status).toBe("complete");
+      expect(resumed.resume.terminal).toBe(true);
+      // A background re-entry may complete first. Assert the durable step
+      // count below rather than which caller happened to perform the resume.
+      expect(resumed.run_id).toBe(parked.run_id);
+      const resumedAsks = resumed.steps.filter(row => row.effect === "tasks.ask");
+      expect(resumedAsks).toHaveLength(1);
+      expect(JSON.stringify(resumedAsks[0]!.outcome)).toContain(groupHex);
+      const waits = resumed.steps.filter(row => row.effect === "tasks.wait");
+      expect(waits.length).toBeGreaterThan(0);
+      expect(waits.some(row => JSON.stringify(row.outcome).includes(groupHex))).toBe(true);
+      expect(waits.some(row => JSON.stringify(row.outcome).includes(`"picked":"${optionDeliver}"`))).toBe(true);
+      expect(resumed.resultsCount).toBe(2);
+      const evidence = await engine.client.call("vault.code.step_evidence", { run_ref: parked.run_id });
+      if (!evidence) throw new Error("Resumed run has no public step evidence");
+      expect(evidence.completed_steps).toBe(2);
+      expect(evidence.steps).toHaveLength(2);
+      expect(evidence.steps[0]!.source?.text).toBe(codeRuntime03AskProgram(ownerHex, turnHex, firstMarker));
+      expect(evidence.steps[1]!.source?.text).toBe(codeRuntime03ResumeProgram(groupHex, secondMarker));
+      expect(providers.seenFixtureCalls).toHaveLength(2);
+      const kept = resumed.results.find(card => (card.name ?? card.handle) === firstRef);
+      expect(kept).toBeDefined();
+      expect(kept!.preview).toBe(firstCard.preview);
+      const secondCard = resumed.results.find(card => (card.name ?? card.handle) !== firstRef);
+      expect(secondCard).toBeDefined();
+      const secondRef = secondCard!.name ?? secondCard!.handle;
+      const secondSlice = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: secondRef, facet: "slice", input: { bytes: [0] } });
+      const secondText = codeRuntime03SliceText(secondSlice);
+      expect(secondText).toContain(`"picked":"${optionDeliver}"`);
+      expect(secondText).toContain(secondMarker);
+      const firstAgain = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: firstRef, facet: "slice", input: { bytes: [0] } });
+      expect(codeRuntime03SliceText(firstAgain)).toBe(firstText);
+
+      // Terminal re-entry: zero new steps, identical stored outputs, no new provider call.
+      const terminal = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
+      expect(terminal.result.status).toBe("complete");
+      expect(terminal.steps_run).toBe(0);
+      expect(terminal.resultsCount).toBe(2);
+      expect(terminal.results.map(card => card.name ?? card.handle).sort()).toEqual(resumed.results.map(card => card.name ?? card.handle).sort());
+      expect(terminal.results.map(card => card.preview).sort()).toEqual(resumed.results.map(card => card.preview).sort());
+      expect(providers.seenFixtureCalls).toHaveLength(2);
+
+      await engine.restart();
+      const afterRestart = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: secondRef, facet: "slice", input: { bytes: [0] } });
+      expect(codeRuntime03SliceText(afterRestart)).toBe(secondText);
+      const firstAfterRestart = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: firstRef, facet: "slice", input: { bytes: [0] } });
+      expect(codeRuntime03SliceText(firstAfterRestart)).toBe(firstText);
+    } finally {
+      await engine.close();
+    }
+  } catch (error) {
+    primaryFailed = true;
+    throw error;
+  } finally {
+    try { await providers.close(); } catch (error) { if (!primaryFailed) throw error; }
+  }
+});
 
 /* CODE-RUNTIME-04 — Three external executor shapes should work.
  * Rows OF-426, OF-385; ARCH-0026 #run-tree; ARCH-0079 #work.
@@ -159,91 +880,435 @@ suite.todo(test, "CODE-RUNTIME-03", "waits on typed host-authorized code-wait re
  */
 suite.todo(test, "CODE-RUNTIME-04", "waits on typed BYOA dispatch/exhaust calls and A2A protocol attachment (Three external executor shapes should work)");
 
+// CODE-RUNTIME-05 — Browser connector action consent should work.
 /* CODE-RUNTIME-05 — Browser connector action consent should work.
- * Rows OF-550, OF-523; ARCH-0040 #mcp-actor-ceilings; ARCH-0053 #r4b-hubs.
- *
- * Built code-mode shapes (not tools/list rows or HTTP/SDK facade calls):
- *   self.browser.open({url}) -> ObservationPage
- *   self.browser.find({role?, name?, cursor?}) -> {rows, next?, partial?}
- *   self.browser.type({ref, text, clear?}) -> ObservationPage
- *   self.browser.click({ref}) -> ObservationPage
- *   self.browser.batch({subgoal?, steps, until_ms?, no_model?}) -> BatchOutput
- * ObservationPage names url/title and receipt; BatchOutput has status,
- * completed, failed_step?, receipts? and observation?. An EffectReceipt names
- * seq/verb/url/title/target/target_name/effect_class/press/screenshot evidence.
- * Preserve these typed shapes; never invent a generic browser RPC route.
- *
- * Missing: generated typed HTTP/SDK browser calls and action-class standing
- * grant author/answer calls for per-send, reviewed-batch and no-press grants.
- * Main consumes StandingConsentGrant::Action to set browser press policy but
- * publishes no typed author/answer door for those grants. Browser takeover
- * endpoints are real; a person's input/takeover is not a consent grant.
- *
- * Activate only on the contained Linux host with the real installed browser
- * pack, verified guest connection and loopback site. Find refs in the current
- * observation, never hard-code engine refs. Exercise read and scripted sends
- * under all three explicit owner grants. Count site submissions independently
- * and inspect every effect's page/target/class/press/receipt. Exhaust a reviewed
- * batch, then request out-of-grant publish: it opens the existing Ask, delivers
- * nothing before the holder's answer and never inherits click authority from
- * read access. Every effect in a batch still has its own gate/receipt.
+ * Promise: a run's browser sends need the owner's action-class consent: reads and
+ *   scripted sends run under explicit per-send, reviewed-batch and standing grants, every
+ *   effect carries its own gate and receipt, an exhausted batch and an out-of-grant publish
+ *   open the existing Ask and deliver nothing before the holder's answer, and read access
+ *   never inherits click authority.
+ * Doors traced present (typed verb rows plus routed host doors; see CODE-RUNTIME-05.report.md):
+ *   self.browser.open/find/type/click/batch as LiveRunRequest host doors, self.run.attach plus
+ *   POST /v1/core/live-runs/{run}/attach, vault.consent.create_standing_grant with an Action
+ *   bound, vault.consent.registry, tasks.answer, vault.code.waits.resolve/receipt.
+ * Stays unproved (all of it): no bound [browser] container guest exists behind the E2E suite,
+ *   so no browser consent flow can run (browser_unbound once pack/connection checks pass),
+ *   and no send, wait or consent-bearing restart read-back can be proved; the guest's only fixture origin is also unreachable from a
+ *   loopback in-test site (fixture dir hardcoded None, forward targets must sit off loopback).
  */
-suite.todo(test, "CODE-RUNTIME-05", "waits on typed browser HTTP/SDK calls and action-class grant author/answer doors (Browser connector action consent should work)");
+suite.todo(test, "CODE-RUNTIME-05", "waits on a bound [browser] container guest and a guest-reachable fixture site with an independent submission recorder for the self.browser.* host doors (Browser connector action consent should work)");
 
+// CODE-RUNTIME-06 — Verified browser workflow reuse should work.
 /* CODE-RUNTIME-06 — Verified browser workflow reuse should work.
- * Row OF-598; ARCH-0053 #r4-lifecycle; CUA-PACK replay-library ruling.
- *
- * Built code-mode library shapes, absent from the HTTP/Oneiron SDK catalog:
- *   self.browser.library.propose({subgoal, params?, steps, postcondition, args?})
- *     -> {admitted, workflow?, refused_by?:"solved"|"replay", unmet?, replay?}
- *   self.browser.library.find({site?, subgoal?}) -> {site, workflows}
- *   self.browser.library.run({workflow, args?})
- *     -> {workflow, status:"done"|"NEEDS_AGENT"|"NEEDS_YOU", unmet?, batch}
- * postcondition is ExpectInput[]: {ref?, role?, name?, value?, absent?}.
- * G01 still requires their typed HTTP/SDK calls, not a generic execute-code
- * escape. Do not call the internal browser library store or fabricate TASKs.
- *
- * Learn on the Linux loopback site with an independently recorded submission.
- * First show that model-authored done without that success cannot admit a
- * workflow; also refuse a solved candidate whose no-model replay fails.
- * Admit the successful parameterized program only after independent success
- * AND a successful model-free validation replay. Reuse with a second argument:
- * a new live submission, no provider calls inside replay, still gated effects.
- * Reusing old bridge answers is not this proof. Change the site's required
- * field/button and success predicate, then replay: no false done or claimed
- * success, explicit unmet pre/postcondition and handback to the planner.
- * Count validation replays separately from reuse and inspect durable library
- * handles. The normal standing grant is never expanded by learning/replay.
+ * Promise: a solved browser run's program joins the replay library only after independent
+ *   site success AND a no-model validation replay meets its postcondition; reuse with new
+ *   arguments performs a new live submission with no model calls inside replay and
+ *   still-gated effects; on a changed site replay reports unmet conditions and hands back
+ *   instead of false done; learning and replay never expand the standing grant.
+ * Doors traced present (typed verb rows plus routed host doors; see CODE-RUNTIME-06.report.md):
+ *   self.browser.library.propose/find/run as LiveRunRequest host doors, POST
+ *   /v1/core/live-runs/{run}/attach, vault.packs.setup.prepare/answer/verify, and
+ *   vault.consent.create_standing_grant with an Action bound.
+ * Stays unproved (all of it): no bound [browser] container guest exists behind the E2E suite,
+ *   so no library flow can run (browser_unbound once pack/connection checks pass), and no
+ *   admission, live reuse, grant-refusal contrast or restart read-back can be proved; the guest's only fixture origin is also unreachable from a
+ *   loopback in-test site (fixture dir hardcoded None, forward targets must sit off loopback).
  */
-suite.todo(test, "CODE-RUNTIME-06", "waits on typed self.browser.library.propose/find/run HTTP and SDK calls (Verified browser workflow reuse should work)");
+suite.todo(test, "CODE-RUNTIME-06", "waits on a bound [browser] container guest behind the verified browser-guest connection and standing action grants, plus a guest-reachable fixture site with an independent submission recorder, for the self.browser.library.propose/find/run host doors (Verified browser workflow reuse should work)");
 
-/* CODE-RUNTIME-07 — Graph filesystem scope and pushdown should work.
- * Rows OF-355, OF-324; ARCH-0050 #tested-pointer; ARCH-0004 #access.
- *
- * Canon's typed semantic door is mount(ref), ref = live head | fork hash |
- * repo snapshot. It returns the scoped file/query face at that reference;
- * list/read/search/coreutils preserve that scope and pinned walk throughout.
- * Its HTTP/SDK/MCP/CLI binding is not published; do not invent its DTO fields.
- *
- * GET /v1/owner/graph-fs DOES exist, with query
- *   {path, op?:ls|cat|head|wc|find|grep|readlink, cursor?, pattern?, recursive?,
- *    by_time?, newer_than?, lines?}
- *   -> {path, output, encoding:"utf8"|"base64", next_cursor?, plan?}
- * That owner-only current tree has no mount/ref parameter; it is not the
- * assigned actor-scoped historical mount. The guest's nine graph-FS imports
- * are not linked. Generic cli api raw is not a designed mount CLI binding.
- *
- * Publicly create visible and owner-excluded project content, capture old
- * tested reference, edit the visible content and mount each named ref. Compare
- * cat/ls/find/grep/head/wc and structured reads against the authored files and
- * counts. Check old bytes remain old, current bytes are new, and one paged walk
- * never changes its ref. Attempt ../ traversal and search for the private
- * marker. Hidden entries, counts and snippets must match an absent control;
- * out-of-scope-but-known may be labelled, OWNER-EXCLUDED must be wholly absent.
- * Check equivalent filtered results for pushdown and ordinary reads, not a
- * timing benchmark or an engine-derived expected query plan.
+// CODE-RUNTIME-07 — Graph filesystem scope and pushdown should work.
+interface CodeRuntime07ScenarioInputs {
+  publicPath: string; oldText: string; newText: string;
+  privatePath: string; privateText: string; traversalPaths: string[];
+}
+interface CodeRuntime07ScenarioExpected {
+  oldPinnedText: string; currentText: string;
+  oldLineCount: number; currentLineCount: number;
+  oldUtf8ByteCount: number; currentUtf8ByteCount: number;
+}
+interface CodeRuntime07Scenarios {
+  scenarios: { id: string; inputs: CodeRuntime07ScenarioInputs; expected: CodeRuntime07ScenarioExpected }[];
+}
+type CodeRuntime07AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+
+async function codeRuntime07Entity(client: PublicHttpClient, entityRef: string): Promise<Facade.EntityView> {
+  const result = await client.call("vault.get", { entity_ref: entityRef });
+  if (!result.value) throw new Error(`Public entity missing: ${entityRef}`);
+  return result.value;
+}
+
+async function codeRuntime07Refused(
+  owner: PublicHttpClient, actorRef: string, verb: string,
+  act: () => Promise<unknown>, status: number, code: string,
+): Promise<PublicHttpError> {
+  let failure: unknown;
+  try { await act(); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
+  if (!receipt) throw new Error("Refusal receipt is not publicly readable by the owner");
+  expect(receipt.receipt_ref).toBe(receiptRef);
+  expect(receipt.verb).toBe(verb);
+  expect(receipt.actor_ref).toBe(actorRef);
+  expect(receipt.actor_class).toBe("human");
+  expect(receipt.outcome).toEqual({ refused: { code } });
+  return failure;
+}
+
+function codeRuntime07Lines(output: string): string[] {
+  return output.split("\n").filter(line => line.length > 0);
+}
+
+function codeRuntime07TrailingIds(lines: readonly string[]): string[] {
+  const ids: string[] = [];
+  for (const line of lines) {
+    const match = /[0-9a-f]{32}$/.exec(line);
+    if (match) ids.push(match[0]);
+  }
+  return ids.sort();
+}
+
+async function codeRuntime07DrainLs(
+  client: PublicHttpClient, mount: Facade.GraphFsMountRequest, path: string, byTime: boolean,
+): Promise<{ lines: string[]; plan: Facade.GraphFsPlan }> {
+  const lines: string[] = [];
+  let cursor: string | null = null;
+  let plan: Facade.GraphFsPlan | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await client.call("graph_fs.ls", { mount, path, cursor, by_time: byTime });
+    if (plan === undefined) plan = result.plan;
+    expect(result.plan).toBe(plan);
+    lines.push(...codeRuntime07Lines(result.output));
+    if (!result.next_cursor) return { lines, plan };
+    cursor = result.next_cursor;
+  }
+  throw new Error("graph_fs.ls did not finish within 20 pages");
+}
+
+async function codeRuntime07DrainFind(
+  client: PublicHttpClient, mount: Facade.GraphFsMountRequest, path: string, newerThan: number | null,
+): Promise<{ lines: string[]; plan: Facade.GraphFsPlan }> {
+  const lines: string[] = [];
+  let cursor: string | null = null;
+  let plan: Facade.GraphFsPlan | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await client.call("graph_fs.find", { mount, path, cursor, newer_than: newerThan });
+    if (plan === undefined) plan = result.plan;
+    expect(result.plan).toBe(plan);
+    lines.push(...codeRuntime07Lines(result.output));
+    if (!result.next_cursor) return { lines, plan };
+    cursor = result.next_cursor;
+  }
+  throw new Error("graph_fs.find did not finish within 20 pages");
+}
+
+async function codeRuntime07Person(
+  owner: PublicHttpClient, conversation: string, name: string, occurred: number,
+): Promise<{ person: string; turn: string }> {
+  const witnessed = await owner.call("vault.witness", {
+    conversation_ref: conversation, occurred_at: occurred,
+    messages: [{ author: "user", message_type: "text", content: `This distinct person is ${name}.`, is_visible: true, order: 0 }],
+  });
+  const turn = await codeRuntime07Entity(owner, witnessed.turn_short_id);
+  expect(turn.kind).toBe("TURN");
+  const created = await owner.call("vault.people.create", {
+    identity: { name }, identity_evidence_refs: [turn.id_hex], occurred_at: occurred,
+  });
+  const person = await codeRuntime07Entity(owner, created.person.entity_ref);
+  expect(person.kind).toBe("PERSON");
+  expect(person.id_hex).toBe(created.person.id_hex);
+  return { person: person.id_hex, turn: turn.id_hex };
+}
+
+async function codeRuntime07AuditRows(client: PublicHttpClient): Promise<CodeRuntime07AuditRow[]> {
+  const rows: CodeRuntime07AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const page = await client.call("vault.authority.audit", { limit: 500, ...(after === undefined ? {} : { after }) });
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    expect(cursors.has(page.next_after)).toBe(false);
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function codeRuntime07MintedSlip(before: readonly CodeRuntime07AuditRow[], after: readonly CodeRuntime07AuditRow[], holder: string): string {
+  const existing = new Set(before.map(row => row.entry_hash));
+  const minted = after.filter(row => !existing.has(row.entry_hash) && row.source_op === "slip_mint" && row.holder_ref === holder);
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  expect(row.fold_valid).toBe(true);
+  expect(row.subject_ref).toMatch(/^[a-f0-9]{64}$/);
+  return row.subject_ref!;
+}
+
+/* Promise: mounted snapshot reads keep pinned bytes and scope; indexed reads agree with walked reads.
+ * Doors: vault.code.snapshots.capture/get/read; mount; graph_fs.cat/read_file/ls/find/grep/head/wc/readdir; vault.claims.upsert; attenuated guest; slips/revoke; receipts.get; restart.
+ * Unproved: live-head repo files (the traced live projection has no repo arm; other publishing doors are UNSURE); owner-excluded file withholding (no exclusion-authoring door traced); MCP/CLI mount bindings (facade is the entered door).
  */
-suite.todo(test, "CODE-RUNTIME-07", "waits on typed mount(ref) and historical actor-scoped graph-FS MCP/CLI bindings (Graph filesystem scope and pushdown should work)");
+suite.test(test, "CODE-RUNTIME-07", "Graph filesystem mounts keep pinned snapshot bytes, hide out-of-scope content, match indexed reads to walked reads, and survive a restart", async () => {
+  const data = await (await loadFixtures()).readJson<CodeRuntime07Scenarios>("code-runtime-scenarios");
+  const scenario = data.scenarios.find(row => row.id === "CODE-RUNTIME-07");
+  if (!scenario) throw new Error("Missing CODE-RUNTIME-07 fixture scenario");
+  const inputs = scenario.inputs;
+  const expected = scenario.expected;
+  expect(inputs.traversalPaths).toHaveLength(2);
+  expect(expected.oldPinnedText).toBe(inputs.oldText);
+  expect(expected.currentText).toBe(inputs.newText);
+  const oldBytes = Buffer.byteLength(inputs.oldText, "utf8");
+  const newBytes = Buffer.byteLength(inputs.newText, "utf8");
+  expect(oldBytes).toBe(expected.oldUtf8ByteCount);
+  expect(newBytes).toBe(expected.currentUtf8ByteCount);
+  const codeRuntime07Words = (text: string): number => text.split(/\s+/).filter(word => word.length > 0).length;
+
+  const engine = await EngineFixture.start({ id: "CODE-RUNTIME-07", profile });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const occurred = 1769947200; // Evidence event time; never the engine's clock.
+    const projectId = "code-runtime-07-parcels";
+    const folder = resolve(engine.root, "code-runtime-07", "project");
+    await mkdir(resolve(folder, "src"), { recursive: true });
+    await mkdir(resolve(folder, "private"), { recursive: true });
+
+    // Act: capture the old tree, edit the visible file, capture the new tree.
+    await writeFile(resolve(folder, inputs.publicPath), inputs.oldText, "utf8");
+    await writeFile(resolve(folder, inputs.privatePath), inputs.privateText, "utf8");
+    const snap1 = await owner.call("vault.code.snapshots.capture", { project_id: projectId, local_folder: folder });
+    expect(snap1.commit ?? null).toBeNull();
+    expect(snap1.files.map(file => file.path).sort()).toEqual([inputs.privatePath, inputs.publicPath].sort());
+    await writeFile(resolve(folder, inputs.publicPath), inputs.newText, "utf8");
+    const snap2 = await owner.call("vault.code.snapshots.capture", { project_id: projectId, local_folder: folder });
+    expect(snap2.repo).not.toBe(snap1.repo);
+    expect(snap2.snapshot).not.toBe(snap1.snapshot);
+    expect(snap2.files.map(file => file.path).sort()).toEqual([inputs.privatePath, inputs.publicPath].sort());
+
+    // A snapshot id resolves to its exact fork hash; reads pin that ref.
+    const oldFork: Facade.GraphFsReference = { kind: "fork_hash", repo: snap1.repo, hash: snap1.snapshot };
+    const newFork: Facade.GraphFsReference = { kind: "fork_hash", repo: snap2.repo, hash: snap2.snapshot };
+    const mountedOld = await owner.call("mount", { ref: { kind: "repo_snapshot", snapshot: snap1.repo } });
+    expect(mountedOld.root).toBe("/");
+    expect(mountedOld.mount.ref).toEqual(oldFork);
+    const mountedNew = await owner.call("mount", { ref: { kind: "repo_snapshot", snapshot: snap2.repo } });
+    expect(mountedNew.mount.ref).toEqual(newFork);
+    const oldMount: Facade.GraphFsMountRequest = { ref: oldFork };
+    const newMount: Facade.GraphFsMountRequest = { ref: newFork };
+    const publicFile = `/${inputs.publicPath}`;
+    const privateFile = `/${inputs.privatePath}`;
+
+    // Second door: the pinned bytes through the file face.
+    const oldCat = await owner.call("graph_fs.cat", { mount: oldMount, path: publicFile });
+    expect(oldCat.output).toBe(inputs.oldText);
+    expect(oldCat.encoding).toBe("utf8");
+    expect(oldCat.mount.ref).toEqual(oldFork);
+    const oldCatSnapshotRef = await owner.call("graph_fs.cat", {
+      mount: { ref: { kind: "repo_snapshot", snapshot: snap1.repo } }, path: publicFile,
+    });
+    expect(oldCatSnapshotRef.output).toBe(inputs.oldText);
+    expect(oldCatSnapshotRef.mount.ref).toEqual(oldFork);
+    const newCat = await owner.call("graph_fs.cat", { mount: newMount, path: publicFile });
+    expect(newCat.output).toBe(inputs.newText);
+    expect(newCat.mount.ref).toEqual(newFork);
+    const oldRead = await owner.call("graph_fs.read_file", { mount: oldMount, path: publicFile });
+    expect(oldRead.output).toBe(inputs.oldText);
+    expect(oldRead.mount.ref).toEqual(oldFork);
+    const oldHead = await owner.call("graph_fs.head", { mount: oldMount, path: publicFile, lines: 1 });
+    expect(oldHead.output).toBe(inputs.oldText);
+    const oldWc = await owner.call("graph_fs.wc", { mount: oldMount, path: publicFile });
+    expect(oldWc.output).toBe(`${expected.oldLineCount} ${codeRuntime07Words(inputs.oldText)} ${oldBytes} ${publicFile}\n`);
+    const newWc = await owner.call("graph_fs.wc", { mount: newMount, path: publicFile });
+    expect(newWc.output).toBe(`${expected.currentLineCount} ${codeRuntime07Words(inputs.newText)} ${newBytes} ${publicFile}\n`);
+
+    // List, walk and search see the authored tree on each mount.
+    const oldLs = await owner.call("graph_fs.ls", { mount: oldMount, path: "/" });
+    expect(codeRuntime07Lines(oldLs.output).sort()).toEqual(["private", "src"]);
+    expect(oldLs.mount.ref).toEqual(oldFork);
+    const oldFind = await owner.call("graph_fs.find", { mount: oldMount, path: "/" });
+    expect(codeRuntime07Lines(oldFind.output)).toContain(publicFile);
+    expect(codeRuntime07Lines(oldFind.output)).toContain(privateFile);
+    const oldGrep = await owner.call("graph_fs.grep", { mount: oldMount, path: "/", pattern: "parcel", recursive: true });
+    expect(codeRuntime07Lines(oldGrep.output)).toEqual([
+      `${publicFile}:${inputs.oldText.trimEnd()}`,
+    ]);
+    const markerGrep = await owner.call("graph_fs.grep", {
+      mount: oldMount, path: "/", pattern: inputs.privateText.trimEnd(), recursive: true,
+    });
+    expect(codeRuntime07Lines(markerGrep.output)).toEqual([`${privateFile}:${inputs.privateText.trimEnd()}`]);
+    const oldDir = await owner.call("graph_fs.readdir", { mount: oldMount, path: "/" });
+    expect(oldDir.entries.map(entry => entry.name).sort()).toEqual(["private", "src"]);
+    expect(oldDir.entries.every(entry => entry.kind === "directory")).toBe(true);
+    expect(oldDir.next_cursor ?? null).toBeNull();
+
+    // Third door: the pinned manifest and frozen bytes agree.
+    const manifest = await owner.call("vault.code.snapshots.get", { repo: snap1.repo, snapshot: snap1.snapshot });
+    if (!manifest) throw new Error("Pinned snapshot manifest is publicly missing");
+    expect(manifest.files.map(file => file.path).sort()).toEqual([inputs.privatePath, inputs.publicPath].sort());
+    const pinnedOld = await owner.call("vault.code.snapshots.read", { repo: snap1.repo, snapshot: snap1.snapshot, path: inputs.publicPath });
+    if (!pinnedOld) throw new Error("Pinned snapshot file is publicly missing");
+    expect(pinnedOld.content).toBe(inputs.oldText);
+    expect(pinnedOld.text_sha256).toBe(createHash("sha256").update(inputs.oldText, "utf8").digest("hex"));
+    const pinnedPrivate = await owner.call("vault.code.snapshots.read", { repo: snap1.repo, snapshot: snap1.snapshot, path: inputs.privatePath });
+    if (!pinnedPrivate) throw new Error("Pinned private file is publicly missing");
+    expect(pinnedPrivate.content).toBe(inputs.privateText);
+
+    // One paged walk never changes its ref.
+    const pagedMount: Facade.GraphFsMountRequest = { ref: oldFork, max_entries: 1 };
+    const page1 = await owner.call("graph_fs.readdir", { mount: pagedMount, path: "/" });
+    if (!page1.next_cursor) throw new Error("Paged walk handed out no cursor");
+    const page1Names = page1.entries.filter(entry => entry.kind !== "cursor").map(entry => entry.name);
+    expect(page1Names).toHaveLength(1);
+    expect(page1.mount.ref).toEqual(oldFork);
+    const page2 = await owner.call("graph_fs.readdir", { mount: pagedMount, path: "/", cursor: page1.next_cursor });
+    const page2Names = page2.entries.filter(entry => entry.kind !== "cursor").map(entry => entry.name);
+    expect(page2Names).toHaveLength(1);
+    expect(page2.mount.ref).toEqual(oldFork);
+    expect([...page1Names, ...page2Names].sort()).toEqual(["private", "src"]);
+
+    // Traversal is refused; an absent path reads as empty, the control.
+    for (const traversal of inputs.traversalPaths) {
+      await codeRuntime07Refused(owner, ownerRef, "graph_fs.cat", () =>
+        owner.call("graph_fs.cat", { mount: oldMount, path: traversal }), 400, "BAD_REQUEST");
+    }
+    const absentCat = await owner.call("graph_fs.cat", { mount: oldMount, path: "/code-runtime-07-absent.txt" });
+    expect(absentCat.output).toBe("");
+    const absentWc = await owner.call("graph_fs.wc", { mount: oldMount, path: "/code-runtime-07-absent.txt" });
+    expect(absentWc.output).toBe("0 0 0 /code-runtime-07-absent.txt\n");
+
+    // Live-head claims for the pushdown comparison.
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    expect((await codeRuntime07Entity(owner, conversation.id)).kind).toBe("CONVERSATION");
+    const subject = await codeRuntime07Person(owner, conversation.id, "Parcel Keeper", occurred);
+    const scope = await ownerBaseClaimScope(owner, ownerRef);
+    const learned1 = occurred + 10;
+    const learned2 = occurred + 20;
+    const first = await owner.call("vault.claims.upsert", {
+      subject_ref: subject.person, predicate: "fixture.code_runtime.graph_fs_note_a",
+      value: "parcel note amber for graph scope", confidence: 1, source: "user_stated",
+      scope, evidence_turn_refs: [subject.turn], occurred_at: occurred, learned_at: learned1,
+    });
+    const second = await owner.call("vault.claims.upsert", {
+      subject_ref: subject.person, predicate: "fixture.code_runtime.graph_fs_note_b",
+      value: "parcel note indigo for graph scope", confidence: 1, source: "user_stated",
+      scope, evidence_turn_refs: [subject.turn], occurred_at: occurred, learned_at: learned2,
+    });
+    const claim1 = (await codeRuntime07Entity(owner, first.claim_short_id)).id_hex;
+    const claim2 = (await codeRuntime07Entity(owner, second.claim_short_id)).id_hex;
+    expect(claim1).not.toBe(claim2);
+
+    // Pushdown and ordinary reads agree on the live head.
+    const liveMount: Facade.GraphFsMountRequest = { ref: { kind: "live_head" } };
+    const liveMounted = await owner.call("mount", liveMount);
+    expect(liveMounted.root).toBe("/");
+    expect(liveMounted.mount.ref).toEqual({ kind: "live_head" });
+    const lsWalk = await codeRuntime07DrainLs(owner, liveMount, "/claims/by-id", false);
+    const lsPush = await codeRuntime07DrainLs(owner, liveMount, "/claims/by-id", true);
+    expect(lsWalk.plan).toBe("walk");
+    expect(lsPush.plan).toBe("pushdown");
+    expect([...lsWalk.lines].sort()).toEqual([...lsPush.lines].sort());
+    expect(lsWalk.lines).toContain(claim1);
+    expect(lsWalk.lines).toContain(claim2);
+    const findWalk = await codeRuntime07DrainFind(owner, liveMount, "/claims/by-id", null);
+    const findPush = await codeRuntime07DrainFind(owner, liveMount, "/claims/by-id", 0);
+    expect(findWalk.plan).toBe("walk");
+    expect(findPush.plan).toBe("pushdown");
+    expect(codeRuntime07TrailingIds(findWalk.lines)).toEqual(codeRuntime07TrailingIds(findPush.lines));
+    expect(codeRuntime07TrailingIds(findWalk.lines)).toContain(claim1);
+    expect(codeRuntime07TrailingIds(findWalk.lines)).toContain(claim2);
+    const findNewer = await codeRuntime07DrainFind(owner, liveMount, "/claims/by-id", learned1);
+    expect(findNewer.plan).toBe("pushdown");
+    const newerIds = codeRuntime07TrailingIds(findNewer.lines);
+    expect(newerIds).toContain(claim2);
+    expect(newerIds).not.toContain(claim1);
+
+    // A reader outside the scope: the owner content reads as absent.
+    const guestId = await codeRuntime07Person(owner, conversation.id, "Observatory guest reader", occurred);
+    expect(guestId.person).not.toBe(ownerRef);
+    const auditBefore = await codeRuntime07AuditRows(owner);
+    const guest = await engine.pairActor({ principalRef: guestId.person, actorClass: "human", scope: ["core:read"] });
+    expect((await guest.client.call("self.actor", {})).actor_ref).toBe(guestId.person);
+    const { seed } = credentialParts(guest.credential);
+    const narrowed = await guest.client.call("self.credential.attenuate", {
+      holder_seed: [...Buffer.from(seed, "hex")],
+      caveat: { scope: { kind: "ceiling", scope: {
+        bands: { kind: "all" }, audience: { kind: "all" },
+        verbs: { kind: "some", values: ["core:read"] }, sensitivity: { kind: "all" },
+        worlds: { kind: "some", values: [] }, facets: { kind: "some", values: [] },
+      } } },
+    });
+    expect(narrowed.token.startsWith("v2.slip.")).toBe(true);
+    const scopedOut = new PublicHttpClient(engine.url, {
+      credential: `v2.cred.${narrowed.token.slice(8)}.${seed}`, artifacts: engine.artifacts,
+    });
+    const ceiling = await scopedOut.call("vault.scope.ceiling", {});
+    expect(ceiling.scope.worlds?.kind).toBe("bottom");
+    expect(ceiling.scope.facets?.kind).toBe("bottom");
+    const guestLive = await scopedOut.call("mount", liveMount);
+    expect(guestLive.root).toBe("/");
+    const guestWorlds = await scopedOut.call("graph_fs.readdir", { mount: liveMount, path: "/worlds" });
+    expect(guestWorlds.entries).toEqual([]);
+    const guestClaims = await scopedOut.call("graph_fs.ls", { mount: liveMount, path: "/claims/by-id" });
+    expect(guestClaims.output).toBe("");
+    const guestClaimFile = await scopedOut.call("graph_fs.cat", { mount: liveMount, path: `/claims/by-id/${claim1}` });
+    expect(guestClaimFile.output).toBe("");
+    const ownerClaimFile = await owner.call("graph_fs.cat", { mount: liveMount, path: `/claims/by-id/${claim1}` });
+    expect(ownerClaimFile.output.length).toBeGreaterThan(0);
+    const guestPush = await scopedOut.call("graph_fs.find", { mount: liveMount, path: "/claims/by-id", newer_than: 0 });
+    expect(guestPush.plan).toBe("pushdown");
+    expect(guestPush.output).toBe("");
+    const guestMountFailed = await codeRuntime07Refused(owner, guestId.person, "mount", () =>
+      scopedOut.call("mount", { ref: { kind: "repo_snapshot", snapshot: snap1.repo } }), 404, "NOT_FOUND");
+    const invented = createHash("sha256").update("code-runtime-07:absent").digest("hex").slice(0, 32);
+    const controlFailed = await codeRuntime07Refused(owner, ownerRef, "mount", () =>
+      owner.call("mount", { ref: { kind: "repo_snapshot", snapshot: invented } }), 404, "NOT_FOUND");
+    expect(controlFailed.reply.status).toBe(guestMountFailed.reply.status);
+    expect(controlFailed.error?.code).toBe(guestMountFailed.error?.code);
+
+    // The wrong actor cannot capture; the refusal carries its receipt.
+    await codeRuntime07Refused(owner, guestId.person, "vault.code.snapshots.capture", () =>
+      guest.client.call("vault.code.snapshots.capture", { project_id: projectId, local_folder: folder }), 403, "FORBIDDEN");
+
+    await engine.artifacts.json("code-runtime-07.json", {
+      oldRepo: snap1.repo, oldFork: snap1.snapshot, newRepo: snap2.repo, newFork: snap2.snapshot,
+      oldBytes, newBytes, claim1, claim2, lsPlan: lsPush.plan, findPlan: findPush.plan,
+      guestWorlds: guestWorlds.entries.length, guestClaimBytes: guestClaimFile.output.length,
+    });
+
+    // Restart: the pins, the bytes and the scope survive.
+    await engine.restart();
+    const oldAgain = await owner.call("graph_fs.cat", { mount: oldMount, path: publicFile });
+    expect(oldAgain.output).toBe(inputs.oldText);
+    expect(oldAgain.mount.ref).toEqual(oldFork);
+    const newAgain = await owner.call("graph_fs.cat", { mount: newMount, path: publicFile });
+    expect(newAgain.output).toBe(inputs.newText);
+    expect(newAgain.mount.ref).toEqual(newFork);
+    const liveAgain = await codeRuntime07DrainLs(owner, liveMount, "/claims/by-id", false);
+    expect(liveAgain.lines).toContain(claim1);
+    expect(liveAgain.lines).toContain(claim2);
+    const guestClaimsAgain = await scopedOut.call("graph_fs.ls", { mount: liveMount, path: "/claims/by-id" });
+    expect(guestClaimsAgain.output).toBe("");
+
+    // Mid-flow grant loss: the revoked guest is refused at its next use.
+    const slipId = codeRuntime07MintedSlip(auditBefore, await codeRuntime07AuditRows(owner), guestId.person);
+    const revoked = await owner.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+      slip_id: Array.from(Buffer.from(slipId, "hex")),
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.revoked).toBe(true);
+    const denied = await guest.client.raw<{ error: { code: string } }>("POST", "/v1/core/facade/mount", { ref: { kind: "live_head" } });
+    expect(denied.status).toBe(401);
+    expect(denied.body.error.code).toBe("UNAUTHORIZED");
+    const ownerStillReads = await owner.call("graph_fs.cat", { mount: oldMount, path: publicFile });
+    expect(ownerStillReads.output).toBe(inputs.oldText);
+  } finally { await engine.close(); }
+});
 
 /* CODE-RUNTIME-08 — Code history diff blame and authenticated regen should work.
  * Rows OF-315, OF-316, OF-320, OF-321, OF-323; ARCH-0050 #tested-pointer;
