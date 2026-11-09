@@ -34,6 +34,8 @@ oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
 oneiron-code-source = { version = "0.1.0", path = "../oneiron-code-source" }
 oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+# Consent state (core split slice 2).
+oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
 # stretch (P6a).
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }

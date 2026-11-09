@@ -6,31 +6,9 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryResult, verify_actor_binding_in_txn};
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
-/// Whose voice a banked identity is (FIX 4393). Its owner/subject id is that
-/// entity either way; the kind is bound when the bank first holds the voice
-/// and never relabelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum VoiceRefSubjectKind {
-    /// A real person's own voice: its subject consents to its rendering on
-    /// their own person proof, under a consent basis.
-    Person,
-    /// A designed (synthetic) voice: it belongs to the entity that created
-    /// it, the owner by default. No real person is its subject, so no person
-    /// proof or consent basis is asked of it.
-    Designed,
-}
-
-impl VoiceRefSubjectKind {
-    /// The kind a render decision's input names when it names none: a
-    /// person's. Only an input wire defaults it; a stored row never does.
-    #[must_use]
-    pub const fn input_default() -> Self {
-        Self::Person
-    }
-}
+#[doc(hidden)]
+pub use oneiron_consent_state::memory::voice_actor::VoiceRefSubjectKind;
 
 /// Who acts on a voice: a live person on their own proof, or a designed
 /// voice's creator on its credential.

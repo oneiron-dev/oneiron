@@ -52,7 +52,9 @@ impl Vault {
                 .opener_slip
                 .is_some_and(|slip| slip != claims.slip_id)
                 || credential.instrument.as_ref().is_some_and(|instrument| {
-                    instrument.slip() != Some(claims.slip_id) || instrument.vault != claims.vault_id
+                    crate::runtime_hooks::verb::verb_ask_instrument_slip(&instrument)
+                        != Some(claims.slip_id)
+                        || instrument.vault != claims.vault_id
                 })
             {
                 return Ok(false);

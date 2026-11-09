@@ -91,7 +91,8 @@ impl Vault {
                 session.grants.push(PackSetupGrantRef {
                     connection: declared.id.clone(),
                     permission: permission.id.clone(),
-                    grant_ref: receipt.grant_ref().unwrap_or(grant_ref),
+                    grant_ref: crate::consent::consent_receipt_grant_ref(&receipt)
+                        .unwrap_or(grant_ref),
                     decision_id: receipt.decision_id().to_hex(),
                     granted_at: at,
                 });

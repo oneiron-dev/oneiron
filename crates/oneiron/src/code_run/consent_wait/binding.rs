@@ -12,7 +12,6 @@ use crate::runtime_hooks::verb::VerbAskCredentialSource;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
-use super::resume::CodeConsentRunOrigin;
 use super::types::{
     CODE_CONSENT_SCHEMA_VERSION, CodeConsentAdmission, CodeConsentBinding, CodeConsentCallSite,
     CodeConsentCheckpoint, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentQuestion,
@@ -169,11 +168,9 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         let slip = verified.claims().slip_id;
         // Only the very slip the witness verifies as: an instrument that
         // names none beside a slip's witness is no instrument of this call.
-        if credential
-            .instrument
-            .as_ref()
-            .is_some_and(|instrument| instrument.slip() != Some(slip))
-        {
+        if credential.instrument.as_ref().is_some_and(|instrument| {
+            crate::runtime_hooks::verb::verb_ask_instrument_slip(&instrument) != Some(slip)
+        }) {
             return Ok(None);
         }
         principal.opener_slip = Some(slip);
@@ -254,7 +251,10 @@ pub(crate) fn mint_code_consent_wait_in_txn(
 /// caller's origin too (FIX 4606), so the seal binds the caller a re-entry
 /// is made for.
 pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
-    let origin = binding.origin.as_ref().map(CodeConsentRunOrigin::digest);
+    let origin = binding
+        .origin
+        .as_ref()
+        .map(crate::code_run::consent_wait::resume::code_consent_run_origin_digest);
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());

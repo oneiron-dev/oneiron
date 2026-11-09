@@ -107,13 +107,15 @@ pub use self::effect::{
     CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts,
     EffectPlace, ReversibilityClass, UndoFidelity,
 };
+pub(crate) use self::grant::code_wait_receipt_links_from_gate_record;
 pub use self::grant::{
     ActionGrant, CONSENT_CONTENT_KIND, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_BYPASS_CREATED,
     CONSENT_REASON_BYPASSED, CONSENT_REASON_CODE_WAIT_CONSUMED, CONSENT_REASON_CODE_WAIT_SETTLED,
     CONSENT_REASON_DENIED, CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED,
     CONSENT_REASON_STANDING_USED, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow,
     ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
-    DisclosureGrant, StandingConsentGrant,
+    DisclosureGrant, StandingConsentGrant, consent_grant_row_grant_ref,
+    consent_receipt_diff_handle, consent_receipt_grant_ref,
 };
 pub use self::owner_reason::{
     OWNER_REASON_UNDO_COMMAND, OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo,

@@ -83,7 +83,7 @@ impl Vault {
                 by: Some(actor),
                 at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
                 receipt: gate_ref(receipt.decision_id()),
-                grant_ref: receipt.grant_ref(),
+                grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
             };
             found.settle(&self.store, txn, settled.clone())?;
             Ok(settled)

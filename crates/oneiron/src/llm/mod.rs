@@ -27,13 +27,9 @@ pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
+#[doc(hidden)]
+pub(crate) use oneiron_consent_state::llm::entity_refs;
 pub use oneiron_model::llm::BudgetCheckpoint;
-pub use oneiron_model::llm::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
-    SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
-    VoicePrecedence, locality_within_extraction_bound,
-};
-pub(crate) mod entity_refs;
 pub use oneiron_model::llm::{
     DeterministicRunner, DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute,
     FallbackError, FallbackRegistry, LlmEventBus, ProgressSnapshot, ProgressSubscriber, Scope,
@@ -43,6 +39,11 @@ pub use oneiron_model::llm::{
 pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
     parse_failure_rules,
+};
+pub use oneiron_model::llm::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
+    SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
+    VoicePrecedence, locality_within_extraction_bound,
 };
 pub mod catalog_doors;
 pub mod manifest;

@@ -156,8 +156,7 @@ fn run_bulk(
         .map_err(|error| widen_refusal(&error, "widen approval failed"))?;
     Ok(Json(CoreAcceptWidenResponse {
         decision_id: receipt.decision_id().to_hex(),
-        grant_ref: receipt
-            .grant_ref()
+        grant_ref: oneiron::consent::consent_receipt_grant_ref(&receipt)
             .ok_or_else(|| ApiError::invalid_state(Some("consent_widen_receipt")))?,
     }))
 }

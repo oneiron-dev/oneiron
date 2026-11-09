@@ -279,7 +279,7 @@ impl Vault {
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
             grant_ref: Some(attribution.grant_ref.clone()),
-            diff_handle: receipt.diff_handle(),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             read_frontier_hash: attribution.policy_frontier,
             context: Default::default(),
             redacted_at: None,

@@ -6,7 +6,8 @@ mod render_history;
 mod views;
 
 pub use crate::memory::voice_actor::{VoiceBankActor, VoiceCreator, VoiceRefSubjectKind};
-pub use consent::{VoiceConsentBasis, VoiceConsentState};
+pub use consent::{VoiceConsentBasis, VoiceConsentState, voice_consent_basis_validate};
+pub(crate) use model::voice_render_decision_validate;
 pub use model::{
     VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip,
     VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant, VoiceTargetClone, VoiceTargetRecord,

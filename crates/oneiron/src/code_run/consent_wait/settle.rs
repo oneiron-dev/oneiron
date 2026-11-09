@@ -298,83 +298,84 @@ fn answer_in_txn(
     let mut standing_grant = None;
     let (decision, remembered, holder_attribution) = match admitted {
         CodeConsentAnswerer::Owner(_) => {
-            let (decision, remembered) = match input.choice {
-                CodeConsentChoice::Deny => (vault.deny_consent_in_txn(txn, owner, digest)?, None),
-                CodeConsentChoice::ApproveOnce => {
-                    (vault.approve_once_in_txn(txn, owner, digest)?, None)
-                }
-                CodeConsentChoice::ApproveAndStopAsking => {
-                    if let Some(offer) = row.binding.remember_offer.clone() {
-                        let call =
-                            row.binding
-                                .pending
-                                .connector_call()
-                                .ok_or(Error::ConcurrentWrite(
-                                    "this code consent wait binds no connector call",
-                                ))?;
-                        let key = crate::connector_key::read_key_for_pack_in_txn(
-                            vault,
-                            txn,
-                            &call.key_ref,
-                        )?
-                        .ok_or(Error::EntityNotFound)?;
-                        let remember_context =
-                            call.remember_context.ok_or(Error::ConcurrentWrite(
-                                "this code consent wait binds no remember context",
-                            ))?;
-                        if remember_asking_lineage && remember_context.lineage.is_none() {
-                            return Err(Error::InvalidConfig(
-                                "asking-lineage remember needs a delegation lineage".to_owned(),
-                            ));
-                        }
-                        let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
-                            server: call.server.clone(),
-                            tool: call.tool.clone(),
-                            resolved_endpoint: call.endpoint.clone(),
-                            payload_data_class: call.payload_data_class,
-                        };
-                        let (_, bound) =
-                            crate::connector_key::connector_tool_remember_bound_in_txn(
-                                &vault.store,
-                                txn,
-                                &call.key_ref,
-                                &key,
-                                &scoped_call,
-                                remember_context,
-                                remember_asking_lineage,
-                            )?
-                            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
-                            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
-                        let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
-                        (
-                            vault.approve_once_in_txn(txn, owner, digest)?,
-                            remembered.grant_ref(),
-                        )
-                    } else {
-                        let offer =
-                            row.binding
-                                .standing_offer
-                                .as_ref()
-                                .ok_or(Error::ConcurrentWrite(
-                                    "this code consent wait offers no stop asking",
-                                ))?;
-                        if super::binding::binding_digest(&row.binding)?
-                            != row.binding.binding_digest
-                        {
-                            return Err(Error::ConcurrentWrite(
-                                "code consent standing offer changed",
-                            ));
-                        }
-                        let receipt =
-                            vault.create_standing_grant_in_txn(txn, owner, offer.bound()?)?;
-                        let grant_ref = receipt.grant_ref().ok_or(Error::InvariantViolation(
-                            "a standing grant creation returned no grant reference",
-                        ))?;
-                        standing_grant = Some((grant_ref, receipt.decision_id()));
+            let (decision, remembered) =
+                match input.choice {
+                    CodeConsentChoice::Deny => {
+                        (vault.deny_consent_in_txn(txn, owner, digest)?, None)
+                    }
+                    CodeConsentChoice::ApproveOnce => {
                         (vault.approve_once_in_txn(txn, owner, digest)?, None)
                     }
-                }
-            };
+                    CodeConsentChoice::ApproveAndStopAsking => {
+                        if let Some(offer) = row.binding.remember_offer.clone() {
+                            let call = row.binding.pending.connector_call().ok_or(
+                                Error::ConcurrentWrite(
+                                    "this code consent wait binds no connector call",
+                                ),
+                            )?;
+                            let key = crate::connector_key::read_key_for_pack_in_txn(
+                                vault,
+                                txn,
+                                &call.key_ref,
+                            )?
+                            .ok_or(Error::EntityNotFound)?;
+                            let remember_context =
+                                call.remember_context.ok_or(Error::ConcurrentWrite(
+                                    "this code consent wait binds no remember context",
+                                ))?;
+                            if remember_asking_lineage && remember_context.lineage.is_none() {
+                                return Err(Error::InvalidConfig(
+                                    "asking-lineage remember needs a delegation lineage".to_owned(),
+                                ));
+                            }
+                            let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
+                                server: call.server.clone(),
+                                tool: call.tool.clone(),
+                                resolved_endpoint: call.endpoint.clone(),
+                                payload_data_class: call.payload_data_class,
+                            };
+                            let (_, bound) =
+                                crate::connector_key::connector_tool_remember_bound_in_txn(
+                                    &vault.store,
+                                    txn,
+                                    &call.key_ref,
+                                    &key,
+                                    &scoped_call,
+                                    remember_context,
+                                    remember_asking_lineage,
+                                )?
+                                .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+                                .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+                            let remembered =
+                                vault.create_standing_grant_in_txn(txn, owner, bound)?;
+                            (
+                                vault.approve_once_in_txn(txn, owner, digest)?,
+                                crate::consent::consent_receipt_grant_ref(&remembered),
+                            )
+                        } else {
+                            let offer = row.binding.standing_offer.as_ref().ok_or(
+                                Error::ConcurrentWrite(
+                                    "this code consent wait offers no stop asking",
+                                ),
+                            )?;
+                            if super::binding::binding_digest(&row.binding)?
+                                != row.binding.binding_digest
+                            {
+                                return Err(Error::ConcurrentWrite(
+                                    "code consent standing offer changed",
+                                ));
+                            }
+                            let receipt =
+                                vault.create_standing_grant_in_txn(txn, owner, offer.bound()?)?;
+                            let grant_ref = crate::consent::consent_receipt_grant_ref(&receipt)
+                                .ok_or(Error::InvariantViolation(
+                                    "a standing grant creation returned no grant reference",
+                                ))?;
+                            standing_grant = Some((grant_ref, receipt.decision_id()));
+                            (vault.approve_once_in_txn(txn, owner, digest)?, None)
+                        }
+                    }
+                };
             (decision, remembered, None)
         }
         CodeConsentAnswerer::Holder(_) => {
@@ -571,7 +572,9 @@ pub(crate) fn original_authority_holds_in_txn(
         .opener_slip
         .is_none_or(|slip| slip == claims.slip_id)
         && credential.instrument.as_ref().is_none_or(|instrument| {
-            instrument.slip() == Some(claims.slip_id) && instrument.vault == claims.vault_id
+            crate::runtime_hooks::verb::verb_ask_instrument_slip(&instrument)
+                == Some(claims.slip_id)
+                && instrument.vault == claims.vault_id
         })
 }
 

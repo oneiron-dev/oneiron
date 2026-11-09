@@ -47,6 +47,7 @@ pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
     VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    verb_ask_instrument_slip,
 };
 pub(crate) use held_member::hold_member;
 pub use held_member::with_held_member;

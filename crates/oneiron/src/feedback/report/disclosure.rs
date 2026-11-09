@@ -282,9 +282,9 @@ impl Vault {
                     owner,
                     publisher_bound(publisher_ref, round)?,
                 )?;
-                let grant_ref = receipt.grant_ref().ok_or(Error::InvariantViolation(
-                    "a standing grant's receipt names its grant",
-                ))?;
+                let grant_ref = crate::consent::consent_receipt_grant_ref(&receipt).ok_or(
+                    Error::InvariantViolation("a standing grant's receipt names its grant"),
+                )?;
                 (
                     ReportDisclosure::Approved,
                     Some(ReportDisclosureBasis::StandingGrant { grant_ref }),

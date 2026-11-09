@@ -160,7 +160,9 @@ pub(crate) fn kept_instrument_auth(
 /// vault it was minted for; a renewed or re-minted credential of the same
 /// actor never stands in.
 fn same_instrument(saved: &VerbAskInstrument, verified: &VerifiedSlip) -> bool {
-    saved.slip() == Some(verified.claims().slip_id) && verified.claims().vault_id == saved.vault
+    oneiron::runtime_hooks::verb::verb_ask_instrument_slip(&saved)
+        == Some(verified.claims().slip_id)
+        && verified.claims().vault_id == saved.vault
 }
 
 /// The attested owner `holder` a kept instrument names, as he stands now
