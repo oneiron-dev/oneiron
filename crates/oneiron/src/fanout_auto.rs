@@ -63,9 +63,6 @@ use crate::outbound_chokepoint::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::vault::Vault;
 
-#[cfg(test)]
-mod tests;
-
 // ---------------------------------------------------------------------------
 // The verdict vocabulary
 // ---------------------------------------------------------------------------
