@@ -1,5 +1,5 @@
-//! Port of generate.py:853-1417: the MCP dispatch (`agent_verb_dispatch.rs`, which `outputs()` prefixes with
-//! `HEADER` and `use super::*;`), its argument projections and the task-work rules the server's doors share (G4a).
+//! The MCP dispatch (`agent_verb_dispatch.rs`, which `outputs()` prefixes with `HEADER` and `use super::*;`), its
+//! argument projections and the task-work rules the server's doors share.
 
 use super::common::{rust_type, str_receiver};
 use super::emit_server::{CALL_HOME_DOORS, HOME_SERVER_DOORS, SOURCE_FEEDBACK_DOORS};
@@ -10,7 +10,7 @@ use crate::py::json::dumps_str;
 use crate::py::re::search_bare_invalid;
 use crate::py::value::{Dict, Value};
 
-/// Port of generate.py:853 (MCP_ARGUMENT_FIELDS): an MCP argument whose Rust field is named apart.
+/// An MCP argument whose Rust field is named apart.
 pub(crate) const MCP_ARGUMENT_FIELDS: &[(&str, &str)] = &[("self", "self_target")];
 
 /// `row['mcp_fields']`, a dict (the module level read its `.values()`).
@@ -21,8 +21,7 @@ fn mcp_fields(row: &Dict) -> Result<&crate::py::value::Dict, GenerateError> {
         .ok_or_else(|| GenerateError::attribute(fields.type_name(), "items"))
 }
 
-/// Port of generate.py:855-880 (mcp_input_projection): one row of the tools/call projection, its arguments
-/// assembled into the typed input.
+/// One row of the tools/call projection, its arguments assembled into the typed input.
 pub(crate) fn mcp_input_projection(row: &Dict) -> Result<String, GenerateError> {
     let fields = mcp_fields(row)?;
     let all = item(row, "mcp_fields")?;
@@ -94,8 +93,7 @@ fn json_item_name(row: &Dict) -> Result<String, GenerateError> {
     Ok(json(item(row, "name")?))
 }
 
-/// Port of generate.py:882-890 (mcp_argument_projection): the inverse, the tools/call arguments one code-mode input
-/// projects onto.
+/// The inverse of `mcp_input_projection`: the tools/call arguments one code-mode input projects onto.
 pub(crate) fn mcp_argument_projection(row: &Dict) -> Result<String, GenerateError> {
     let mut lines = Vec::new();
     for (field, path) in mcp_fields(row)? {
@@ -120,14 +118,13 @@ pub(crate) fn mcp_argument_projection(row: &Dict) -> Result<String, GenerateErro
     ))
 }
 
-/// Port of generate.py:899-901 (takes_task_decisions): whether the served doors run this row on a worker with the
-/// decision ladder bound (OF-533, FIX 2762). Absent is false.
+/// Whether the served doors run this row on a worker with the decision ladder bound (OF-533, FIX 2762).
+/// Absent is false.
 pub(crate) fn takes_task_decisions(row: &Dict) -> bool {
     flag(row, "task_decisions")
 }
 
-/// Port of generate.py:909-910 (TASK_PRODUCER_ROWS): Rule 5 (FIX 2166), plain memory rows whose engine call is a
-/// task-work producer.
+/// Rule 5 (FIX 2166): plain memory rows whose engine call is a task-work producer.
 pub(crate) const TASK_PRODUCER_ROWS: &[&str] = &[
     "tasks.accept",
     "vault.projects.route_tradeoff",
@@ -135,15 +132,14 @@ pub(crate) const TASK_PRODUCER_ROWS: &[&str] = &[
     "vault.artifacts.body.proposal.settle",
 ];
 
-/// Port of generate.py:917 (TASK_PRODUCER_BRANCHES): rows one branch of whose engine call is a task-work producer,
-/// each keyed to the predicate over the request that says it takes that branch.
+/// Rows one branch of whose engine call is a task-work producer, each keyed to the predicate over the request that
+/// says it takes that branch.
 pub(crate) const TASK_PRODUCER_BRANCHES: &[(&str, &str)] = &[(
     "describe",
     "oneiron::task_verb::sdk::describe_takes_task_work_turn",
 )];
 
-/// Port of generate.py:919-922 (task_producer_branch_turns): the MCP turn test for each producer branch, over the
-/// args its pre hooks left.
+/// The MCP turn test for each producer branch, over the args its pre hooks left.
 pub(crate) fn task_producer_branch_turns(args: &str) -> String {
     let turns: Vec<String> = TASK_PRODUCER_BRANCHES
         .iter()
@@ -156,8 +152,7 @@ pub(crate) fn task_producer_branch_turns(args: &str) -> String {
     }
 }
 
-/// Port of generate.py:924-932 (takes_task_work_turn): whether the served doors await a task-work turn for this row
-/// and bind it.
+/// Whether the served doors await a task-work turn for this row and bind it.
 pub(crate) fn takes_task_work_turn(row: &Dict) -> Result<bool, GenerateError> {
     let name = item(row, "name")?;
     if !TASK_PRODUCER_ROWS
@@ -189,7 +184,7 @@ pub(crate) fn readable_contains(row: &Dict, needle: &str) -> Result<bool, Genera
     }
 }
 
-/// Port of generate.py:937-1119 (mcp_input_dispatch): one row of the input dispatcher every MCP door shares.
+/// One row of the input dispatcher every MCP door shares.
 pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     let name_value = item(row, "name")?;
     let method = method_name(row)?;
@@ -435,8 +430,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     Ok(format!("{name} => {{\n{body} }},\n"))
 }
 
-/// Port of generate.py:1121-1151 (held_content_rows): FIX 22074, the rows with a `file_call`, run on content an
-/// HTTP body held as a file.
+/// FIX 22074: the rows with a `file_call`, run on content an HTTP body held as a file.
 pub(crate) fn held_content_rows(generator: &Generator) -> Result<String, GenerateError> {
     let rows: Vec<RowId> = generator
         .mcp_rows()
@@ -482,8 +476,7 @@ pub(crate) fn held_content_rows(generator: &Generator) -> Result<String, Generat
     Ok(out)
 }
 
-/// Port of generate.py:1153-1417 (mcp_dispatch): the MCP dispatcher, its argument projections and one boxed arm per
-/// row.
+/// The MCP dispatcher, its argument projections and one boxed arm per row.
 pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateError> {
     let mcp_rows = generator.mcp_rows();
     let mut result = EXECUTE_MCP_AGENT_VERB.to_owned();
@@ -558,10 +551,10 @@ pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateErro
     result += MCP_AGENT_VERB_OUTPUT;
     Ok(result)
 }
-/// generate.py:1154-1154.
+/// The `invalid` closure: the `tool_args_invalid` error of a bad typed argument.
 const INVALID: &str = "let invalid = || McpGatewayError::new(-32602, \"tool_args_invalid\", \"invalid typed agent-verb argument\");\n";
 
-/// generate.py:1155-1172.
+/// `execute_mcp_agent_verb`, and the head of `mcp_agent_verb_input`.
 const EXECUTE_MCP_AGENT_VERB: &str = "/// A `tools/call` of one generated verb: its arguments assemble the verb's typed
 /// input, which then takes the one dispatcher every MCP door shares.
 pub(super) async fn execute_mcp_agent_verb(
@@ -581,13 +574,13 @@ pub(super) async fn execute_mcp_agent_verb(
 pub(crate) fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
 ";
 
-/// generate.py:1174-1177.
+/// The head of `mcp_agent_verb_arguments`.
 const MCP_AGENT_VERB_ARGUMENTS: &str = "/// The `tools/call` arguments one verb input projects onto, so a call that
 /// arrives as a whole input meets the admission a tool call of that verb meets.
 pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crate::mcp::McpVerbArguments, McpGatewayError> {
 ";
 
-/// generate.py:1180-1244.
+/// `execute_agent_verb_input`, `execute_agent_verb_input_held`, and the head of `execute_agent_verb_listing`.
 const EXECUTE_AGENT_VERB_INPUT: &str = "/// Runs one verb from its whole typed input, with the actor ceiling and
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
@@ -654,7 +647,7 @@ async fn execute_agent_verb_listing(
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
 ";
 
-/// generate.py:1245-1273.
+/// `execute_agent_verb_listing`'s body, up to the task-producer rows its turn test matches.
 const VERB_LISTING_HEAD: &str = "if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, \"tool_args_invalid\", format!(\"{tool} input names unknown field `{field}`\")));
     }
@@ -685,7 +678,7 @@ const VERB_LISTING_HEAD: &str = "if let Some(field) = crate::mcp::verb_input_unk
     let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
         || matches!(tool, ";
 
-/// generate.py:1273-1303.
+/// `execute_agent_verb_listing`'s body, from the task-producer rows up to the producer-branch turn test.
 const VERB_LISTING_PRODUCERS: &str = ") {
         Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
@@ -718,7 +711,7 @@ const VERB_LISTING_PRODUCERS: &str = ") {
     // The row holds one turn only, bound on its surface and its memory alike.
     let (memory, task_work_turn) = if task_work_turn.is_none() && (";
 
-/// generate.py:1303-1334.
+/// The rest of `execute_agent_verb_listing`, after the producer-branch turn test.
 const VERB_LISTING_TAIL: &str = ") {
         let turn = Arc::new(server.admit_task_work(actor.actor_ref).await);
         surface.task_work_turn = Some(Arc::clone(&turn));
@@ -752,7 +745,7 @@ const VERB_LISTING_TAIL: &str = ") {
 
 ";
 
-/// generate.py:1334-1370.
+/// `execute_agent_verb_row`, and the head of `execute_agent_verb_row_on`.
 const EXECUTE_AGENT_VERB_ROW: &str = "
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
 /// on `memory`, the caller's surface `surface` built. A task row that may ask
@@ -791,7 +784,7 @@ async fn execute_agent_verb_row_on(
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 ";
 
-/// generate.py:1391-1407.
+/// The types of an MCP row's own arm: its result, its boxed future and its arguments.
 const MCP_VERB_ROW_TYPES: &str = "/// What one MCP row's arm returns.
 type McpVerbRowResult = Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError>;
 /// One MCP row's arm, boxed by its own function (FIX 19837).
@@ -810,7 +803,7 @@ struct McpVerbRow<'a> {
 }
 ";
 
-/// generate.py:1408-1416.
+/// `mcp_agent_verb_output`: one typed verb result, drained in a single frame.
 const MCP_AGENT_VERB_OUTPUT: &str = "/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
         output: impl serde::Serialize,
@@ -821,7 +814,7 @@ fn mcp_agent_verb_output(
     }
 ";
 
-/// generate.py:956-965.
+/// The `describe(self)` branch: the connection's own brief.
 const DESCRIBE_SELF: &str = "if input.get(\"self\").and_then(Value::as_bool) == Some(true) {
     // A code-mode call names its trusted durable run; a direct call names none.
     let run = surface.run.as_ref().map(|run| run.run_id);
@@ -834,7 +827,7 @@ const DESCRIBE_SELF: &str = "if input.get(\"self\").and_then(Value::as_bool) == 
 }
 ";
 
-/// generate.py:972-995.
+/// The owner-grade export's MCP body, after its owner check and its decode.
 const OWNER_GRADE_EXPORT: &str = "// An export a code run calls follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591): the run's dispatch says so, never the request.
 let input = oneiron::memory::ExportOptions { in_code_run: crate::api::facade::host_doors::support::in_code_run(), ..input };
 // A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.
@@ -861,7 +854,7 @@ let output = match (auth.verified_slip(), action) {
 }.map_err(mcp_facade_error)?;
 ";
 
-/// generate.py:1036-1040.
+/// The caller's owner authorship on `memory`, for `vault.artifacts.view` and `vault.artifacts.export`.
 const OWNER_AUTHORSHIP: &str = "let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());
 let memory = match owner {
     Some(owner) => memory.with_owner_authorship(&owner),
@@ -869,14 +862,14 @@ let memory = match owner {
 };
 ";
 
-/// generate.py:1044-1047.
+/// The `describe(card key)` branch: a board card's expansion.
 const DESCRIBE_CARD_KEY: &str = "if let Some(key) = input.key.clone() {
     let frame_epoch = input.frame_epoch;
     return Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch }))).await;
 }
 ";
 
-/// generate.py:1049-1055.
+/// The `describe` TASKS-section branch: its rows, narrowed to the credential.
 const DESCRIBE_TASKS_SECTION: &str = "if input.task_ref.is_none() && input.handle.is_none() && input.after.is_none() && !input.self_target && !input.vault {
     // The section is narrowed to this credential before its
     // render cap, so its counts are the credential's rows alone.
@@ -886,13 +879,13 @@ const DESCRIBE_TASKS_SECTION: &str = "if input.task_ref.is_none() && input.handl
 }
 ";
 
-/// generate.py:1086-1090.
+/// `self.inbox.concern.move`'s landed turn: only an applied move that links a note lands one.
 const CONCERN_MOVE_LANDED: &str = "if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied { receipt, .. } if matches!(receipt.link, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. })) {
 server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
 }
 ";
 
-/// generate.py:1129-1138.
+/// The head of `execute_held_content_row`.
 const EXECUTE_HELD_CONTENT_ROW: &str = "/// One row whose `content_base64` its HTTP body held as a file (FIX 22074),
 /// on args its pre chain left as the caller sent them: its `_file` engine fn
 /// reads the content there, behind the checks its plain fn runs.
@@ -904,7 +897,7 @@ fn execute_held_content_row(
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 ";
 
-/// generate.py:1140-1140.
+/// The `measured` closure: the held file's body, measured.
 const HELD_MEASURED: &str = "let measured = || oneiron::blob_artifact::BlobBodyFile::measure(held.file()).map_err(|error| mcp_facade_error(error.into()));\n";
 
 #[cfg(test)]
@@ -915,7 +908,7 @@ mod tests {
 
     #[test]
     fn a_task_work_producer_row_is_a_plain_memory_row() {
-        // generate.py:931, Python's `ValueError` text.
+        // The Python generator's `ValueError` text.
         let refused = [
             r#"{"name": "tasks.accept", "task_decisions": true}"#,
             r#"{"name": "tasks.accept", "server_door": "accept"}"#,

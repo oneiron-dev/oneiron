@@ -1,4 +1,4 @@
-//! Port of facade_types.py:697-1008 (the `Rust type -> IR` section of `Inventory`): a Rust type, field, struct or
+//! The `Rust type -> IR` section of `Inventory`: a Rust type, field, struct or
 //! enum as its serde wire shape.
 
 use std::rc::Rc;
@@ -22,50 +22,50 @@ use crate::py::re::compile;
 use crate::py::text::{strip, title};
 use crate::py::value::{Dict, Value};
 
-/// facade_types.py:751: `limited|bounded|capped`
+/// Python: `limited|bounded|capped`
 static BOUNDED: LazyLock<Regex> = LazyLock::new(|| compile("limited|bounded|capped"));
-/// facade_types.py:758: `entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display|decimal`
+/// Python: `entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display|decimal`
 /// (Python's `^` is the start, its `$` the end or before a final newline).
 static STRINGY: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"entit|ref|_id|id_|\Aid\n?\z|::id\n?\z|hex|digest|base64|b64|hash|blake|uuid|display|decimal",
     )
 });
-/// facade_types.py:811, the mirror a codec's `deserialize` reads.
+/// The mirror a codec's `deserialize` reads.
 static CODEC_READ: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"(?:<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:::<[^;{}()]*?>)?)(?:\s+as\s+[\w:]*Deserialize[^>]*>)?::deserialize\(\s*deserializer",
     )
 });
-/// facade_types.py:834: `re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?(r#)?(\w+)\s*:\s*(.+)$', rest, re.S)`; greedy `.+`
+/// Python: `re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?(r#)?(\w+)\s*:\s*(.+)$', rest, re.S)`; greedy `.+`
 /// runs to the end, so `$` holds there.
 static FIELD: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?s)\A(?:pub(?:\s*\([^)]*\))?\s+)?(r#)?(\w+)\s*:\s*(.+)"));
-/// facade_types.py:865: `re.sub(r'^pub(?:\s*\([^)]*\))?\s+', '', rest)`
+/// Python: `re.sub(r'^pub(?:\s*\([^)]*\))?\s+', '', rest)`
 static PUB: LazyLock<Regex> = LazyLock::new(|| compile(r"\Apub(?:\s*\([^)]*\))?\s+"));
-/// facade_types.py:895: `\brepr\s*\(\s*([ui](?:8|16|32|64|size))\b`, its `\b`s checked by hand.
+/// Python: `\brepr\s*\(\s*([ui](?:8|16|32|64|size))\b`, its `\b`s checked by hand.
 static REPR: LazyLock<Regex> = LazyLock::new(|| compile(r"repr\s*\(\s*([ui](?:8|16|32|64|size))"));
-/// facade_types.py:930: `re.match(r'(\w+)\s*(.*)$', rest, re.S)`
+/// Python: `re.match(r'(\w+)\s*(.*)$', rest, re.S)`
 static VARIANT: LazyLock<Regex> = LazyLock::new(|| compile(r"(?s)\A(\w+)\s*(.*)"));
-/// facade_types.py:979
+/// A handwritten serializer that writes a string.
 static MANUAL_STRING: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"serialize_str|collect_str|to_string\(\)\.serialize|as_str\(\)\.serialize|to_hex\(\)\.serialize",
     )
 });
-/// facade_types.py:980: `serialize_([ui]\d+|usize)`
+/// Python: `serialize_([ui]\d+|usize)`
 static MANUAL_INT: LazyLock<Regex> = LazyLock::new(|| compile(r"serialize_([ui]\d+|usize)"));
-/// facade_types.py:982: `serialize_f\d+`
+/// Python: `serialize_f\d+`
 static MANUAL_FLOAT: LazyLock<Regex> = LazyLock::new(|| compile(r"serialize_f\d+"));
-/// facade_types.py:986: `self\.0\.serialize\(`
+/// Python: `self\.0\.serialize\(`
 static MANUAL_SELF0: LazyLock<Regex> = LazyLock::new(|| compile(r"self\.0\.serialize\("));
-/// facade_types.py:990: `\bself\.([A-Za-z_]\w*)\.serialize\(\s*serializer\s*\)`, its `\b` checked by hand.
+/// Python: `\bself\.([A-Za-z_]\w*)\.serialize\(\s*serializer\s*\)`, its `\b` checked by hand.
 static MANUAL_DELEGATE: LazyLock<Regex> =
     LazyLock::new(|| compile(r"self\.([A-Za-z_]\w*)\.serialize\(\s*serializer\s*\)"));
-/// facade_types.py:994: `re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?(?:r#)?(\w+)\s*:\s*(.+)$', rest, re.S)`
+/// Python: `re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?(?:r#)?(\w+)\s*:\s*(.+)$', rest, re.S)`
 static MANUAL_FIELD: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?s)\A(?:pub(?:\s*\([^)]*\))?\s+)?(?:r#)?(\w+)\s*:\s*(.+)"));
-/// facade_types.py:1001: `(?:<\s*)?([A-Z]\w*)(?:\s+as\s+[\w:]*Deserialize[^>]*>)?::deserialize\(\s*deserializer`
+/// Python: `(?:<\s*)?([A-Z]\w*)(?:\s+as\s+[\w:]*Deserialize[^>]*>)?::deserialize\(\s*deserializer`
 static MANUAL_MIRROR: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"(?:<\s*)?([A-Z]\w*)(?:\s+as\s+[\w:]*Deserialize[^>]*>)?::deserialize\(\s*deserializer",
@@ -95,7 +95,7 @@ impl Record {
 }
 
 impl Inventory {
-    /// Port of facade_types.py:699-730 (`Inventory.ir`).
+    /// A parsed Rust type as IR: its paths resolve from `context`, and a name in `params` is a type parameter.
     pub(crate) fn ir(
         &mut self,
         ast: &Ast,
@@ -107,7 +107,7 @@ impl Inventory {
         self.walk(ast, scope, location)
     }
 
-    /// One frame of `Inventory.ir`'s recursion (facade_types.py:699-730), around `walk_frame`: the frames are
+    /// One frame of `Inventory.ir`'s recursion, around `walk_frame`: the frames are
     /// counted, so a walk as deep as Python's recursion limit is its `RecursionError`.
     fn walk(&mut self, ast: &Ast, scope: Scope<'_>, location: &str) -> Result<Ir, GenerateError> {
         self.enter()?;
@@ -116,7 +116,7 @@ impl Inventory {
         value
     }
 
-    /// The body of `Inventory.ir` (facade_types.py:699-730).
+    /// The body of `Inventory.ir`.
     fn walk_frame(
         &mut self,
         ast: &Ast,
@@ -209,7 +209,7 @@ impl Inventory {
         Ok(Ir::Ref(key, arguments))
     }
 
-    /// Port of facade_types.py:732-746 (`Inventory.std`): a std or external type the wire spells by convention, or
+    /// A std or external type the wire spells by convention, or
     /// `None`. Every argument is walked first.
     fn std(
         &mut self,
@@ -252,7 +252,7 @@ impl Inventory {
         Ok(leaf(name))
     }
 
-    /// Port of facade_types.py:748-773 (`Inventory.codec`): a field under `with = codec`. A bounded codec reads
+    /// A field under `with = codec`. A bounded codec reads
     /// the type itself; an id, hex, digest, base64 or decimal codec puts a string on the wire (a byte-id codec an
     /// array of numbers), under any `Option`, sequence or map around it; any other reads the mirror its module
     /// deserializes, else it is unread.
@@ -284,7 +284,7 @@ impl Inventory {
         Ok(codec_walk(ast, &wire.unwrap_or(STRING)))
     }
 
-    /// Port of facade_types.py:775-783 (`Inventory.codec_place`): the (crate, module path) a codec path names from
+    /// The (crate, module path) a codec path names from
     /// its field's file; `None` for an external one.
     fn codec_place(
         &mut self,
@@ -302,7 +302,7 @@ impl Inventory {
             .filter(|(_, path)| !path.is_empty()))
     }
 
-    /// Port of facade_types.py:785-813 (`Inventory.codec_mirror`): the wire mirror a codec module reads in its
+    /// The wire mirror a codec module reads in its
     /// `deserialize` (`Option::<Row>::deserialize(deserializer)`), with the context its names resolve in; `None`
     /// when it reads none. The mirror an inline codec module declares takes the module's name.
     fn codec_mirror(
@@ -402,7 +402,7 @@ impl Inventory {
         Ok(Some((read[1].replace("::<", "<"), place)))
     }
 
-    /// Port of facade_types.py:815-827 (`Inventory.field_ir`): a field's IR through its codec; the schema's own
+    /// A field's IR through its codec; the schema's own
     /// spelling (`schemars(with = ...)`) stands in only where the serde type could not be read.
     fn field_ir(
         &mut self,
@@ -429,7 +429,7 @@ impl Inventory {
         Ok(value)
     }
 
-    /// Port of facade_types.py:829-854 (`Inventory.fields`): named fields as `([(key, IR, optional)], [flattened
+    /// Named fields as `([(key, IR, optional)], [flattened
     /// IR])`.
     fn fields(
         &mut self,
@@ -490,7 +490,7 @@ impl Inventory {
         Ok((out, flat))
     }
 
-    /// Port of facade_types.py:856-859 (`Inventory.object`).
+    /// The object of a record's named fields (`record.extra` first), intersected with any flattened fields.
     fn object(
         &mut self,
         body: &str,
@@ -512,7 +512,7 @@ impl Inventory {
         })
     }
 
-    /// Port of facade_types.py:861-868 (`Inventory.tuple_fields`).
+    /// Every tuple field's IR, except a `serde(skip)` one.
     fn tuple_fields(
         &mut self,
         body: &str,
@@ -531,7 +531,7 @@ impl Inventory {
         Ok(out)
     }
 
-    /// Port of facade_types.py:870-913 (`Inventory.item_ir`): what a type writes, its `into` type, else its own
+    /// What a type writes, its `into` type, else its own
     /// derive; a type that only reads takes the shape it reads `from`. A wire no caller can name is written under
     /// this type's own name (FIX 11203).
     pub(crate) fn item_ir(&mut self, item: &ItemRef, name: &str) -> Result<Ir, GenerateError> {
@@ -638,7 +638,7 @@ impl Inventory {
         self.enum_ir(item, &serde, case.as_ref(), scope, location)
     }
 
-    /// Port of facade_types.py:915-921 (`Inventory.private_wire`): the type a conversion of `item` names, when it is
+    /// The type a conversion of `item` names, when it is
     /// a non-generic one of its own file that is not `pub`; else `None`.
     fn private_wire(
         &mut self,
@@ -672,7 +672,7 @@ impl Inventory {
         Ok(Some(found))
     }
 
-    /// Port of facade_types.py:923-971 (`Inventory.enum`): every variant as its member of the union, by the enum's
+    /// Every variant as its member of the union, by the enum's
     /// tagging (untagged, adjacent, internal, external), with its metadata in `variants`.
     fn enum_ir(
         &mut self,
@@ -825,7 +825,7 @@ impl Inventory {
         })
     }
 
-    /// Port of facade_types.py:973-1008 (`Inventory.manual`): a type with a handwritten `Serialize`, as what its
+    /// A type with a handwritten `Serialize`, as what its
     /// serializer writes when that is plain. Only the first `impl Serialize` found (of the item's crate, else any)
     /// is read.
     fn manual(
@@ -941,7 +941,7 @@ impl Inventory {
     }
 }
 
-/// The `walk` closure of facade_types.py:764-772: the codec's wire leaf under the `Option`, sequence (not of
+/// The `walk` closure of `Inventory.codec`: the codec's wire leaf under the `Option`, sequence (not of
 /// `u8`) and map around the field's type.
 fn codec_walk(node: &Ast, wire: &Ir) -> Ir {
     match node {

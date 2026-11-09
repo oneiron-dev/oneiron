@@ -1,8 +1,7 @@
-//! Port of generate.py:346-463: the shared boundary helpers every emitter calls (G3 M1, DESIGN 9.1), and
-//! generate.py:1546-1585 `AGENT_VERBS_TS`, which `hand_declared('ts')` reads.
+//! The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads.
 //!
-//! `boundary_type` and `hand_declared` take the `Generator`: the first can root a new type in the shared `Inventory`
-//! (brief H10), and the second keeps `functools.cache`'s memo on it (`Generator::hand_declared_cache`).
+//! `boundary_type` and `hand_declared` take the `Generator`: the first can root a new type in the shared `Inventory`,
+//! and the second keeps `functools.cache`'s memo on it (`Generator::hand_declared_cache`).
 //!
 //! The helpers take a `&str` where Python's argument is a string; a row value that may be no string is turned into
 //! one by `str_receiver`, with the `AttributeError` Python raises at the first `str` method it calls.
@@ -18,8 +17,8 @@ use crate::py::text::title;
 use crate::py::value::{Dict, Value};
 
 impl Generator {
-    /// `INVENTORY`, for an emitter's call into it. Only `Generator::rows_only` (the rows harness, where Python's
-    /// stub builds none) has no inventory; no emitter runs on that one.
+    /// `INVENTORY`, for an emitter's call into it. Only `Generator::rows_only` (the refusal tests' module level) has no
+    /// inventory; no emitter runs on that one.
     pub(crate) fn inventory_mut(&mut self) -> Result<&mut Inventory, GenerateError> {
         self.inventory.as_mut().ok_or_else(|| {
             GenerateError::exception(
@@ -30,12 +29,12 @@ impl Generator {
     }
 }
 
-/// Port of generate.py:346 (LONG_SIGNATURE): clippy caps a function at seven parameters, its receiver included; a
-/// verb with more SDK arguments says why it may pass them one by one.
+/// Clippy caps a function at seven parameters, its receiver included; a verb with more SDK arguments says why it may
+/// pass them one by one.
 pub(crate) const LONG_SIGNATURE: &str =
     r#"expect(clippy::too_many_arguments, reason = "one parameter per SDK argument of the verb")"#;
 
-/// Port of generate.py:347-348 (long_signature).
+/// The `LONG_SIGNATURE` attribute for a function of more than seven parameters, else nothing.
 pub(crate) fn long_signature(params: usize) -> String {
     if params > 7 {
         format!("#[{LONG_SIGNATURE}] ")
@@ -44,15 +43,15 @@ pub(crate) fn long_signature(params: usize) -> String {
     }
 }
 
-/// Port of generate.py:350-351 (RUST_PRIMITIVES), a frozenset read for membership only (OF-495: the Rust primitives
-/// a row may name bare; no crate path prefixes them). In the literal's order.
+/// The Rust primitives a row may name bare (OF-495: no crate path prefixes them). A frozenset read for membership
+/// only, in the literal's order.
 pub(crate) const RUST_PRIMITIVES: &[&str] = &[
     "bool", "char", "String", "f32", "f64", "u8", "u16", "u32", "u64", "u128", "usize", "i8",
     "i16", "i32", "i64", "i128", "isize", "()",
 ];
 
-/// Port of generate.py:352-355 (rust_type): a row type outside the engine: primitives and JSON values as is, engine
-/// paths under `oneiron::`, other names from the SDK module.
+/// A row type outside the engine: primitives and JSON values as is, engine paths under `oneiron::`, other names from
+/// the SDK module.
 ///
 /// `value in RUST_PRIMITIVES` refuses a list or dict (unhashable); any other value that is no string passes the two
 /// tests and meets `value.startswith`.
@@ -123,8 +122,8 @@ impl ArgumentKind {
     }
 }
 
-/// Port of generate.py:377-416 (ARGUMENTS): boundary codecs are selected by argument/result type, never by verb
-/// name. In the dict literal's order, each entry's keys in theirs (copied from the literal by its AST).
+/// Boundary codecs are selected by argument/result type, never by verb name. In the dict literal's order, each
+/// entry's keys in theirs (copied from the literal by its AST).
 pub(crate) const ARGUMENTS: &[ArgumentKind] = &[
     ArgumentKind {
         kind: "witness",
@@ -474,7 +473,7 @@ pub(crate) struct ResultCodec {
     pub(crate) error: Option<&'static str>,
 }
 
-/// Port of generate.py:417-422 (RESULTS), in the dict literal's order.
+/// The result codecs by result type, in the dict literal's order.
 pub(crate) const RESULTS: &[(&str, ResultCodec)] = &[
     (
         "WitnessReceipt",
@@ -519,9 +518,9 @@ pub(crate) fn result_codec(inner: &str) -> Result<&'static ResultCodec, Generate
         .ok_or_else(|| GenerateError::key(inner))
 }
 
-/// Port of generate.py:424-427 (native_binding): the binding the native layer types, or `None` when it is the generic
-/// agent-verb door. Python returns the row's `binding` value itself otherwise; an absent binding and a JSON `null`
-/// are both `None`. A truthy binding that is no dict meets `binding.get`.
+/// The binding the native layer types, or `None` when it is the generic agent-verb door. Python returns the row's
+/// `binding` value itself otherwise; an absent binding and a JSON `null` are both `None`. A truthy binding that is no
+/// dict meets `binding.get`.
 pub(crate) fn native_binding(row: &Dict) -> Result<Option<&Value>, GenerateError> {
     let binding = match row.get("binding") {
         None | Some(Value::None) => return Ok(None),
@@ -537,8 +536,7 @@ pub(crate) fn native_binding(row: &Dict) -> Result<Option<&Value>, GenerateError
     Ok(Some(binding))
 }
 
-/// Port of generate.py:429-431 (js_method): the first segment unchanged, then each later one `str.title()`d (brief H3):
-/// `v2beta.html5parser` is `v2betaHtml5Parser`.
+/// The first segment unchanged, then each later one `str.title()`d: `v2beta.html5parser` is `v2betaHtml5Parser`.
 pub(crate) fn js_method(name: &str) -> String {
     let joined = name.replace('.', "_");
     let mut parts = joined.split('_');
@@ -549,8 +547,8 @@ pub(crate) fn js_method(name: &str) -> String {
     out
 }
 
-/// Port of generate.py:433-437 (container_type): `('Option' | 'Vec', inner)` for a text that starts with
-/// `<container><` and ends with `>`, else `(None, the last `::` segment)`.
+/// `('Option' | 'Vec', inner)` for a text that starts with `<container><` and ends with `>`, else
+/// `(None, the last `::` segment)`.
 pub(crate) fn container_type(value: &str) -> (Option<&'static str>, &str) {
     for container in ["Option", "Vec"] {
         if let Some(inner) = value
@@ -567,10 +565,10 @@ pub(crate) fn container_type(value: &str) -> (Option<&'static str>, &str) {
     )
 }
 
-/// Port of generate.py:439-454 (boundary_type): a row type as one boundary spells it (`language`: `napi`, `py`,
-/// `py_stub`, `ts`). A type the package declares by hand is the shape its native conversion returns; any other is the
-/// generated wire declaration, which `ts_type`/`py_type` can root in the shared `Inventory` (H10). `hand_declared` is
-/// read only when the built-in names do not answer, as Python's `or` does.
+/// A row type as one boundary spells it (`language`: `napi`, `py`, `py_stub`, `ts`). A type the package declares by
+/// hand is the shape its native conversion returns; any other is the generated wire declaration, which
+/// `ts_type`/`py_type` can root in the shared `Inventory`. `hand_declared` is read only when the built-in names do not
+/// answer, as Python's `or` does.
 pub(crate) fn boundary_type(
     generator: &mut Generator,
     value: &str,
@@ -642,8 +640,8 @@ pub(crate) fn boundary_type(
 /// kept, as Python caches only a returned value.
 pub(crate) type HandDeclaredCache = IndexMap<String, IndexSet<String>>;
 
-/// Port of generate.py:456-463 (hand_declared): the type names a package declares by hand: its TypeScript type
-/// modules and agent-verbs template, or the stub's top level. A frozenset, read for membership (and through `sorted`).
+/// The type names a package declares by hand: its TypeScript type modules and agent-verbs template, or the stub's top
+/// level. A frozenset, read for membership (and through `sorted`).
 pub(crate) fn hand_declared<'g>(
     generator: &'g mut Generator,
     language: &str,
@@ -673,7 +671,7 @@ pub(crate) fn hand_declared<'g>(
     Ok(&generator.hand_declared_cache[language])
 }
 
-/// generate.py:461 `re.findall(r'^export (?:type|interface) (\w+)', text, re.M)`: the one group of each match.
+/// Python: `re.findall(r'^export (?:type|interface) (\w+)', text, re.M)`: the one group of each match.
 /// Rust: `(?m)^export (?:type|interface) ([\p{L}\p{N}_]+)` (`translate`); `(?m)^` matches at the start and after each
 /// `\n`, as Python's `re.M` does (the text has universal newlines).
 fn ts_declared_names(text: &str) -> IndexSet<String> {
@@ -688,7 +686,7 @@ fn ts_declared_names(text: &str) -> IndexSet<String> {
         .collect()
 }
 
-/// generate.py:462-463 `frozenset(a or b for a, b in re.findall(r'^(?:class (\w+)\b|(\w+) = )', text, re.M))`.
+/// Python: `frozenset(a or b for a, b in re.findall(r'^(?:class (\w+)\b|(\w+) = )', text, re.M))`.
 /// Rust: `(?m)^(?:class ([\p{L}\p{N}_]+)|([\p{L}\p{N}_]+) = )`. The `\b` is dropped: after a greedy run of Python word
 /// characters the next one is no word character to Python (or the text ends), so Python's `\b` always holds there,
 /// while Rust's Unicode `\b` would fail before a combining mark (`class X\u{301}y` is `X` to Python).
@@ -715,7 +713,7 @@ pub(crate) fn str_receiver<'v>(value: &'v Value, method: &str) -> Result<&'v str
 }
 
 /// Python's `template.format(**fields)` for the generator's constant templates (`ARGUMENTS`, `UNIFFI_ARGUMENTS`,
-/// `uniffi_types.WIRE_LEAVES`): `{{` and `}}` are one brace, `{name}` is the field's text, never parsed again; a
+/// `uniffi_types::WIRE_LEAVES`): `{{` and `}}` are one brace, `{name}` is the field's text, never parsed again; a
 /// missing field is Python's `KeyError`, an unpaired brace its `ValueError`. Every constant template uses plain
 /// `{name}` fields only; a conversion, a format spec, an index or a positional field is refused (no template has one).
 pub(crate) fn str_format(template: &str, fields: &[(&str, &str)]) -> Result<String, GenerateError> {
@@ -766,9 +764,8 @@ pub(crate) fn str_format(template: &str, fields: &[(&str, &str)]) -> Result<Stri
     Ok(out)
 }
 
-/// Port of generate.py:1546-1585 (AGENT_VERBS_TS): the task and ask declarations
-/// `packages/oneiron/src/agent-verbs.ts` carries (copied from the literal by its AST; ASCII, no backslash). G4b's
-/// emitters read it from here.
+/// The task and ask declarations `packages/oneiron/src/agent-verbs.ts` carries (copied from the literal by its AST;
+/// ASCII, no backslash). The emitters read it from here.
 pub(crate) const AGENT_VERBS_TS: &str = r#"import type { RecordRef, TaskDescription as FacadeTaskDescription } from "./facade-types.js";
 export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
 export interface CalibrationPair { prediction: unknown; probability: number; outcome: {answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number} }
@@ -813,8 +810,8 @@ export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" |
 mod tests {
     use super::*;
 
-    // The expected values below were printed by Python 3.14.7 on nelly with the generate.py definitions copied
-    // verbatim (`<workspace>/.claude/jobs/51b185fd/tmp/g3/probe_m1.py`, run as `ssh nelly python3 -I - < probe_m1.py`):
+    // The expected values below were printed by Python 3.14.7 on nelly with the Python generator's definitions
+    // copied verbatim into a probe (main e79eb76df3e):
     //   print(repr(n), repr(js_method(n)))  /  print(repr(v), repr(container_type(v)))  /  ... rust_type(v) ...
 
     #[test]
@@ -1030,7 +1027,7 @@ mod tests {
         );
     }
 
-    // print(re.findall(r'^export (?:type|interface) (\w+)', ts, re.M)) and the `class`/`=` findall of probe_m1.py.
+    // print(re.findall(r'^export (?:type|interface) (\w+)', ts, re.M)) and the `class`/`=` findall of the same probe.
     #[test]
     fn hand_declared_names_match_pythons_findall() {
         let ts = "export type A = 1;\nexport interface B { }\nexport  type C = 2;\nexport type D<T> = T;\n  export type E = 3;\nexport typeF = 1;\nexport interface Ģé_9 {}\nexport type X\u{301}y = 1;\nexport class K {}\nexport type\n";
@@ -1045,7 +1042,7 @@ mod tests {
         );
     }
 
-    // print(repr(t.format(**kw))) and print(repr(t), err(lambda t: t.format(name='v'), t)) of probe_m1.py.
+    // print(repr(t.format(**kw))) and print(repr(t), err(lambda t: t.format(name='v'), t)) of the same probe.
     #[test]
     fn str_format_is_pythons_for_named_fields() {
         assert_eq!(

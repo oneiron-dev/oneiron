@@ -1,4 +1,4 @@
-//! Port of facade_types.py:1010-1051 (the `census` section of `Inventory`): how the rows' inputs and results
+//! The `census` section of `Inventory`: how the rows' inputs and results
 //! read, fully typed, typed to an opaque leaf, or with an unread shape.
 
 use indexmap::{IndexMap, IndexSet};
@@ -9,7 +9,7 @@ use crate::error::GenerateError;
 use crate::py::value::Dict;
 
 impl Inventory {
-    /// Port of facade_types.py:1012-1029 (`Inventory.reach`): the fallback and opaque counts reachable from an IR
+    /// The fallback and opaque counts reachable from an IR
     /// value, each declaration counted once per `seen`.
     pub(crate) fn reach(
         &self,
@@ -39,7 +39,7 @@ impl Inventory {
         Ok((unknown, opaque))
     }
 
-    /// Port of facade_types.py:1031-1033 (`Inventory.root_state`): `unknown`, `opaque` or `typed`.
+    /// A root's state: `unknown`, `opaque` or `typed`.
     pub(crate) fn root_state(
         &mut self,
         text: &crate::py::value::Value,
@@ -55,7 +55,7 @@ impl Inventory {
         })
     }
 
-    /// Port of facade_types.py:1035-1051 (`Inventory.census`): the four census lines over the rows.
+    /// The four census lines over the rows.
     pub(crate) fn census(&mut self, rows: &[&Dict]) -> Result<Vec<String>, GenerateError> {
         let mut states: IndexMap<&str, IndexMap<&str, usize>> =
             [("input", IndexMap::new()), ("output", IndexMap::new())]

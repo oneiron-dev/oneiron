@@ -1,5 +1,5 @@
-//! Port of generate.py:2622-2926 (main `e79eb76df3e`): the UniFFI verb surface (`facade_generated.rs`, one
-//! `export_facade!` arm per facade row) and its generated types (`facade_types_generated.rs`, uniffi_types.py).
+//! The UniFFI verb surface (`facade_generated.rs`, one `export_facade!` arm per facade row) and its generated types
+//! (`facade_types_generated.rs`, `crate::uniffi_types`).
 //!
 //! A row with a `uniffi` signature projects by it. A row without one projects by type: an engine type with a
 //! hand-written UniFFI record (`dto.rs`) crosses as that record, a typed binding argument as its foreign value, and
@@ -19,7 +19,7 @@ use crate::error::GenerateError;
 use crate::py::value::{Dict, Value};
 use crate::uniffi_types::UniffiTypes;
 
-/// Port of generate.py:2622-2630 (UNIFFI_INPUTS): engine input types with a hand-written UniFFI record.
+/// Engine input types with a hand-written UniFFI record.
 pub(crate) const UNIFFI_INPUTS: &[(&str, &str)] = &[
     ("crate::memory::WitnessTurn", "WitnessTurn"),
     ("crate::memory::ClaimInput", "ClaimInput"),
@@ -33,7 +33,7 @@ pub(crate) const UNIFFI_INPUTS: &[(&str, &str)] = &[
     ("crate::memory::BlobArtifactInput", "BlobArtifactInput"),
 ];
 
-/// Port of generate.py:2631-2647 (UNIFFI_RESULTS): engine result types with a hand-written UniFFI record.
+/// Engine result types with a hand-written UniFFI record.
 pub(crate) const UNIFFI_RESULTS: &[(&str, &str)] = &[
     ("crate::memory::WitnessReceipt", "WitnessReceipt"),
     ("crate::memory::CommitReceipt", "CommitReceipt"),
@@ -70,8 +70,8 @@ pub(crate) const UNIFFI_RESULTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Port of generate.py:2648-2711 (UNIFFI_GENERATED_RESULT_LIFTS): generated records with an owned codec for a nested
-/// opaque JSON result; `types.root()` still emits their public records before this codec is selected.
+/// Generated records with an owned codec for a nested opaque JSON result; `types.root()` still emits their public
+/// records before this codec is selected.
 pub(crate) const UNIFFI_GENERATED_RESULT_LIFTS: &[(&str, &str)] = &[
     ("crate::lens::InspectionResolved", "InspectionResolved"),
     (
@@ -255,9 +255,8 @@ pub(crate) const UNIFFI_GENERATED_RESULT_LIFTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Port of generate.py:2713-2723 (UNIFFI_ARGUMENTS): a typed binding argument the client takes as is, by kind: its
-/// foreign type and how it is passed (a `str.format` template). Any other binding argument is lowered into its
-/// `ARGUMENTS` type.
+/// A typed binding argument the client takes as is, by kind: its foreign type and how it is passed (a `str.format`
+/// template). Any other binding argument is lowered into its `ARGUMENTS` type.
 pub(crate) const UNIFFI_ARGUMENTS: &[(&str, (&str, &str))] = &[
     ("text", ("String", "&{name}")),
     ("ref", ("Option<String>", "{name}.as_deref()")),
@@ -274,8 +273,8 @@ pub(crate) const UNIFFI_ARGUMENTS: &[(&str, (&str, &str))] = &[
     ),
 ];
 
-/// Port of generate.py:2725-2733 (UNIFFI_LENS_ROOTS): FIX 3297, the hand-written lens-frame calls cross the generated
-/// records of the client crate's bodies, under these names.
+/// FIX 3297: the hand-written lens-frame calls cross the generated records of the client crate's bodies, under these
+/// names.
 pub(crate) const UNIFFI_LENS_ROOTS: &[(&str, &str)] = &[
     (
         "oneiron_remote::LensFrameEventRequest",
@@ -285,20 +284,20 @@ pub(crate) const UNIFFI_LENS_ROOTS: &[(&str, &str)] = &[
     ("oneiron_remote::CloseLensFrameReply", "CloseLensFrameReply"),
 ];
 
-/// Port of generate.py:2735-2738 (UNIFFI_STREAM_ROOTS): FIX 7968, 9891, roots that reach no row.
+/// FIX 7968, 9891: roots that reach no row.
 pub(crate) const UNIFFI_STREAM_ROOTS: &[&str] = &[
     "crate::lens::GeneratedUiSegment",
     "crate::lens::GeneratedUiCatalogDescriptor",
 ];
 
-/// Port of generate.py:2748-2750 (UNIFFI_HAND_WRITTEN): the files whose public types a generated type may not be named.
+/// The files whose public types a generated type may not be named.
 pub(crate) const UNIFFI_HAND_WRITTEN: &[&str] = &[
     "crates/oneiron-uniffi/src/dto.rs",
     "crates/oneiron-uniffi/src/lib.rs",
     "crates/oneiron-uniffi/src/error.rs",
 ];
 
-/// Port of generate.py:2751 (UNIFFI_ROOT_NAMES): what the crate root already binds.
+/// What the crate root already binds.
 pub(crate) const UNIFFI_ROOT_NAMES: &[&str] = &["Arc", "Lift", "Lower", "UniFfiTag"];
 
 /// `{table}.get(text)` of a `UNIFFI_*` table.
@@ -321,8 +320,7 @@ fn uniffi_argument(kind: &Value) -> Result<Option<(&'static str, &'static str)>,
     }))
 }
 
-/// Port of generate.py:2740-2746 (uniffi_record): the UniFFI type an engine type crosses as, or `None` when it has no
-/// record (through `Option<...>` and `Vec<...>`).
+/// The UniFFI type an engine type crosses as, or `None` when it has no record (through `Option<...>` and `Vec<...>`).
 pub(crate) fn uniffi_record(value: &str, records: &[(&str, &'static str)]) -> Option<String> {
     for container in ["Option", "Vec"] {
         if let Some(inner) = value
@@ -337,8 +335,8 @@ pub(crate) fn uniffi_record(value: &str, records: &[(&str, &'static str)]) -> Op
     lookup(records, value).map(str::to_owned)
 }
 
-/// Port of generate.py:2753-2757 (uniffi_taken): the crate's hand-written public struct and enum names, and what the
-/// crate root binds (a set; `UniffiTypes` reads it for membership).
+/// The crate's hand-written public struct and enum names, and what the crate root binds (a set; `UniffiTypes` reads it
+/// for membership).
 pub(crate) fn uniffi_taken(root: &Path) -> Result<IndexSet<String>, GenerateError> {
     let mut names: IndexSet<String> = UNIFFI_ROOT_NAMES
         .iter()
@@ -460,8 +458,8 @@ fn declaration(params: &PyDict) -> Result<String, GenerateError> {
     Ok(parts.join(", "))
 }
 
-/// Port of generate.py:2759-2900 (uniffi_export): one `export_facade!` arm: lower the arguments, call the typed
-/// client method, lift. Appends the row's name to `census` under its sides.
+/// One `export_facade!` arm: lower the arguments, call the typed client method, lift. Appends the row's name to
+/// `census` under its sides.
 pub(crate) fn uniffi_export(
     row: &Dict,
     types: &mut UniffiTypes<'_>,
@@ -657,8 +655,8 @@ pub(crate) fn uniffi_export(
     ))
 }
 
-/// generate.py:2823-2890: how a generated result is lifted: a named codec for the rows whose result keeps a nested
-/// opaque JSON value, the owned codec, the `ActAnswer` match, or the whole-record conversion.
+/// How a generated result is lifted: a named codec for the rows whose result keeps a nested opaque JSON value, the
+/// owned codec, the `ActAnswer` match, or the whole-record conversion.
 fn generated_result(row_output: &str, mirror: &str, name: &str, owned: bool) -> String {
     let codec = |function: &str| format!("crate::codec::{function}({name}, output)");
     match row_output {
@@ -693,9 +691,8 @@ fn generated_result(row_output: &str, mirror: &str, name: &str, owned: bool) -> 
     }
 }
 
-/// generate.py:2856-2888: an `ActAnswer<...>` result: its `QuestionsNarrowed` variant lifts the hand-written record,
-/// the live-voice and connector-call results lift their nested replies, and the other variants keep the whole-record
-/// conversion.
+/// An `ActAnswer<...>` result: its `QuestionsNarrowed` variant lifts the hand-written record, the live-voice and
+/// connector-call results lift their nested replies, and the other variants keep the whole-record conversion.
 fn act_answer_result(row_output: &str, mirror: &str, name: &str) -> String {
     const LIVE_VOICE: &str =
         "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>";
@@ -753,9 +750,8 @@ fn holds_row(generator: &Generator, rows: &[RowId], id: RowId) -> bool {
     })
 }
 
-/// Port of generate.py:2902-2926 (uniffi_facade): the UniFFI verb surface (every facade row; a definition row is
-/// refused) and its generated types: `(facade_generated.rs, facade_types_generated.rs)`. `facade_rows` is
-/// outputs()'s local of that name (generate.py:2242).
+/// The UniFFI verb surface (every facade row; a definition row is refused) and its generated types:
+/// `(facade_generated.rs, facade_types_generated.rs)`. `facade_rows` is outputs()'s local of that name.
 pub(crate) fn uniffi_facade(
     generator: &mut Generator,
     facade_rows: &[RowId],
@@ -880,7 +876,7 @@ pub(crate) fn uniffi_facade(
 mod tests {
     use super::*;
 
-    // print(repr(v), err(dict, v)) of <workspace>/.claude/jobs/51b185fd/tmp/g3/probe_uniffi.py on nelly (3.14.7).
+    // print(repr(v), err(dict, v)) of a probe on nelly (Python 3.14.7).
     #[test]
     fn dict_of_is_pythons_dict() {
         let parse = |text: &str| crate::py::json::loads(text).expect("json");
@@ -958,7 +954,7 @@ mod tests {
         assert!(!json_eq(&parse("[NaN]"), &parse("[1.0]")));
     }
 
-    // print(repr(a), repr(b), err(lambda a, b: a + b, a, b)) and the join cases of probe_uniffi.py.
+    // print(repr(a), repr(b), err(lambda a, b: a + b, a, b)) and the join cases of the same probe.
     #[test]
     fn declarations_and_joins_refuse_as_python() {
         let text = |s: &str| Value::Str(s.to_owned());

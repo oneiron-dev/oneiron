@@ -1,5 +1,5 @@
-//! The `oneiron-sdk-generator` binary: generate.py's `main()` (generate.py:2928-2984): its argument parsing, as
-//! Python's `argparse` parses and refuses it, and its exit codes; the library does the work.
+//! The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's `argparse`
+//! parses and refuses it, and its exit codes; the library does the work.
 //!
 //! As in Python, the generator's module level runs first (the verb rows and the type inventory), then the arguments
 //! are parsed: a broken verb file fails before a bad flag. A refusal prints `GenerateError` (the line Python prints
@@ -17,14 +17,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use oneiron_sdk_generator::{GenerateError, Run, py_is_decimal, py_is_space, py_repr};
 
-/// The generator recurses as deep as the Python, which raised its own limit to 20,000 frames
-/// (`facade_types.py:24`), and a JSON input may nest 50,000 levels: it runs on a thread with a 256 MiB stack, as
-/// the build crate does (brief 2.2).
+/// The generator recurses as deep as the Python generator, which raised its own limit to 20,000 frames, and a JSON
+/// input may nest 50,000 levels: it runs on a thread with a 256 MiB stack, as the build crate does.
 const STACK_BYTES: usize = 256 << 20;
 
-// ---- generate.py:2930-2933, `argparse` as CPython 3.14.7 (nelly) runs it
+// ---- The generator's parser, `argparse` as CPython 3.14.7 (nelly) runs it
 
-/// One option of generate.py's parser, in `add_argument` order (`-h`/`--help` first, as `ArgumentParser` adds it).
+/// One option of the generator's parser, in `add_argument` order (`-h`/`--help` first, as `ArgumentParser` adds it).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Opt {
     Help,
@@ -340,7 +339,7 @@ fn consume_optional(
     Ok(stop)
 }
 
-/// `parser.parse_args(args)` (argparse.py:2007-2012 and `_parse_known_args`, 2057-2340) for generate.py's parser: no
+/// `parser.parse_args(args)` (argparse.py:2007-2012 and `_parse_known_args`, 2057-2340) for the generator's parser: no
 /// positionals, no groups; options in any order, a long option by any unique prefix, `--opt=value`, `--` ending the
 /// options. Errors and the help end the parse where Python's do; unrecognized arguments are reported at the end.
 fn parse(args: &[String]) -> Parsed {
@@ -598,7 +597,7 @@ fn format_help(prog: &str, width: i64) -> String {
     out
 }
 
-// ---- generate.py:2934-2983, the modes
+// ---- The modes
 
 /// The repository root: the nearest ancestor of the current directory holding `scripts/sdk/verbs`.
 fn find_root() -> Result<PathBuf, String> {
@@ -744,7 +743,7 @@ fn argument_refusal(prog: &str, width: i64, message: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Port of generate.py:2928-2983 (main): the module level, then the arguments, then one mode.
+/// The module level, then the arguments, then one mode.
 fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
     let root = match find_root() {
         Ok(root) => root,
@@ -773,8 +772,7 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
         Parsed::Error(message) => return argument_refusal(prog, width, &message),
     };
     let result = if !package.is_empty() {
-        // generate.py:2934-2949: a package build writes its own outputs in the tree; the docs mirror runs
-        // agent-docs.py --generated.
+        // A package build writes its own outputs in the tree; the docs mirror runs agent-docs.py --generated.
         run.write_packages(&package).and_then(|docs| {
             if docs {
                 run.agent_docs(&["--generated"])
@@ -795,12 +793,12 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
                 ),
             );
         }
-        // generate.py:2950-2958: every output under the directory, and the three generated docs (SDKGEN-DOCS = A:
-        // written here, no agent-docs.py).
+        // Every output under the directory, and the three generated docs (SDKGEN-DOCS = A: written here, no
+        // agent-docs.py).
         run.write_out_dir(Path::new(&Run::command_line_path(&dir)))
     } else {
-        // generate.py:2959-2983: the tree's package outputs written (or checked), the old homes deleted, the census
-        // printed, then agent-docs.py.
+        // The tree's package outputs written (or checked), the old homes deleted, the census printed, then
+        // agent-docs.py.
         // A census stdout cannot take is Python's OSError from `print`, before agent-docs.py runs.
         run.write_tree(check).and_then(|census| {
             run.print(&census)?;
@@ -825,21 +823,6 @@ fn prog_name(argv0: Option<&OsString>) -> String {
 fn dispatch(argv: &[OsString]) -> ExitCode {
     let prog = prog_name(argv.first());
     let args = argv.get(1..).unwrap_or_default();
-    if args.first().is_some_and(|arg| arg == "port-harness") {
-        // The temporary port harness (DESIGN 6; G6 deletes it).
-        let strings: Option<Vec<String>> = args[1..]
-            .iter()
-            .map(|arg| arg.clone().into_string().ok())
-            .collect();
-        let Some(strings) = strings else {
-            print_stderr(&format!("{prog}: the port-harness arguments must be UTF-8"));
-            return ExitCode::from(2);
-        };
-        return match oneiron_sdk_generator::port_harness(&strings) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => failure(&error),
-        };
-    }
     generate_main(&prog, args)
 }
 
@@ -877,8 +860,8 @@ mod tests {
         }
     }
 
-    // The messages python3 (3.14.7, nelly) printed for generate.py's parser, one run per line:
-    //   python3 generate.py <args>; its last stderr line is `generate.py: error: <message>`.
+    // Expected: what the Python generator's argparse printed (main e79eb76df3e, Python 3.14.7 on nelly), one run per
+    // line with the arguments shown; its last stderr line was `<prog>: error: <message>`.
     #[test]
     fn refusals_are_argparses() {
         assert_eq!(error(&["--foo"]), "unrecognized arguments: --foo");
@@ -968,7 +951,8 @@ mod tests {
         }
     }
 
-    // python3 generate.py -h (and with COLUMNS=40, 200; and the script copied to `oneiron-sdk-generator`).
+    // Expected: the help the Python generator's argparse printed for `-h` (main e79eb76df3e, Python 3.14.7 on nelly),
+    // also with COLUMNS=40 and 200, and with the script copied to `oneiron-sdk-generator`.
     #[test]
     fn help_and_usage_wrap_as_argparse() {
         assert_eq!(

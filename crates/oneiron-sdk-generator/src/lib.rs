@@ -1,28 +1,21 @@
-//! The SDK generator: a port of `scripts/sdk/generate.py` and its sibling modules (SDK-GENERATOR-RUST).
+//! The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust types the
+//! facade rows name, and the hand-written files listed in `INPUTS` (SDK-GENERATOR-RUST).
 //!
-//! On the same inputs the port writes the same bytes to the same paths as the Python generator, and it refuses the
-//! same inputs with the same message (`GenerateError` carries the text Python prints last). Until the stack's last
-//! PR (G6) removes the Python, each ported function names the Python file and lines it ports, as of main
-//! `e79eb76df3e`.
+//! It is a byte-for-byte port of the standard-library Python generator it replaced (main `e79eb76df3e`), so it keeps
+//! that generator's rules: Python's `json`, `str` and `re` semantics where they reach an output (the `py` helpers),
+//! dict insertion order, and the refusal texts (`GenerateError` carries the line Python printed last).
 //!
-//! The public API (brief 2.1): `outputs` (every output, in generate.py's order), `write_out_dir` (the `--out-dir`
-//! mode, which crates/oneiron-sdk-build runs in-process), `CRATES` and `INPUTS` (what the generator reads, for the
-//! build crate's input digest), `Outputs` and `GenerateError`. Both functions run the generator on a thread of its
-//! own with a 256 MiB stack: the type walk recurses as deep as Python's raised limit (`facade_types.py:24`).
+//! The public API: `outputs` (every output, in the generator's order), `write_out_dir` (the `--out-dir` mode, which
+//! crates/oneiron-sdk-build runs in-process), `CRATES` and `INPUTS` (what the generator reads, for the build crate's
+//! input digest), `Outputs` and `GenerateError`. Both functions run the generator on a thread of its own with a
+//! 256 MiB stack: the type walk recurses deeply on the engine's types.
 
 mod catalog_fragment;
 mod error;
 mod facade_types;
-#[allow(
-    dead_code,
-    reason = "the module-level state; the emitters of later PRs of the port read it"
-)]
 mod generate;
-mod harness;
-#[allow(
-    dead_code,
-    reason = "the shared Python-behaviour helpers; later PRs of the port call the ones G1a does not"
-)]
+#[cfg(all(test, unix))]
+mod projection_rules;
 mod py;
 mod uniffi_types;
 mod verb_table;
@@ -43,9 +36,9 @@ const STACK_BYTES: usize = 256 << 20;
 /// Every fixed path the generator reads, relative to the repository root, beside the `CRATES` source directories
 /// (brief 1.3), each with the functions that read it. A directory stands for every file under it.
 pub const INPUTS: &[&str] = &[
-    // verb_table::load_verbs (generate.py:17, the verb table) and generate::docs::generated_artifacts (verbs.md).
+    // verb_table::load_verbs (the verb table) and generate::docs::generated_artifacts (verbs.md).
     "scripts/sdk/verbs",
-    // facade_types::type_names (facade_types.py:372, read at import).
+    // facade_types::type_names (read first, before any verb file).
     "scripts/sdk/type_names.json",
     // generate::common::hand_declared('ts'), generate::emit_ts::ts_facade_module, ts_native_module, and
     // generate::docs::generated_artifacts (types.md).
@@ -54,15 +47,10 @@ pub const INPUTS: &[&str] = &[
     "packages/oneiron/src/key-value.ts",
     // generate::common::hand_declared('py') and generate::docs::generated_artifacts (types.md).
     "crates/oneiron-py/python/oneiron/__init__.pyi",
-    // generate::uniffi::uniffi_taken (generate.py:2750, UNIFFI_HAND_WRITTEN).
+    // generate::uniffi::uniffi_taken (UNIFFI_HAND_WRITTEN).
     "crates/oneiron-uniffi/src/dto.rs",
     "crates/oneiron-uniffi/src/lib.rs",
     "crates/oneiron-uniffi/src/error.rs",
-    // generate::outputs (generate.py:2536): the dormant MCP dispatch host, read and set aside.
-    "crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs",
-    // generate::outputs (generate.py:2554): the dormant board catalog host, read and set aside (it is under the
-    // `oneiron` crate's source directory too).
-    "crates/oneiron/src/board_verb.rs",
 ];
 
 /// Runs `work` on a thread with the generator's stack, and returns its result.
@@ -81,14 +69,13 @@ fn on_generator_thread<T: Send + 'static>(
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-/// Every output of generate.py's `outputs()` for the repository at `root`, in its order: each path with its text,
-/// and `None` for each of the sixteen old homes the default mode deletes.
+/// Every output for the repository at `root`, in the generator's order: each repository path with its text.
 pub fn outputs(root: &Path) -> Result<Outputs, GenerateError> {
     let root = root.to_path_buf();
     on_generator_thread(move || generate::Generator::new(&root)?.outputs())
 }
 
-/// generate.py's `--out-dir <dir>`: every output that is no deletion, under `<dir>/<repo path>`, and the three
+/// The `--out-dir <dir>` mode: every output under `<dir>/<repo path>`, and the three
 /// generated agent-SDK docs under `<dir>/docs/agent-sdk/` (SDKGEN-DOCS = A). It writes into `dir` as given and runs
 /// no other process.
 pub fn write_out_dir(root: &Path, dir: &Path) -> Result<(), GenerateError> {
@@ -96,8 +83,8 @@ pub fn write_out_dir(root: &Path, dir: &Path) -> Result<(), GenerateError> {
     on_generator_thread(move || generate::Generator::new(&root)?.write_out_dir(&dir))
 }
 
-/// generate.py after its module level, for the binary's modes: built once, on the thread that uses it (the type
-/// inventory is not `Send`), and run in one mode.
+/// The generator after its module level (the verb rows read and checked, the row sets built), for the binary's
+/// modes: built once, on the thread that uses it (the type inventory is not `Send`), and run in one mode.
 #[doc(hidden)]
 pub struct Run {
     generator: generate::Generator,
@@ -105,24 +92,24 @@ pub struct Run {
 
 #[doc(hidden)]
 impl Run {
-    /// generate.py's module level (generate.py:4-343) for the repository at `root`.
+    /// The module level for the repository at `root`: the first refusal wins.
     pub fn new(root: &Path) -> Result<Self, GenerateError> {
         Ok(Self {
             generator: generate::Generator::new(root)?,
         })
     }
 
-    /// `--package <name>...` (generate.py:2934-2947); whether `docs` was among them.
+    /// `--package <name>...`; whether `docs` was among them.
     pub fn write_packages(&mut self, names: &[String]) -> Result<bool, GenerateError> {
         self.generator.write_packages(names)
     }
 
-    /// `--out-dir <dir>` (generate.py:2950-2958, with the docs written here).
+    /// `--out-dir <dir>`, the three generated docs included.
     pub fn write_out_dir(&mut self, dir: &Path) -> Result<(), GenerateError> {
         self.generator.write_out_dir(dir)
     }
 
-    /// The default mode or `--check` (generate.py:2959-2979); what the default mode prints on stdout.
+    /// The default mode or `--check`; what the default mode prints on stdout.
     pub fn write_tree(&mut self, check: bool) -> Result<String, GenerateError> {
         self.generator.write_tree(check)
     }
@@ -165,11 +152,4 @@ pub fn py_is_decimal(c: char) -> bool {
 #[doc(hidden)]
 pub fn py_is_space(c: char) -> bool {
     py::text::is_space(c)
-}
-
-/// The `port-harness` subcommand (DESIGN 6): dumps the port's state for comparison with
-/// `scripts/sdk/port_harness.py`. Temporary: G6 deletes it with the Python.
-#[doc(hidden)]
-pub fn port_harness(args: &[String]) -> Result<(), GenerateError> {
-    harness::run(args)
 }

@@ -1,6 +1,6 @@
-//! Port of generate.py's module level, lines 16-343: the verb rows' validation and the row sets, in source order
-//! (Sol's map 1.7). Each check keeps Python's evaluation order and short-circuits, its truthiness and `is True`, and
-//! the error Python raises when a malformed row meets an operation of the wrong type.
+//! The Python generator's module level: the verb rows' validation and the row sets, in source order. Each check
+//! keeps Python's evaluation order and short-circuits, its truthiness and `is True`, and the error Python raises when
+//! a malformed row meets an operation of the wrong type.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -17,30 +17,30 @@ use crate::py::value::{Dict, Value, set_add};
 use crate::verb_table::load_verbs;
 
 // The `re.fullmatch` patterns, each beside the Python one (all ASCII classes, so Python's and Rust's agree).
-/// generate.py:93 `[A-Za-z_][A-Za-z0-9_]*`
+/// An `outputs_by_input` field name: `[A-Za-z_][A-Za-z0-9_]*`
 static FIELD_NAME: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[A-Za-z_][A-Za-z0-9_]*"));
-/// generate.py:215 `[A-Za-z0-9][A-Za-z0-9._-]*`
+/// An attachment's file name: `[A-Za-z0-9][A-Za-z0-9._-]*`
 static ATTACHMENT: LazyLock<Regex> =
     LazyLock::new(|| compile_fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*"));
-/// generate.py:262 `(crate|super|self)(::[A-Za-z_][A-Za-z0-9_]*)+`
+/// A `refs_check` fn path: `(crate|super|self)(::[A-Za-z_][A-Za-z0-9_]*)+`
 static REFS_CHECK: LazyLock<Regex> =
     LazyLock::new(|| compile_fullmatch(r"(crate|super|self)(::[A-Za-z_][A-Za-z0-9_]*)+"));
-/// generate.py:268 `(/(\*|[a-z_][a-z0-9_]*))+`
+/// A `refs` pointer: `(/(\*|[a-z_][a-z0-9_]*))+`
 static REF_POINTER: LazyLock<Regex> =
     LazyLock::new(|| compile_fullmatch(r"(/(\*|[a-z_][a-z0-9_]*))+"));
-/// generate.py:288 `[a-z_][a-z0-9_]*(\[\*\])?(\.[a-z_][a-z0-9_]*(\[\*\])?)*`
+/// A `readable` field path: `[a-z_][a-z0-9_]*(\[\*\])?(\.[a-z_][a-z0-9_]*(\[\*\])?)*`
 static READABLE: LazyLock<Regex> =
     LazyLock::new(|| compile_fullmatch(r"[a-z_][a-z0-9_]*(\[\*\])?(\.[a-z_][a-z0-9_]*(\[\*\])?)*"));
-/// generate.py:302 `(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+`
+/// A `prose_links` pointer: `(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+`
 static PROSE_POINTER: LazyLock<Regex> = LazyLock::new(|| {
     compile_fullmatch(r"(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+")
 });
-/// generate.py:321 `[a-z_][a-z0-9_]*`
+/// A generic binding argument's name: `[a-z_][a-z0-9_]*`
 static ARG_NAME: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[a-z_][a-z0-9_]*"));
-/// generate.py:333 `[ -~]{1,240}\.`
+/// A row's description: `[ -~]{1,240}\.`
 static DESCRIPTION: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[ -~]{1,240}\."));
 
-/// generate.py:32: the keys a host projection may hold.
+/// The keys a host projection may hold.
 const HOST_KEYS: &[&str] = &[
     "input",
     "output",
@@ -52,7 +52,7 @@ const HOST_KEYS: &[&str] = &[
     "host_door_proof",
     "openapi",
 ];
-/// generate.py:34: the host projection's flags, each a bool.
+/// The host projection's flags, each a bool.
 const HOST_FLAGS: &[&str] = &[
     "host_door_caller",
     "host_door_session",
@@ -60,14 +60,14 @@ const HOST_FLAGS: &[&str] = &[
     "host_door_precheck",
     "openapi",
 ];
-/// generate.py:80: the keys a run row may hold beside its required ones, and the required ones.
+/// The keys a run row may hold beside its required ones, and the required ones.
 const RUN_OPTIONAL: &[&str] = &["output", "outputs_by_input", "host", "run_surface"];
 const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect"];
-/// generate.py:113: a scoped-child row's keys, `description` aside.
+/// A scoped-child row's keys, `description` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
     "name", "input", "output", "call", "scope", "context", "mcp", "section",
 ];
-/// generate.py:239: the record-scope admissions `require_granted_scope` excludes.
+/// The record-scope admissions `require_granted_scope` excludes.
 const OTHER_RECORD_SCOPES: &[&str] = &[
     "owner_grade",
     "claim_record_scope",
@@ -130,8 +130,8 @@ fn same_name(a: &Value, b: &Value) -> bool {
     a.py_eq(b) || matches!((a, b), (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan())
 }
 
-/// `isinstance(x, str) and re.fullmatch(pattern, x)` over every item: generate.py:268 and :302 (`refs`,
-/// `prose_links`): `not pointers or len(set(pointers)) != len(pointers) or not all(...)`, negated.
+/// `isinstance(x, str) and re.fullmatch(pattern, x)` over every item of `refs` or `prose_links`:
+/// `not pointers or len(set(pointers)) != len(pointers) or not all(...)`, negated.
 fn distinct_pointers(pointers: &Value, pattern: &Regex) -> Result<bool, GenerateError> {
     if !pointers.truthy() {
         return Ok(false);
@@ -156,8 +156,8 @@ fn fullmatch(pattern: &Regex, value: &Value) -> Result<bool, GenerateError> {
     }
 }
 
-/// Port of generate.py:36-50 (host_synthetic): a run, browser or board row's facade-only host projection. Python
-/// evaluates the dict literal left to right, so `row['output']` is read before the host's own `output`.
+/// A run, browser or board row's facade-only host projection. Python evaluates the dict literal left to right, so
+/// `row['output']` is read before the host's own `output`.
 fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
     let name = item(row, "name")?;
     let mut out = Dict::new();
@@ -213,7 +213,7 @@ fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
     Ok(out)
 }
 
-/// Port of generate.py:29-35: a host projection names the public input and description, with optional flags.
+/// A host projection names the public input and description, with optional flags.
 fn check_host(row: &Dict) -> Result<(), GenerateError> {
     let host = item(row, "host")?;
     let context = row.get("context");
@@ -248,7 +248,7 @@ fn check_host(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:67-75: the role fields (custody, overlay_write, session_read, run_surface).
+/// The role fields (custody, overlay_write, session_read, run_surface).
 fn check_metadata(row: &Dict) -> Result<(), GenerateError> {
     if let Some(custody) = row.get("custody")
         && (!is(row, "scope", "Write") || !matches!(custody, Value::Str(_)))
@@ -285,7 +285,7 @@ fn check_metadata(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:79-81: a run row's key set.
+/// A run row's key set.
 fn check_run_row(row: &Dict) -> Result<(), GenerateError> {
     let keys: BTreeSet<&str> = row
         .keys()
@@ -301,7 +301,7 @@ fn check_run_row(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:89-95: `outputs_by_input` maps input field names to non-empty output types.
+/// `outputs_by_input` maps input field names to non-empty output types.
 fn check_outputs_by_input(row: &Dict) -> Result<(), GenerateError> {
     let Some(by_input) = row.get("outputs_by_input") else {
         return Ok(());
@@ -327,7 +327,7 @@ fn check_outputs_by_input(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:111-116: a scoped-child row's shape.
+/// A scoped-child row's shape.
 fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
     if !is(row, "context", "scoped_child") {
         return Ok(());
@@ -357,7 +357,7 @@ fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:123-124: the row's MCP scope and fields, after their defaults.
+/// The row's MCP scope and fields, after their defaults.
 fn check_mcp(row: &Dict) -> Result<(), GenerateError> {
     let scope = item(row, "mcp_scope")?;
     scope.check_hashable("a set element")?;
@@ -379,7 +379,7 @@ fn check_mcp(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:128-233: the door flags of one row.
+/// The door flags of one row.
 fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     if flag(row, "proposes") && !item(row, "scope")?.is_str("Write") {
         return Err(refuse(row, "only a Write row proposes"));
@@ -465,7 +465,7 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// generate.py:203 `'rows' in row.get('admission', {}).get('readable', [])`.
+/// `'rows' in row.get('admission', {}).get('readable', [])`.
 fn readable_has_rows(row: &Dict) -> Result<bool, GenerateError> {
     let Some(admission) = row.get("admission") else {
         return Ok(false);
@@ -476,7 +476,7 @@ fn readable_has_rows(row: &Dict) -> Result<bool, GenerateError> {
     }
 }
 
-/// Port of generate.py:234-252: `require_granted_scope` and `mcp_off_runtime`.
+/// `require_granted_scope` and `mcp_off_runtime`.
 fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     // `admission = row.get('admission', {})`, then `admission.get(...)`: always read, so an admission that is no
     // dict fails here whatever it holds.
@@ -526,7 +526,7 @@ fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:260-269: `refs_check` and `refs`.
+/// `refs_check` and `refs`.
 fn check_refs(row: &Dict) -> Result<(), GenerateError> {
     if let Some(refs_check) = row.get("refs_check")
         && (!row.contains_key("refs")
@@ -561,7 +561,7 @@ fn check_refs(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:273-277: `file_call`.
+/// `file_call`.
 fn check_file_call(row: &Dict) -> Result<(), GenerateError> {
     let Some(file_call) = row.get("file_call") else {
         return Ok(());
@@ -581,7 +581,7 @@ fn check_file_call(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:286-289: each `readable` entry.
+/// Each `readable` entry.
 fn check_readable(row: &Dict) -> Result<(), GenerateError> {
     let Some(admission) = row.get("admission") else {
         return Ok(());
@@ -600,7 +600,7 @@ fn check_readable(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:297-303: `prose_links`.
+/// `prose_links`.
 fn check_prose_links(row: &Dict) -> Result<(), GenerateError> {
     let Some(pointers) = row.get("prose_links") else {
         return Ok(());
@@ -624,7 +624,7 @@ fn check_prose_links(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// generate.py:320-322: one generic binding argument's shape.
+/// One generic binding argument's shape.
 fn valid_generic_arg(arg: &Value) -> Result<bool, GenerateError> {
     let Some(arg) = arg.as_dict() else {
         return Ok(false);
@@ -649,7 +649,7 @@ fn valid_generic_arg(arg: &Value) -> Result<bool, GenerateError> {
     })
 }
 
-/// Port of generate.py:314-325: a generic binding's shape; whether the row has one to move.
+/// A generic binding's shape; whether the row has one to move.
 fn check_generic_binding(row: &Dict) -> Result<bool, GenerateError> {
     let Some(binding) = row.get("binding") else {
         return Ok(false);
@@ -696,7 +696,7 @@ fn check_generic_binding(row: &Dict) -> Result<bool, GenerateError> {
     Ok(true)
 }
 
-/// Port of generate.py:330-334: a callable row's one-line description.
+/// A callable row's one-line description.
 fn check_description(row: &Dict) -> Result<(), GenerateError> {
     let Some(text) = row.get("description") else {
         return Ok(());
@@ -714,36 +714,31 @@ fn check_description(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Port of generate.py:283-285 (nested_readable): whether a `readable` entry is a nested path rather than a
-/// top-level field.
-pub(crate) fn nested_readable(readable: &str) -> bool {
-    readable.contains('.') || readable.contains('[')
-}
-
 /// The rows of `ids` that `keep` takes.
 fn filter(rows: &RowStore, ids: &[RowId], keep: impl Fn(&Dict) -> bool) -> Vec<RowId> {
     ids.iter().copied().filter(|&id| keep(&rows[id])).collect()
 }
 
 impl Generator {
-    /// Port of generate.py:4-343, the module level, in source order: the first failure wins, with Python's message.
+    /// The Python generator's module level, in source order: the first failure wins, with Python's message.
     pub(crate) fn new(root: &Path) -> Result<Self, GenerateError> {
         Self::module_level(root, true)
     }
 
-    /// The module level as `scripts/sdk/port_harness.py rows` runs it: facade_types.py's import still reads
-    /// type_names.json, but the stubbed `Inventory` reads no Rust source and builds nothing (`inventory` is `None`).
+    /// The module level without the type inventory, for the refusal tests: type_names.json and the verb rows are
+    /// read and checked, but no Rust source is read and `inventory` is `None`.
+    #[cfg(test)]
     pub(crate) fn rows_only(root: &Path) -> Result<Self, GenerateError> {
         Self::module_level(root, false)
     }
 
     fn module_level(root: &Path, build_inventory: bool) -> Result<Self, GenerateError> {
-        // generate.py:4-15, the imports. facade_types.py's module level runs here, before any verb file is read: it
-        // reads type_names.json (facade_types.py:372), beside the resolved scripts/sdk (its `__file__`), so it is
-        // read below once that directory is known. catalog_fragment.py and uniffi_types.py read nothing at import.
+        // The imports. `facade_types`'s module level runs here, before any verb file is read: it reads
+        // type_names.json beside the resolved scripts/sdk (its `__file__`), so it is read below once that directory
+        // is known. `catalog_fragment` and `uniffi_types` read nothing at import.
         //
-        // generate.py:16 `ROOT = Path(__file__).resolve().parents[2]`, and verb_table.py:7's `VERBS_DIR` beside
-        // the resolved scripts/sdk.
+        // `ROOT = Path(__file__).resolve().parents[2]`, and the verb table's `VERBS_DIR` beside the resolved
+        // scripts/sdk.
         let sdk_dir = root.join("scripts/sdk");
         let sdk = sdk_dir
             .canonicalize()
@@ -753,9 +748,9 @@ impl Generator {
             .and_then(Path::parent)
             .unwrap_or(&sdk)
             .to_path_buf();
-        // facade_types.py:372 `TYPE_NAMES = json.loads(...)` (the import, generate.py:12).
+        // `TYPE_NAMES = json.loads(...)` (the `facade_types` import).
         let type_names = type_names(&root)?;
-        // generate.py:17 `MANIFEST = {'verbs': load_verbs()}`
+        // `MANIFEST = {'verbs': load_verbs()}`
         let mut rows = RowStore::default();
         let manifest: Vec<RowId> = load_verbs(&sdk.join("verbs"))?
             .into_iter()
@@ -790,7 +785,7 @@ impl Generator {
         for &id in &generator.manifest {
             check_description(&generator.rows[id])?;
         }
-        // generate.py:338 HEADER is `super::HEADER`; generate.py:339 FACADE_ROWS.
+        // HEADER is `super::HEADER`; then FACADE_ROWS.
         let memory = filter(&generator.rows, &generator.callable_rows, |row| {
             !not_memory(row)
         });
@@ -798,9 +793,8 @@ impl Generator {
             .into_iter()
             .chain(generator.board_host_rows.iter().copied())
             .collect();
-        // generate.py:343 `INVENTORY = Inventory(ROOT, FACADE_ROWS)`. The module level after it binds constant
-        // tables only (left to the PRs that port their emitters) and CORE_VERB_NAMES and CORE_COUNT_DEFAULTS
-        // (`super`); it checks no row.
+        // `INVENTORY = Inventory(ROOT, FACADE_ROWS)`. The module level after it binds constant tables only
+        // (CORE_VERB_NAMES and CORE_COUNT_DEFAULTS are `super`'s); it checks no row.
         if build_inventory {
             let facade_rows = generator.rows.select(&generator.facade_rows);
             let inventory =
@@ -810,7 +804,7 @@ impl Generator {
         Ok(generator)
     }
 
-    /// Port of generate.py:21-35: the host sets, then each host projection's shape.
+    /// The host sets, then each host projection's shape.
     fn host_sets(&mut self) -> Result<(), GenerateError> {
         let rows = &self.rows;
         self.host_rows = filter(rows, &self.manifest, |row| row.contains_key("host"));
@@ -824,8 +818,7 @@ impl Generator {
         Ok(())
     }
 
-    /// Port of generate.py:51-59: ROWS, BOARD_HOST_ROWS, BOARD_HOST_NAMES, DEFINITIONS, the duplicate check and
-    /// RUN_ROWS.
+    /// ROWS, BOARD_HOST_ROWS, BOARD_HOST_NAMES, DEFINITIONS, the duplicate check and RUN_ROWS.
     fn callable_sets(&mut self) -> Result<(), GenerateError> {
         // `row not in HOST_BROWSER_ROWS` compares rows by value in Python. A manifest row equal to a host-browser
         // row holds `host` and `context: "browser"` itself, so it is one of them: comparing ids is the same test.
@@ -872,13 +865,13 @@ impl Generator {
         Ok(())
     }
 
-    /// Port of generate.py:66-116: the role fields, CODE_MODE_ROWS and SCHEMA_ROWS, the run rows' shape,
-    /// `outputs_by_input` and the scoped-child rows.
+    /// The role fields, CODE_MODE_ROWS and SCHEMA_ROWS, the run rows' shape, `outputs_by_input` and the scoped-child
+    /// rows.
     fn checked_sets(&mut self) -> Result<(), GenerateError> {
         for &id in &self.manifest {
             check_metadata(&self.rows[id])?;
         }
-        // generate.py:77; Python makes the set of host names again for each row.
+        // Python makes the set of host names again for each row.
         let mut host_names = Vec::new();
         for &id in &self.host_rows {
             host_names.push(item(&self.rows[id], "name")?.clone());
@@ -897,7 +890,6 @@ impl Generator {
         code_mode.extend(&self.host_board_rows);
         code_mode.extend(&self.run_rows);
         self.code_mode_rows = code_mode;
-        // generate.py:78
         let hostless_runs = filter(&self.rows, &self.run_rows, |row| !row.contains_key("host"));
         self.schema_rows = self
             .callable_rows
@@ -917,8 +909,8 @@ impl Generator {
         Ok(())
     }
 
-    /// Port of generate.py:117-303: each callable row's MCP shape (with its two defaults), door flags and
-    /// admission, then the record refs, file calls, readable paths and prose links, loop by loop.
+    /// Each callable row's MCP shape (with its two defaults), door flags and admission, then the record refs, file
+    /// calls, readable paths and prose links, loop by loop.
     fn check_callable_rows(&mut self) -> Result<(), GenerateError> {
         for id in self.callable_rows.clone() {
             let row = &self.rows[id];
@@ -932,7 +924,7 @@ impl Generator {
                     "only a browser or scoped-child row states \"mcp\": \"none\", and every such row does",
                 ));
             }
-            // generate.py:121-122: `setdefault` mutates the row object, which every set shares.
+            // `setdefault` mutates the row object, which every set shares.
             let row = self.rows.get_mut(id);
             row.entry("mcp_fields".into()).or_insert_with(|| {
                 let mut spec = Dict::new();
@@ -959,7 +951,7 @@ impl Generator {
         Ok(())
     }
 
-    /// Port of generate.py:313-326: each generic binding, checked, then moved off its row:
+    /// Each generic binding, checked, then moved off its row:
     /// `row['handle_args'] = row.pop('binding')['args']` (the other keys keep their order).
     fn move_generic_bindings(&mut self) -> Result<(), GenerateError> {
         for id in self.callable_rows.clone() {
@@ -992,7 +984,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let verbs = root.join("scripts/sdk/verbs");
         fs::create_dir_all(&verbs).expect("a scratch tree");
-        // facade_types.py's import reads it before any verb file.
+        // The `facade_types` import reads it before any verb file.
         fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
         for (file, text) in files {
             fs::write(verbs.join(file), text).expect("a verb file");
@@ -1002,8 +994,8 @@ mod tests {
 
     const BASE: &str = r#""name": "zz_fixture", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "section": false"#;
 
-    // Each expected line: the last stderr line of `python3 scripts/sdk/port_harness.py rows` on nelly (Python
-    // 3.14.7) over a tree whose only verb file is the row (tools/sdk_port_fixtures.py makes the same trees).
+    // Each expected line: the last stderr line of the Python generator's module level (Python 3.14.7 on nelly) over
+    // a tree whose only verb file is the row.
     #[test]
     fn refusals_match_python() {
         let cases: &[(&str, &str)] = &[
@@ -1096,8 +1088,8 @@ mod tests {
 
     #[test]
     fn type_names_is_read_before_the_verbs() {
-        // facade_types.py's import reads type_names.json (generate.py:12) before load_verbs (generate.py:17): with
-        // both broken, Python's `generate.py` and `port_harness.py rows` stop on type_names.json.
+        // The `facade_types` import reads type_names.json before load_verbs: with both broken, the Python generator
+        // stops on type_names.json, and so does the module level with or without the type inventory.
         let root = tree("type-names-first", &[("zz_fixture.json", "{")]);
         fs::write(root.join("scripts/sdk/type_names.json"), "{\n").expect("type_names.json");
         let expected = "json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column \
@@ -1159,7 +1151,6 @@ mod tests {
                 "mcp_scope"
             ]
         );
-        assert!(nested_readable("a.b") && nested_readable("a[*]") && !nested_readable("rows"));
         fs::remove_dir_all(&root).expect("cleanup");
     }
 }

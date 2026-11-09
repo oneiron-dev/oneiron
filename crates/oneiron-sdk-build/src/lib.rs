@@ -23,8 +23,8 @@ use std::{env, fs};
 
 use oneiron_sdk_generator::{CRATES, GENERATOR_SOURCE_DIGEST, INPUTS, write_out_dir};
 
-/// Generated files the package builds write beside the generator's inputs (`PACKAGE_OUTPUTS` in
-/// `scripts/sdk/generate.py`). They are outputs, never inputs: the digest and the rerun list leave them out, so a
+/// Generated files the package builds write beside the generator's inputs (the generator's
+/// `PACKAGE_OUTPUTS`). They are outputs, never inputs: the digest and the rerun list leave them out, so a
 /// package build that writes them does not make the next cargo build run the generator again.
 const PACKAGE_OUTPUTS: &[&str] = &[
     "packages/oneiron/src/facade-types.ts",
