@@ -5,6 +5,7 @@ import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpError, type PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 import { ScriptedProviders } from "./support/providers.ts";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { SkillLibraryView, GraduationScope } from "@oneiron/client/facade-types";
@@ -24,9 +25,9 @@ afterAll(suite.flush);
  * generated HTTP facade inputs/results and the public Oneiron SDK; server
  * OpenAPI registry/owner paths, owner pack handlers and CLI command enum.
  * The owner's HTTP pack routes exist, even where SDK/library doors do not.
- * self.skills.save/fork/callables exist; self.skills.call is run-context only,
- * not a generated HTTP/SDK verb. skills-pack prints the static API guide, not
- * the vault's skill library. Neither is a substitute for the missing flows.
+ * self.skills.save/fork/callables exist; self.skills.call is a typed live-run
+ * Callable door, not a stored prose-Workflow executor. skills-pack prints the
+ * static API guide, not the vault's skill library. Neither replaces the missing flows.
  *
  * Independent inputs, expected facts and canon SHA-256 pins: skills-scenarios
  * in fixtures/skills/manifest.json. Hub aliases refer to immutable folder
@@ -45,8 +46,9 @@ afterAll(suite.flush);
 /* SKILLS-01 — Message to reusable skill should work. OF-206, OF-215.
  * Canon: ARCH-0053 #r4-lifecycle. Oracle: skills-scenarios / SKILLS-01.
  * Conversion/get/list now exist, but this fixture is a stored prose Workflow,
- * not a Callable. Wait for a public stored-Workflow execution verb behind its
- * live-run Grant, yielding the actual used-version terminal pack receipt.
+ * not a Callable. Wait for public converted-Candidate admission and a public
+ * stored-Workflow execution verb behind its live-run Grant, yielding the actual
+ * used-version terminal pack receipt.
  * Preserve conversion dedup, both message refs, [3,1,2] -> [1,2,3], and
  * R5-skill_convert-005: deleting a source must retain and stale the skill,
  * mark that evidence unavailable, and stop trusted loading. Today's converted
@@ -54,7 +56,7 @@ afterAll(suite.flush);
  * Future full journey also refuses a paired agent with receiptRef and reads
  * conversion, execution and deletion state through second doors after restart.
  */
-suite.todo(test, "SKILLS-01", "waits on a public stored-Workflow execution verb behind the live-run Grant that returns its used-version terminal pack receipt; retain source-deletion-to-stale assertion R5-skill_convert-005");
+suite.todo(test, "SKILLS-01", "waits on public converted-Candidate admission and a public stored-Workflow execution verb behind the live-run Grant that returns its used-version terminal pack receipt; retain source-deletion-to-stale assertion R5-skill_convert-005");
 
 /* SKILLS-02 — Hub content identity and pinned update should work.
  * OF-213, OF-396. Canon: ARCH-0053 #r4b-hubs, ARCH-0040 #mcp-actor-ceilings,
@@ -96,7 +98,7 @@ suite.todo(test, "SKILLS-02", "waits on typed SKILL_HUB register/read, skill imp
 const skills03Pins = {
   clean: "652b4548b9147c1a41cb2bc80aa452726b05c465ab4bfdfa0a6fe87a5393a347",
   suspicious: "08c1b2d54fb85b230d8b3186ee5abb107ba498123148779a45cfe8f150a7eeb9",
-  pack: "517e0ed634bc1138ee1baa5bbbdb44d96519696423725481fa2fb1477164e25b",
+  pack: "380efdb34d7e13358b3894edb111f9574b5bb605e1c0fe8ac2d895bd03148f10",
   custom: "e23543d64c43fa7ac3f18bd0e6008084b3d1d453f6be6d64bcd44e7c79b70d8c",
 } as const;
 function skills03QueueTree(providers: ScriptedProviders, id: string,
@@ -157,7 +159,10 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   const fixtures = await loadFixtures();
   const clean = await fixtures.readArchive("skills-clean-v1");
   const suspicious = await fixtures.readArchive("skills-suspicious");
-  const pack = await fixtures.readArchive("skills-code-pack");
+  // Author the scoped-identity correction here; the external fixture stays hash-checked and unchanged.
+  const packSource = new TextDecoder().decode(await fixtures.readArchive("skills-code-pack"));
+  const pack = new TextEncoder().encode(packSource.replace("name: local-number-helper\n", "name: e2e.local-number-helper\n"));
+  expect(createHash("sha256").update(pack).digest("hex")).toBe("20516cc6ab5e1394cedf5e74a8d1ce3ba90d33e90112bc692754dc1b73193e36");
   const helper = await fixtures.readArchive("skills-code-pack-helper");
   const custom = await fixtures.readArchive("skills-custom-fork");
   const engine = await EngineFixture.start({ id: "SKILLS-03", profile });
@@ -207,7 +212,7 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   if (!origin) throw new Error("Missing clean import origin");
   expect(origin).toMatchObject({ entity: imported.entity, content_hash: skills03Pins.clean, hub_id: hub,
     pin_type: "content_hash", pin_value: skills03Pins.clean, publisher, installed_as: "active",
-    disposition: "already_installed", requested_permissions: [] });
+    disposition: "installed", requested_permissions: [] });
 
   expectedCalls.push(...skills03QueueTree(providers, "suspicious", {
     name: "unsafe-sandbox-escape", description: "Deliberately suspicious admission fixture, never execute it.",
@@ -226,7 +231,7 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   })]));
 
   expectedCalls.push(...skills03QueueTree(providers, "code-pack", {
-    name: "local-number-helper", description: "A harmless code-bearing pack for admission with code auto-install off.",
+    name: "e2e.local-number-helper", description: "A harmless code-bearing pack for admission with code auto-install off.",
     version: "1.0.0", ref_string: packRef.ref_string,
   }, skills03Pins.pack, [{ path: "PACK.md", bytes: pack }, { path: "scripts/helper.js", bytes: helper }]));
   const heldPack = await engine.client.call("vault.packs.install", { hub_ref: packRef, publisher });
@@ -234,14 +239,9 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   expect(heldPack.receipt).toMatchObject({ content_hash: skills03Pins.pack, status: "candidate",
     candidate_reason: "code_auto_install_off", hub_id: hub, hub_ref: packRef.ref_string,
     pin_type: "content_hash", pin_value: skills03Pins.pack });
-  // Guided setup reads a Candidate; packs.get intentionally reads only Active installations.
-  await engine.client.call("vault.packs.setup.prepare", { pack: "local-number-helper", source: skills03Pins.pack });
-  const packView = await engine.client.call("vault.packs.setup.get", { pack: "local-number-helper", source: skills03Pins.pack });
-  expect(packView.setup.status).toBe("candidate");
-  expect(packView.setup.content_hash).toBe(skills03Pins.pack);
-  expect(packView.setup.source_id).toBe(heldPack.receipt?.source_id);
-  expect(packView.setup.permissions).toEqual(heldPack.receipt?.permissions);
-  expect(await engine.client.call("vault.packs.get", { name: "local-number-helper" })).toBeNull();
+  // The held pack is not an Active installation; this fixture declares no guided setup.
+  // Coverage is the immediate Candidate result and no Active installation, not a durable Candidate receipt read.
+  expect(await engine.client.call("vault.packs.get", { name: "e2e.local-number-helper" })).toBeNull();
 
   await engine.client.call("vault.skills.archive", { entity: imported.entity });
   const archived = await engine.client.call("vault.skills.get", { entity: imported.entity });
@@ -253,7 +253,8 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   expect(archived.scans).toEqual(active.scans);
   const archiveReceipts = await engine.client.call("vault.skills.receipts", { entity: imported.entity });
   expect(archiveReceipts.imports.map(skills03Origin)).toEqual(activeReceipts.imports.map(skills03Origin));
-  expect(archiveReceipts.imports[0]?.disposition).toEqual({ not_installed: "quarantined" });
+  expect(archiveReceipts.imports[0]?.disposition).toBe("installed");
+  expect(archiveReceipts.imports[0]?.installed_as).toBe("active");
   await skills03Refusal(engine, engine.client, owner, "vault.skills.restore", { entity: imported.entity },
     400, "BAD_REQUEST", "invalid SKILL body: hub or fork activation requires local consent and held-out replay");
   expect((await engine.client.call("vault.skills.get", { entity: imported.entity })).lifecycle).toBe("archived");
@@ -330,7 +331,7 @@ suite.test(test, "SKILLS-03", "Pinned skill admission and soft archive retain ev
   expect(durableFork.lifecycle).toBe("candidate");
   expect(durableFork.loadable).toBe(false);
   expect((await engine.client.call("vault.skills.get", { entity: blocked.entity })).lifecycle).toBe("candidate");
-  expect((await engine.client.call("vault.packs.setup.get", { pack: "local-number-helper", source: skills03Pins.pack })).setup.status).toBe("candidate");
+  expect(await engine.client.call("vault.packs.get", { name: "e2e.local-number-helper" })).toBeNull();
   for (const receiptRef of agentRefusals) {
     expect((await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }))?.actor_ref).toBe(agentRef);
   }
@@ -453,19 +454,16 @@ suite.test(test, "SKILLS-04", "Bootstrap skills and pinned defaults restore expl
   const refString = `skills/${cleanSkillId}`;
 
   // Offline first-hub mirror beside the vault, never inside it: the exact
-  // clean tree at the default's alias, committed signed per house rule.
+  // clean tree at the default's alias in one commit (the hub reads trees;
+  // it verifies no commit signature, as HOOKS-05's foreign mirror shows).
   const mirrorDir = resolve(engine.root, "skills04-hub");
   const skillFile = resolve(mirrorDir, refString, "SKILL.md");
   await mkdir(dirname(skillFile), { recursive: true });
   await writeFile(skillFile, clean);
   await skills04Git(["init"], mirrorDir, engine);
   await skills04Git(["add", "-A"], mirrorDir, engine);
-  try {
-    await skills04Git(["-c", "user.name=skills04", "-c", "user.email=skills04@local",
-      "commit", "-S", "-m", "skills04 pinned fixture mirror"], mirrorDir, engine);
-  } catch (error) {
-    throw new Error(`SKILLS-04 waits on a fleet git signing key for its signed fixture-mirror commit: ${(error as Error).message}`);
-  }
+  await skills04Git(["-c", "user.name=skills04", "-c", "user.email=skills04@local",
+    "commit", "-m", "skills04 pinned fixture mirror"], mirrorDir, engine);
   const commitOid = (await skills04Git(["rev-parse", "HEAD"], mirrorDir, engine)).trim().toLowerCase();
   expect(commitOid).toMatch(/^[a-f0-9]{40}$|^[a-f0-9]{64}$/);
 
@@ -515,7 +513,7 @@ suite.test(test, "SKILLS-04", "Bootstrap skills and pinned defaults restore expl
   if (!originReceipt) throw new Error("Missing default import origin");
   expect(originReceipt).toMatchObject({ entity: imported.entity, content_hash: skills04Pins.clean,
     pin_type: "commit", pin_value: commitOid, publisher, installed_as: "active",
-    disposition: "already_installed", requested_permissions: [] });
+    disposition: "installed", requested_permissions: [] });
 
   // Customize through the common fork law under the fixture's declared name.
   const fork = await engine.client.call("self.skills.fork", { parent: imported.entity, skill_id: forkSkillId });
@@ -692,7 +690,7 @@ interface Skills06Scenario {
   inputs: { excludedTiers: string[] };
   expectedFacts: { identityAutoEdited: boolean; alignmentAutoEdited: boolean };
 }
-// The content axes a tier mark must not touch: everything except governance_tier.
+// Source, content version, lifecycle and capabilities must not change with a tier mark.
 function skills06Content(view: SkillLibraryView) {
   return { desc: view.desc, version: view.version, content_hash: view.content_hash ?? null,
     lifecycle: view.lifecycle, files: view.files, capabilities: view.capabilities };
@@ -820,6 +818,17 @@ suite.test(test, "SKILLS-06", "Identity and alignment skills stay out of automat
     expect(emptyResult.reply.status).toBe(400);
     expect(emptyResult.error?.code).toBe("BAD_REQUEST");
     expect(emptyResult.error?.message).toBe("optimize result needs a job_ref or a proposal");
+    const emptyResultReceiptRef = emptyResult.error?.receiptRef;
+    expect(typeof emptyResultReceiptRef).toBe("string");
+    if (typeof emptyResultReceiptRef !== "string") throw new Error("Empty optimize result refusal omitted receiptRef");
+    expect(emptyResult.reply.headers.get("x-oneiron-receipt-ref")).toBe(emptyResultReceiptRef);
+    const emptyResultReceipt = await awaitPublic(
+      () => owner.call("vault.receipts.get", { receipt_ref: emptyResultReceiptRef }),
+      value => value !== null, { label: "skills06 owner input-refusal receipt" });
+    expect(emptyResultReceipt?.receipt_ref).toBe(emptyResultReceiptRef);
+    expect(emptyResultReceipt?.actor_ref).toBe(engine.pairedActor.principalRef);
+    expect(emptyResultReceipt?.verb.endsWith("vault.skills.optimize.result")).toBe(true);
+    expect(emptyResultReceipt?.outcome).toEqual({ refused: { code: "BAD_REQUEST" } });
 
     // Restart: protected marks and untouched content survive.
     await engine.restart();
@@ -924,9 +933,10 @@ async function skills08HttpRefusal<V extends FacadeVerb>(
  * not-now decline resets the streak and needs the whole streak re-earned;
  * owner accept mints exactly one standing grant, durable across restart;
  * demotion returns the scope to propose with history kept and a gate receipt;
- * non-owner answers are refused with call receipts. Promise kept at fixture
- * guard 0.5: with two same-scope corrections the positive offer leg runs red
- * against today's posterior math (see report). Unproved: sample/edit-cost
+ * non-owner answers are refused with call receipts. The fixture's four clean
+ * approvals are a negative guard control at 0.5 after two same-scope corrections;
+ * extend each earned streak to seven approvals to satisfy both policy axes.
+ * This explicitly extends the fixture's four-entry reEarnedEvidence. Unproved: sample/edit-cost
  * policy axes, literal undo demotion, exact audience/budget on the grant, a
  * stored offer identity. waits on owner-authorized graduation policy/read
  * axes for sample/edit-cost evidence, an undo outcome with thresholded
@@ -983,7 +993,7 @@ suite.test(test, "SKILLS-08", "Consent graduation offers grant nothing until own
     expect(afterReject).toMatchObject({ untouched_streak: 0, amended: 1, rejected: 1, state: "propose" });
     expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toEqual([]);
 
-    // Refusals run before the streak completes so the 403 legs execute even where the promised offer runs red.
+    // Refusals run before the streak completes and must not alter correction history.
     await skills08HttpRefusal(engine, agent.client, "vault.consent.graduation.policy", { scope }, 403, "FORBIDDEN", agentRef, "agent");
     await skills08HttpRefusal(engine, agent.client, "vault.consent.graduation.policy.set", { policy: {
       scope_pattern: pattern, required_streak: 4, posterior_guard: 0.5, snooze_backoff_seconds: [0, 0] } }, 403, "FORBIDDEN", agentRef, "agent");
@@ -997,28 +1007,35 @@ suite.test(test, "SKILLS-08", "Consent graduation offers grant nothing until own
     expect(await owner.call("vault.consent.graduation.stats", { scope })).toMatchObject({ untouched_streak: 0, amended: 1, rejected: 1 });
     expect((await owner.call("vault.consent.graduation.policy", { scope })).effective?.posterior_guard).toBe(0.5);
 
-    // Restart: policy and correction history survive; still no grant.
-    await engine.restart();
+    // Policy and correction history remain intact; reserve the single restart for grant durability.
     expect((await owner.call("vault.consent.graduation.policy", { scope })).effective).toEqual({
       scope_pattern: pattern, required_streak: 4, posterior_guard: 0.5, snooze_backoff_seconds: [0, 0] });
     expect(await owner.call("vault.consent.graduation.stats", { scope })).toMatchObject({ untouched_streak: 0, amended: 1, rejected: 1, state: "propose" });
     expect(skills08ActiveGrantsFor(await owner.call("vault.consent.registry", { limit: 100 }), agentRef)).toEqual([]);
 
-    // Streak: no offer before the fourth ruling.
+    // The streak floor alone does not waive the posterior guard after two corrections.
     for (let i = 1; i <= 3; i++) {
       const stats = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
       expect(stats.untouched_streak).toBe(i);
       expect(stats.state).toBe("propose");
       expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toEqual([]);
     }
-    // Promised positive offer at guard 0.5 with (4,2): runs red against today's math (see report).
+    // Extend the fixture's four clean outcomes by three; keep the guard at 0.5 and streak floor at four.
     const fourth = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
-    expect(fourth).toMatchObject({ untouched_streak: 4, amended: 1, rejected: 1, state: "offered" });
+    expect(fourth).toMatchObject({ untouched_streak: 4, amended: 1, rejected: 1, state: "propose" });
+    expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toEqual([]);
+    for (let i = 5; i <= 6; i++) {
+      const stats = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
+      expect(stats).toMatchObject({ untouched_streak: i, state: "propose" });
+      expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toEqual([]);
+    }
+    const earned = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
+    expect(earned).toMatchObject({ untouched_streak: 7, amended: 1, rejected: 1, state: "offered" });
     const offers = skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef);
     expect(offers).toHaveLength(1);
     const offer = offers[0]!;
     expect(offer.scope).toEqual(scope);
-    expect(offer.stats).toMatchObject({ untouched_streak: 4, amended: 1, rejected: 1, state: "offered" });
+    expect(offer.stats).toMatchObject({ untouched_streak: 7, amended: 1, rejected: 1, state: "offered" });
     expect(offer.threshold).toEqual({ scope_pattern: pattern, required_streak: 4,
       posterior_guard: 0.5, snooze_backoff_seconds: [0, 0] });
     expect(offer.reach.line).toEqual(expect.any(String));
@@ -1048,15 +1065,26 @@ suite.test(test, "SKILLS-08", "Consent graduation offers grant nothing until own
     expect(repeatDecline.reply.status).toBe(400);
     expect(repeatDecline.error?.code).toBe("BAD_REQUEST");
     expect(repeatDecline.error?.message).toBe("invalid consent bound: no graduation offer is standing for this scope");
+    const repeatDeclineReceiptRef = repeatDecline.error?.receiptRef;
+    expect(typeof repeatDeclineReceiptRef).toBe("string");
+    if (typeof repeatDeclineReceiptRef !== "string") throw new Error("Repeat decline refusal omitted receiptRef");
+    expect(repeatDecline.reply.headers.get("x-oneiron-receipt-ref")).toBe(repeatDeclineReceiptRef);
+    const repeatDeclineReceipt = await awaitPublic(
+      () => owner.call("vault.receipts.get", { receipt_ref: repeatDeclineReceiptRef }),
+      value => value !== null, { label: "skills08 repeat-decline refusal receipt" });
+    expect(repeatDeclineReceipt?.receipt_ref).toBe(repeatDeclineReceiptRef);
+    expect(repeatDeclineReceipt?.actor_ref).toBe(engine.pairedActor.principalRef);
+    expect(repeatDeclineReceipt?.verb.endsWith("vault.consent.graduation.answer")).toBe(true);
+    expect(repeatDeclineReceipt?.outcome).toEqual({ refused: { code: "BAD_REQUEST" } });
 
-    // Re-earn the whole streak; owner accepts: exactly one standing grant.
-    for (let i = 1; i <= 3; i++) {
+    // Re-earn seven clean outcomes, extending the fixture's four-entry evidence; owner accepts once.
+    for (let i = 1; i <= 6; i++) {
       const stats = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
       expect(stats.untouched_streak).toBe(i);
       expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toEqual([]);
     }
     const reEarned = await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
-    expect(reEarned).toMatchObject({ untouched_streak: 4, state: "offered" });
+    expect(reEarned).toMatchObject({ untouched_streak: 7, state: "offered" });
     expect(skills08Offers(await owner.call("vault.consent.graduation.offers", {}), agentRef)).toHaveLength(1);
     const accepted = await owner.call("vault.consent.graduation.answer", { scope, answer: "auto" });
     expect(accepted.answer).toBe("auto");
@@ -1097,7 +1125,7 @@ suite.test(test, "SKILLS-08", "Consent graduation offers grant nothing until own
       actor: agentRef, demotion_reason: "amended", grant_ref: grantRef });
 
     // Owner reverses the demotion by re-earning and accepting again.
-    for (let i = 0; i < 4; i++) await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
+    for (let i = 0; i < 7; i++) await owner.call("vault.consent.graduation.outcome", { scope, outcome: "approved_untouched" });
     const reversed = await owner.call("vault.consent.graduation.answer", { scope, answer: "auto" });
     expect(reversed.grant?.grant_ref).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/));
     expect(skills08ActiveGrantsFor(await owner.call("vault.consent.registry", { limit: 100 }), agentRef)).toHaveLength(1);
