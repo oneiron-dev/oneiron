@@ -1020,6 +1020,14 @@ async function codeRuntime07Person(
   });
   const turn = await codeRuntime07Entity(owner, witnessed.turn_short_id);
   expect(turn.kind).toBe("TURN");
+  expect(witnessed.message_short_ids).toHaveLength(1);
+  const messageRef = witnessed.message_short_ids[0];
+  if (messageRef === undefined) throw new Error("Witness returned no message ref");
+  const message = await codeRuntime07Entity(owner, messageRef);
+  expect(message.kind).toBe("MESSAGE");
+  expect(message.body).toMatchObject({
+    author: "user", type: "text", content: `This distinct person is ${name}.`, is_visible: true, order: 0,
+  });
   const created = await owner.call("vault.people.create", {
     identity: { name }, identity_evidence_refs: [turn.id_hex], occurred_at: occurred,
   });
@@ -1237,7 +1245,8 @@ suite.test(test, "CODE-RUNTIME-07", "Graph filesystem mounts keep pinned snapsho
     const guestId = await codeRuntime07Person(owner, conversation.id, "Observatory guest reader", occurred);
     expect(guestId.person).not.toBe(ownerRef);
     const auditBefore = await codeRuntime07AuditRows(owner);
-    const guest = await engine.pairActor({ principalRef: guestId.person, actorClass: "human", scope: ["core:read"] });
+    // core:write lets the capture probe pass the verb grant, so its refusal comes from the owner-only door.
+    const guest = await engine.pairActor({ principalRef: guestId.person, actorClass: "human", scope: ["core:read", "core:write"] });
     expect((await guest.client.call("self.actor", {})).actor_ref).toBe(guestId.person);
     const { seed } = credentialParts(guest.credential);
     const narrowed = await guest.client.call("self.credential.attenuate", {
