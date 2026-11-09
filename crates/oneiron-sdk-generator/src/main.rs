@@ -147,15 +147,15 @@ fn parse_optional(text: &str) -> Option<Vec<OptionTuple>> {
     if text.chars().count() == 1 {
         return None;
     }
-    if let (head, Some(explicit)) = partition(text) {
-        if let Some(opt) = option_action(head) {
-            return Some(vec![OptionTuple {
-                action: Some(opt),
-                option_string: head.to_owned(),
-                sep: Some("=".to_owned()),
-                explicit: Some(explicit.to_owned()),
-            }]);
-        }
+    if let (head, Some(explicit)) = partition(text)
+        && let Some(opt) = option_action(head)
+    {
+        return Some(vec![OptionTuple {
+            action: Some(opt),
+            option_string: head.to_owned(),
+            sep: Some("=".to_owned()),
+            explicit: Some(explicit.to_owned()),
+        }]);
     }
     let tuples = get_option_tuples(text);
     if !tuples.is_empty() {
@@ -444,10 +444,10 @@ fn get_lines(parts: &[&str], indent: &str, prefix: Option<&str>, text_width: i64
     if !line.is_empty() {
         lines.push(format!("{indent}{}", line.join(" ")));
     }
-    if prefix.is_some() {
-        if let Some(first) = lines.first_mut() {
-            *first = first.chars().skip(indent.chars().count()).collect();
-        }
+    if prefix.is_some()
+        && let Some(first) = lines.first_mut()
+    {
+        *first = first.chars().skip(indent.chars().count()).collect();
     }
     lines
 }

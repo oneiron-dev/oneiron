@@ -753,7 +753,9 @@ mod tests {
     // python3 -c "print(err(lambda: 5 + 'a'), err(lambda: [1] + 'a'), err(lambda: 'a' + None), ...)"
     #[test]
     fn concatenation_refusals_are_pythons() {
-        let text = |result: Result<&str, GenerateError>| result.map_err(|error| error.to_string());
+        fn text(result: Result<&str, GenerateError>) -> Result<String, String> {
+            result.map(str::to_owned).map_err(|error| error.to_string())
+        }
         assert_eq!(
             text(concat_left(&Value::Int(5))),
             Err("TypeError: unsupported operand type(s) for +: 'int' and 'str'".to_owned())
@@ -774,6 +776,9 @@ mod tests {
             text(concat(&Value::Dict(Dict::new()))),
             Err(r#"TypeError: can only concatenate str (not "dict") to str"#.to_owned())
         );
-        assert_eq!(text(concat_left(&Value::Str("a".to_owned()))), Ok("a"));
+        assert_eq!(
+            text(concat_left(&Value::Str("a".to_owned()))),
+            Ok("a".to_owned())
+        );
     }
 }
