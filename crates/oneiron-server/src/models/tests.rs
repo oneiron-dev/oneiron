@@ -58,6 +58,8 @@ pub(super) fn request(model: &ModelId, text: &str) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
