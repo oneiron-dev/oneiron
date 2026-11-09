@@ -165,7 +165,9 @@ fn material_valid(
     // certificates is missing coverage. Forged or unverifiable material is
     // discarded and noted in `tampering`: where the result would otherwise
     // be unresolved, it is possible tampering. Genuine material that cannot
-    // be used (stale, scoped) or that says a certificate is revoked fails.
+    // be used (stale, scoped) or that says a certificate is revoked fails,
+    // but only when it is about the covered chains (Engine call Q-C = A):
+    // about any other certificate it claims nothing.
     let empty = |array: &DssArray| match array {
         DssArray::Absent => true,
         DssArray::Malformed => false,
@@ -230,9 +232,11 @@ fn material_valid(
             v
         }
     };
-    // Every usable OCSP response: the DERs of the target certificates it
+    // Every authentic OCSP response: the DERs of the target certificates it
     // binds to with a `good` status, and its `unknown` statuses, read in
-    // place.
+    // place. What it says no to fails the material only when it names a
+    // covered non-anchor certificate (Engine call Q-C = A); about any other
+    // certificate it claims nothing.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
     let mut ocsp_unknown_statuses: Vec<UnknownStatus<'_>> = Vec::new();
     match ocsps {
@@ -242,6 +246,17 @@ fn material_valid(
             for e in &entries {
                 match ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)? {
                     Ok(evidence) => {
+                        for claim in &evidence.negative {
+                            if names_covered_certificate(
+                                claim.target,
+                                claim.issuer,
+                                anchors,
+                                covered,
+                                memory,
+                            )? {
+                                return Ok(MaterialValidity::Invalid);
+                            }
+                        }
                         memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
                         memory.admit_len::<UnknownStatus<'_>>(evidence.unknown_statuses.len())?;
                         ocsp_targets.extend(evidence.good_targets);
@@ -344,6 +359,31 @@ fn material_valid(
     Ok(MaterialValidity::Valid)
 }
 
+/// Whether an OCSP CertID that bound `target` under `issuer` names a
+/// covered non-anchor certificate: one with `target`'s serial that
+/// `issuer`'s key signed. A CertID names a certificate by issuer and serial
+/// number, and binds to the first certificate that matches it, so a second
+/// encoding of a covered certificate still names it.
+fn names_covered_certificate(
+    target: &EmbeddedCert,
+    issuer: &EmbeddedCert,
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der)
+            || cert.cert.tbs_certificate.serial_number != target.cert.tbs_certificate.serial_number
+        {
+            continue;
+        }
+        if issued_by(cert, issuer, memory)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether a valid CRL's `signer` shadows `cert`'s issuer: it carries the
 /// issuer's subject, it did not sign `cert`, and no trust anchor vouches for
 /// its key. An anchor vouches for the key when it carries the same subject
@@ -352,7 +392,7 @@ fn material_valid(
 /// separate CRL-signing key, a key rollover's link certificate and a
 /// same-subject anchored CA are never shadows; an attacker's self-signed
 /// certificate that only copies the subject is.
-fn crl_signer_shadows(
+pub(super) fn crl_signer_shadows(
     cert: &EmbeddedCert,
     signer: &EmbeddedCert,
     embedded: &[EmbeddedCert],

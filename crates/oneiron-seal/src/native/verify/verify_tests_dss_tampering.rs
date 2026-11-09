@@ -7,10 +7,15 @@
 //!   would otherwise be unresolved, reports NotRun with the visible
 //!   sub-indication ValidationMaterialPossibleTampering;
 //! - material that claims nothing about the signer's certificates is
-//!   missing coverage, NotRun with ValidationMaterialUnavailable.
+//!   missing coverage, NotRun with ValidationMaterialUnavailable; so is a
+//!   genuine negative claim (stale, scoped, revoked, produced later) about
+//!   anything outside the covered chains (Engine call Q-C = A, 07:23);
+//! - a broken DSS never takes away the B-B or B-T profile the signature
+//!   earned (Engine call Q-D = A, 07:23).
 //!
-//! Genuine stale, revoked or out-of-scope material still fails; its tests
-//! are in verify_tests_fixtures_dss_a.rs and verify_tests_dss_b.rs.
+//! Genuine stale, revoked or out-of-scope material about the covered chains
+//! still fails; its tests are in verify_tests_fixtures_dss_a.rs and
+//! verify_tests_dss_b.rs.
 
 #[cfg(test)]
 mod tests {
@@ -19,7 +24,11 @@ mod tests {
     use lopdf::{Dictionary, Document, Object, Stream};
 
     use super::super::verify_tests_fixtures_dss_a::tests::*;
-    use crate::api::{VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
+    use super::super::verify_tests_lta_probes::tests::base_input;
+    use super::super::verify_tests_time_lta_a::tests::{
+        VERIFY_SECS, append_dss_revision, append_sig_revision, tsa_ca, verify_engine,
+    };
+    use crate::api::{PadesProfile, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
 
     const THIS_UPDATE: u64 = AT_UNIX - 3600;
     const NEXT_UPDATE: Option<u64> = Some(AT_UNIX + 3600);
@@ -106,6 +115,46 @@ mod tests {
         );
         // OCSPResponse { responseStatus tryLater }: no response bytes.
         let unsuccessful_ocsp = vec![0x30, 0x03, 0x0a, 0x01, 0x03];
+        // Genuine negative claims about nothing in the covered chains
+        // (Engine call Q-C = A): an unrelated CA's stale CRL, an attacker
+        // certificate revoking itself in its own CRL, and an attacker CA's
+        // responder saying no about an extra certificate it issued.
+        let stale_crl =
+            |signer: &TestCa| build_crl(signer, AT_UNIX - 7200, Some(AT_UNIX - 60), None, vec![]);
+        let attacker = test_ca("attacker");
+        let self_revoking_crl = build_crl(
+            &attacker,
+            THIS_UPDATE,
+            NEXT_UPDATE,
+            None,
+            vec![attacker.cert.tbs_certificate.serial_number.clone()],
+        );
+        let attacker_ca = test_ca("attacker-ca");
+        let extra_der = leaf_under(&attacker_ca, "extra");
+        let extra = x509_cert::Certificate::from_der(&extra_der).unwrap();
+        let attacker_certs = vec![
+            ca.cert_der.clone(),
+            attacker_ca.cert_der.clone(),
+            extra_der.clone(),
+        ];
+        let about_extra = |this: u64, next: Option<u64>, status, produced_at| {
+            build_ocsp_full(
+                &attacker_ca,
+                extra.tbs_certificate.serial_number.clone(),
+                this,
+                next,
+                status,
+                produced_at,
+                &attacker_ca,
+                false,
+            )
+        };
+        let revoked_status = || {
+            x509_ocsp::CertStatus::revoked(x509_ocsp::RevokedInfo {
+                revocation_time: x509_ocsp::OcspGeneralizedTime(gt(AT_UNIX - 120)),
+                revocation_reason: None,
+            })
+        };
         let certs = vec![ca.cert_der.clone()];
         let tampering = VerifyFindingCode::ValidationMaterialPossibleTampering;
         let missing = VerifyFindingCode::ValidationMaterialUnavailable;
@@ -195,6 +244,16 @@ mod tests {
                 tampering,
             ),
             (
+                "shadow's stale CRL",
+                dss_doc(
+                    &[leaf_der.clone(), shadow.cert_der.clone()],
+                    &[stale_crl(&shadow)],
+                    &[],
+                ),
+                leaf_der.clone(),
+                tampering,
+            ),
+            (
                 "/Certs entry that does not parse",
                 dss_doc(
                     &[ca.cert_der.clone(), b"not a certificate".to_vec()],
@@ -232,6 +291,71 @@ mod tests {
                 missing,
             ),
             (
+                "unrelated CA's stale CRL",
+                dss_doc(
+                    &[ca.cert_der.clone(), unrelated.cert_der.clone()],
+                    &[stale_crl(&unrelated)],
+                    &[],
+                ),
+                ca.cert_der.clone(),
+                missing,
+            ),
+            (
+                "attacker certificate revoking itself in its own CRL",
+                dss_doc(
+                    &[ca.cert_der.clone(), attacker.cert_der.clone()],
+                    &[self_revoking_crl],
+                    &[],
+                ),
+                ca.cert_der.clone(),
+                missing,
+            ),
+            (
+                "attacker CA's revoked status for an extra certificate it issued",
+                dss_doc(
+                    &attacker_certs,
+                    &[],
+                    &[about_extra(
+                        AT_UNIX - 60,
+                        NEXT_UPDATE,
+                        revoked_status(),
+                        AT_UNIX - 60,
+                    )],
+                ),
+                ca.cert_der.clone(),
+                missing,
+            ),
+            (
+                "attacker CA's stale status for an extra certificate it issued",
+                dss_doc(
+                    &attacker_certs,
+                    &[],
+                    &[about_extra(
+                        AT_UNIX - 7200,
+                        Some(AT_UNIX - 60),
+                        x509_ocsp::CertStatus::good(),
+                        AT_UNIX - 7200,
+                    )],
+                ),
+                ca.cert_der.clone(),
+                missing,
+            ),
+            (
+                "attacker CA's response about an extra certificate, produced later",
+                dss_doc(
+                    &attacker_certs,
+                    &[],
+                    &[about_extra(
+                        AT_UNIX - 60,
+                        NEXT_UPDATE,
+                        x509_ocsp::CertStatus::good(),
+                        AT_UNIX + 86_400,
+                    )],
+                ),
+                ca.cert_der.clone(),
+                missing,
+            ),
+            (
                 "covered certificate missing from /Certs and the anchors",
                 dss_doc(
                     std::slice::from_ref(&unrelated.cert_der),
@@ -248,14 +372,17 @@ mod tests {
                 missing,
             ),
         ];
+        // Every row is judged before the test fails, so a run names each
+        // row that differs.
+        let mut wrong = Vec::new();
         for (row, doc, covered, finding) in rows {
             let checks = dss_check(&doc, &covered_of(&[&covered]));
-            assert_eq!(
-                dss_finding(&checks),
-                (VerifyCheckStatus::NotRun, Some(finding)),
-                "{row}"
-            );
+            let found = dss_finding(&checks);
+            if found != (VerifyCheckStatus::NotRun, Some(finding)) {
+                wrong.push(format!("{row}: {found:?}"));
+            }
         }
+        assert!(wrong.is_empty(), "rows not as ruled: {wrong:#?}");
     }
 
     #[test]
@@ -271,5 +398,41 @@ mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[forged, genuine], &[]);
         let checks = dss_check(&doc, &covered_of(&[&ca.cert_der]));
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+    #[test]
+    fn broken_dss_appended_to_a_baseline_t_document_keeps_baseline_t() {
+        // Engine call Q-D = A (10 Nov 07:23): anyone holding the signed PDF
+        // can append a DSS, so a broken one leaves validation material
+        // NotRun (possible tampering) and denies LT and LTA, but never takes
+        // away the B-T profile the signature and its timestamp earned.
+        let root = test_ca("bt-root");
+        let signer = child_ca(&root, "bt-signer");
+        let tsa = tsa_ca();
+        let signed = append_sig_revision(&base_input(), &signer, "bt", Some(&tsa), AT_UNIX);
+        let anchors = vec![root.cert_der.clone(), tsa.cert_der.clone()];
+        let before = verify_engine(anchors.clone(), VERIFY_SECS)
+            .verify_sealed_pdf(&signed)
+            .unwrap();
+        assert_eq!(before.signatures[0].profile, Some(PadesProfile::BaselineT));
+        let attacked = append_dss_revision(
+            &signed,
+            vec![signer.cert_der.clone()],
+            vec![b"not a CRL".to_vec()],
+        );
+        let report = verify_engine(anchors, VERIFY_SECS)
+            .verify_sealed_pdf(&attacked)
+            .unwrap();
+        let material = report
+            .checks()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+            .unwrap();
+        assert_eq!(
+            (material.status, material.finding),
+            (
+                VerifyCheckStatus::NotRun,
+                Some(VerifyFindingCode::ValidationMaterialPossibleTampering)
+            )
+        );
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
     }
 }
