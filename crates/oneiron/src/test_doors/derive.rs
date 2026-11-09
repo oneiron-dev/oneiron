@@ -481,6 +481,55 @@ pub fn mint_nightly_links(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// What a door revert did: the items undone and the items left, each with
+/// why; or the refusal's reason tokens.
+pub type Reverted = std::result::Result<(Vec<String>, Vec<(String, String)>), Vec<String>>;
+
+fn reverted(answer: Result<crate::derive::DeriveRevertReceipt>) -> Result<Reverted> {
+    match answer {
+        Ok(receipt) => Ok(Ok((receipt.reverted, receipt.left))),
+        Err(crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
+            reason_codes,
+            ..
+        })) => Ok(Err(reason_codes
+            .iter()
+            .map(|code| (*code).to_owned())
+            .collect())),
+        Err(error) => Err(error),
+    }
+}
+
+/// Reverts the batch `batch` as `actor` of `class`.
+///
+/// # Errors
+///
+/// The vault's, other than the gate's refusal.
+pub fn revert(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    batch: EntityId,
+) -> Result<Reverted> {
+    reverted(vault.derive_revert(WriteActor::new(actor, class), None, batch))
+}
+
+/// Reverts the batch `batch` as the vault's embedded owner.
+///
+/// # Errors
+///
+/// The vault's, other than the gate's refusal.
+pub fn revert_as_owner(vault: &Vault, batch: EntityId) -> Result<Reverted> {
+    let owner = super::steward::owner(vault)?;
+    let id = vault.ensure_embedded_owner_actor().map_err(|error| {
+        crate::error::Error::InvalidConfig(format!("embedded owner: {error:?}"))
+    })?;
+    reverted(vault.derive_revert(
+        WriteActor::new(id, EdgeActorClass::Human),
+        Some(&owner),
+        batch,
+    ))
+}
+
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
 /// when it is a stored claim.
 ///

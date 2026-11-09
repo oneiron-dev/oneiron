@@ -163,11 +163,22 @@ impl Vault {
                 outcome,
             });
         }
+        let read: &heed::RoTxn<'_> = txn;
+        let revisions = items
+            .iter()
+            .map(|item| match &item.outcome {
+                ItemOutcome::Landed { rows, .. } => rows
+                    .iter()
+                    .map(|row| super::revert::row_revision_in(self, read, item.kind, *row))
+                    .collect::<Result<Vec<_>>>(),
+                ItemOutcome::Refused { .. } => Ok(Vec::new()),
+            })
+            .collect::<Result<Vec<_>>>()?;
         put_batch_in_txn(
             self,
             txn,
             context.batch,
-            &batch_record(stamp, context.now, &items),
+            &batch_record(stamp, context.now, &items, revisions),
         )?;
         Ok(DerivationReceipt {
             batch: context.batch,
@@ -265,6 +276,7 @@ fn batch_record(
     stamp: &DerivationStamp,
     committed_at: u64,
     items: &[ItemReceipt],
+    revisions: Vec<Vec<[u8; 32]>>,
 ) -> DerivationBatchRecord {
     DerivationBatchRecord {
         actor: stamp.actor.entity_ref(),
@@ -273,7 +285,8 @@ fn batch_record(
         committed_at,
         items: items
             .iter()
-            .map(|item| match &item.outcome {
+            .zip(revisions)
+            .map(|(item, revisions)| match &item.outcome {
                 ItemOutcome::Landed {
                     rows,
                     approval,
@@ -286,6 +299,7 @@ fn batch_record(
                     approval: approval.map(|approval| approval.as_str().to_owned()),
                     reasons: Vec::new(),
                     receipt: receipt.map(GateDecisionId::as_bytes),
+                    revisions,
                 },
                 ItemOutcome::Refused { reasons, receipt } => ItemRecord {
                     local: item.local.clone(),
@@ -295,6 +309,7 @@ fn batch_record(
                     approval: None,
                     reasons: reasons.clone(),
                     receipt: Some(receipt.as_bytes()),
+                    revisions,
                 },
             })
             .collect(),

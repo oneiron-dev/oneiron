@@ -12,7 +12,7 @@ use super::batch::DerivedEvidence;
 use super::commit::{ItemContext, ItemOutcome, refusal_receipt_in_txn};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
-use crate::dreamer_promotion::{EvidenceAssertion, assert_evidence_in_txn};
+use crate::dreamer_promotion::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -101,7 +101,9 @@ pub(super) fn stage_in_txn(
         &mut None,
     );
     match asserted {
-        Ok((original, _)) => {
+        Ok(AssertedEvidence {
+            original, records, ..
+        }) => {
             if vault.get_claim_in_txn(&savepoint, &head)?.as_ref() != Some(&original) {
                 return Err(Error::InvalidClaimBody(
                     "evidence attachment altered its head",
@@ -109,7 +111,7 @@ pub(super) fn stage_in_txn(
             }
             savepoint.commit()?;
             Ok(ItemOutcome::Landed {
-                rows: vec![head],
+                rows: records,
                 approval: Some(ClaimApprovalStatus::Auto),
                 receipt: None,
             })

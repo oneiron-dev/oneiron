@@ -254,6 +254,23 @@ pub(crate) fn about_facts_in(
     Ok((facts_digest(&facts, TOP_BAND), about_bands(&facts)))
 }
 
+/// The revision of `person`'s `about` row in `txn`: a digest of the row as
+/// stored, all zeros when it has none. A revert undoes an `about` landing
+/// only while the row still stands at the revision the landing left
+/// (untangle 6.7c).
+pub(crate) fn about_revision_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<[u8; 32]> {
+    let Some(row) = PERSON_ABOUT.get(&vault.store, txn, &person)? else {
+        return Ok([0; 32]);
+    };
+    let bytes = rmp_serde::to_vec_named(&row)
+        .map_err(|_| Error::InvariantViolation("an about row does not encode"))?;
+    Ok(*blake3::hash(&bytes).as_bytes())
+}
+
 /// Publishes `lines`, each a band and its text, as `person`'s `about` lines
 /// in `txn` (the validated publish, untangle 6.7a, X03). The writer names the
 /// facts digest it wrote from; the PERSON must be live and the facts `read`
