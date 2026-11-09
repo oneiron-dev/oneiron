@@ -463,6 +463,17 @@ async function coordination02Refused(call: Promise<unknown>, status: number, cod
   return refusal;
 }
 
+/** Diagnostic: a refused call fails with the engine's wire code and message first (PublicHttpError says only
+ * "HTTP <status>", and the fleet log keeps the first 400 characters of a failure reason). */
+async function withWireReason<T>(label: string, call: Promise<T>): Promise<T> {
+  try { return await call; } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`${label}: HTTP ${error.reply.status} ${error.error?.code ?? "no-code"}: ${(error.error?.message ?? "").slice(0, 300)}`);
+    }
+    throw error;
+  }
+}
+
 /* COORDINATION-02 promise: a reply in a thread never moves the conversation's trunk HEAD, and every
  *   original trunk and reply record keeps its id; a forged byline and a HEAD-advancing thread reply are
  *   refused, and the shape survives a restart.
@@ -500,9 +511,10 @@ suite.test(test, "COORDINATION-02", "A thread reply never moves the trunk HEAD a
   // Trunk: each record advances HEAD (records.append bylines the caller; no witness, so no project question).
   let previous: string | null = null;
   for (const row of scenario.inputs.trunk) {
-    const appended: FacadeResult<"vault.conversations.records.append"> = await client.call("vault.conversations.records.append", {
-      conversation, parent: previous, advance: true, body: { txt: row.content, speaker: "user", at: COORDINATION02_AT },
-      occurred_start: COORDINATION02_AT, occurred_end: COORDINATION02_AT, learned_at: COORDINATION02_AT });
+    const appended: FacadeResult<"vault.conversations.records.append"> = await withWireReason("COORDINATION-02 trunk append",
+      client.call("vault.conversations.records.append", {
+        conversation, parent: previous, advance: true, body: { txt: row.content, speaker: "user", at: COORDINATION02_AT },
+        occurred_start: COORDINATION02_AT, occurred_end: COORDINATION02_AT, learned_at: COORDINATION02_AT }));
     expect(appended.head).toBe(appended.id);
     expect(appended.parent ?? null).toBe(previous);
     ids.set(row.label, appended.id);
