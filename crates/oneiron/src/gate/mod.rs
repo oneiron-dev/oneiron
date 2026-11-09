@@ -85,12 +85,18 @@ mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
-pub(crate) use self::derive_verdict::{
-    DeriveAllowance, DeriveCapability, DeriveRefusal, derive_verdict_in_txn,
-};
+pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
+// The refusal's type is named only by the integration tests' doors; the
+// engine reads its token where the verdict answers.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::derive_verdict::DeriveRefusal;
+// The landing rows' reference names the X02 grant a verdict stood on before
+// the Dreamer held a Steward grant (6.3b); only the lib tests read it here.
+#[cfg(test)]
+pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
 pub(crate) use self::dreamer_grant::{
-    DREAMER_LANDING_ROWS_REF, DreamerLandingVerdict, body_with_steward_rows,
-    dreamer_landing_verdict_in_txn, dreamer_rows_held,
+    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
+    dreamer_rows_held,
 };
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
