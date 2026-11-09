@@ -134,7 +134,9 @@ impl<'a> HostSelfDispatcher<'a> {
     /// other asks Auto and lands at once when the gates allow it, and a gate
     /// that pends the Auto request (an actor ceiling, a missing source-trust
     /// permit, a checker hold) lands it Proposed with its pending review, as
-    /// the Memory claim door does.
+    /// the Memory claim door does. The Auto request reaches the host's auto
+    /// checker as a Dreamer write does; this door injects no checker, so a
+    /// vault that names one holds it checker-unavailable (review 6881 P1).
     pub fn put_claim_from_host(
         &self,
         input: crate::code_run::MemoryClaimInput,
