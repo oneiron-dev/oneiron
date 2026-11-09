@@ -397,7 +397,8 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     // Ruled refusal removed (Rule 5, counted not capped: #4034 dropped the
     // 256-ref refusal; #4211, FIX 11125, reads a longer batch frame by frame):
     // a batch one past the old bound is served, every ref answered.
-    let too_many_refs = vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
+    let too_many_refs =
+        vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
     let (too_many_status, too_many_body) = route_json_auth(
         server.clone(),
         json_request(
@@ -408,9 +409,7 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     )
     .await;
     assert_eq!(too_many_status, StatusCode::OK, "{too_many_body:#}");
-    let too_many_results = too_many_body["results"]
-        .as_array()
-        .expect("batch results");
+    let too_many_results = too_many_body["results"].as_array().expect("batch results");
     assert_eq!(too_many_results.len(), too_many_refs.len());
     assert!(
         too_many_results

@@ -184,4 +184,3 @@ fn entity_blob(body: &[u8]) -> Vec<u8> {
     blob.extend_from_slice(body);
     blob
 }
-

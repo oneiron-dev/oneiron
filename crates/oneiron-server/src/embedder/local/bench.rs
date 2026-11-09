@@ -134,4 +134,3 @@ fn percentile(sorted: &[Duration], fraction: f64) -> f64 {
     let rank = ((sorted.len() - 1) as f64 * fraction).round() as usize;
     sorted[rank.min(sorted.len() - 1)].as_secs_f64() * 1_000.0
 }
-

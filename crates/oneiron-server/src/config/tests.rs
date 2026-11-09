@@ -114,4 +114,3 @@ fn an_unreadable_trusted_proxy_stops_startup() {
     assert!(host.contains(ip("::1")) && !host.contains(ip("::2")));
     assert!(mapped.contains(ip("192.0.2.200")) && !mapped.contains(ip("192.0.3.1")));
 }
-

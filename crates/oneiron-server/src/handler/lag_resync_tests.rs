@@ -289,4 +289,3 @@ async fn a_lagging_owner_socket_is_resynced_and_keeps_receiving() {
         );
     }
 }
-

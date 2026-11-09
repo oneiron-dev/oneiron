@@ -14,8 +14,8 @@ use oneiron::{BudgetExhaustionPolicy, BudgetGuard};
 use serde_json::{Value as JsonValue, json};
 
 use super::{DecisionReadDoor, bind};
-use crate::models::llama_identity::LlamaIdentityResolver;
 use crate::config::models::ModelsConfig;
+use crate::models::llama_identity::LlamaIdentityResolver;
 
 const LETTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr";
 /// Test 5's served ids for its 44 labels, and its end token.

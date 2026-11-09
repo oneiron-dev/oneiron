@@ -446,4 +446,3 @@ fn summary(mut samples: Vec<Duration>) -> serde_json::Value {
         "p95_ms": percentile(&samples, 0.95),
     })
 }
-

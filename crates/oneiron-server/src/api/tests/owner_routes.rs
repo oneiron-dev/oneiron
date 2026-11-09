@@ -1007,4 +1007,3 @@ fn server_sink_logs_a_failed_owner_action_by_kind_never_its_text() {
     assert!(written.contains("Some(InvalidConfig)"), "{written}");
     assert!(written.contains("owner action failed"), "{written}");
 }
-

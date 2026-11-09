@@ -302,4 +302,3 @@ pub(crate) async fn cross_the_index(
             .is_some(),
     }
 }
-

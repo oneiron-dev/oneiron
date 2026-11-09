@@ -74,4 +74,3 @@ async fn a_wait_ends_at_its_deadline_and_its_place_goes_on() {
     assert_eq!(next.await.unwrap(), Ok(()));
     assert!(pool.is_idle());
 }
-

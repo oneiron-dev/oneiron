@@ -60,4 +60,3 @@ async fn raw_search_takes_a_deadline_and_refuses_one_out_of_range() {
         }
     }
 }
-

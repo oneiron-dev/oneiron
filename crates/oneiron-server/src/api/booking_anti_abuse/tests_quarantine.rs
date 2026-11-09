@@ -37,7 +37,14 @@ pub(crate) mod tests {
                 )
             })
         {
-            apply_rule_amendment(&server.vault, &crate::test_credentials::embedded_owner(&server.vault), 0, row, None).expect("install partial row");
+            apply_rule_amendment(
+                &server.vault,
+                &crate::test_credentials::embedded_owner(&server.vault),
+                0,
+                row,
+                None,
+            )
+            .expect("install partial row");
         }
         let mut first = facts();
         first.email = Some(oneiron::booking::anti_abuse::EmailValidationEvidence {

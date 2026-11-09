@@ -344,10 +344,9 @@ fn spawn_mock_supervisor(
                     break;
                 };
                 let page = &update.page;
-                let last = page.offset
-                    + page.entries.len() as u64
-                    + page.artifact_origins.len() as u64
-                    >= page.total + page.artifact_origins_total;
+                let last =
+                    page.offset + page.entries.len() as u64 + page.artifact_origins.len() as u64
+                        >= page.total + page.artifact_origins_total;
                 let ack = serde_json::to_string(&LedgerAck {
                     ok: true,
                     error: None,

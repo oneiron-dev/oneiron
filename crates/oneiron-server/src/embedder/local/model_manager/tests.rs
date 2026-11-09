@@ -138,4 +138,3 @@ fn two_servers_fetching_one_model_into_one_directory_both_get_it() {
         "no temporary file is left: {leftovers:?}"
     );
 }
-

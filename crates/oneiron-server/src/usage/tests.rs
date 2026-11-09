@@ -75,7 +75,11 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
     let first = event("one", "USD");
     let second = event("two", "JPY");
     ledger
-        .record_event(first.clone(), UsageMode::OneironCloud, UsageEventOrigin::Posted)
+        .record_event(
+            first.clone(),
+            UsageMode::OneironCloud,
+            UsageEventOrigin::Posted,
+        )
         .unwrap();
     ledger
         .record_event(second, UsageMode::OneironCloud, UsageEventOrigin::Posted)
@@ -137,7 +141,11 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
     assert_eq!(replay.vault_rollup, before);
     assert_eq!(restored.vault_rollup("owner-a", "vault-a").unwrap(), before);
     restored
-        .record_event(event("three", "USD"), UsageMode::OneironCloud, UsageEventOrigin::Posted)
+        .record_event(
+            event("three", "USD"),
+            UsageMode::OneironCloud,
+            UsageEventOrigin::Posted,
+        )
         .unwrap();
     assert_eq!(
         restored

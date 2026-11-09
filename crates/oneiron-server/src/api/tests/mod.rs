@@ -269,8 +269,12 @@ pub(super) fn seed_companion_profile_access(
     person_ref: oneiron::EntityId,
     persona_ref: oneiron::EntityId,
 ) {
-    let grant =
-        oneiron::AccessGrant::companion_profile_read(principal_ref, person_ref, Some(persona_ref), 10);
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        principal_ref,
+        person_ref,
+        Some(persona_ref),
+        10,
+    );
     server
         .vault
         .create_access_grant(&grant_id, &grant)

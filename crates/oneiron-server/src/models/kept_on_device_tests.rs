@@ -508,4 +508,3 @@ fn sources(dir: &Path, files: &mut Vec<PathBuf>) {
         }
     }
 }
-

@@ -117,7 +117,13 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     assert_eq!(rehearsal.kinds, at_backup);
     assert!(!rehearsal.restored_into.exists());
 
-    let restored = restore_over(&outcome.backup.path, &vault_path, VaultConfig::default(), Some(Arc::clone(&keystore))).unwrap();
+    let restored = restore_over(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        Some(Arc::clone(&keystore)),
+    )
+    .unwrap();
     assert_eq!(restored.kinds, at_backup);
     assert_eq!(restored.durability_warning, None);
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
@@ -183,7 +189,13 @@ fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
     let link = root.path().join("vault");
     std::os::unix::fs::symlink(&directory, &link).unwrap();
 
-    let restored = restore_over(&outcome.backup.path, &link, VaultConfig::default(), Some(Arc::clone(&keystore))).unwrap();
+    let restored = restore_over(
+        &outcome.backup.path,
+        &link,
+        VaultConfig::default(),
+        Some(Arc::clone(&keystore)),
+    )
+    .unwrap();
     assert!(
         std::fs::symlink_metadata(&link)
             .unwrap()
@@ -363,10 +375,15 @@ fn restore_refuses_a_running_vault_and_leaves_it_alone() {
     let vault = open_hosted(&vault_path, &keystore);
     let outcome = take(&vault, &plan).unwrap();
     let later = person(&vault, b"after the backup");
-    let refused = restore_over(&outcome.backup.path, &vault_path, VaultConfig::default(), Some(Arc::clone(&keystore)))
-        .map(|_| ())
-        .unwrap_err()
-        .to_string();
+    let refused = restore_over(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        Some(Arc::clone(&keystore)),
+    )
+    .map(|_| ())
+    .unwrap_err()
+    .to_string();
     // The running vault's refusal, not the path's (C8 review r8).
     assert!(!refused.contains("another user"), "{refused}");
     assert!(vault.get(&later).unwrap().is_some());
@@ -531,7 +548,13 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
         std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
     };
     set_mode(0o777);
-    let error = restore_over(&backup, &vault_path, VaultConfig::default(), Some(Arc::clone(&keystore))).expect_err("refused");
+    let error = restore_over(
+        &backup,
+        &vault_path,
+        VaultConfig::default(),
+        Some(Arc::clone(&keystore)),
+    )
+    .expect_err("refused");
     assert!(
         format!("{error:#}").contains("another user could move entries"),
         "{error:#}"
@@ -551,5 +574,11 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
     assert_eq!(warning.directory, parent.canonicalize().unwrap());
     assert!(warning.fix.contains("chmod go-w"), "{}", warning.fix);
     set_mode(0o755);
-    restore_over(&backup, &vault_path, VaultConfig::default(), Some(Arc::clone(&keystore))).expect("restore");
+    restore_over(
+        &backup,
+        &vault_path,
+        VaultConfig::default(),
+        Some(Arc::clone(&keystore)),
+    )
+    .expect("restore");
 }

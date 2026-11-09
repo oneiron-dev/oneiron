@@ -229,4 +229,3 @@ fn an_answer_naming_another_stack_than_its_card_fails_and_the_marker_waits() {
     assert_eq!(vault.turn_tags(&turn).expect("read"), None);
     assert!(owes_a_pass(&vault), "the turn still owes a pass");
 }
-

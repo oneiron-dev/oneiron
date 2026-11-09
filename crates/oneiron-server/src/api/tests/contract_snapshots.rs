@@ -383,4 +383,3 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "v1 core success contract",
     );
 }
-

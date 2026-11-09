@@ -451,4 +451,3 @@ async fn a_reaped_vault_wakes_when_its_lease_comes_due_and_expires_it() {
         "the lease is already expired"
     );
 }
-

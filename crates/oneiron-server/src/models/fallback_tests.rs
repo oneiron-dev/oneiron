@@ -594,4 +594,3 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
         .expect("a portable call goes to the cloud");
     assert_eq!(answer.usage.raw_provider["rung"], json!(1));
 }
-
