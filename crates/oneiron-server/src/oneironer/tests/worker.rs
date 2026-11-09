@@ -542,8 +542,7 @@ fn timing_write_latency_and_write_to_trace() {
     running.stop();
     let to_trace = |turns: &BTreeMap<EntityId, Instant>| -> Vec<Duration> {
         live_server
-            .tagger
-            .as_ref()
+            .tagger_slot()
             .expect("slot")
             .traces()
             .into_iter()

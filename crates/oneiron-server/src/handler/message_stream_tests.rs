@@ -236,7 +236,14 @@ async fn presence_past_the_old_hub_share_is_kept() {
         assert!(server.ephemeral_store.get(key).is_some(), "{key} dropped");
     }
     // A socket that joins now hears all of it, in parts.
-    let late: Vec<_> = late_join_presence(&server, 18).collect();
+    // A fresh socket, placed as `ConnState::new` places one (FIX 9537).
+    let late: Vec<_> = late_join_presence(
+        &server,
+        18,
+        oneiron::claim::CallerLocality::OffDevice,
+        oneiron::authority::PeerMachine::Unknown,
+    )
+    .collect();
     assert!(late.len() > 1, "a hub past one frame is sent in parts");
     let heard: Vec<_> = late
         .iter()

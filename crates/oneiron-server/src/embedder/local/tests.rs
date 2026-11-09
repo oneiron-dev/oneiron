@@ -768,7 +768,8 @@ mod with_model {
     fn the_committed_subset_matches_the_reference_runtime() {
         let embedder = LocalEmbedder::load(&harrier_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        // The vectors; the per-item encoder input counts are not compared.
+        let (measured, _) = embedder
             .embed_documents(&reference_chunks())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &reference_vectors(), 0.99);
@@ -787,7 +788,7 @@ mod with_model {
         for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
             let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
                 .expect("model loads");
-            let measured = embedder
+            let (measured, _) = embedder
                 .embed_documents(&pplx_parity_texts())
                 .expect("embedded");
             let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), floor);
@@ -801,7 +802,7 @@ mod with_model {
     fn pplx_q8_0_matches_sentence_transformers() {
         let embedder = LocalEmbedder::load(&pplx_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        let (measured, _) = embedder
             .embed_documents(&pplx_parity_texts())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);

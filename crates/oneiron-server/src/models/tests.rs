@@ -807,10 +807,13 @@ async fn one_config_edit_swaps_the_seat_model_with_the_same_calling_code() {
 #[tokio::test]
 async fn the_router_serves_seats_and_configured_models_by_id() {
     let fake = FakeLlm::start(vec![], Some(Reply::text("routed"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"p:m\"\n[providers.p]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"p:m\"\n[providers.p]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let router = runtime.router().expect("router");
     let seat = runtime.seat(ModelRole::Checker).unwrap();
     let direct = ModelId::new("p/m@live").unwrap();
@@ -844,11 +847,13 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
     let keyed = FakeLlm::start(vec![], Some(Reply::text("keyed"))).await;
     let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
     let receipts = Arc::new(MemoryReceipts::default());
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
-        keyed.base_url, own.base_url
-    ))),
-    oneiron::HostingPrivacyPosture::SelfHostLocal,)
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
+            keyed.base_url, own.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    )
     .with_receipts(receipts.clone());
     let keyed_id = ModelId::new("keyed/teacher@live").unwrap();
     let own_id = ModelId::new("own/small@live").unwrap();

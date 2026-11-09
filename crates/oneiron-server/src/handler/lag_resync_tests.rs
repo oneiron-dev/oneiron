@@ -370,13 +370,21 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
     )
     .unwrap();
 
-    // A change the socket's lagged receiver never saw.
+    // A change the socket's lagged receiver never saw, the vault's own
+    // owner writing as a human at its now (FIX 8873).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     server
         .reassert_manager
         .documents()
         .open(id)
         .unwrap()
-        .edit_text(0, 0, "placeholder edit")
+        .edit_text(
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            server.vault.now_recorded_at(),
+            0,
+            0,
+            "placeholder edit",
+        )
         .unwrap();
     let notices: Vec<_> = super::lag_resync::lag_resync_frames(&server, &state)
         .into_iter()

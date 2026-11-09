@@ -394,6 +394,7 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
                 actor_class: Some("human".to_owned()),
                 org_ref: None,
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();
