@@ -70,11 +70,7 @@ fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResu
     else {
         return Err("expected one fresh spawn".into());
     };
-    let agent = status
-        .input
-        .target
-        .agent_definition_ref()
-        .ok_or("the dispatch targets an agent")?;
+    let agent = status.input.target.agent_definition_ref()?;
     let reader = vault.memory(agent, EdgeActorClass::Agent);
     let owner_actor = vault.ensure_embedded_owner_actor()?;
     let owner = vault.memory(owner_actor, EdgeActorClass::Human);
