@@ -703,4 +703,58 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn the_cause_list_names_every_cause() {
+        // A new cause fails this match: add it to CAUSES and to the table.
+        let named = CAUSES.map(|cause| match cause {
+            DreamerParkCause::ProviderUnavailable
+            | DreamerParkCause::ExecutorError
+            | DreamerParkCause::Checkpoint
+            | DreamerParkCause::Retry
+            | DreamerParkCause::Paused
+            | DreamerParkCause::Cancelled
+            | DreamerParkCause::Signal
+            | DreamerParkCause::Other => cause.as_str(),
+        });
+        let mut distinct = named.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), CAUSES.len());
+    }
+
+    #[test]
+    fn owner_classes_read_the_owner_strings() {
+        assert_eq!(
+            ParkOwnerClass::of(DREAMER_SERVER_PARK_OWNER),
+            ParkOwnerClass::DreamerServer
+        );
+        assert_eq!(
+            ParkOwnerClass::of(AGENT_RUNS_PARK_OWNER),
+            ParkOwnerClass::AgentRuns
+        );
+        assert_eq!(
+            ParkOwnerClass::of(WORKFLOWS_PARK_OWNER),
+            ParkOwnerClass::Workflows
+        );
+        assert_eq!(
+            ParkOwnerClass::of(TURN_PROGRAM_PARK_OWNER),
+            ParkOwnerClass::TurnProgram
+        );
+        assert_eq!(
+            ParkOwnerClass::of("dreamer.trap:00ff"),
+            ParkOwnerClass::Trap
+        );
+        assert_eq!(
+            ParkOwnerClass::of(DRAFTER_RETRAIN_PARK_OWNER),
+            ParkOwnerClass::DrafterRetrain
+        );
+        assert_eq!(
+            ParkOwnerClass::of(FEEDBACK_TRIAGE_PARK_OWNER),
+            ParkOwnerClass::FeedbackTriage
+        );
+        for other in ["coach.host", "dreamer.step_wait:00ff", "worker-7", ""] {
+            assert_eq!(ParkOwnerClass::of(other), ParkOwnerClass::Other, "{other}");
+        }
+    }
 }
