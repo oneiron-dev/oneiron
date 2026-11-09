@@ -20,9 +20,9 @@ afterAll(suite.flush);
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
  * MEMORY-03 and MEMORY-06 are pending doors (Engine CORE-FOUR-SKIPS = A) and keep their full journeys.
- * MEMORY-01 and MEMORY-07 are E2E-PARTIAL subsets (Engine 23:01), named for what they prove:
- * an approved proposal does not supersede the original, and a split reads only the split person's
- * own claims; each case says what stays unproved, with a FIX row filed at READY.
+ * MEMORY-01 is an E2E-PARTIAL subset (Engine 23:01), named for what it proves: an approved proposal
+ * does not supersede the original yet (OPUS-MAP-5B2 fixes it). MEMORY-07 asserts the fixture's full
+ * split promise, which needs #6924 (split membership through merged_into).
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -1099,7 +1099,7 @@ suite.pendingDoor(test, "MEMORY-06",
   { fix: "FIX 22509", deadline: "2026-12-01" });
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
-suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evidence with named residue, and undo keep original claim subjects", async () => {
+suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
   const w = await setup("MEMORY-07");
   try {
     const c = scenario(w, "MEMORY-07");
@@ -1130,24 +1130,34 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
       survivorship_plan: "read_through",
     };
     const merged = applied(await w.engine.client.call("vault.identity.merge", mergeSpec));
+    // Read through the merge: the survivor's remaining claims include the merged source's, which keep their subject.
+    const survivor = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-a") });
+    for (const role of ["@evidence-a", "@evidence-b", "@ambiguous-evidence"]) expect(survivor.remaining_claims).toContain(ref(w, role));
     const bMerged = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-b") });
     expect(bMerged.state).toBe("merged"); expect(bMerged.heads).toEqual([ref(w, "@person-a")]);
     expect(bMerged.merged_into).toEqual([ref(w, "@person-a")]);
     expect((await entity(w.engine.client, ref(w, "@person-b"))).kind).toBe("PERSON");
     for (const role of c.split.heads) await person(w, role, role === "@head-north" ? "Morgan North head" : "Morgan South head");
-    const splitMap = c.split.reassignment_map.filter(item =>
-      c.evidence.find(row => row.ref === item.evidence)?.subject === c.split.entity);
-    expect(splitMap.map(item => item.evidence)).toEqual(["@evidence-a"]);
+    // A claim of a person never merged into the survivor: a split map entry naming it is dropped.
+    const outsiderId = await person(w, "@person-outsider", "Morgan Outsider");
+    const outsiderTurn = await witnessed(w, "@outsider-turn", "Morgan Outsider made no observatory report.");
+    const outsiderReceipt = await w.engine.client.call("vault.claims.upsert", {
+      subject_ref: outsiderId, predicate: "profile.name", value: "Morgan Outsider",
+      confidence: 1, source: "user_stated", scope: w.scope, evidence_turn_refs: [outsiderTurn],
+    });
+    const outsiderClaim = (await entity(w.engine.client, outsiderReceipt.claim_short_id)).id_hex;
+    const outsiderBefore = await claim(w, outsiderClaim);
+    const splitMap = c.split.reassignment_map;
     const splitSpec: FacadeInput<"vault.identity.split"> = {
       entity: ref(w, c.split.entity), heads: c.split.heads.map(role => ref(w, role)),
-      // Only the split person's own claims are mapped: the engine reads a split's claim membership
-      // through the direct claim_of edge, so a merged source's claim (@evidence-b) is not reassigned
-      // (E2E-PARTIAL; FIX row filed with the READY). The ambiguous claim is named as residue.
+      // The fixture's map (the survivor's own claim to North, the merged source's claim to South), the
+      // ambiguous claim named as residue, and the never-merged outsider's claim, which the split drops.
       reassignment_map: [
         ...splitMap.map(item => ({
           item: { kind: "claim" as const, claim: ref(w, item.evidence) }, target: { kind: "head" as const, head: ref(w, item.head) },
         })),
         { item: { kind: "claim" as const, claim: ref(w, "@ambiguous-evidence") }, target: { kind: "residue" as const } },
+        { item: { kind: "claim" as const, claim: outsiderClaim }, target: { kind: "head" as const, head: ref(w, "@head-south") } },
       ],
       evidence: { refs: c.split.evidence.map(role => ref(w, role)), rationale: "North and South evidence identify separate people." },
     };
@@ -1161,7 +1171,11 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
     for (const mapping of splitMap) {
       const head = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, mapping.head) });
       expect(head.assigned_claims).toContain(ref(w, mapping.evidence));
+      expect(head.assigned_claims).not.toContain(outsiderClaim);
     }
+    // The merged source's claim is assigned away from the survivor; the outsider's claim is untouched.
+    expect(shell.remaining_claims).not.toContain(ref(w, "@evidence-b"));
+    expect(await claim(w, outsiderClaim)).toEqual(outsiderBefore);
     for (const original of originals) {
       const current = await claim(w, original.id);
       expect(current.subject_ref).toBe(original.subject);
