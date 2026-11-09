@@ -5934,7 +5934,7 @@ class Oneiron:
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
             return Oneiron._VaultRunsBranchesVerbs(self._client)
         def checkpoint(self, spec):
-            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with: the owner reads any run, another caller a run it is the actor of."""
             return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
         def pause(self, spec):
             """Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."""
@@ -5964,7 +5964,7 @@ class Oneiron:
             """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
             return json.loads(_translate(lambda: self._client.vault_runs_settlement(json.dumps(spec))))
         def step(self, spec):
-            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+            """Reads one committed model step of an attempt by job reference and step hash, without calling a model or admitting work: the owner reads any attempt, another caller an attempt it is the actor of."""
             return json.loads(_translate(lambda: self._client.vault_runs_step(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:

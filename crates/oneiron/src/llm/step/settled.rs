@@ -213,6 +213,18 @@ pub(crate) fn committed_steps_in_txn(
     Ok((steps, next))
 }
 
+/// The attempt and step hash a [`SettledStepRequest`] names, parsed as
+/// [`settled_step_as_owner`] parses them (slice 6.4c's caller form reads the
+/// same request).
+pub(crate) fn settled_step_target(
+    input: &SettledStepRequest,
+) -> MemoryResult<(AttemptId, [u8; 32])> {
+    let attempt = attempt_ref(&input.job_ref)?;
+    let step_hash = decode_hash_hex(input.step_hash.trim())
+        .map_err(|_| MemoryError::bad_request("step_hash must be 64 hex characters"))?;
+    Ok((attempt, step_hash))
+}
+
 fn attempt_ref(job_ref: &str) -> MemoryResult<AttemptId> {
     let text = job_ref.trim();
     let text = text.strip_prefix("job:").unwrap_or(text);
