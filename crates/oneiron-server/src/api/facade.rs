@@ -212,6 +212,7 @@ mod skill_execution_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod standing_doors;
+mod steward_doors;
 // Untangle 6.6c: who reads engine substrate rows through a host door.
 mod substrate_read_doors;
 // FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).
