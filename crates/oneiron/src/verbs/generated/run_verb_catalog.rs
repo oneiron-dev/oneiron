@@ -180,6 +180,32 @@ impl RunVerb {
                 | Self::Summarize
         )
     }
+    /// The run rows the action registry serves on ordinary storage: they need no live run. (`run_surface: "memory"` on the row.)
+    pub const MEMORY_RUN: [Self; 4] = [
+        Self::VaultSearch,
+        Self::VaultClaimsPut,
+        Self::VaultClaimsSupersede,
+        Self::VaultEdgesPut,
+    ];
+    /// The run rows that act on their caller's live agent run, served only under that run's lease. (`run_surface: "live"` on the row.)
+    pub const LIVE_RUN: [Self; 16] = [
+        Self::SelfFold,
+        Self::SelfCompact,
+        Self::SelfUnfold,
+        Self::SelfFolds,
+        Self::TasksConsultResult,
+        Self::TasksRefuse,
+        Self::SelfReportBlocked,
+        Self::SelfAgentsSpawn,
+        Self::SelfWorkflowsDispatchBound,
+        Self::SelfLeaderAdvice,
+        Self::SelfLeaderPattern,
+        Self::SelfLeaderSplit,
+        Self::SelfTeamStart,
+        Self::SelfTeamRecord,
+        Self::SelfTeamVote,
+        Self::SelfTeamSubmit,
+    ];
     pub const fn effect(self) -> crate::code_run::SelfEffect {
         match self {
             Self::ConnectorAnswer => crate::code_run::SelfEffect::ConnectorAnswer,
