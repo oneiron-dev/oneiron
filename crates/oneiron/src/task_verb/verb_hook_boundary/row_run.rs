@@ -17,27 +17,33 @@ use crate::runtime_hooks::verb::{
 };
 use crate::runtime_hooks::{InvocationId, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{AgentVerb, validate_input};
+use crate::verb_table::VerbTable;
 
 /// Runs the pre chain of row `verb` over its JSON `args`: the args to run it
-/// with. A rewrite must pass the row's own input check, then the admission
-/// its door bound on `memory`.
+/// with. A rewrite must pass the row's own input check (`verbs`), then the
+/// admission its door bound on `memory`.
 ///
 /// # Errors
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
-pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
+pub fn row_pre(
+    memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
+    verb: &str,
+    args: Value,
+) -> MemoryResult<VerbHookPre> {
     // A call serving a room NOTE keeps its hooks' records for its session
     // (FIX 4280, 10344), judged on the call's own input.
     let _restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let session = hook_session_for_call(Some(memory), verbs, verb, &args, None)?;
     row_pre_resumable(
         memory,
+        verbs,
         verb,
         args,
         None,
         None,
-        validate_input,
+        &|verb, value| verbs.validate_input(verb, value),
         session.as_ref(),
     )?
     .map_err(|stop| stop_refusal(stop, session.as_ref()))
@@ -46,16 +52,22 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// The run-bound browser projection of a row uses its original browser input,
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
-pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
+pub fn browser_row_pre(
+    memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
+    verb: &str,
+    args: Value,
+) -> MemoryResult<VerbHookPre> {
     let _restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let session = hook_session_for_call(Some(memory), verbs, verb, &args, None)?;
     row_pre_resumable(
         memory,
+        verbs,
         verb,
         args,
         None,
         None,
-        crate::task_verb::sdk::validate_browser_input,
+        &|verb, value| verbs.validate_browser_input(verb, value),
         session.as_ref(),
     )?
     .map_err(|stop| stop_refusal(stop, session.as_ref()))
@@ -88,25 +100,27 @@ fn restriction_clock_for_call(
 /// retry there.
 fn row_pre_resumable(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     resume: Option<VerbResume>,
     credential: Option<VerbAskCredential>,
-    validate: fn(&str, &Value) -> MemoryResult<()>,
+    validate: &dyn Fn(&str, &Value) -> MemoryResult<()>,
     session: Option<&HookSession>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     row_pre_with_saved(
-        memory, verb, args, resume, credential, validate, session, false,
+        memory, verbs, verb, args, resume, credential, validate, session, false,
     )
 }
 
 fn row_pre_with_saved(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     resume: Option<VerbResume>,
     credential: Option<VerbAskCredential>,
-    validate: fn(&str, &Value) -> MemoryResult<()>,
+    validate: &dyn Fn(&str, &Value) -> MemoryResult<()>,
     session: Option<&HookSession>,
     require_saved: bool,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
@@ -126,7 +140,7 @@ fn row_pre_with_saved(
             .map_or(Ok(()), |admit| admit(verb, args))
     };
     let vault = memory.vault();
-    let call = row_call(memory, verb)?;
+    let call = row_call(memory, verbs, verb)?;
     let turn = memory.task_work_turn();
     let mut ended = if require_saved {
         match session {
@@ -177,11 +191,12 @@ fn row_pre_with_saved(
 /// error a call settlement ran failed with.
 pub fn row(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    row_with_saved(memory, verb, args, |args, _| run(args), false).0
+    row_with_saved(memory, verbs, verb, args, |args, _| run(args), false).0
 }
 
 /// [`row`] for a call one member of whose args its host holds as a file
@@ -192,11 +207,12 @@ pub fn row(
 /// result comes back beside the notice bit, as [`row_with_notice`] gives it.
 pub(crate) fn row_holding_member(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     run: impl FnOnce(Value, bool) -> MemoryResult<Value>,
 ) -> (MemoryResult<Value>, Option<bool>) {
-    row_with_saved(memory, verb, args, run, false)
+    row_with_saved(memory, verbs, verb, args, run, false)
 }
 
 /// [`row`] with the content-free notice bit from the actual pre chain,
@@ -209,11 +225,12 @@ pub(crate) fn row_holding_member(
 /// As [`row`].
 pub fn row_with_notice(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> (MemoryResult<Value>, Option<bool>) {
-    row_with_saved(memory, verb, args, |args, _| run(args), false)
+    row_with_saved(memory, verbs, verb, args, |args, _| run(args), false)
 }
 
 /// A workflow's caller-only retry from its retained tool checkpoint. The
@@ -226,15 +243,17 @@ pub fn row_with_notice(
 /// As [`row`], including an unavailable saved hook call.
 pub fn row_retained(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    row_with_saved(memory, verb, args, |args, _| run(args), true).0
+    row_with_saved(memory, verbs, verb, args, |args, _| run(args), true).0
 }
 
 fn row_with_saved(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     mut args: Value,
     run: impl FnOnce(Value, bool) -> MemoryResult<Value>,
@@ -267,19 +286,20 @@ fn row_with_saved(
             let credential = memory.verb_ask_credential();
             let resume = memory
                 .plain_resume()
-                .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+                .filter(|_| credential.is_none() && verb != crate::verb_names::REVEAL_WAIT)
                 .map(VerbResume::Row);
             (credential, resume)
         };
         let pre_restriction = restriction_clock_for_call(memory, verb, &args);
-        let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+        let session = hook_session_for_call(Some(memory), verbs, verb, &args, None)?;
         let pre = match row_pre_with_saved(
             memory,
+            verbs,
             verb,
             args,
             resume,
             credential,
-            validate_input,
+            &|verb, value| verbs.validate_input(verb, value),
             session.as_ref(),
             require_saved,
         )? {
@@ -331,6 +351,7 @@ fn row_with_saved(
 /// clock and abort path.
 pub fn row_tapped(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     mut args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
@@ -344,17 +365,18 @@ pub fn row_tapped(
     let credential = memory.verb_ask_credential();
     let resume = memory
         .plain_resume()
-        .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+        .filter(|_| credential.is_none() && verb != crate::verb_names::REVEAL_WAIT)
         .map(VerbResume::Row);
     let pre_restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let session = hook_session_for_call(Some(memory), verbs, verb, &args, None)?;
     let pre = match row_pre_resumable(
         memory,
+        verbs,
         verb,
         args,
         resume,
         credential,
-        validate_input,
+        &|verb, value| verbs.validate_input(verb, value),
         session.as_ref(),
     )? {
         Ok(pre) => pre,
@@ -390,6 +412,7 @@ pub fn row_tapped(
 /// the field never leaks back.
 pub fn typed_row<I, O>(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     input: I,
     run: impl FnOnce(I) -> MemoryResult<O>,
@@ -398,7 +421,14 @@ where
     I: Serialize + DeserializeOwned,
     O: Serialize + DeserializeOwned,
 {
-    typed_row_validated(memory, verb, input, validate_input, run)
+    typed_row_checked(
+        memory,
+        verbs,
+        verb,
+        input,
+        &|verb, value| verbs.validate_input(verb, value),
+        run,
+    )
 }
 
 /// [`typed_row`] for a door whose typed input is its own rather than the
@@ -411,9 +441,26 @@ where
 /// As [`typed_row`].
 pub fn typed_row_validated<I, O>(
     memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
     verb: &str,
     input: I,
     validate: fn(&str, &Value) -> MemoryResult<()>,
+    run: impl FnOnce(I) -> MemoryResult<O>,
+) -> MemoryResult<O>
+where
+    I: Serialize + DeserializeOwned,
+    O: Serialize + DeserializeOwned,
+{
+    typed_row_checked(memory, verbs, verb, input, &validate, run)
+}
+
+/// [`typed_row_validated`] with `validate` as the input check a rewrite must pass.
+fn typed_row_checked<I, O>(
+    memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
+    verb: &str,
+    input: I,
+    validate: &dyn Fn(&str, &Value) -> MemoryResult<()>,
     run: impl FnOnce(I) -> MemoryResult<O>,
 ) -> MemoryResult<O>
 where
@@ -425,9 +472,10 @@ where
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
     let pre_restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let session = hook_session_for_call(Some(memory), verbs, verb, &args, None)?;
     let mut pre = match row_pre_resumable(
         memory,
+        verbs,
         verb,
         args.clone(),
         None,
