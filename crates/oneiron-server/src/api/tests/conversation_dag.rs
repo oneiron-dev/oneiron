@@ -362,25 +362,25 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
             .append_dag_record(
                 &surface,
                 &oneiron::conversation_dag::AppendRecord {
-                conversation: conv_id,
-                parent: Some(parent),
-                reply_to: None,
-                address: oneiron::conversation_dag::AddressMode::Broadcast,
-                recipients: vec![],
-                advance: false,
-                kind: ENTITY_TYPE_TURN,
-                occurred: TimeRange {
-                    start: n + 10,
-                    end: n + 10,
-                },
-                learned_at: n + 10,
-                body: rmp_serde::to_vec_named(&json!({"txt": "retained"})).unwrap(),
-                text: vec![],
-                session: Some(session_id),
-                actor: writer,
-                quote: None,
-                containing_turn: None,
-                thread_audience: None,
+                    conversation: conv_id,
+                    parent: Some(parent),
+                    reply_to: None,
+                    address: oneiron::conversation_dag::AddressMode::Broadcast,
+                    recipients: vec![],
+                    advance: false,
+                    kind: ENTITY_TYPE_TURN,
+                    occurred: TimeRange {
+                        start: n + 10,
+                        end: n + 10,
+                    },
+                    learned_at: n + 10,
+                    body: rmp_serde::to_vec_named(&json!({"txt": "retained"})).unwrap(),
+                    text: vec![],
+                    session: Some(session_id),
+                    actor: writer,
+                    quote: None,
+                    containing_turn: None,
+                    thread_audience: None,
                 },
             )
             .unwrap();
@@ -1333,9 +1333,14 @@ summary_prompt = "Summarize these records."
         extractor.base_url, narrator.base_url
     ));
     let receipts = Arc::new(MemoryReceipts::default());
-    let host =
-        AiHost::start_receipted(Arc::clone(&vault), Some(&models), true, receipts.clone(), None)
-            .await;
+    let host = AiHost::start_receipted(
+        Arc::clone(&vault),
+        Some(&models),
+        true,
+        receipts.clone(),
+        None,
+    )
+    .await;
     let config = SyncServerConfig {
         allow_unauthenticated: true,
         ..Default::default()

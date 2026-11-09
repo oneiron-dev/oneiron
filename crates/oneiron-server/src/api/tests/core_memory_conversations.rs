@@ -502,7 +502,8 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
 
     // CORE_MAX_BATCH_ENTITIES is gone (#4034, 005dd2c4427); the hydrate frame
     // keeps its 256 (rule D).
-    let too_many_refs = vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
+    let too_many_refs =
+        vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
     let (too_many_status, too_many_body) = route_json_auth(
         server.clone(),
         json_request(

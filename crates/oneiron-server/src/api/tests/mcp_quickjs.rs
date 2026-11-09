@@ -2,17 +2,17 @@
 use super::*;
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
-use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
-use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
     DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
 };
+use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
+use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
 use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
-use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::llm::{
     LlmCapability, LlmCatalogCost, LlmCatalogEntry, ModelTierRef as Tier, ReasoningEffort,
 };
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality,
@@ -51,7 +51,12 @@ impl DecisionProvider for Judge {
         };
         let answer = if options.iter().any(|option| option == self.model.as_str()) {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            assert!(!call.state["task"]["task"].as_str().unwrap_or_default().is_empty());
+            assert!(
+                !call.state["task"]["task"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty()
+            );
             self.model.to_string()
         } else {
             // The effort question: the chosen model's first rung.
@@ -101,7 +106,10 @@ impl LlmBackend for Backend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text, signature: None }],
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
