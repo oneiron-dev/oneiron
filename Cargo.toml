@@ -104,6 +104,7 @@ oxc_syntax = "=0.152.0"
 oxc_transformer = "=0.152.0"
 
 [workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oneiron_test_support)'] }
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 single_use_lifetimes = "deny"
