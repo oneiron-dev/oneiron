@@ -26,9 +26,13 @@ pub(super) fn start_run_guest(
         phase,
         error: BrowserError::Unavailable(e),
     };
-    let backend =
-        select_backend_for_session(SandboxGuestTier::Untrusted, runtime.to_path_buf(), image)
-            .map_err(|e| unavailable(Phase::SandboxUnavailable, e.to_string()))?;
+    let backend = select_backend_for_session(
+        &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
+        SandboxGuestTier::Untrusted,
+        runtime.to_path_buf(),
+        image,
+    )
+    .map_err(|e| unavailable(Phase::SandboxUnavailable, e.to_string()))?;
     let spec = GuestSpec {
         image: ImageRef::pinned(image)
             .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,

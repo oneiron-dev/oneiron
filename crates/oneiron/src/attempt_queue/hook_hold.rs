@@ -70,7 +70,7 @@ impl AttemptQueue<'_> {
         if !record.hook_wait_for(invocation) || record.attempt_count != attempt_count {
             return Ok(false);
         }
-        self.intervene_in_txn(
+        self.release_hold_in_txn(
             txn,
             InterveneAttempt {
                 id,
