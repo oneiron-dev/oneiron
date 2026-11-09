@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.catalog.get",
+  "description": "Reads a pinned model catalog revision with its prices, backend offers and score evidence.",
+  "input": "crate::llm::catalog_doors::ModelCatalogGet",
+  "output": "crate::llm::catalog_doors::ModelCatalogRevision",
+  "call": "memory.vault().model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

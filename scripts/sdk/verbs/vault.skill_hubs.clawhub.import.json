@@ -1,0 +1,16 @@
+{
+  "name": "vault.skill_hubs.clawhub.import",
+  "description": "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin.",
+  "input": "crate::skill_hub::ClawHubImportRequest",
+  "output": "crate::skill_hub::ClawHubImportReply",
+  "call": "crate::task_verb::sdk::skill_hub_clawhub_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.import\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_precheck": false,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

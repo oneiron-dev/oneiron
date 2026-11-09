@@ -1,0 +1,16 @@
+{
+  "name": "vault.federation.coreference.unlink",
+  "description": "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims.",
+  "input": "crate::task_verb::sdk::CoreferencePairRequest",
+  "output": "crate::task_verb::sdk::CoreferenceUnlinkReceipt",
+  "call": "crate::task_verb::sdk::unlink_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.unlink\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

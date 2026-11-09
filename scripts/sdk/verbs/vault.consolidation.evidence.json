@@ -1,0 +1,16 @@
+{
+  "name": "vault.consolidation.evidence",
+  "description": "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner.",
+  "input": "crate::memory::consolidation::ConsolidationEvidenceRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>",
+  "scope": "Read",
+  "call": "memory.consolidation_evidence_as_owner(&memory.embedded_owner(\"vault.consolidation.evidence\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

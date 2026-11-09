@@ -1,0 +1,16 @@
+{
+  "name": "vault.hooks.regen.run",
+  "description": "Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing.",
+  "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+  "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+  "call": "memory.hooks_regen_run_unhosted(&memory.embedded_owner(\"vault.hooks.regen.run\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

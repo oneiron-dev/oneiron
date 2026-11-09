@@ -1,0 +1,17 @@
+{
+  "name": "vault.weave.digest_feedback.put",
+  "description": "Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are.",
+  "input": "crate::claim::WeaveDigestFeedback",
+  "output": "crate::claim::WeaveDigestFeedback",
+  "call": "crate::task_verb::sdk::weave_digest_feedback_put(memory, &memory.embedded_owner(\"vault.weave.digest_feedback.put\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

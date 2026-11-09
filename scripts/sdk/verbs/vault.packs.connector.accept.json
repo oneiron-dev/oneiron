@@ -1,0 +1,16 @@
+{
+  "name": "vault.packs.connector.accept",
+  "description": "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent.",
+  "input": "ConnectorPackAcceptRequest",
+  "output": "crate::task_verb::sdk::ConnectorPackView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.accept\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "self.leader.split",
+  "input": "crate::code_run::LeaderSplitInput",
+  "output": "crate::code_run::LeaderSplitOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "LeaderSplit",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
+    "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope.",
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "self.inbox.get",
+  "description": "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done.",
+  "input": "crate::agent_inbox_lens::InboxItemRequest",
+  "output": "crate::agent_inbox_lens::InboxItemView",
+  "call": "memory.inbox_item_get(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

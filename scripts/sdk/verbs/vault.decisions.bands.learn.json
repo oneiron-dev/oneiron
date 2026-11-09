@@ -1,0 +1,16 @@
+{
+  "name": "vault.decisions.bands.learn",
+  "description": "The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility.",
+  "input": "crate::llm::decision::DecisionBandLearnRequest",
+  "output": "crate::llm::decision::LearnedBand",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.learn\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

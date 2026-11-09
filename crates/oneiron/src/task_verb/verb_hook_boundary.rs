@@ -37,8 +37,8 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop,
 };
 use crate::task_verb::revoke_lands;
+use crate::task_verb::sdk::CUSTODY_VALUE_ROWS;
 use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS};
-use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 
@@ -467,11 +467,7 @@ impl CustodySecret {
         if !CUSTODY_VALUE_ROWS.contains(&verb) {
             return None;
         }
-        let member = if verb == "vault.secrets.custody.submit" {
-            "input_base64"
-        } else {
-            "value_base64"
-        };
+        let member = crate::task_verb::sdk::AgentVerb::from_name(verb)?.custody_member()?;
         let Some(Value::String(held)) = args.get_mut(member) else {
             return None;
         };

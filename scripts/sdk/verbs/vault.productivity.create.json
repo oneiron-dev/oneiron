@@ -1,0 +1,16 @@
+{
+  "name": "vault.productivity.create",
+  "description": "Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write.",
+  "refs": [
+    "/parent_ref"
+  ],
+  "input": "crate::memory::ProductivityCreateRequest",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.productivity_create(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

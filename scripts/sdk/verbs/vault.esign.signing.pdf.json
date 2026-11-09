@@ -1,0 +1,18 @@
+{
+  "name": "vault.esign.signing.pdf",
+  "description": "One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing.",
+  "input": "crate::blob_artifact::esign::EsignSigningPdfRequest",
+  "output": "crate::blob_artifact::esign::EsignSigningPdfView",
+  "call": "memory.esign_signing_pdf(&input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

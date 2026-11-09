@@ -1,0 +1,16 @@
+{
+  "name": "vault.embedding_spaces.declare",
+  "description": "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.",
+  "input": "crate::task_verb::sdk::EmbeddingSpaceDeclareRequest",
+  "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+  "call": "crate::task_verb::sdk::declare_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.declare\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

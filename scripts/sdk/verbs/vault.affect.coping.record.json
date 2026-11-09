@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.coping.record",
+  "description": "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded.",
+  "input": "crate::memory::coping_doors::CopingOutcomeRecordRequest",
+  "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+  "call": "memory.coping_outcome_record_as_owner(&memory.embedded_owner(\"vault.affect.coping.record\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

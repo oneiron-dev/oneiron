@@ -1,0 +1,17 @@
+{
+  "name": "vault.off_record.notes.create",
+  "description": "A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+  "input": "crate::task_verb::sdk::OffRecordNoteRequest",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

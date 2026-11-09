@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.zoom",
+  "description": "Zooms into a rectangle of a held image.",
+  "input": "crate::task_verb::sdk::BrowserZoomInput",
+  "output": "crate::task_verb::sdk::BrowserImageOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.zoom(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserZoomInput>",
+    "description": "Zooms into a rectangle of a held image.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

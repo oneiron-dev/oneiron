@@ -1,0 +1,17 @@
+{
+  "name": "vault.packs.sections.suggest",
+  "description": "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal.",
+  "input": "crate::memory::PluginSectionSuggestRequest",
+  "output": "crate::memory::PluginSectionSuggestion",
+  "call": "memory.plugin_section_suggest(&input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

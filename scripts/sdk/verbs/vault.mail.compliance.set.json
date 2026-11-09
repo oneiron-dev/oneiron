@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.compliance.set",
+  "description": "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log.",
+  "input": "crate::mail_pack::MailComplianceSetRequest",
+  "output": "crate::mail_pack::MailComplianceSettingView",
+  "call": "memory.mail_compliance_set(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,13 @@
+{
+  "name": "vault.conversations.turn.continue",
+  "description": "Queues generation that resumes an incomplete assistant reply from exactly its saved text.",
+  "input": "crate::conversation::TurnActionRequest",
+  "output": "crate::conversation::TurnActionReceipt",
+  "call": "memory.conversations_turn_continue(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,12 @@
+{
+  "name": "vault.campaign.program.archive",
+  "description": "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops.",
+  "input": "crate::campaign::surface::ArchiveCampaignProgramRequest",
+  "output": "crate::campaign::surface::CampaignProgramRecord",
+  "call": "memory.campaign_program_archive(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

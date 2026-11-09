@@ -1,0 +1,8 @@
+{
+  "name": "self.code.views.read",
+  "input": "crate::memory::repo_doors::RepoViewsReadInput",
+  "output": "crate::memory::repo_doors::RepoViewsReadOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "RepoViewsRead"
+}

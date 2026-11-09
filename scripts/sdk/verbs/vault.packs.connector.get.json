@@ -1,0 +1,16 @@
+{
+  "name": "vault.packs.connector.get",
+  "description": "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows.",
+  "input": "ConnectorPackGetRequest",
+  "output": "crate::task_verb::sdk::ConnectorPackView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.get\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

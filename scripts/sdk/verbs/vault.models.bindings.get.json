@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.bindings.get",
+  "description": "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence.",
+  "input": "crate::llm::catalog_doors::ModelBindingProposalRef",
+  "output": "crate::llm::catalog_doors::ModelBindingProposal",
+  "call": "memory.vault().model_binding_proposal_as_owner(&memory.embedded_owner(\"vault.models.bindings.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
