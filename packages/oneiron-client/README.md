@@ -5,7 +5,7 @@ SDK verb table, with raw-response passthrough. It is the second lane of the
 packaging ladder — the lane for agents and apps that can install one package —
 and it exists to save typing, never to become the contract.
 
-The verb table, `scripts/sdk/agent-verbs.json`, is the contract. This package
+The verb table, `scripts/sdk/verbs/`, is the contract. This package
 is a small fetch wrapper over it: it builds URLs and default headers, types
 every verb's input and result, and hands back the raw `Response`.
 

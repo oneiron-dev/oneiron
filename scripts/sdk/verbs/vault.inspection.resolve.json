@@ -1,0 +1,12 @@
+{
+  "name": "vault.inspection.resolve",
+  "description": "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item.",
+  "input": "crate::lens::InspectionResolveRequest",
+  "output": "crate::lens::InspectionResolved",
+  "call": "memory.inspection_resolve(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false
+}

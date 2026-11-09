@@ -13,7 +13,7 @@ afterAll(suite.flush);
  *
  * Binding read: main f8e2f8397685bc63405bc1a303b65f94aa26c33d (this worktree's
  * HEAD and origin/main). See fixtures/learning/bindings.json for source hashes.
- * Read: generated HTTP SDK, agent-verbs.json, public OpenAPI registry and owner
+ * Read: generated HTTP SDK, the verb table (scripts/sdk/verbs/), public OpenAPI registry and owner
  * route table/DTOs, CLI, oneiron.skills.md by tier, and the public SDK README.
  * Existing research, critic, setting, offer-answer and swap doors are NOT absent.
  *

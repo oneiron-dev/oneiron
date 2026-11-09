@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.proposals",
+  "description": "The proposals waiting beside one artifact.",
+  "input": "crate::blob_artifact::ArtifactRefRequest",
+  "output": "Vec<crate::edit_settle::PendingProposalView>",
+  "call": "memory.artifacts_proposals(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// The proposals waiting beside one artifact for Keep or Discard.\n",
+      "ts": "/** The proposals waiting beside one artifact for Keep or Discard. */",
+      "py": "The proposals waiting beside one artifact for Keep or Discard."
+    }
+  }
+}

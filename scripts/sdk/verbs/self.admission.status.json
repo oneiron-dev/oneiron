@@ -1,0 +1,13 @@
+{
+  "name": "self.admission.status",
+  "description": "Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work.",
+  "input": "crate::receipt::admission::AdmissionStatusRequest",
+  "output": "Option<crate::receipt::admission::AdmissionReceipt>",
+  "call": "memory.admission_status(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

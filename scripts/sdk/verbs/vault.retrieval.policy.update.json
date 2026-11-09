@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.policy.update",
+  "description": "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior.",
+  "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+  "output": "crate::task_verb::sdk::RetrievalPolicyUpdateReceipt",
+  "call": "crate::task_verb::sdk::retrieval_policy_update_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.update\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

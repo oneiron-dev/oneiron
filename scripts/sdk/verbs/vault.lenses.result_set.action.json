@@ -1,0 +1,16 @@
+{
+  "name": "vault.lenses.result_set.action",
+  "description": "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate.",
+  "input": "crate::lens::LensResultSetActionRequest",
+  "output": "crate::lens::LensResultSetActionResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.result_set.action\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "projection_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

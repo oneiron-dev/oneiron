@@ -1,0 +1,17 @@
+{
+  "name": "vault.graph.admit",
+  "description": "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller.",
+  "input": "crate::receipt::GraphAdmitRequest",
+  "output": "crate::receipt::GraphAskOutcome",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.admit\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "proposes": true,
+  "admission": {
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "openapi": true
+}

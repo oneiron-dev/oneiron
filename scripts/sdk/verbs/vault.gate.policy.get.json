@@ -1,0 +1,16 @@
+{
+  "name": "vault.gate.policy.get",
+  "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
+  "input": "crate::policy_manifest_doors::PolicyManifestRead",
+  "output": "crate::policy_manifest_doors::PolicyManifestsView",
+  "call": "crate::policy_manifest_doors::policy_manifests_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.get\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

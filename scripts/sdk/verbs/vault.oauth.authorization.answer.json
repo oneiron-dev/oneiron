@@ -1,0 +1,17 @@
+{
+  "name": "vault.oauth.authorization.answer",
+  "description": "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint.",
+  "input": "crate::task_verb::sdk::OAuthAuthorizationAnswer",
+  "output": "crate::task_verb::sdk::OAuthAuthorizationAnswered",
+  "call": "crate::task_verb::sdk::answer_oauth_authorization_as(memory.vault(), &memory.embedded_owner(\"vault.oauth.authorization.answer\")?, crate::authority::ActSurface::ThisInstall, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

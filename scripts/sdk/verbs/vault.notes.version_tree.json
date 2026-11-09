@@ -1,0 +1,18 @@
+{
+  "name": "vault.notes.version_tree",
+  "description": "Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts.",
+  "input": "crate::note::NoteAccessRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>",
+  "call": "memory.note_version_tree(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true
+}

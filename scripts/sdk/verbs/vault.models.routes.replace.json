@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.routes.replace",
+  "description": "Replaces one model slot route within its manifest pin without changing any other slot or role binding.",
+  "input": "crate::llm::manifest::doors::ModelRouteReplace",
+  "output": "crate::llm::manifest::doors::ModelRouteView",
+  "call": "crate::task_verb::sdk::replace_model_route(memory, input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

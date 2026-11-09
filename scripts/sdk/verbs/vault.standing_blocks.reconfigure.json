@@ -1,0 +1,16 @@
+{
+  "name": "vault.standing_blocks.reconfigure",
+  "description": "The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened.",
+  "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",
+  "output": "crate::task_verb::sdk::StandingBlockView",
+  "call": "crate::task_verb::sdk::reconfigure_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.reconfigure\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

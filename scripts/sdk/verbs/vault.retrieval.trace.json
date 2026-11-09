@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.trace",
+  "description": "The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults.",
+  "input": "crate::task_verb::sdk::RetrievalTraceRequest",
+  "output": "Option<crate::store::RetrievalTrace>",
+  "call": "crate::task_verb::sdk::retrieval_trace_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.trace\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

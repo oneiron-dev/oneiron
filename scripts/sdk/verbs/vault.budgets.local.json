@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.local",
+  "description": "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore.",
+  "input": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest",
+  "output": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetView",
+  "call": "crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.local\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

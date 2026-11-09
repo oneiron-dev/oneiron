@@ -1,0 +1,17 @@
+{
+  "name": "vault.outbound_calls.request.erase",
+  "description": "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting.",
+  "input": "OutboundCallRequestEraseRequest",
+  "output": "crate::task_verb::sdk::OutboundCallRequestErased",
+  "call": "crate::task_verb::sdk::erase_outbound_call_request_as_owner(memory.vault(), &memory.embedded_owner(\"vault.outbound_calls.request.erase\")?, input)?",
+  "host_door": true,
+  "host_door_precheck": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

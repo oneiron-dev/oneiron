@@ -8,7 +8,7 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! The route projection is generated from `scripts/sdk/agent-verbs.json`.
+//! The route projection is generated from `scripts/sdk/verbs/`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
 //! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one

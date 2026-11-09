@@ -1,0 +1,16 @@
+{
+  "name": "vault.personas.edit",
+  "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out.",
+  "input": "crate::persona_snapshot::PersonaSnapshotCopyEditRequest",
+  "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.edit\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.model.generate",
+  "description": "Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>",
+  "output": "crate::LlmResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.model.generate\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

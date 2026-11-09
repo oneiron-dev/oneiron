@@ -287,4 +287,63 @@ class AgentSdkProjectionTests(unittest.TestCase):
                 client.tasks.wait(receipt["handle"])
             self.assertEqual(refusal.exception.code, "FORBIDDEN")
 
+class VerbRoleTests(unittest.TestCase):
+    """VERB-METADATA (untangle slice 4.1): a verb's roles are fields on its own row. These pin the
+    rows to the handwritten lists they replaced (main c9b20c0105): CUSTODY_VALUE_ROWS and the custody
+    member forks, OffRecordSession::writes_verb, session_verbs::session_read, MEMORY_RUN_VERBS and
+    LIVE_RUN_VERBS, and door_admits' arms."""
+
+    @classmethod
+    def setUpClass(cls):
+        verbs = [json.loads(path.read_text()) for path in sorted((ROOT / "scripts/sdk/verbs").glob("*.json"))]
+        cls.rows = {row["name"]: row for row in verbs}
+
+    def field(self, key):
+        return {name: row[key] for name, row in self.rows.items() if key in row}
+
+    def test_custody_rows_name_their_secret_member(self):
+        self.assertEqual(self.field("custody"), {
+            "vault.secrets.register": "value_base64",
+            "vault.secrets.rotate": "value_base64",
+            "vault.secrets.custody.submit": "input_base64",
+        })
+
+    def test_overlay_writes(self):
+        self.assertEqual(set(self.field("overlay_write")), {"vault.notes.create", "vault.claims.upsert"})
+
+    def test_session_reads_are_an_explicit_field(self):
+        self.assertEqual(self.field("session_read"), {
+            "vault.get": "Get",
+            "vault.hydrate": "Hydrate",
+            "vault.refs.resolve": "RefsResolve",
+            "vault.search.bm25": "SearchBm25",
+            "vault.receipts": "Receipts",
+        })
+
+    def test_run_surfaces(self):
+        surfaces = self.field("run_surface")
+        self.assertEqual({name for name, surface in surfaces.items() if surface == "memory"},
+                         {"vault.search", "vault.claims.put", "vault.claims.supersede", "vault.edges.put"})
+        self.assertEqual({name for name, surface in surfaces.items() if surface == "live"}, {
+            "tasks.consult.result", "tasks.refuse", "self.report_blocked", "self.agents.spawn",
+            "self.team.start", "self.team.record", "self.team.vote", "self.team.submit",
+            "self.leader.advice", "self.leader.pattern", "self.leader.split", "self.fold",
+            "self.compact", "self.unfold", "self.folds", "self.workflows.dispatch_bound",
+        })
+
+    def test_every_checked_host_door_names_its_proof(self):
+        checked = {}
+        for name, row in self.rows.items():
+            door = row.get("host") if "host" in row else row
+            if (row.get("host_door") or "host" in row) and door.get("host_door_precheck", True):
+                checked[name] = door.get("host_door_proof")
+        self.assertEqual(len(checked), 766)
+        self.assertEqual([name for name, proof in checked.items() if not proof], [])
+        kinds = {}
+        for proof in checked.values():
+            kinds[proof] = kinds.get(proof, 0) + 1
+        self.assertEqual(kinds["owner"], 631)
+        self.assertEqual(len(kinds), 36)
+
+
 if __name__ == "__main__": unittest.main()

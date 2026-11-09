@@ -1,6 +1,7 @@
 # Agent verb projections
 
-`agent-verbs.json` is the shared facade/task/room verb table. `generate.py` emits the
+The verb table, one JSON file per verb in `scripts/sdk/verbs/` (`<verb name>.json`, read in name
+order), is the shared facade/task/room verb table: a verb PR adds or edits its own file. `generate.py` emits the
 engine dispatcher, MCP catalog, HTTP facade handlers, Rust client methods,
 N-API/PyO3 methods, and TypeScript/Python namespaces. All domain behavior stays
 in the engine. The facade methods use the same generated dispatch as tasks and rooms.
@@ -42,6 +43,15 @@ snapshot it reads and writes, so a world-, facet- or record-scoped credential re
 propose-only). Every other write takes effect at once and needs `core:write`.
 `lands_turn` marks a `Write` row that lands a conversation turn: its generated HTTP
 facade handler wakes the Dreamer's turn producer after the write (ARCH-0026 RD-26).
+A verb's roles are fields on its own row, never names in a handwritten list (VERB-METADATA):
+`custody` names the input member that holds a secret's value or its sealed input (the server wipes it
+and the hook boundary lifts it; the action registry offers no such row); `overlay_write` marks a write a
+run bound to a session stages in its room; `session_read` names the room read (a `SessionRead`
+variant) a session-bound run serves through the room's view, an explicit field, never "every verb that
+writes nothing"; `run_surface` marks a run row the action registry serves, `memory` (no live run) or
+`live` (under the caller's live run's lease); and `host_door_proof` names the proof `door_admits` runs
+before a checked host door's hooks (in `host` for a host projection). The generator refuses a checked
+host door without one, and a new proof kind needs its arm in `door_admits`.
 `refs` (OF-063) lists a row's typed record-ref slots as JSON pointers into its input,
 `*` taking every item of an array (`"refs": ["/edges/*/target_ref"]`). The row's
 generated engine fn calls `gate::record_references::admit_row_references` before the
@@ -191,7 +201,7 @@ fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract), and
 `crates/oneiron/src/verbs/generated/code-mode.d.ts` is the same text at a second
 path. This script writes both from the table and the Rust types its rows name
 (`catalog_fragment.py`). Neither is edited by hand: a new row reaches both
-through its `agent-verbs.json` entry and a run of this script. The text covers every row
+through its `scripts/sdk/verbs/` file and a run of this script. The text covers every row
 code mode serves, at its full SDK path (`vault.recall`, `self.focus.refresh`,
 a bare `describe`). `self` is a namespace of constants, every other root a
 constant and a bare verb a function, so a row named by a reserved word

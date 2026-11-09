@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.ls",
+  "description": "List names at the mounted reference, using the live temporal index when requested.",
+  "input": "crate::memory::graph_fs_doors::GraphFsLsRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_ls(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

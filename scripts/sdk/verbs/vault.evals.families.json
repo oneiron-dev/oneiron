@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.families",
+  "description": "Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels.",
+  "input": "crate::skill_optimize::eval_doors::EvalSeatRequest",
+  "output": "Vec<crate::skill_optimize::eval_doors::EvalFamilyView>",
+  "call": "crate::skill_optimize::eval_doors::families(memory.vault(), &memory.embedded_owner(\"vault.evals.families\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -14,43 +14,6 @@ use crate::task_verb::sdk::RunVerb;
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Error, Result, TimeRange};
 use serde_json::Value;
 
-/// The memory run rows, which need no live run.
-pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
-    RunVerb::VaultSearch,
-    RunVerb::VaultClaimsPut,
-    RunVerb::VaultClaimsSupersede,
-    RunVerb::VaultEdgesPut,
-];
-
-/// The run rows that act on their caller's live agent run and read nothing
-/// else of it: the attempt, its lease and its actor, for the leader's rows
-/// the planner or slip issuer the host lends beside the lease, and for the
-/// fold rows the run's own log, at the step boundary its host serializes the action with
-/// (OF-181). A host serves them as actions only under that run's lease.
-/// `tasks.consult.result` lands as the run's actor, under its door's read
-/// lane, and `self.workflows.dispatch_bound` binds a TASK as that actor,
-/// under its lease and its door's read lane. `self.skills.call`,
-/// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
-/// bridge, its results, its park). None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 16] = [
-    RunVerb::TasksConsultResult,
-    RunVerb::TasksRefuse,
-    RunVerb::SelfReportBlocked,
-    RunVerb::SelfAgentsSpawn,
-    RunVerb::SelfTeamStart,
-    RunVerb::SelfTeamRecord,
-    RunVerb::SelfTeamVote,
-    RunVerb::SelfTeamSubmit,
-    RunVerb::SelfLeaderAdvice,
-    RunVerb::SelfLeaderPattern,
-    RunVerb::SelfLeaderSplit,
-    RunVerb::SelfFold,
-    RunVerb::SelfCompact,
-    RunVerb::SelfUnfold,
-    RunVerb::SelfFolds,
-    RunVerb::SelfWorkflowsDispatchBound,
-];
-
 /// The typed `self.*` call a run row makes, `now` in unix seconds: the call,
 /// effect and gate the row had as a hand-written import. Every row has its
 /// arm here, so a run row is never served undecoded, and the component

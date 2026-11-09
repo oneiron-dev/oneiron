@@ -1,0 +1,29 @@
+{
+  "name": "wait",
+  "description": "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode.",
+  "input": "crate::task_verb::sdk::TaskWaitRequest",
+  "output": "crate::task_verb::TaskAskWait",
+  "mcp_served": "[input.handle.group_ref]",
+  "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
+  "scope": "Write",
+  "task_work": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "handle",
+        "type": "crate::task_verb::TaskAskHandle"
+      },
+      {
+        "name": "step_key",
+        "type": "String",
+        "default": "sdk.wait"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "calendar.connector.kill",
+  "description": "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorKillRequest",
+  "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.kill\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
