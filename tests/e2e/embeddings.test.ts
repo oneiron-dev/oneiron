@@ -3,14 +3,15 @@ import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { FacadeInput } from "@oneiron/client";
-import type { SpaceMove, WitnessReceipt } from "@oneiron/client/facade-types";
-import { CliClient, CliError, PublicHttpClient, SdkProcessDriver, credentialParts } from "./support/clients.ts";
+import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import type { SpaceMove, WitnessReceipt, TranscriptPage } from "@oneiron/client/facade-types";
+import { CliClient, CliError, PublicHttpClient, SdkProcessDriver, credentialParts, PublicHttpError } from "./support/clients.ts";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadBuildManifest, loadFixtures, requireAsset } from "./support/fixtures.ts";
 import { ScriptedProviders, embeddingReply } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
 import { Artifacts, LIMITS, ManagedProcess, assertFlowActive, defineFile, isolatedEnv, ownResource, redactor, secretHex, tempRoot } from "./support/run.ts";
+import type { PairedActor } from "./support/engine.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -437,28 +438,363 @@ inputs = ["text"]
   await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
 });
 
+type MediaEmb04Kind = FacadeInput<"vault.assets.ingest">["embedding_kind"];
+type MediaEmb04Fields = NonNullable<ProviderStep["request"]["fields"]>;
+interface MediaEmb04Scenarios {
+  occurredAt: number;
+  media: {
+    text: { content: string; vector: number[] };
+    image: { asset: string; vector: number[] };
+    audio: { asset: string; vector: number[] };
+    queries: { kind: MediaEmb04Kind; text: string; vector: number[]; target: MediaEmb04Kind }[];
+    unrelated: number[];
+    floors: Record<MediaEmb04Kind, { floor: number; strong: number }>;
+  };
+}
+interface MediaEmb04Asset {
+  kind: MediaEmb04Kind; assetRef: string; space: string; mime: string;
+  bytes: Uint8Array; text: string; vector: number[];
+}
+interface MediaEmb04Query {
+  id: string; target: MediaEmb04Kind; queryKind: MediaEmb04Kind;
+  input: FacadeInput<"vault.recall">;
+  fields?: MediaEmb04Fields;
+}
+interface MediaEmb04Status {
+  models: { seats: { role: string; rungs: {
+    provider: string; engine_model?: string; health?: { state: string };
+  }[] }[] };
+}
+function mediaEmb04Fields(kind: MediaEmb04Kind, mime: string, bytes: Uint8Array): MediaEmb04Fields {
+  const encoded = Buffer.from(bytes).toString("base64");
+  if (kind === "text") return { input: [new TextDecoder().decode(bytes)], encoding_format: "float" };
+  if (kind === "image") return { messages: [{ role: "user", content: [
+    { type: "image_url", image_url: { url: `data:${mime};base64,${encoded}` } },
+  ] }], encoding_format: "float" };
+  return { messages: [{ role: "user", content: [
+    { type: "input_audio", input_audio: { data: encoded, format: "wav" } },
+  ] }], encoding_format: "float" };
+}
+function mediaEmb04Step(origin: string, id: string, fields: MediaEmb04Fields,
+  vector: number[], barrier?: string): ProviderStep {
+  return { id, origin, role: "media.embed", purpose: id.startsWith("media-emb04-fill-")
+      ? "typed ASSET fill" : "authored recall query",
+    request: { method: "POST", path: "/v1/embeddings", model: "model", fields },
+    response: embeddingReply("model", [vector], 8), ...(barrier ? { barrier } : {}) };
+}
+async function mediaEmb04Error(action: () => Promise<unknown>, status: number, code: string) {
+  try { await action() } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBe(status);
+    expect(error.error?.code).toBe(code);
+    return error;
+  }
+  throw new Error(`Expected HTTP ${status} ${code}`);
+}
+async function mediaEmb04RefusalReceipt(engine: EngineFixture, error: PublicHttpError,
+  verb: string, actorRef: string, actorClass: string) {
+  const receiptRef = error.error?.receiptRef;
+  expect(typeof receiptRef).toBe("string");
+  if (typeof receiptRef !== "string") throw new Error("Facade refusal omitted its call receipt");
+  expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+  expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
+  expect(receipt).not.toBeNull();
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, verb, actor_ref: actorRef,
+    actor_class: actorClass, outcome: { refused: { code: error.error!.code } } });
+  return receiptRef;
+}
+async function mediaEmb04Filled(client: PublicHttpClient, asset: MediaEmb04Asset) {
+  const query = new URLSearchParams({ space: asset.space, queryKind: asset.kind,
+    query: asset.vector.join(","), limit: "100", view: "standard", depth: "light" });
+  const page = await awaitPublic(async () => (await client.request<SearchPage>("GET", `/api/search/vector?${query}`)).body,
+    value => value.items.some(item => item.id === asset.assetRef),
+    { label: `media ${asset.kind} vector is searchable` });
+  expect(new Set(page.items.map(item => item.id))).toEqual(new Set([asset.assetRef]));
+}
+function mediaEmb04Matches(pack: FacadeResult<"vault.recall">, plan: MediaEmb04Query,
+  assets: Record<MediaEmb04Kind, MediaEmb04Asset>, data: MediaEmb04Scenarios) {
+  const matched = new Map<string, Set<string>>();
+  for (const item of pack.items) {
+    expect(item.kind).toBe("ASSET");
+    for (const evidence of item.embedding_matches ?? []) {
+      const asset = Object.values(assets).find(row => row.space === evidence.space);
+      if (!asset) throw new Error("Recall exposed an undeclared fixture space");
+      expect(item.asset_ref).toBe(asset.assetRef);
+      expect(evidence.embedding_kind).toBe(asset.kind);
+      expect(evidence.query_kind).toBe(asset.kind === "text" ? "text" : plan.queryKind);
+      expect(evidence.floor).toBeCloseTo(data.media.floors[asset.kind].floor, 6);
+      expect(evidence.strong).toBeCloseTo(data.media.floors[asset.kind].strong, 6);
+      expect(Number.isFinite(evidence.score)).toBe(true);
+      expect(evidence.matched).toBe(evidence.score >= evidence.floor);
+      if (evidence.matched) {
+        const refs = matched.get(evidence.space) ?? new Set<string>();
+        refs.add(item.asset_ref!); matched.set(evidence.space, refs);
+      }
+    }
+  }
+  for (const asset of Object.values(assets)) {
+    expect(matched.get(asset.space) ?? new Set<string>()).toEqual(
+      new Set(asset.kind === plan.target ? [asset.assetRef] : []));
+  }
+  const asset = assets[plan.target];
+  const hits = pack.items.filter(item => item.asset_ref === asset.assetRef &&
+    item.embedding_matches?.some(match => match.space === asset.space &&
+      match.embedding_kind === asset.kind && match.query_kind === plan.queryKind && match.matched));
+  expect(hits).toHaveLength(1);
+  return hits[0]!.asset_ref!;
+}
+async function mediaEmb04Resolve(client: PublicHttpClient, asset: MediaEmb04Asset,
+  receipt: FacadeResult<"vault.assets.ingest">, bytes: boolean) {
+  const result = await client.call("vault.assets.resolve", { asset_ref: asset.assetRef,
+    image_input: bytes && asset.kind === "image", audio_input: bytes && asset.kind === "audio",
+    room_bytes: 1_048_576 });
+  expect(result.narrowing).toBeDefined();
+  expect(result.value.asset_ref).toBe(asset.assetRef);
+  const form = bytes && asset.kind !== "text" ? asset.kind : "asset_text";
+  expect(result.value.form).toBe(form);
+  if (form === "asset_text") {
+    expect(result.value.text).toBe(asset.text);
+    expect(result.value.asset_text_ref).toBe(receipt.asset_text_ref);
+    expect(result.value.bytes_b64).toBeNull();
+    expect(result.value.mime_type).toBeNull();
+  } else {
+    expect(result.value.mime_type).toBe(asset.mime);
+    expect(result.value.bytes_b64).toBe(Buffer.from(asset.bytes).toString("base64"));
+    expect(result.value.handle?.length).toBeGreaterThan(0);
+  }
+  expect(result.value.receipt_refs).toHaveLength(1);
+  expect(result.value.receipt_refs[0]!).toMatch(/^served_form:[a-f0-9]{32}$/);
+  return { receiptRef: result.value.receipt_refs[0]!, assetRef: asset.assetRef,
+    form: form === "asset_text" ? "text" : form,
+    ...(form === "asset_text" ? { assetTextRef: receipt.asset_text_ref! } : {}) };
+}
+
 /* EMBEDDINGS-04 — Text and media space search should work. OF-370, OF-329.
- * Oracle: scenarios.media plus the pinned red-triangle PNG/three-pulse WAV.
- * Existing declare/bind inputs above; bind({kind: text|image|audio,space}) ->
- * EmbeddingSpacesView. recall({query,effort:'medium',media?:
- *   {space,mime,bytes_b64,kinds?: (text|image|audio)[]}}) -> MemoryPack;
- * GET search/vector takes space,queryKind,query,limit,view. Each declared
- * space pins its revision, width, accepted inputs, towers and own floor.
- * Required typed ingest: asset ref + MIME + content/byte ref + embedding kind;
- * required hit evidence: asset ref, embedding kind, declared space/version,
- * per-space match evidence and selected bytes/text/handle form with receipt.
- * Upload text/photo/audio through that door, hold fills independently, and
- * verify routing by the separate provider origins and authored fixture ids.
- * Query each kind and cross-modality with the declared text/media towers.
- * Orthogonal no-match queries must abstain at EACH kind's authored floor;
- * compare kind/target sets, not cross-space raw scores. Read the metadata and
- * resolver receipt to prove the chosen space and reader's declared form.
- * Current ArtifactCreateRequest writes BLOB_ARTIFACT, not the image/audio
- * ASSETs this backfill scans. structural.put({kind:'asset',body:unknown}) is
- * not a typed media-ingest door. MemoryItem also lacks the required typed
- * space/kind evidence. Never seed binary ASSET bodies through a generic put.
+ * Partial: typed text/image/audio ASSETs fill separate declared spaces;
+ * native and text towers return per-space match evidence and authored floors.
+ * Resolve serves pinned bytes while the image fill is held, or saved text to
+ * a text-only reader, with served-form receipts read through vault.receipts.
+ * Owner-only setup and read-only ingest refusals carry call receipts. A fourth
+ * offered, declared but unbound rung receives one query and fails explicitly.
+ * Restart retains bindings, match evidence, bytes, text and earlier receipts
+ * without another document fill. Orthogonal queries abstain in all three spaces.
+ * No learned-quality, retry/recovery, per-ASSET fill-state, erasure, thumbnail
+ * budget ladder or live content-grant withdrawal claim is made here.
  */
-suite.todo(test, "EMBEDDINGS-04", "waits on typed media ASSET ingest and per-kind space/evidence result metadata");
+suite.test(test, "EMBEDDINGS-04", "Typed text, image and audio assets fill declared spaces, recall with match evidence, resolve to the reader's form across restart, and an unavailable media rung refuses its query", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<MediaEmb04Scenarios>("embeddings-scenarios");
+  const imageQuery = data.media.queries.find(query => query.kind === "text" && query.target === "image");
+  const audioQuery = data.media.queries.find(query => query.kind === "audio" && query.target === "audio");
+  if (!imageQuery || !audioQuery) throw new Error("Missing authored media queries");
+  const revision = "1111111111111111111111111111111111111111";
+  const mediaEmb04Space = (origin: string) => `${origin}/model@${revision}@${origin}`;
+  const assets: Record<MediaEmb04Kind, MediaEmb04Asset> = {
+    text: { kind: "text", assetRef: "018f0000000070008000000000000401", space: mediaEmb04Space("text"),
+      mime: "text/plain", bytes: Buffer.from(data.media.text.content), text: data.media.text.content,
+      vector: data.media.text.vector },
+    image: { kind: "image", assetRef: "018f0000000070008000000000000402", space: mediaEmb04Space("image"),
+      mime: "image/png", bytes: await catalog.readArchive(data.media.image.asset),
+      text: data.media.text.content, vector: data.media.image.vector },
+    audio: { kind: "audio", assetRef: "018f0000000070008000000000000403", space: mediaEmb04Space("audio"),
+      mime: "audio/wav", bytes: await catalog.readArchive(data.media.audio.asset),
+      text: audioQuery.text, vector: data.media.audio.vector },
+  };
+  const mediaEmb04Declaration = (origin: MediaEmb04Kind | "down"): FacadeInput<"vault.embedding_spaces.declare"> => {
+    const kind = origin === "down" ? "image" : origin;
+    return { id: mediaEmb04Space(origin), dimensions: 4, accepts: [kind],
+      query_towers: kind === "text" ? ["text"] : ["text", kind], evidence: data.media.floors[kind] };
+  };
+  const mediaEmb04QueryPlan = (id: string, target: "image" | "audio", queryKind: MediaEmb04Kind,
+    query: string, mime: string, bytes: Uint8Array): MediaEmb04Query => ({
+    id, target, queryKind, fields: mediaEmb04Fields(queryKind, mime, bytes),
+    input: { query, effort: "medium", scope: { kinds: ["ASSET"] }, limit: 10,
+      media: { space: assets[target].space, mime, bytes_b64: Buffer.from(bytes).toString("base64"), kinds: [target] } },
+  });
+  const plans: MediaEmb04Query[] = [
+    { id: "text", target: "text", queryKind: "text",
+      input: { query: imageQuery.text, effort: "medium", scope: { kinds: ["ASSET"] }, limit: 10 } },
+    mediaEmb04QueryPlan("image-text", "image", "text", imageQuery.text, "text/plain", Buffer.from(imageQuery.text)),
+    mediaEmb04QueryPlan("image-native", "image", "image", imageQuery.text, assets.image.mime, assets.image.bytes),
+    mediaEmb04QueryPlan("audio-native", "audio", "audio", audioQuery.text, assets.audio.mime, assets.audio.bytes),
+    mediaEmb04QueryPlan("audio-text", "audio", "text", audioQuery.text, "text/plain", Buffer.from(audioQuery.text)),
+  ];
+  const unrelated = "unrelated quartz orbit";
+  const noMatchPlans: MediaEmb04Query[] = [
+    { id: "no-match-text", target: "text", queryKind: "text",
+      input: { query: unrelated, effort: "medium", scope: { kinds: ["ASSET"] }, limit: 10 } },
+    mediaEmb04QueryPlan("no-match-image", "image", "text", unrelated, "text/plain", Buffer.from(unrelated)),
+    mediaEmb04QueryPlan("no-match-audio", "audio", "text", unrelated, "text/plain", Buffer.from(unrelated)),
+  ];
+  const failedQuery = "unavailable cobalt prism";
+  const steps: ProviderStep[] = Object.values(assets).map(asset => mediaEmb04Step(asset.kind,
+    `media-emb04-fill-${asset.kind}`, mediaEmb04Fields(asset.kind, asset.mime, asset.bytes), asset.vector,
+    asset.kind === "image" ? "media-emb04-image-held" : undefined));
+  steps.push(mediaEmb04Step("text", "media-emb04-down-normal",
+    mediaEmb04Fields("text", "text/plain", Buffer.from(failedQuery)), data.media.unrelated));
+  steps.push({ ...mediaEmb04Step("down", "media-emb04-down-query",
+    mediaEmb04Fields("text", "text/plain", Buffer.from(failedQuery)), data.media.unrelated),
+    response: { kind: "json", status: 503,
+      body: { error: { type: "unavailable", message: "fixture provider unavailable" } } } });
+  const mediaEmb04AddQueries = (phase: string, queries: MediaEmb04Query[], abstain: boolean) => {
+    for (const plan of queries) {
+      steps.push(mediaEmb04Step("text", `media-emb04-${phase}-${plan.id}-normal`,
+        mediaEmb04Fields("text", "text/plain", Buffer.from(plan.input.query)),
+        !abstain && plan.target === "text" ? imageQuery.vector : data.media.unrelated));
+      if (plan.fields) steps.push(mediaEmb04Step(plan.target, `media-emb04-${phase}-${plan.id}-media`,
+        plan.fields, abstain ? data.media.unrelated : plan.queryKind === "text"
+          ? (plan.target === "image" ? imageQuery.vector : audioQuery.vector) : assets[plan.target].vector));
+    }
+  };
+  mediaEmb04AddQueries("before", plans, false);
+  mediaEmb04AddQueries("abstain", noMatchPlans, true);
+  mediaEmb04AddQueries("after", plans, false);
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-04", steps });
+  const serverConfig = ["text", "image", "audio", "down"].map(origin => `
+[models.providers.${origin}]
+kind = "local-openai-compat"
+base_url = "${providers.urls[origin]!}"
+revision = "${revision}"
+request_compression = false
+timeout_secs = ${origin === "down" ? 1 : 5}
+`).join("") + `
+[models.media.embed]
+rungs = ["text:model", "image:model", "audio:model", "down:model"]
+inputs = ["text", "image", "audio"]
+`;
+  const engine = await EngineFixture.start({ id: "EMBEDDINGS-04", profile, serverConfig });
+  for (const origin of ["text", "image", "audio", "down"] as const)
+    await engine.client.call("vault.embedding_spaces.declare", mediaEmb04Declaration(origin));
+  const setup = await engine.client.call("vault.embedding_spaces.list", {});
+  for (const origin of ["text", "image", "audio", "down"] as const)
+    expect(setup.spaces.find(row => row.id === mediaEmb04Space(origin))).toEqual(mediaEmb04Declaration(origin));
+  expect(Object.values(setup.slots)).not.toContain(mediaEmb04Space("down"));
+
+  const agentRef = "018f0000000070008000000000000404";
+  const agentInput: FacadeInput<"vault.agents.create"> = { agent_def_ref: agentRef,
+    definition: { agent_id: "media-emb04-reader", desc: "Inert media-space refusal principal", version: "1" } };
+  await engine.client.call("vault.agents.create", agentInput);
+  expect((await engine.client.call("vault.agents.get", { agent_def_ref: agentRef })).definition).toMatchObject(agentInput.definition);
+  const agent = await engine.pairActor({ principalRef: agentRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+  expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+  const refusedDeclaration = { ...mediaEmb04Declaration("image"), id: `${mediaEmb04Space("image")}-refused` };
+  const declareRefusal = await mediaEmb04Error(() => agent.client.call("vault.embedding_spaces.declare", refusedDeclaration), 403, "FORBIDDEN");
+  const bindRefusal = await mediaEmb04Error(() => agent.client.call("vault.embedding_spaces.bind", { kind: "image", space: mediaEmb04Space("down") }), 403, "FORBIDDEN");
+  const refusalRefs = [
+    await mediaEmb04RefusalReceipt(engine, declareRefusal, "vault.embedding_spaces.declare", agentRef, "agent"),
+    await mediaEmb04RefusalReceipt(engine, bindRefusal, "vault.embedding_spaces.bind", agentRef, "agent"),
+  ];
+  const refusedSetup = await engine.client.call("vault.embedding_spaces.list", {});
+  expect(refusedSetup.spaces).toEqual(setup.spaces);
+  expect(refusedSetup.slots).toEqual(setup.slots);
+  const readOnly = await engine.pairActor({ principalRef: agentRef, actorClass: "agent", scope: ["core:read"] });
+  const deniedAssetRef = "018f0000000070008000000000000405";
+  const ingestRefusal = await mediaEmb04Error(() => readOnly.client.call("vault.assets.ingest", {
+    asset_ref: deniedAssetRef, embedding_kind: "text", mime_type: "text/plain",
+    bytes_b64: Buffer.from(data.media.text.content).toString("base64"), occurred_at: data.occurredAt,
+  }), 403, "FORBIDDEN");
+  refusalRefs.push(await mediaEmb04RefusalReceipt(engine, ingestRefusal, "vault.assets.ingest", agentRef, "agent"));
+  await mediaEmb04Error(() => engine.client.call("vault.assets.resolve", { asset_ref: deniedAssetRef }), 404, "NOT_FOUND");
+  expect(providers.seenFixtureCalls).toHaveLength(0);
+
+  const ingested = {} as Record<MediaEmb04Kind, FacadeResult<"vault.assets.ingest">>;
+  const served: { receiptRef: string; assetRef: string; form: string; assetTextRef?: string }[] = [];
+  for (const asset of Object.values(assets)) {
+    await engine.client.call("vault.embedding_spaces.bind", { kind: asset.kind, space: asset.space });
+    ingested[asset.kind] = await engine.client.call("vault.assets.ingest", {
+      asset_ref: asset.assetRef, embedding_kind: asset.kind, mime_type: asset.mime,
+      bytes_b64: Buffer.from(asset.bytes).toString("base64"), text: asset.text, occurred_at: data.occurredAt,
+    });
+    expect(ingested[asset.kind]).toMatchObject({ asset_ref: asset.assetRef, embedding_kind: asset.kind,
+      mime_type: asset.mime, byte_size: asset.bytes.byteLength });
+    expect(ingested[asset.kind].blake3).toMatch(/^[a-f0-9]{64}$/);
+    expect(ingested[asset.kind].asset_text_ref).toMatch(/^[a-f0-9]{32}$/);
+    if (asset.kind === "image") {
+      await providers.awaitBarrier("media-emb04-image-held");
+      // Resolve is independent of the still-held embedding response.
+      served.push(await mediaEmb04Resolve(engine.client, asset, ingested.image, true));
+      const held = new URLSearchParams({ space: asset.space, queryKind: "image",
+        query: asset.vector.join(","), limit: "100", view: "standard", depth: "light" });
+      expect((await engine.client.request<SearchPage>("GET", `/api/search/vector?${held}`)).body.items).toEqual([]);
+      providers.releaseBarrier("media-emb04-image-held");
+    }
+    await mediaEmb04Filled(engine.client, asset);
+    served.push(await mediaEmb04Resolve(engine.client, asset, ingested[asset.kind], true));
+    served.push(await mediaEmb04Resolve(engine.client, asset, ingested[asset.kind], false));
+  }
+  const mediaEmb04CheckSetup = async () => {
+    const view = await engine.client.call("vault.embedding_spaces.list", {});
+    for (const asset of Object.values(assets)) {
+      expect(view.slots[asset.kind]).toBe(asset.space);
+      expect(view.spaces.find(row => row.id === asset.space)).toEqual(mediaEmb04Declaration(asset.kind));
+    }
+    expect(view.spaces.find(row => row.id === mediaEmb04Space("down"))).toEqual(mediaEmb04Declaration("down"));
+    expect(Object.values(view.slots)).not.toContain(mediaEmb04Space("down"));
+  };
+  await mediaEmb04CheckSetup();
+  const down = await mediaEmb04Error(() => engine.client.call("vault.recall", {
+    query: failedQuery, effort: "medium", scope: { kinds: ["ASSET"] }, limit: 10,
+    media: { space: mediaEmb04Space("down"), mime: "text/plain",
+      bytes_b64: Buffer.from(failedQuery).toString("base64"), kinds: ["image"] },
+  }), 503, "MODEL_UNAVAILABLE");
+  const status = (await engine.client.request<MediaEmb04Status>("GET", "/v1/ai/status")).body;
+  const downRung = status.models.seats.find(seat => seat.role === "media.embed")?.rungs
+    .find(rung => rung.provider === "down" && rung.engine_model === `down/model@${revision}`);
+  expect(downRung?.health?.state).toBe("down");
+  refusalRefs.push(await mediaEmb04RefusalReceipt(engine, down, "vault.recall", engine.pairedActor.principalRef, "human"));
+  expect(providers.seenFixtureCalls.filter(call => call.origin === "down").map(call => call.fixtureId))
+    .toEqual(["media-emb04-down-query"]);
+
+  const mediaEmb04RecallPlans = async () => {
+    for (const plan of plans) {
+      const pack = await engine.client.call("vault.recall", plan.input);
+      const returnedRef = mediaEmb04Matches(pack, plan, assets, data);
+      served.push(await mediaEmb04Resolve(engine.client, { ...assets[plan.target], assetRef: returnedRef }, ingested[plan.target], true));
+    }
+  };
+  await mediaEmb04RecallPlans();
+  for (const plan of noMatchPlans) {
+    const pack = await engine.client.call("vault.recall", plan.input);
+    expect(pack.items).toEqual([]);
+  }
+  const mediaEmb04CheckServedReceipts = async () => {
+    const page = await engine.client.call("vault.receipts", { kinds: ["served_form"], limit: 100 });
+    for (const expected of served) {
+      const receipt = page.receipts.find(row => row.receipt_ref === expected.receiptRef);
+      expect(receipt).toMatchObject({ kind: "served_form", outcome: "served", actor_class: "human",
+        actor_ref: engine.pairedActor.principalRef,
+        fields: { asset_ref: expected.assetRef, form: expected.form,
+          ...(expected.assetTextRef ? { asset_text_ref: expected.assetTextRef } : {}) } });
+    }
+  };
+  await mediaEmb04CheckServedReceipts();
+  const fillCalls = providers.seenFixtureCalls.filter(call => call.purpose === "typed ASSET fill");
+  expect(fillCalls.map(call => call.fixtureId)).toEqual([
+    "media-emb04-fill-text", "media-emb04-fill-image", "media-emb04-fill-audio",
+  ]);
+  const beforeRestart = providers.seenFixtureCalls.length;
+  await engine.restart();
+  await mediaEmb04CheckSetup();
+  await mediaEmb04RecallPlans();
+  for (const asset of Object.values(assets))
+    served.push(await mediaEmb04Resolve(engine.client, asset, ingested[asset.kind], false));
+  await mediaEmb04CheckServedReceipts();
+  for (const receiptRef of refusalRefs)
+    expect((await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }))?.receipt_ref).toBe(receiptRef);
+  expect(providers.seenFixtureCalls.slice(beforeRestart).some(call => call.purpose === "typed ASSET fill")).toBe(false);
+  expect(providers.seenFixtureCalls.filter(call => call.purpose === "typed ASSET fill")).toEqual(fillCalls);
+  for (const origin of ["text", "image", "audio", "down"]) {
+    const calls = providers.seenFixtureCalls.filter(call => call.origin === origin);
+    const expected = steps.filter(step => step.origin === origin);
+    expect(calls.map(call => call.fixtureId)).toEqual(expected.map(step => step.id));
+    for (let index = 0; index < expected.length; index++) {
+      expect(calls[index]).toMatchObject({ method: "POST", path: "/v1/embeddings", origin, role: "media.embed" });
+      expect(calls[index]!.body).toEqual({ model: "model", ...expected[index]!.request.fields });
+    }
+  }
+  await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
+});
 
 suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should work", async () => {
   const data = await fixtures();
@@ -506,46 +842,436 @@ suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should 
   await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
 });
 
+interface TaggerFixtures {
+  occurredAt: number;
+  tagger: {
+    checkpointSha16: string; stackSha16: string; labelCount: number; text: string;
+    modelCard: { checkpoint_sha16: string; stack_sha16: string; contract_version: number;
+      label_count: number; returns: { spans: boolean; links: boolean; mood: boolean } };
+    output: {
+      spans: { message: number; start: number; end: number; label: string; confidence: number }[];
+      links: { span: number; antecedent: number; confidence: number }[];
+      vad: { valence: number; arousal: number; dominance: number }; stack_sha16: string;
+    };
+    expected: { mentions: string[]; claimsAuthored: number; dreamerCalls: number;
+      rawTurnSurvivesDelay: boolean };
+  };
+}
+interface TaggerTurnRefs { conversation: string; turn: string; message: string }
+function taggerCard(data: TaggerFixtures): ProviderStep {
+  // Probes race successful-answer vouch reads. Only extraction is FIFO.
+  return { id: "tagger-card", origin: "tagger", role: "oneironer", purpose: "configured model card",
+    standing: true, request: { method: "GET", path: "/v1/model" },
+    response: { kind: "json", body: data.tagger.modelCard } };
+}
+function taggerExtract(id: string, refs: TaggerTurnRefs, text: string,
+  response: ProviderStep["response"], barrier?: string): ProviderStep {
+  return { id, origin: "tagger", role: "oneironer", purpose: "witnessed turn extraction",
+    request: { method: "POST", path: "/v1/extract", fields: {
+      turn: refs.turn, messages: [{ id: refs.message, text }], context: [],
+    } }, response, ...(barrier ? { barrier } : {}) };
+}
+function taggerEngine(id: string, data: TaggerFixtures, providers: ScriptedProviders) {
+  return EngineFixture.start({ id, profile,
+    oneironer: { url: providers.urls.tagger!, checkpointSha16: data.tagger.checkpointSha16,
+      labelCount: data.tagger.labelCount, mode: "save" },
+    // Init carries labels forward into its own [oneironer] table.
+    serverConfig: `
+[oneironer.labels]
+PERSON = "PERSON"
+[models.providers.dreamer]
+kind = "local-openai-compat"
+base_url = "${providers.urls.dreamer!}"
+revision = "e2e-tagger-only-v1"
+request_compression = false
+[models.roles.dreamer_current]
+model = "dreamer:unused"
+[models.dreamer]
+enabled = false
+`,
+  });
+}
+async function taggerAgent(engine: EngineFixture, principalRef: string, scope: string[]) {
+  const created = await engine.client.call("vault.agents.create", {
+    agent_def_ref: principalRef,
+    definition: { agent_id: "tagging-refusal-agent", display_name: "Tagging refusal agent",
+      desc: "Inert principal for public-door refusal checks", version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(principalRef);
+  const stored = await engine.client.call("vault.agents.get", { agent_def_ref: principalRef });
+  expect(stored).toEqual(created);
+  const actor = await engine.pairActor({ principalRef, actorClass: "agent", scope });
+  // The write-only actor cannot call self.actor, which requires core:read.
+  return actor;
+}
+async function taggerRefusal<V extends FacadeVerb>(engine: EngineFixture, actor: PairedActor,
+  verb: V, input: FacadeInput<V>, reason: "scope" | "owner") {
+  let refusal: PublicHttpError | undefined;
+  try { await actor.client.call(verb, input) }
+  catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    refusal = error;
+  }
+  if (!refusal) throw new Error(`Expected refusal from ${verb}`);
+  expect(refusal.reply.status).toBe(403);
+  expect(refusal.error).toMatchObject({ code: "FORBIDDEN",
+    message: reason === "owner" ? `${verb} is the vault owner's` : "request does not have the required scope",
+    suggestions: [reason === "owner" ? "Present the owner's own verified, unattenuated credential."
+      : "Request a token with the required Oneiron core scope and retry."],
+  });
+  expect(typeof refusal.error?.requestId).toBe("string");
+  const receiptRef = refusal.error?.receiptRef;
+  if (typeof receiptRef !== "string") throw new Error("Authenticated facade refusal lacks its call receipt");
+  expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+  expect(refusal.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null, { label: `${verb} refusal receipt` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+    verb, actor_ref: actor.principalRef, actor_class: "agent",
+    outcome: { refused: { code: "FORBIDDEN" } }, served: [],
+  });
+}
+async function taggerReadable(client: PublicHttpClient, refs: TaggerTurnRefs, text: string, query: string) {
+  const transcript = await client.request<TranscriptPage>("GET",
+    `/v1/core/conversations/${refs.conversation}/transcript?limit=10`);
+  expect(transcript.body.conversation).toBe(refs.conversation);
+  const turn = transcript.body.turns.find(row => row.id === refs.turn);
+  expect(turn?.messages.map(message => ({ id: message.id, text: message.text })))
+    .toEqual([{ id: refs.message, text }]);
+  const recalled = await client.call("vault.recall", { query, effort: "light", limit: 10 });
+  expect(recalled.items.some(item => item.value_text.includes(text))).toBe(true);
+}
+function taggerExtractionIds(providers: ScriptedProviders) {
+  return providers.seenFixtureCalls.filter(call => call.origin === "tagger" && call.path === "/v1/extract")
+    .map(call => call.fixtureId);
+}
+function taggerOnlyCalls(providers: ScriptedProviders, expectedDreamerCalls: number) {
+  expect(providers.seenFixtureCalls.filter(call => call.origin === "dreamer")).toHaveLength(expectedDreamerCalls);
+  expect(providers.seenFixtureCalls.every(call => call.origin === "tagger" &&
+    ((call.method === "GET" && call.path === "/v1/model") ||
+     (call.method === "POST" && call.path === "/v1/extract")))).toBe(true);
+}
+
 /* EMBEDDINGS-06 — Oneironer tags without authoring beliefs should work.
- * OF-119/128/135/138/539. Oracle: scenarios.tagger (contract-v2 model card,
- * PERSON/EMAIL spans, coreference link and VAD); no teacher-training claim.
- * Public setup: witness(WitnessTurn) -> WitnessReceipt; claims.list
- * ({subject_ref?,predicate?,lifecycle?,limit}) -> ScopedReadResult<ClaimView[]>.
- * EngineFixture.oneironer configures the real GET /v1/model and POST
- * /v1/extract adapter. Script the startup card, then hold the extract request;
- * assert witness ACK, raw conversation transcript and light recall while
- * held. Required typed read: turn ref -> pending/retrying/settled tagging
- * marker + configured model/checkpoint + failure reason; settled tags ->
- * mention refs/spans/targets, coreference, affect, PII labels and provenance.
- * Release the fixed output, read those saved annotations, and recall by its
- * mention. Compare claims before/after (empty), with every Dreamer generation
- * origin scripted for zero calls. Repeat with a missing/delayed tagger: a
- * visible retry state and raw turn, not a write failure or invented beliefs.
- * No typed HTTP+SDK marker/tag/mention-history reads exist. TURN/entity reads
- * return an opaque entity body, not the tag side-table contract. Affect-only
- * /turns/annotate cannot certify NER/coreference/PII/tagging completion.
+ * OF-119/128/135/138/539. Contract-v2 fixture spans, coreference and VAD
+ * survive a transient 500, a successful retry and a settled restart.
+ * The acknowledged text stays readable and recallable while tagging waits.
+ * Saved tags and reverse mentions are read through separate public doors;
+ * claims stay unchanged, and the disabled Dreamer origin receives no call.
+ * R5-server-oneironer-001 and R5-server-oneironer-007 are asserted here.
+ * This checks the adapter and persistence, not learned tagging quality.
  */
-suite.todo(test, "EMBEDDINGS-06", "waits on typed tagging marker/status and saved mention/coreference/PII annotation reads");
+suite.test(test, "EMBEDDINGS-06", "Oneironer saves faithful tags without beliefs, retries a transient failure, and preserves them after restart", async () => {
+  const data = await (await loadFixtures()).readJson<TaggerFixtures>("embeddings-scenarios");
+  const refs: TaggerTurnRefs = { conversation: "018f0000000070008000000000000600",
+    turn: "018f0000000070008000000000000601", message: "018f0000000070008000000000000602" };
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-06", origins: ["tagger", "dreamer"], steps: [
+    taggerCard(data),
+    taggerExtract("extract-failure", refs, data.tagger.text,
+      { kind: "json", status: 500, body: { error: "fixture transient failure" } }, "tagger-first"),
+    taggerExtract("extract-retry", refs, data.tagger.text,
+      { kind: "json", body: data.tagger.output }, "tagger-retry"),
+  ] });
+  const engine = await taggerEngine("EMBEDDINGS-06", data, providers);
+  const agent = await taggerAgent(engine, "018f00000000700080000000000006f0", ["core:write"]);
+  const claimsBefore = (await engine.client.call("vault.claims.list", { limit: 1000 })).value;
+  expect(claimsBefore.length).toBeLessThan(1000);
+  const saved = await engine.client.call("vault.witness", {
+    conversation_ref: refs.conversation, turn_ref: refs.turn, occurred_at: data.occurredAt,
+    messages: [{ id: refs.message, author: "user", message_type: "dialogue", content: data.tagger.text,
+      is_visible: true, order: 0 }],
+  });
+  expect(saved.turn_id).toBe(refs.turn);
+  expect(saved.message_short_ids).toHaveLength(1);
+  expect(saved.receipt_ref.length).toBeGreaterThan(0);
+  const turnInput = { turn_ref: saved.turn_short_id };
+  const status = () => engine.client.call("vault.tagging.status", turnInput);
+  const tags = () => engine.client.call("vault.tagging.tags", turnInput);
+  const history = () => engine.client.call("vault.tagging.history", turnInput);
+  const unchangedClaims = async () => {
+    const current = (await engine.client.call("vault.claims.list", { limit: 1000 })).value;
+    expect(current).toEqual(claimsBefore);
+    expect(current.length - claimsBefore.length).toBe(data.tagger.expected.claimsAuthored);
+  };
+  await providers.awaitBarrier("tagger-first");
+  expect((await status()).value).toMatchObject({ turn_ref: refs.turn, state: "pending", configured: true,
+    checkpoint: data.tagger.checkpointSha16, mode: "save", has_tags: false, failure: null });
+  expect((await tags()).value.tags).toBeNull();
+  expect((await history()).value.traces).toEqual([]);
+  await taggerReadable(engine.client, refs, data.tagger.text, "Mira");
+  await unchangedClaims();
+  providers.releaseBarrier("tagger-first");
+  await awaitPublic(history, value => value.value.traces.some(trace => trace.outcome.outcome === "failed"),
+    { label: "first tagger failure recorded" });
+  // Hold the successor so the retry state cannot race a successful save.
+  await providers.awaitBarrier("tagger-retry");
+  const retrying = (await status()).value;
+  expect(retrying).toMatchObject({ state: "retrying", configured: true, has_tags: false, try_number: 1,
+    checkpoint: data.tagger.checkpointSha16, model: `oneironer/endpoint@${data.tagger.checkpointSha16}`,
+    failure: { class: "call", code: "tagger extract returned HTTP 500", refusal: null },
+  });
+  expect(retrying.marker?.retry_of).toMatch(/^[a-f0-9]{32}$/);
+  expect(retrying.retry_at).toEqual(expect.any(Number));
+  expect(retrying.last_trace?.outcome).toMatchObject({ outcome: "failed", retry_at: retrying.retry_at });
+  expect((await tags()).value.tags).toBeNull();
+  const failedHistory = (await history()).value.traces;
+  expect(failedHistory).toHaveLength(1);
+  expect(failedHistory[0]?.try_number).toBe(1);
+  await taggerReadable(engine.client, refs, data.tagger.text, "Mira");
+  await unchangedClaims();
+  providers.releaseBarrier("tagger-retry");
+  const settled = await awaitPublic(status, value => value.value.state === "settled" && value.value.has_tags,
+    { label: "valid retry saves the turn annotations" });
+  expect(settled.value).toMatchObject({ marker: null, failure: null, try_number: 2,
+    checkpoint: data.tagger.checkpointSha16, model: `oneironer/endpoint@${data.tagger.checkpointSha16}`,
+    freshness: { stale: false, pending_retag: false } });
+  const savedTags = (await tags()).value.tags;
+  if (!savedTags) throw new Error("Settled tagger has no saved annotations");
+  expect(savedTags.turn_ref).toBe(refs.turn);
+  expect(savedTags.message_refs).toEqual([refs.message]);
+  expect(savedTags.mentions).toHaveLength(data.tagger.output.spans.length);
+  for (const [index, span] of data.tagger.output.spans.entries()) {
+    const mention = savedTags.mentions[index]!;
+    expect(mention).toMatchObject({ index, message_ref: refs.message, start: span.start, end: span.end, label: span.label });
+    expect(mention.confidence).toBeCloseTo(span.confidence, 6);
+    expect(data.tagger.text.slice(mention.start, mention.end)).toBe(data.tagger.expected.mentions[index]);
+  }
+  const [mira, she, email] = savedTags.mentions;
+  if (!mira || !she || !email || mira.link.link !== "minted") throw new Error("Expected Mira's provisional identity link");
+  expect(mira.antecedent).toBeNull();
+  expect(she.link).toEqual(mira.link);
+  expect(she.antecedent).toBe(0);
+  expect(she.link_confidence!).toBeCloseTo(data.tagger.output.links[0]!.confidence, 6);
+  expect(email.link).toEqual({ link: "tag" });
+  expect(email.antecedent).toBeNull();
+  expect(savedTags.merge_evidence).toEqual([]);
+  expect(savedTags.mood?.valence!).toBeCloseTo(data.tagger.output.vad.valence, 6);
+  expect(savedTags.mood?.arousal!).toBeCloseTo(data.tagger.output.vad.arousal, 6);
+  expect(savedTags.mood?.dominance!).toBeCloseTo(data.tagger.output.vad.dominance, 6);
+  expect(savedTags.mood_freshness).toEqual({ stale: false, pending_retag: false });
+  expect(savedTags.mood_parts).toEqual([]);
+  expect(savedTags.freshness).toEqual({ stale: false, pending_retag: false });
+  expect(savedTags.envelope).toMatchObject({
+    model_id: `oneironer/endpoint@${data.tagger.checkpointSha16}@${data.tagger.checkpointSha16}`,
+    stack: data.tagger.stackSha16, version: "oneiron.tagging.save.v2",
+  });
+  expect(savedTags.envelope.content_hash).toMatch(/^[a-f0-9]{64}$/);
+  expect(savedTags.envelope.params_hash).toMatch(/^[a-f0-9]{64}$/);
+  expect(savedTags.saved_at).toEqual(expect.any(Number));
+  const mentionInput = { entity_ref: mira.link.entity_ref, limit: 10 };
+  const reverse = (await engine.client.call("vault.tagging.mentions", mentionInput)).value;
+  expect(reverse.entity_ref).toBe(mira.link.entity_ref);
+  expect(reverse.mentions).toEqual([mira, she].map((mention, index) => ({ turn_ref: refs.turn, index,
+    mention, freshness: { stale: false, pending_retag: false } })));
+  const savedHistory = (await history()).value;
+  expect(savedHistory.traces.map(trace => trace.outcome.outcome)).toEqual(["failed", "saved"]);
+  expect(savedHistory.traces.map(trace => trace.try_number)).toEqual([1, 2]);
+  expect(savedHistory.traces[1]?.outcome).toMatchObject({ outcome: "saved", spans: 3, links: 1, mood: true });
+  await taggerRefusal(engine, agent, "vault.tagging.status", turnInput, "scope");
+  await taggerRefusal(engine, agent, "vault.tagging.tags", turnInput, "scope");
+  await taggerRefusal(engine, agent, "vault.tagging.history", turnInput, "scope");
+  await taggerRefusal(engine, agent, "vault.tagging.mentions", mentionInput, "scope");
+  expect((await tags()).value.tags).toEqual(savedTags);
+  await unchangedClaims();
+  expect(taggerExtractionIds(providers)).toEqual(["extract-failure", "extract-retry"]);
+  await engine.restart();
+  expect((await status()).value).toMatchObject({ state: "settled", has_tags: true, marker: null, failure: null });
+  expect((await tags()).value.tags).toEqual(savedTags);
+  expect((await history()).value).toEqual(savedHistory);
+  expect((await engine.client.call("vault.tagging.mentions", mentionInput)).value).toEqual(reverse);
+  await taggerReadable(engine.client, refs, data.tagger.text, "Mira");
+  await unchangedClaims();
+  expect(taggerExtractionIds(providers)).toEqual(["extract-failure", "extract-retry"]);
+  taggerOnlyCalls(providers, data.tagger.expected.dreamerCalls);
+  await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
+  await engine.close();
+  taggerOnlyCalls(providers, data.tagger.expected.dreamerCalls);
+  await providers.close();
+});
+
+interface IdentityFixtures extends TaggerFixtures {
+  identity: {
+    people: { label: string; name: string; identityEvidence: { email: string; organisation: string } }[];
+    ambiguousMention: string; ownerEvidence: string;
+    expected: { ambiguousMerges: number; distinctPeople: number; resolvedPerson: string;
+      retainMentionAndOwnerEvidence: boolean };
+  };
+}
+async function identityEvidence(engine: EngineFixture, content: string) {
+  // Diary notes do not enqueue witnessed-turn tagging markers.
+  const receipt = await engine.client.call("self.memory.diary", { content });
+  expect(receipt.entry_id).toMatch(/^[a-f0-9]{32}$/);
+  const stored = await engine.client.call("vault.get", { entity_ref: receipt.entry_id });
+  expect(stored.value).toMatchObject({ id_hex: receipt.entry_id, kind: "NOTE", body: { markdown: content } });
+  return { receipt, stored: stored.value };
+}
 
 /* EMBEDDINGS-07 — Conservative entity resolution should work. OF-443.
- * Oracle: scenarios.identity. Two distinct Mira Chen people have independent
- * contact/organisation evidence; the name alone must not merge them.
- * Existing self.identity.settle({name,conversation?,effect,prompt,someone_new})
- * -> {state:'settled',entity} | {state:'unknown'} |
- *    {state:'deciding',ask} | {state:'needs_person',ask,card:unknown};
- * self.identity.answer({ask,choice}) -> {ask,entity}; people.list/get exist.
- * Required typed setup/search: create person with identity-evidence refs;
- * look-before-mint(kind,declared identity hints,mention evidence) -> N
- * candidates with evidence/provenance, never a derived identity id. Required
- * read: mention -> unresolved/candidates/resolved target + resolving owner
- * evidence and provenance. First search, then import the ambiguous mention
- * through witness/tagger. The two people remain distinct, with neither
- * silently selected by a name hint. Supply the later owner evidence through
- * the typed identity decision, choose only the returned matching person,
- * and assert original mention plus owner resolution provenance survives.
- * No typed person-with-evidence creation, look-before-mint query or resolved
- * mention provenance projection exists in HTTP+SDK. The existing owner choice
- * verbs are not missing, but opaque structural PERSON bodies, a generic get
- * or refs.resolve's handle lookup are not the missing identity contracts.
+ * Two owner-created namesakes retain their own contact/organisation evidence.
+ * Name-only lookup and an ambiguous saved mention keep both candidates.
+ * A non-owner agent cannot create, inspect owner identity doors, or answer;
+ * the refusal's receipt and unchanged owner projection are read back.
+ * The owner's evidence-backed answer selects north without merging south.
+ * Original suggestion, owner provenance and saved resolution survive restart
+ * without another extraction. No learned evidence scoring is claimed.
  */
-suite.todo(test, "EMBEDDINGS-07", "waits on typed person identity-evidence setup, look-before-mint and resolved-mention provenance reads");
+suite.test(test, "EMBEDDINGS-07", "Same-name people stay distinct until an evidence-backed owner answer resolves the mention and survives restart", async () => {
+  const data = await (await loadFixtures()).readJson<IdentityFixtures>("embeddings-scenarios");
+  const northFixture = data.identity.people.find(person => person.label === "mira-north");
+  const southFixture = data.identity.people.find(person => person.label === "mira-south");
+  if (!northFixture || !southFixture) throw new Error("Missing authored namesakes");
+  const refs: TaggerTurnRefs = { conversation: "018f0000000070008000000000000700",
+    turn: "018f0000000070008000000000000701", message: "018f0000000070008000000000000702" };
+  // This text has its own nine-byte name span, not the other case's spans.
+  const nameEnd = 9;
+  expect(data.identity.ambiguousMention.slice(0, nameEnd)).toBe(northFixture.name);
+  expect(southFixture.name).toBe(northFixture.name);
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-07", origins: ["tagger", "dreamer"], steps: [
+    taggerCard(data),
+    taggerExtract("ambiguous-person", refs, data.identity.ambiguousMention, { kind: "json", body: {
+      spans: [{ message: 0, start: 0, end: nameEnd, label: "PERSON", confidence: 0.99 }],
+      links: [], stack_sha16: data.tagger.stackSha16,
+    } }),
+  ] });
+  const engine = await taggerEngine("EMBEDDINGS-07", data, providers);
+  const agent = await taggerAgent(engine, "018f00000000700080000000000007f0", ["core:read", "core:write"]);
+  const agentIdentity = await agent.client.call("self.actor", {});
+  expect(agentIdentity).toMatchObject({ actor_ref: agent.principalRef, actor_class: "agent" });
+  const evidenceText = (person: IdentityFixtures["identity"]["people"][number]) =>
+    `${person.name}: ${person.identityEvidence.email}; organisation ${person.identityEvidence.organisation}.`;
+  const northEvidence = await identityEvidence(engine, evidenceText(northFixture));
+  const southEvidence = await identityEvidence(engine, evidenceText(southFixture));
+  const personInput = (person: IdentityFixtures["identity"]["people"][number], evidence: string): FacadeInput<"vault.people.create"> => ({
+    identity: { name: person.name, contact_handle: [person.identityEvidence.email] },
+    identity_evidence_refs: [evidence], occurred_at: data.occurredAt,
+  });
+  const northInput = personInput(northFixture, northEvidence.receipt.entry_id);
+  const southInput = personInput(southFixture, southEvidence.receipt.entry_id);
+  const north = await engine.client.call("vault.people.create", northInput);
+  const south = await engine.client.call("vault.people.create", southInput);
+  expect(north.person.id_hex).not.toBe(south.person.id_hex);
+  expect(north.prior_candidate_refs).toEqual([]);
+  expect(south.prior_candidate_refs).toEqual([north.person.id_hex]);
+  for (const [created, input] of [[north, northInput], [south, southInput]] as const) {
+    expect(created.identity).toMatchObject(input.identity);
+    expect(created.identity_evidence_refs).toEqual(input.identity_evidence_refs);
+    expect(created.owner_ref).toBe(engine.pairedActor.principalRef);
+    expect(created.recorded_at).toEqual(expect.any(Number));
+    const person = await engine.client.call("vault.get", { entity_ref: created.person.id_hex });
+    expect(person.value).toMatchObject({ id_hex: created.person.id_hex, kind: "PERSON", body: {
+      name: input.identity.name, contact_handle: input.identity.contact_handle,
+      identity_evidence_refs: input.identity_evidence_refs, identity_owner_ref: engine.pairedActor.principalRef,
+    } });
+  }
+  const candidateRefs = [north.person.id_hex, south.person.id_hex].sort();
+  const lookupInput: FacadeInput<"vault.entities.look_before_mint"> = { kind: "PERSON", identity: { name: northFixture.name } };
+  const lookup = () => engine.client.call("vault.entities.look_before_mint", lookupInput);
+  const candidates = await lookup();
+  expect(candidates.kind).toBe("PERSON");
+  expect(candidates.candidates).toHaveLength(data.identity.expected.distinctPeople);
+  expect(candidates.candidates.map(candidate => candidate.entity_ref).sort()).toEqual(candidateRefs);
+  expect(candidates.waterfall).toMatchObject({ ranked: [], selected: null, claims_suppressed: 0,
+    route: "provisional_entity", requires_async_verification: false });
+  for (const created of [north, south]) {
+    const candidate = candidates.candidates.find(row => row.entity_ref === created.person.id_hex);
+    expect(candidate).toMatchObject({ identity_evidence_refs: created.identity_evidence_refs,
+      identity_owner_ref: engine.pairedActor.principalRef, identity_recorded_at: created.recorded_at,
+      mention_evidence: [] });
+    expect(candidate?.matched_hints).toEqual([northFixture.name.toLowerCase()]);
+    expect(candidate?.made_by).not.toBeNull();
+    expect(candidate?.made_by).toBeDefined();
+  }
+  await taggerRefusal(engine, agent, "vault.people.create", northInput, "owner");
+  await taggerRefusal(engine, agent, "vault.entities.look_before_mint", lookupInput, "owner");
+  expect(await lookup()).toEqual(candidates);
+
+  const saved = await engine.client.call("vault.witness", {
+    conversation_ref: refs.conversation, turn_ref: refs.turn, occurred_at: data.occurredAt,
+    messages: [{ id: refs.message, author: "user", message_type: "dialogue", content: data.identity.ambiguousMention,
+      is_visible: true, order: 0 }],
+  });
+  expect(saved.turn_id).toBe(refs.turn);
+  const turnInput = { turn_ref: saved.turn_short_id };
+  const status = () => engine.client.call("vault.tagging.status", turnInput);
+  await awaitPublic(status, reply => reply.value.state === "settled" && reply.value.has_tags,
+    { label: "ambiguous mention saved without choosing a person" });
+  await taggerReadable(engine.client, refs, data.identity.ambiguousMention, northFixture.name);
+  const originalTags = (await engine.client.call("vault.tagging.tags", turnInput)).value.tags;
+  if (!originalTags) throw new Error("Missing saved ambiguous tags");
+  expect(originalTags.mentions).toHaveLength(1);
+  const suggested = originalTags.mentions[0]!;
+  expect(suggested).toMatchObject({ index: 0, message_ref: refs.message, start: 0, end: nameEnd, label: "PERSON" });
+  expect(suggested.confidence).toBeCloseTo(0.99, 6);
+  if (suggested.link.link !== "candidates") throw new Error("Name-only tagging chose or minted an identity");
+  expect([...suggested.link.entity_refs].sort()).toEqual(candidateRefs);
+  const mentionInput: FacadeInput<"vault.identity.mention"> = {
+    turn: refs.turn, message: refs.message, start: 0, end: nameEnd,
+  };
+  const mention = () => engine.client.call("vault.identity.mention", mentionInput);
+  const before = await mention();
+  expect(before).toMatchObject({ mention: mentionInput, name: northFixture.name, state: "candidates",
+    target_ref: null, resolution: null });
+  expect([...before.candidate_refs].sort()).toEqual(candidateRefs);
+  expect(before.current).toEqual(suggested);
+  expect(before.provenance).toEqual(originalTags.envelope);
+  const decision = await engine.client.call("self.identity.settle", {
+    name: northFixture.name, conversation: refs.conversation, effect: "send",
+    prompt: "Which Mira Chen should receive the note?", someone_new: "Someone new",
+  });
+  if (decision.state !== "deciding") throw new Error("An ambiguous name must open an owner-answerable choice");
+  expect(decision.ask).toMatch(/^[a-f0-9]{64}$/);
+  expect(await mention()).toEqual(before);
+  const ownerEvidence = await identityEvidence(engine, data.identity.ownerEvidence);
+  const answerInput: FacadeInput<"self.identity.answer"> = { ask: decision.ask,
+    choice: `is:${north.person.id_hex}`, evidence_refs: [ownerEvidence.receipt.entry_id] };
+  await taggerRefusal(engine, agent, "vault.identity.mention", mentionInput, "owner");
+  await taggerRefusal(engine, agent, "self.identity.answer", answerInput, "owner");
+  // Refusing the agent neither consumes the choice nor changes its suggestion.
+  expect(await mention()).toEqual(before);
+  expect((await engine.client.call("vault.tagging.tags", turnInput)).value.tags).toEqual(originalTags);
+  expect(await lookup()).toEqual(candidates);
+  const answered = await engine.client.call("self.identity.answer", answerInput);
+  expect(answered).toEqual({ ask: decision.ask, entity: north.person.id_hex });
+  expect(data.identity.expected.resolvedPerson).toBe(northFixture.label);
+  const resolved = await mention();
+  expect(resolved).toMatchObject({ name: northFixture.name, state: "resolved", target_ref: north.person.id_hex,
+    candidate_refs: [north.person.id_hex], mention: mentionInput,
+    resolution: { ask: decision.ask, target_ref: north.person.id_hex, source: "user_stated",
+      owner_ref: engine.pairedActor.principalRef, owner_evidence_refs: [ownerEvidence.receipt.entry_id] },
+  });
+  expect(resolved.resolution?.resolved_at).toEqual(expect.any(Number));
+  expect(resolved.resolution?.original).toEqual(before.current);
+  expect(resolved.resolution?.original_provenance).toEqual(before.provenance);
+  expect(resolved.provenance).toEqual(before.provenance);
+  expect(resolved.current).toEqual({ ...before.current,
+    link: { link: "candidates", kind: suggested.link.kind, entity_refs: [north.person.id_hex] } });
+  const resolvedTags = (await engine.client.call("vault.tagging.tags", turnInput)).value.tags;
+  expect(resolvedTags?.mentions).toEqual([resolved.current]);
+  expect(resolvedTags?.envelope).toEqual(originalTags.envelope);
+  expect(await lookup()).toEqual(candidates);
+  const northMentions = (await engine.client.call("vault.tagging.mentions", { entity_ref: north.person.id_hex, limit: 10 })).value;
+  const southMentions = (await engine.client.call("vault.tagging.mentions", { entity_ref: south.person.id_hex, limit: 10 })).value;
+  expect(northMentions.mentions).toEqual([{ turn_ref: refs.turn, index: 0, mention: resolved.current,
+    freshness: { stale: false, pending_retag: false } }]);
+  expect(southMentions.mentions).toEqual([]);
+  expect(taggerExtractionIds(providers)).toEqual(["ambiguous-person"]);
+
+  // The restart is the failure leg: durable evidence, not a fresh extraction.
+  await engine.restart();
+  expect((await status()).value).toMatchObject({ state: "settled", has_tags: true, marker: null });
+  expect(await mention()).toEqual(resolved);
+  expect((await engine.client.call("vault.tagging.tags", turnInput)).value.tags).toEqual(resolvedTags);
+  expect(await lookup()).toEqual(candidates);
+  expect((await engine.client.call("vault.get", { entity_ref: ownerEvidence.receipt.entry_id })).value).toEqual(ownerEvidence.stored);
+  expect((await engine.client.call("vault.get", { entity_ref: northEvidence.receipt.entry_id })).value).toEqual(northEvidence.stored);
+  expect((await engine.client.call("vault.get", { entity_ref: southEvidence.receipt.entry_id })).value).toEqual(southEvidence.stored);
+  expect((await engine.client.call("vault.tagging.mentions", { entity_ref: north.person.id_hex, limit: 10 })).value).toEqual(northMentions);
+  expect((await engine.client.call("vault.tagging.mentions", { entity_ref: south.person.id_hex, limit: 10 })).value).toEqual(southMentions);
+  await taggerReadable(engine.client, refs, data.identity.ambiguousMention, northFixture.name);
+  expect(taggerExtractionIds(providers)).toEqual(["ambiguous-person"]);
+  taggerOnlyCalls(providers, data.tagger.expected.dreamerCalls);
+  await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
+  await engine.close();
+  taggerOnlyCalls(providers, data.tagger.expected.dreamerCalls);
+  await providers.close();
+});
