@@ -146,3 +146,17 @@ default-filter = "none()"
 
 [profile.quarantine.junit]
 path = "junit.xml"
+
+# Promise tests waiting on a product door (OPUS-NODOOR's register; Engine
+# ruling 03:32, 10 Nov). The filter is not static: the register lives outside
+# the repo, so `oneiron-testkit-pending-door <today>` turns it into two
+# filtersets. The nightly job runs `--profile nightly -E 'not (<pending> |
+# <expired>)'`, then `--profile pending-door -E '<pending>'` with its exit code
+# ignored, and fails the night on any expired test: door or delete.
+[profile.pending-door]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.pending-door.junit]
+path = "junit.xml"

@@ -14,6 +14,7 @@
 //! | Receipts read through the public door | [`receipt`] |
 //! | No sleeps, wall clock, network or real model | [`lint`] |
 //! | The PR, nightly and quarantine tiers | [`quarantine`] |
+//! | Tests waiting on a product door, nightly only | [`pending_door`] |
 //!
 //! The rules a door test keeps (Fable, section 4):
 //! 1. The test's name is the promise, in one sentence a user or agent would say.
@@ -40,6 +41,7 @@ pub mod embedder;
 pub mod fault;
 pub mod fixture;
 pub mod lint;
+pub mod pending_door;
 pub mod provider;
 pub mod quarantine;
 pub mod receipt;

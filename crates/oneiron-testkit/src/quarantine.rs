@@ -14,8 +14,12 @@ use std::path::Path;
 /// The most days an entry may stay in the quarantine.
 pub const MAX_QUARANTINE_DAYS: i64 = 7;
 
-/// The profiles that must run with zero retries.
+/// The tier profiles whose default filter carries the quarantine.
 pub const TIER_PROFILES: [&str; 3] = ["pr", "nightly", "quarantine"];
+
+/// Every profile of the test tiers, each of which must run with zero
+/// retries: a retry hides a flake.
+pub const RETRY_FREE_PROFILES: [&str; 4] = ["pr", "nightly", "quarantine", "pending-door"];
 
 /// A calendar date, `YYYY-MM-DD`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -162,18 +166,25 @@ pub fn check(root: &Path, today: Option<Date>) -> Vec<String> {
     };
     let union = union(&entries);
     let exclusion = format!("not ({union})");
-    for name in TIER_PROFILES {
-        let profile = config
+    let profile_of = |name: &str| {
+        config
             .get("profile")
             .and_then(|profiles| profiles.get(name))
-            .and_then(toml::Value::as_table);
-        let Some(profile) = profile else {
-            problems.push(format!(".config/nextest.toml: no [profile.{name}]"));
+            .and_then(toml::Value::as_table)
+    };
+    for name in RETRY_FREE_PROFILES {
+        match profile_of(name) {
+            None => problems.push(format!(".config/nextest.toml: no [profile.{name}]")),
+            Some(profile) if profile.get("retries").and_then(toml::Value::as_integer) != Some(0) => {
+                problems.push(format!("[profile.{name}]: retries must be 0 (a retry hides a flake)"));
+            }
+            Some(_) => {}
+        }
+    }
+    for name in TIER_PROFILES {
+        let Some(profile) = profile_of(name) else {
             continue;
         };
-        if profile.get("retries").and_then(toml::Value::as_integer) != Some(0) {
-            problems.push(format!("[profile.{name}]: retries must be 0 (a retry hides a flake)"));
-        }
         let filter = profile
             .get("default-filter")
             .and_then(toml::Value::as_str)
