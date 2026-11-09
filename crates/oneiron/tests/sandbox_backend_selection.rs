@@ -46,6 +46,12 @@ fn session_outcome(selected: oneiron::Result<Box<dyn MicroVmBackend>>) -> String
     }
 }
 
+/// An outcome without its message, which names the tier: `in-process`,
+/// `backend <name>` or `refused <kind>`.
+fn outcome_shape(line: &str) -> &str {
+    line.split(':').next().unwrap_or(line)
+}
+
 #[test]
 fn selection_outcomes_of_the_compiled_backends() {
     let mut finite = Vec::new();
@@ -65,7 +71,8 @@ fn selection_outcomes_of_the_compiled_backends() {
     }
     assert_eq!(finite[0], "in-process", "first-party code takes no microVM");
     assert_eq!(
-        finite[1], finite[2],
+        outcome_shape(&finite[1]),
+        outcome_shape(&finite[2]),
         "Foreign and Untrusted take the same isolating backend, or both fail closed"
     );
     assert_ne!(
