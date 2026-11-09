@@ -1,4 +1,8 @@
-import { afterAll, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { PublicHttpError } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -7,8 +11,11 @@ const suite = defineFile(import.meta, { profile, slots: 2 });
 afterAll(suite.flush);
 
 /*
- * Sync and federation: all eight full flows are blocked, not passing slices.
- * suite.todo registers Bun test.todo and a mandatory BLOCKED result per ID.
+ * Sync and federation. A written case proves exactly the subset its name
+ * states, and only when that subset keeps a promise of the planned title
+ * (Engine E2E-PARTIAL = A, 9 Nov 2026); its comment lists what stays
+ * unproved. Every other case is a TODO naming its missing door. suite.todo
+ * registers Bun test.todo and a mandatory BLOCKED result per ID.
  * G01: a designed operation waits for its typed HTTP AND SDK call. Do not
  * cast a missing name to FacadeVerb, use execute_code, decode an opaque entity
  * body as a private storage type, or substitute another progress/trust lane.
@@ -31,10 +38,11 @@ afterAll(suite.flush);
  * Use loadFixtures() for authored content and ScriptedProviders only for
  * external inference/effects. Await receipts/events and bounded public reads.
  *
- * A byte-transparent TCP proxy may partition/order whole connections, not
- * manufacture CRDT operations, approvals or sync ACKs. A needed orchestration
- * helper belongs in THIS file, not support/. No unused proxy or counterfeit
- * EphemeralStore codec is installed while these prerequisites remain blocked.
+ * A link proxy may cut, drop, duplicate or reorder whole sync messages, never
+ * manufacture CRDT operations, approvals or sync ACKs. Process orchestration
+ * (a same-vault device peer, the link proxy) lives in support/, which
+ * OPUS-E2E-1 owns (Engine 9 Nov: NOTE SYNC-PEER-OPTION). No unused proxy or
+ * counterfeit EphemeralStore codec is installed while these remain blocked.
  */
 
 /* SYNC-01 — Concurrent document and ledger convergence should work.
@@ -68,7 +76,26 @@ afterAll(suite.flush);
  * be equally wrong. No whole-text rewrite or private Loro edit substitutes
  * for anchored concurrent edits. WS app RPC alone does not establish sync.
  */
-suite.todo(test, "SYNC-01", "waits on typed NOTE live text, stable cursor/version and actor-attributed operation reads");
+/* SYNC-01 — decision: TODO (Engine rulings 23:09 and 23:15; reason names NOTE SYNC-PEER-OPTION).
+ * Promise: two replicas of ONE vault converge on the authored note text and
+ *   claim set under partition, both delivery orders and redelivery, keeping
+ *   the original paired writers as authors.
+ * Doors that exist today: vault.notes.read / vault.notes.history (live text,
+ *   stable anchors, actor-attributed operations), vault.notes.edit
+ *   replace_span, vault.claims.upsert / list, and the sync door the Engine
+ *   confirmed at 23:15: CLI token pair --machine yours, then device enrol on
+ *   an EMPTY vault (empty-vault join merged), then serve.
+ * Unproved and why: EngineFixture.start runs `token bootstrap` on every vault,
+ *   peers included, so no fixture vault can be that empty enrolling device;
+ *   and there is no support-side link relay to partition, reorder and
+ *   duplicate the device's /ws traffic. Both are requested from OPUS-E2E-1
+ *   as EngineFixture.startDevicePeer and SyncLinkProxy. Federation Connect
+ *   export/rejoin, the only cross-vault door between independent fixture
+ *   vaults, lands a FOREIGN world copy under the guest actor, ledger window
+ *   only: it cannot show one vault's replicas converging with the paired
+ *   writers as authors. A one-vault restart subset is excluded by the brief.
+ */
+suite.todo(test, "SYNC-01", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION) for a same-vault replica pair; independent peers and Connect copies are not replicas");
 
 /* SYNC-02 — One selector governs ledger and text should work.
  * Rows: OF-475, OF-152. Canon: ARCH-0023b #two-planes,
@@ -97,7 +124,7 @@ suite.todo(test, "SYNC-01", "waits on typed NOTE live text, stable cursor/versio
  * NOTE/document-history reads do not. Do not use a second text-plane selector
  * or a public-looking call to a Rust federation admission function.
  */
-suite.todo(test, "SYNC-02", "waits on typed grant-scoped NOTE live text and document-history reads on a federation replica");
+suite.todo(test, "SYNC-02", "waits on a receiving-vault door that admits a guest NOTE document envelope; Connect export/rejoin pairs the vaults but carries only the granted world's ledger window, not text");
 
 /* SYNC-03 — Ephemeral progress expires without history should work.
  * Row: OF-144. Canon: ARCH-0023b #engine (EphemeralStore progress lane).
@@ -159,7 +186,28 @@ suite.todo(test, "SYNC-03", "waits on an independent native EphemeralStore wire 
  * Revoke the reader's grant; fresh remote search/open must not fetch new bytes.
  * Already disclosed copies are not asserted to disappear by cryptography.
  */
-suite.todo(test, "SYNC-04", "waits on typed opened-item NOTE body reads that distinguish local residence from a home fetch");
+/* SYNC-04 — decision: TODO (Engine rulings 23:09 and 23:15; reason names NOTE SYNC-PEER-OPTION).
+ * Promise: a non-home device of the same vault holds only a thin index,
+ *   opens exactly one item (readable offline afterwards, its neighbour not),
+ *   searches unopened bodies through its caller-bound home route with an
+ *   explicit source/completeness, and stops fetching after revocation.
+ * Doors that exist today: vault.residence.index / open / mode (open returns
+ *   typed NOTE text with source local|home), GET /api/search/text with its
+ *   residence block, vault.notes.read, CLI token pair --machine yours and
+ *   device enrol (empty-vault join merged).
+ * Unproved and why: residence acts address an enrolled MACHINE of the same
+ *   vault and act through its live sync connection; independent fixture
+ *   peers are separately bootstrapped vaults with no machine link; the
+ *   enrolled empty-vault device and its cuttable /ws link are requested from
+ *   OPUS-E2E-1 as EngineFixture.startDevicePeer and SyncLinkProxy. Federation
+ *   Connect moves a foreign world copy, which has no residence mode at all.
+ *   Separately, vault.notes.create takes only {kind, markdown} and stamps the
+ *   live clock, so the fixture's 2026-01 / 2026-10 windows cannot be authored
+ *   without a fixture revision or a NOTE birth door that takes learned_at.
+ *   Sol's subset (local note text plus residence target refusals on one
+ *   vault) is a single-vault restart and an absence check: excluded.
+ */
+suite.todo(test, "SYNC-04", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION) for an enrolled non-home device, and on a NOTE birth door or fixture revision for the authored 2026-01/2026-10 windows");
 
 /* SYNC-05 — Sync-all switch retains public semantics should work.
  * Rows: OF-534, OF-536. Canon: ARCH-0023b #partial-sync, #two-planes.
@@ -182,7 +230,26 @@ suite.todo(test, "SYNC-04", "waits on typed opened-item NOTE body reads that dis
  * no extra record/message/effect is added. Do not infer residence or durable
  * settlement from a byte count, private sync queue, log line or sleep.
  */
-suite.todo(test, "SYNC-05", "waits on typed NOTE live text and stable cursor/version reads for the offline sync-all merge");
+/* SYNC-05 — decision: TODO (Engine ruling 23:15; reason names NOTE SYNC-PEER-OPTION).
+ * Promise: switching an enrolled device to sync-all makes authorized
+ *   unopened bodies readable with the home link cut, never the private
+ *   canary, merges the device's offline edit with the home's disjoint edit
+ *   under both writers, and leaves claim source/approval unchanged.
+ * Doors that exist today: vault.residence.mode (applied when called on the
+ *   device itself), vault.residence.open, vault.notes.read / history / edit
+ *   replace_span, vault.claims.upsert / list, and the sync door the Engine
+ *   confirmed: token pair --machine yours, device enrol on an empty vault,
+ *   serve.
+ * Unproved and why: (1) support: no fixture vault can be the empty enrolling
+ *   device (EngineFixture always bootstraps) and nothing relays and cuts the
+ *   device's home link; requested as EngineFixture.startDevicePeer and
+ *   SyncLinkProxy. (2) engine: the canon's first offline edit lands on an
+ *   opened (thin) NOTE, and only SyncConnection::edit_opened_item promotes a
+ *   thin window before a write; it has no caller, and vault.notes.edit
+ *   refuses thin ids. Sol's one-vault subset (two anchored edits survive a
+ *   restart) is a single-vault restart: excluded.
+ */
+suite.todo(test, "SYNC-05", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION), and on a public door that promotes an opened thin NOTE for its first offline edit");
 
 /* SYNC-06 — Single Dreamer home leadership should work.
  * Rows: OF-147, OF-195. Canon: ARCH-0026 #wake-model and MACRO home-node
@@ -217,36 +284,242 @@ suite.todo(test, "SYNC-05", "waits on typed NOTE live text and stable cursor/ver
  */
 suite.todo(test, "SYNC-06", "waits on typed owner home-leadership transfer, durable attempt handoff and shared-budget observation");
 
-/* SYNC-07 — Guest evidence remains foreign should work.
- * Rows: OF-149, OF-056. Canon: ARCH-0040 #memory-board-source-trust,
- * ARCH-0043 #guest-grants, ARCH-0023b #two-planes.
- * Oracle: sync-scenarios / SYNC-07.
- *
- * Existing ClaimView exposes source/approval/lifecycle, not the foreign
- * admission trust tier, accountable actor or generated evidence frontier.
- * MemoryProvenance = {source,source_revision_ids,evidence_turn_ids}; this is
- * not proof of source independence or the full foreign admission attribution.
- * Existing enqueue({scope,input:unknown,...}) cannot be used to smuggle a
- * private consolidation job. Require a typed consolidation of evidence refs
- * and a typed evidence/source read, rather than JSON.parse of entity bodies.
- * Canon evidence shape (ARCH-0032):
- *   EvidenceRef {kind:EvidenceKind,entity:EntityRef,doc:DocId,at:Frontier,
- *                span:Option<CursorSpan>,quote_sha256:Option<[u8;32]>}
- * Foreign attribution must also retain origin vault, connection, grant and
- * grant epoch on the vault-resident guest actor (ARCH-0043).
- *
- * Send equivalent fixture evidence from an owner clone and a foreign guest,
- * then run the named consolidation. Owner replay preserves its existing
- * identity/source/approval without a fresh approval ask. Foreign admission
- * remains foreign on each receiving device, never a trusted synced flag.
- * Inspect generated claim evidence, not only text equality: three citations
- * of one source remain one signal, a generated restatement adds no new one,
- * and foreign evidence contributes zero FIRST-PARTY corroboration. The
- * least-trusted slice stays inert; other foreign evidence need not disappear.
- * Do not conflate an in-vault peer_stated source with every foreign tier or
- * invent a universal numeric confidence down-weight/quality threshold.
+type Sync07Scope = FacadeInput<"vault.federation.connect.grants.mint">["authority_scope"];
+type Sync07Direction = FacadeInput<"vault.federation.connect.offer">["outbound"];
+type Sync07SourceTrust = NonNullable<FacadeInput<"vault.gate.policy.put">["manifest"]["source_trust"]>[string];
+type Sync07Evidence = FacadeResult<"vault.consolidation.evidence">["value"][number];
+interface Sync07Fixture {
+  readonly scenarios: readonly { readonly id: string; readonly inputs: { readonly evidenceText?: unknown } }[];
+}
+interface Sync07Pact {
+  readonly pact: string;
+  readonly sharerVault: string;
+  readonly receiverVault: string;
+  readonly sharerWorld: string;
+  readonly receiverGrant: FacadeResult<"vault.federation.connect.grants.mint">;
+}
+
+/** Test-authored learn time (2026-10-17T12:00:00Z): the claim's world window is
+ * then known without reading a clock. Claims honour a supplied past learned_at. */
+const SYNC07_LEARNED_AT = 1792238400;
+const SYNC07_PREDICATE = "prototype.fastener";
+
+/** A Connect guest grant over one named world: read only, at most private,
+ * every other axis explicit (an omitted Scope axis deserializes as bottom). */
+function sync07ShareScope(world: string): Sync07Scope {
+  return {
+    worlds: { kind: "some", values: [world] }, facets: { kind: "all" }, bands: { kind: "all" },
+    audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] },
+    sensitivity: { kind: "at_most", value: "private" },
+  };
+}
+/** The pact half a grant above projects to; offer/accept require it exactly. */
+function sync07Direction(world: string): Sync07Direction {
+  return { worlds: { kind: "some", values: [world] }, facets: { kind: "all" }, bands: { kind: "all" } };
+}
+/** "YYYY-MM@<world hex>": the world-scoped monthly window a CLAIM lives in. */
+function sync07WindowKey(learnedAt: number, world: string): string {
+  return `${new Date(learnedAt * 1000).toISOString().slice(0, 7)}@${world}`;
+}
+async function sync07Refusal(attempt: Promise<unknown>): Promise<PublicHttpError> {
+  try {
+    await attempt;
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error;
+    throw error;
+  }
+  throw new Error("expected a public refusal; the call succeeded");
+}
+async function sync07NamedWorld(engine: EngineFixture, name: string): Promise<string> {
+  const world = await engine.client.call("vault.structural.put", {
+    kind: "WORLD", body: { name, kind: "fictional" }, occurred_at: SYNC07_LEARNED_AT,
+    text_fields: [{ field: "name", value: name }],
+  });
+  expect((await engine.client.call("vault.get", { entity_ref: world.entity_ref })).value?.kind).toBe("WORLD");
+  return world.id_hex;
+}
+/** Both owners carry each signed half; each host sends nothing (FIX 323/3016). */
+async function sync07ConnectPact(sharer: EngineFixture, receiver: EngineFixture): Promise<Sync07Pact> {
+  const sharerId = await sharer.client.call("vault.federation.connect.identity", {});
+  const receiverId = await receiver.client.call("vault.federation.connect.identity", {});
+  expect(sharerId.vault).not.toBe(receiverId.vault);
+  const sharerWorld = await sync07NamedWorld(sharer, "SYNC-07 shared workshop");
+  const receiverWorld = await sync07NamedWorld(receiver, "SYNC-07 receiving workshop");
+  const sharerGrant = await sharer.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: receiverId.vault, authority_scope: sync07ShareScope(sharerWorld),
+  });
+  const receiverGrant = await receiver.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: sharerId.vault, authority_scope: sync07ShareScope(receiverWorld),
+  });
+  const offer = await sharer.client.call("vault.federation.connect.offer", {
+    peer_vault: receiverId.vault, grant: sharerGrant.grant,
+    outbound: sync07Direction(sharerWorld), inbound: sync07Direction(receiverWorld),
+  });
+  const receiverAccepted = await receiver.client.call("vault.federation.connect.accept", {
+    offer, grant: receiverGrant.grant,
+  });
+  expect(receiverAccepted.pact).toBe(offer.pact);
+  expect(receiverAccepted.status).toBe("Active");
+  const sharerAccepted = await sharer.client.call("vault.federation.connect.accept", {
+    offer: receiverAccepted.counter, grant: sharerGrant.grant,
+  });
+  expect(sharerAccepted.pact).toBe(offer.pact);
+  expect(sharerAccepted.status).toBe("Active");
+  for (const side of [sharer, receiver]) {
+    const status = await side.client.call("vault.federation.status", {});
+    expect(status.pacts.filter(row => row.status === "Active" && row.epoch === 1)).toHaveLength(1);
+  }
+  return { pact: offer.pact, sharerVault: sharerId.vault, receiverVault: receiverId.vault, sharerWorld, receiverGrant };
+}
+async function sync07Evidence(engine: EngineFixture, claimRef: string): Promise<Sync07Evidence> {
+  const read = await engine.client.call("vault.consolidation.evidence", { source_refs: [claimRef] });
+  expect(read.value).toHaveLength(1);
+  const [row] = read.value;
+  if (!row) throw new Error(`No evidence row for ${claimRef}`);
+  return row;
+}
+
+/* SYNC-07 — decision: WRITTEN (partial).
+ * Promise: a claim delivered from a connected vault enters the receiving vault
+ *   only under that vault's own source-trust rule, and there it stays foreign
+ *   evidence: foreign world, imported source, zero first-party corroboration,
+ *   origin vault + pact + grant + epoch on record. A same-text claim the
+ *   receiver authors itself stays first-party. Forged deliveries are refused;
+ *   a crash and a duplicate delivery change nothing.
+ * Doors: vault.structural.put (WORLD), vault.federation.connect.identity /
+ *   grants.mint / offer / accept / export / rejoin, vault.federation.status,
+ *   vault.claims.upsert / list, vault.gate.policy.get / put (receiver's
+ *   imported-source permit), vault.consolidation.evidence, kill + restart.
+ * Unproved and why: owner-clone replay (needs EngineFixture.startDevicePeer,
+ *   NOTE SYNC-PEER-OPTION); two foreign trust tiers and the least-trusted
+ *   slice (no public per-tier admission input); a typed named consolidation
+ *   of evidence refs (enqueue input is still `unknown`), so generated
+ *   restatements and three-citation dedupe are not exercised; trust derived
+ *   on a second receiving device (same missing device peer).
  */
-suite.todo(test, "SYNC-07", "waits on typed trust-graded consolidation input and generated-claim evidence with foreign actor attribution");
+suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the receiver's own trust permit and stays foreign evidence, never first-party, through forgery, crash and redelivery", async () => {
+  const catalog = await loadFixtures();
+  const fixture = await catalog.readJson<Sync07Fixture>("sync-scenarios");
+  const evidenceText = fixture.scenarios.find(row => row.id === "SYNC-07")?.inputs.evidenceText;
+  if (typeof evidenceText !== "string") throw new Error("sync-scenarios has no SYNC-07 evidenceText");
+  const engine = await EngineFixture.start({ id: "SYNC-07", profile, peers: 1 });
+  const receiver = engine.peers[0];
+  if (!receiver) throw new Error("SYNC-07 needs its peer vault");
+  const pact = await sync07ConnectPact(engine, receiver);
+
+  // The sharing owner's claim in the shared world. Sensitivity 1 (private)
+  // keeps it inside the grant's private ceiling; an unannotated claim reads as
+  // sensitive and the export filter would drop it.
+  const sharerScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const shared = await engine.client.call("vault.claims.upsert", {
+    predicate: SYNC07_PREDICATE, subject_ref: engine.pairedActor.principalRef, value: evidenceText,
+    confidence: 0.9, source: "user_stated", sensitivity: 1,
+    scope: { ...sharerScope, world_id: pact.sharerWorld },
+    occurred_at: SYNC07_LEARNED_AT, learned_at: SYNC07_LEARNED_AT,
+  });
+  expect(shared.claim_short_id.length).toBeGreaterThan(0);
+  const delivery = await engine.client.call("vault.federation.connect.export", {
+    pact: pact.pact, window_key: sync07WindowKey(SYNC07_LEARNED_AT, pact.sharerWorld), world_ref: pact.sharerWorld,
+  });
+  expect(delivery.body.pact).toBe(pact.pact);
+  expect(delivery.body.source_vault).toBe(pact.sharerVault);
+  expect(delivery.body.recipient_vault).toBe(pact.receiverVault);
+  expect(delivery.body.epoch).toBe(1);
+  expect(delivery.body.update.length).toBeGreaterThan(0);
+
+  // Refusal: with no imported-source permit of its own, the receiver admits nothing.
+  const untrusted = await sync07Refusal(receiver.client.call("vault.federation.connect.rejoin", delivery));
+  expect(untrusted.reply.status).toBe(400);
+  expect(untrusted.error?.code).toBe("BAD_REQUEST");
+  expect((await receiver.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 })).value).toEqual([]);
+
+  // The receiving owner's local trust decision: imported claims up to private may land.
+  const policy = await receiver.client.call("vault.gate.policy.get", {});
+  const manifest = policy.manifests.find(row => row.manifest_ref === policy.default_manifest_ref);
+  if (!manifest) throw new Error("Receiving vault has no default policy manifest");
+  const permit: Sync07SourceTrust = { max_auto_sensitivity: 1, receipted: true, warned: true };
+  const put = await receiver.client.call("vault.gate.policy.put", {
+    manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
+    manifest: { ...manifest.manifest, source_trust: { ...(manifest.manifest.source_trust ?? {}), imported: permit } },
+  });
+  expect(put.receipt_ref.length).toBeGreaterThan(0);
+  const policyAfter = await receiver.client.call("vault.gate.policy.get", {});
+  const manifestAfter = policyAfter.manifests.find(row => row.manifest_ref === policyAfter.default_manifest_ref);
+  expect(manifestAfter?.trusted).toBe(true);
+  expect(manifestAfter?.quarantined).toBe(false);
+  expect(manifestAfter?.manifest.source_trust?.["imported"]).toBeDefined();
+
+  const landed = await receiver.client.call("vault.federation.connect.rejoin", delivery);
+  expect(landed.status).toBe("imported");
+  expect(landed.pact).toBe(pact.pact);
+  expect(landed.epoch).toBe(delivery.body.epoch);
+  expect(landed.world_ref).not.toBe(pact.sharerWorld);
+  const foreignWorld = landed.world_ref;
+  const listed = await awaitPublic(
+    () => receiver.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 }),
+    page => page.value.some(row => row.world_ref === foreignWorld),
+    { label: "delivered claim readable on the receiving vault" },
+  );
+  const [foreignClaim, ...extraForeign] = listed.value.filter(row => row.world_ref === foreignWorld);
+  if (!foreignClaim) throw new Error("Delivered claim missing from the foreign world");
+  expect(extraForeign).toEqual([]);
+  expect(foreignClaim.value).toEqual(evidenceText);
+  expect(foreignClaim.source).toBe("imported");
+
+  // The receiver states the same text itself: equal text, different standing.
+  const receiverScope = await ownerBaseClaimScope(receiver.client, receiver.pairedActor.principalRef);
+  const own = await receiver.client.call("vault.claims.upsert", {
+    predicate: SYNC07_PREDICATE, subject_ref: receiver.pairedActor.principalRef, value: evidenceText,
+    confidence: 0.9, source: "user_stated", scope: receiverScope,
+  });
+  expect(own.approval).toBe("auto");
+  const ownClaim = (await receiver.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 }))
+    .value.find(row => row.claim_ref !== foreignClaim.claim_ref);
+  if (!ownClaim) throw new Error("Receiver's own claim missing");
+
+  const foreignEvidence = await sync07Evidence(receiver, foreignClaim.claim_ref);
+  expect(foreignEvidence.foreign_world_ref).toBe(foreignWorld);
+  expect(foreignEvidence.source).toBe("imported");
+  expect(foreignEvidence.first_party_corroboration).toBe(false);
+  expect(foreignEvidence.writer_ref ?? null).not.toBe(receiver.pairedActor.principalRef);
+  const origin = (foreignEvidence.delivery_history ?? []).find(row => row.delivering_pact === pact.pact);
+  expect(origin).toBeDefined();
+  expect(origin?.source_vault).toBe(pact.sharerVault);
+  expect(origin?.grant_ref).toBe(pact.receiverGrant.grant);
+  expect(origin?.consent_epoch).toBe(delivery.body.epoch);
+  const ownEvidence = await sync07Evidence(receiver, ownClaim.claim_ref);
+  expect(ownEvidence.foreign_world_ref ?? null).toBeNull();
+  expect(ownEvidence.source).toBe("user_stated");
+  expect(ownEvidence.first_party_corroboration).toBe(true);
+  expect(ownEvidence.delivery_history ?? []).toEqual([]);
+
+  // Forged input: altered bytes, or a delivery relabelled as the receiver's own.
+  const tampered = await sync07Refusal(receiver.client.call("vault.federation.connect.rejoin", {
+    ...delivery, body: { ...delivery.body, update: delivery.body.update.map((byte, index) => index === 0 ? byte ^ 1 : byte) },
+  }));
+  expect(tampered.reply.status).toBe(400);
+  expect(tampered.error?.code).toBe("BAD_REQUEST");
+  const relabelled = await sync07Refusal(receiver.client.call("vault.federation.connect.rejoin", {
+    ...delivery, body: { ...delivery.body, source_vault: pact.receiverVault },
+  }));
+  expect(relabelled.reply.status).toBe(400);
+  expect(relabelled.error?.code).toBe("BAD_REQUEST");
+
+  // Crash, then the same delivery again: still one foreign row, still foreign.
+  await receiver.kill();
+  await receiver.restart();
+  const replayed = await receiver.client.call("vault.federation.connect.rejoin", delivery);
+  expect(replayed.status).toBe("imported");
+  expect(replayed.world_ref).toBe(foreignWorld);
+  const afterReplay = await receiver.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 });
+  expect(afterReplay.value.filter(row => row.world_ref === foreignWorld)).toHaveLength(1);
+  expect(afterReplay.value).toHaveLength(2);
+  const restarted = await sync07Evidence(receiver, foreignClaim.claim_ref);
+  expect(restarted.foreign_world_ref).toBe(foreignWorld);
+  expect(restarted.first_party_corroboration).toBe(false);
+  expect((restarted.delivery_history ?? []).some(row => row.delivering_pact === pact.pact
+    && row.source_vault === pact.sharerVault && row.grant_ref === pact.receiverGrant.grant)).toBe(true);
+});
 
 /* SYNC-08 — Mesh admission follows pairing should work.
  * Row: OF-535. Canon: ARCH-0023b #two-planes, identity #authority-log.
@@ -279,4 +552,24 @@ suite.todo(test, "SYNC-07", "waits on typed trust-graded consolidation input and
  * mesh: it no longer accepts mesh, while ordinary HTTP/WS remains usable.
  * A refused arbitrary UDP packet or an HTTP 401 is not a mesh admission test.
  */
-suite.todo(test, "SYNC-08", "waits on public typed mesh address/ALPN grant configuration and a caller-facing unpaired mesh dial");
+/* SYNC-08 — decision: TODO (reason string replaced).
+ * Promise: the mesh is off by default; once opted in, only a paired machine
+ *   with the sync ALPN grant reaches application data, an unpaired third
+ *   machine is refused before any data with a refused path receipt, denied
+ *   data stays denied on mesh and HTTP/WS alike, and disabling the mesh
+ *   leaves ordinary HTTP/WS working.
+ * Doors that exist today: vault.mesh.identity, bind_machine,
+ *   set_alpn_grant, revoke_machine, dial (admission-only, returns a
+ *   MeshPathReceipt), path_receipts; CLI token pair --machine yours and
+ *   device enrol (which can auto-bind the mesh identity).
+ * Unproved and why: the listener is enabled only by the ONEIRON_MESH_BIND
+ *   environment variable (or managed-mode --mesh-bind, which requires
+ *   managed_by_hypnos); EngineFixture deletes every inherited ONEIRON_*
+ *   variable and launches plain `serve --config`, and serverConfig TOML has
+ *   no mesh table, so no fixture vault can opt in. vault.mesh.dial opens no
+ *   application stream, so the scoped transfer and the denied-canary read
+ *   over oneiron/sync/1 also need a same-vault enrolled device syncing over
+ *   the mesh. Sol's off-state subset (dial refused 409 INVALID_STATE, no
+ *   path receipts, across restart) is an absence check: excluded.
+ */
+suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mesh listener on loopback peers (ONEIRON_MESH_BIND is environment-only and the fixture strips ONEIRON_*) and an enrolled same-vault device syncing over oneiron/sync/1");
