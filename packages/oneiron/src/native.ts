@@ -203,6 +203,8 @@ vaultAffectWellnessGet(input: unknown): unknown
 vaultAffectWellnessPolicyConfigure(input: unknown): unknown
 vaultAffectWellnessPolicyGet(input: unknown): unknown
 vaultAgentRunEffectAnswer(input: unknown): unknown
+vaultAgentHealthCalls(input: unknown): unknown
+vaultAgentHealthCards(input: unknown): unknown
 vaultAgentsBase(input: unknown): unknown
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsDreamingGet(input: unknown): unknown
@@ -557,7 +559,9 @@ vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationSelectionTimingSet(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultConsolidationStrengthSet(input: unknown): unknown
 vaultConsolidationWakeStatus(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
@@ -573,6 +577,7 @@ vaultCourtesyDeleteSent(input: unknown): unknown
 vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultCraftCandidates(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
+vaultCuratorCadenceSet(input: unknown): unknown
 vaultCustodyMembersDrainBegin(input: unknown): unknown
 vaultCustodyMembersDrainCommit(input: unknown): unknown
 vaultCustodyMembersDrainFolder(input: unknown): unknown
@@ -589,6 +594,7 @@ vaultDeliveryWindowPolicyList(input: unknown): unknown
 vaultDeliveryWindowPolicyPut(input: unknown): unknown
 vaultDeliveryWindowPolicyRetract(input: unknown): unknown
 vaultDevicesPredecessorName(input: unknown): unknown
+vaultDiagnosticsEvidence(input: unknown): unknown
 vaultDiagnosticsGet(input: unknown): unknown
 vaultDiagnosticsList(input: unknown): unknown
 vaultDisclosureCeilingClear(input: unknown): unknown
@@ -604,6 +610,7 @@ vaultDraftersRevert(input: unknown): unknown
 vaultDraftersRevertAs(input: unknown): unknown
 vaultDraftersStatus(input: unknown): unknown
 vaultDreamerFollowerKeyframe(input: unknown): unknown
+vaultDreamerProjectorSet(input: unknown): unknown
 vaultEdgesProvenance(input: unknown): unknown
 vaultEmbeddingSpacesBind(input: unknown): unknown
 vaultEmbeddingSpacesDeclare(input: unknown): unknown
@@ -648,6 +655,7 @@ vaultEvalsInventory(input: unknown): unknown
 vaultEvalsLabelsBlocked(input: unknown): unknown
 vaultEvalsLabelsPick(input: unknown): unknown
 vaultEvalsSufficiency(input: unknown): unknown
+vaultEvaluationRetuneThresholdsSet(input: unknown): unknown
 vaultExplainGate(input: unknown): unknown
 vaultExplainMemory(input: unknown): unknown
 vaultExport(input: unknown): unknown
@@ -701,6 +709,7 @@ vaultFreeTimeCycles(input: unknown): unknown
 vaultFreeTimePolicyGet(input: unknown): unknown
 vaultFreeTimePolicySet(input: unknown): unknown
 vaultFreeTimePolicySetAs(input: unknown): unknown
+vaultFreeTimeScheduleSet(input: unknown): unknown
 vaultGateCheckerGet(input: unknown): unknown
 vaultGateCheckerSet(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
@@ -938,6 +947,7 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultProactivityDigestGet(input: unknown): unknown
 vaultProactivityDigest(input: unknown): unknown
+vaultProactivityPeriodSet(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
 vaultProductivityTree(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
@@ -1177,6 +1187,7 @@ vaultSharesCreate(input: unknown): unknown
 vaultSharesIssueViewLink(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
+vaultSieveBudgetsLower(input: unknown): unknown
 vaultSieveCadence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown
 vaultSieveEvidenceReplay(input: unknown): unknown
@@ -1254,6 +1265,7 @@ vaultStandingBlocksList(input: unknown): unknown
 vaultStandingBlocksReconfigure(input: unknown): unknown
 vaultStepUpPasskeysReset(input: unknown): unknown
 vaultStepUpTotpReset(input: unknown): unknown
+vaultStewardshipRulesPeriodSet(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultSummariesCreate(input: unknown): unknown
 vaultSummariesEdit(input: unknown): unknown

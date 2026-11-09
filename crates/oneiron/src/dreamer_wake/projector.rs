@@ -223,24 +223,42 @@ impl Vault {
         })
     }
 
-    /// A holder of `engine.controls` sets the projector policy (untangle 6.6b; maintenance cadence),
-    /// through the one check, with a receipt naming it. Returns the receipt.
+    /// The owner, by its proof, or a holder of `engine.controls` sets the projector policy
+    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
+    /// Untangle 6.6d gives it its verb. Returns the receipt.
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
-    /// row's own validation; store failures.
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_dreamer_projector_policy_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        policy: ProjectorPolicy,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_PROJECTOR_POLICY",
+            &crate::federation::rendered_change(&policy)?,
+            |txn| POLICY.put(&self.store, txn, &(), &policy),
+        )
+    }
+
+    /// [`Self::set_dreamer_projector_policy_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_dreamer_projector_policy_by`].
     pub fn set_dreamer_projector_policy_as_holder(
         &self,
         holder: crate::entity_id::EntityId,
         policy: ProjectorPolicy,
     ) -> Result<crate::entity_id::EntityId> {
-        self.apply_engine_control(
+        self.set_dreamer_projector_policy_by(
             crate::federation::EngineControlActor::Holder(holder),
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_PROJECTOR_POLICY",
-            &crate::federation::rendered_change(&policy)?,
-            |txn| POLICY.put(&self.store, txn, &(), &policy),
+            policy,
         )
     }
 }

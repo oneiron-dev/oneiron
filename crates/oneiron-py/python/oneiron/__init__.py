@@ -1400,6 +1400,9 @@ class Oneiron:
         def agent(self) -> "Oneiron._VaultAgentVerbs":
             return Oneiron._VaultAgentVerbs(self._client)
         @property
+        def agent_health(self) -> "Oneiron._VaultAgentHealthVerbs":
+            return Oneiron._VaultAgentHealthVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         def append_to_stream(self, spec):
@@ -1493,6 +1496,9 @@ class Oneiron:
         def critic(self) -> "Oneiron._VaultCriticVerbs":
             return Oneiron._VaultCriticVerbs(self._client)
         @property
+        def curator(self) -> "Oneiron._VaultCuratorVerbs":
+            return Oneiron._VaultCuratorVerbs(self._client)
+        @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs":
             return Oneiron._VaultCustodyVerbs(self._client)
         @property
@@ -1537,6 +1543,9 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
+        @property
+        def evaluation(self) -> "Oneiron._VaultEvaluationVerbs":
+            return Oneiron._VaultEvaluationVerbs(self._client)
         @property
         def explain(self) -> "Oneiron._VaultExplainVerbs":
             return Oneiron._VaultExplainVerbs(self._client)
@@ -1805,6 +1814,9 @@ class Oneiron:
         def step_up(self) -> "Oneiron._VaultStepUpVerbs":
             return Oneiron._VaultStepUpVerbs(self._client)
         @property
+        def stewardship(self) -> "Oneiron._VaultStewardshipVerbs":
+            return Oneiron._VaultStewardshipVerbs(self._client)
+        @property
         def structural(self) -> "Oneiron._VaultStructuralVerbs":
             return Oneiron._VaultStructuralVerbs(self._client)
         @property
@@ -1937,6 +1949,15 @@ class Oneiron:
         def answer(self, spec):
             """The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it."""
             return json.loads(_translate(lambda: self._client.vault_agent_run_effect_answer(json.dumps(spec))))
+    class _VaultAgentHealthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def calls(self, spec):
+            """Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_agent_health_calls(json.dumps(spec))))
+        def cards(self, spec):
+            """Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_agent_health_cards(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3473,9 +3494,15 @@ class Oneiron:
         def promote(self, spec):
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))
+        @property
+        def selection_timing(self) -> "Oneiron._VaultConsolidationSelectionTimingVerbs":
+            return Oneiron._VaultConsolidationSelectionTimingVerbs(self._client)
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+        @property
+        def strength(self) -> "Oneiron._VaultConsolidationStrengthVerbs":
+            return Oneiron._VaultConsolidationStrengthVerbs(self._client)
         @property
         def wake(self) -> "Oneiron._VaultConsolidationWakeVerbs":
             return Oneiron._VaultConsolidationWakeVerbs(self._client)
@@ -3488,6 +3515,18 @@ class Oneiron:
         def pick(self, spec):
             """The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_home_pick(json.dumps(spec))))
+    class _VaultConsolidationSelectionTimingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets how long a claim soaks before consolidation selects it and the recency window; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_selection_timing_set(json.dumps(spec))))
+    class _VaultConsolidationStrengthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets the strength under which a quiet claim is archived and how long it stays quiet first; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_strength_set(json.dumps(spec))))
     class _VaultConsolidationWakeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3569,6 +3608,18 @@ class Oneiron:
         def review(self, spec):
             """Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."""
             return json.loads(_translate(lambda: self._client.vault_critic_review(json.dumps(spec))))
+    class _VaultCuratorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def cadence(self) -> "Oneiron._VaultCuratorCadenceVerbs":
+            return Oneiron._VaultCuratorCadenceVerbs(self._client)
+    class _VaultCuratorCadenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets the curator's minimum age and the period between its passes; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_curator_cadence_set(json.dumps(spec))))
     class _VaultCustodyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3662,6 +3713,9 @@ class Oneiron:
     class _VaultDiagnosticsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def evidence(self, spec):
+            """Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_evidence(json.dumps(spec))))
         def get(self, spec):
             """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_diagnostics_get(json.dumps(spec))))
@@ -3734,12 +3788,21 @@ class Oneiron:
         @property
         def follower(self) -> "Oneiron._VaultDreamerFollowerVerbs":
             return Oneiron._VaultDreamerFollowerVerbs(self._client)
+        @property
+        def projector(self) -> "Oneiron._VaultDreamerProjectorVerbs":
+            return Oneiron._VaultDreamerProjectorVerbs(self._client)
     class _VaultDreamerFollowerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def keyframe(self, spec):
             """The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."""
             return json.loads(_translate(lambda: self._client.vault_dreamer_follower_keyframe(json.dumps(spec))))
+    class _VaultDreamerProjectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets how many new statements the Dreamer's wake projector waits for; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_dreamer_projector_set(json.dumps(spec))))
     class _VaultEdgesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3956,6 +4019,18 @@ class Oneiron:
         def pick(self, spec):
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
             return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
+    class _VaultEvaluationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def retune_thresholds(self) -> "Oneiron._VaultEvaluationRetuneThresholdsVerbs":
+            return Oneiron._VaultEvaluationRetuneThresholdsVerbs(self._client)
+    class _VaultEvaluationRetuneThresholdsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets the score regressions past which tuned prompts, weights and manifest thresholds are retuned; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_evaluation_retune_thresholds_set(json.dumps(spec))))
     class _VaultExplainVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4178,6 +4253,9 @@ class Oneiron:
         @property
         def policy(self) -> "Oneiron._VaultFreeTimePolicyVerbs":
             return Oneiron._VaultFreeTimePolicyVerbs(self._client)
+        @property
+        def schedule(self) -> "Oneiron._VaultFreeTimeScheduleVerbs":
+            return Oneiron._VaultFreeTimeScheduleVerbs(self._client)
     class _VaultFreeTimePolicyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4190,6 +4268,12 @@ class Oneiron:
         def set_as(self, spec):
             """An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
             return json.loads(_translate(lambda: self._client.vault_free_time_policy_set_as(json.dumps(spec))))
+    class _VaultFreeTimeScheduleVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """A holder of engine.controls moves the schedule of an agent's standing free-time policy at the revision it read; the owner's units and split stay, and setting or clearing a policy stays the owner's act at vault.free_time.policy.set."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_schedule_set(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4417,7 +4501,7 @@ class Oneiron:
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
             return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
         def read(self, spec):
-            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            """The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
             return json.loads(_translate(lambda: self._client.vault_learning_read(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -5277,6 +5361,9 @@ class Oneiron:
         @property
         def digest(self) -> "Oneiron._VaultProactivityDigestVerbs":
             return Oneiron._VaultProactivityDigestVerbs(self._client)
+        @property
+        def period(self) -> "Oneiron._VaultProactivityPeriodVerbs":
+            return Oneiron._VaultProactivityPeriodVerbs(self._client)
     class _VaultProactivityDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5286,6 +5373,12 @@ class Oneiron:
         def get(self, spec):
             """Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."""
             return json.loads(_translate(lambda: self._client.vault_proactivity_digest_get(json.dumps(spec))))
+    class _VaultProactivityPeriodVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets the proactivity digest's period; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_period_set(json.dumps(spec))))
     class _VaultProductivityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5703,7 +5796,7 @@ class Oneiron:
             """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_run(json.dumps(spec))))
         def runs(self, spec):
-            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+            """The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_runs(json.dumps(spec))))
         def trace(self, spec):
             """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
@@ -6126,13 +6219,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+            """The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type."""
             return json.loads(_translate(lambda: self._client.vault_settings_learning(json.dumps(spec))))
         def clear(self, spec):
-            """The owner clears one learned-setting row of a key, mode and scope."""
+            """The owner, or a holder of engine.controls on a dial it may tune, clears one learned-setting row of a key, mode and scope; the owner's pins and work-budget rows stand."""
             return json.loads(_translate(lambda: self._client.vault_settings_learning_clear(json.dumps(spec))))
         def put(self, spec):
-            """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
+            """The owner, or a holder of engine.controls on a dial it may tune, lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope; the owner's pins and caps stand."""
             return json.loads(_translate(lambda: self._client.vault_settings_learning_put(json.dumps(spec))))
     class _VaultSettingsModelPackVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6162,7 +6255,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def set(self, spec):
-            """The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."""
+            """The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. A holder of engine.controls sets it through the engine's holder door, with a receipt naming it."""
             return json.loads(_translate(lambda: self._client.vault_settings_wake_policy_set(json.dumps(spec))))
     class _VaultSettingsWebConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6312,6 +6405,9 @@ class Oneiron:
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def budgets(self) -> "Oneiron._VaultSieveBudgetsVerbs":
+            return Oneiron._VaultSieveBudgetsVerbs(self._client)
         def cadence(self, spec):
             """Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."""
             return json.loads(_translate(lambda: self._client.vault_sieve_cadence(json.dumps(spec))))
@@ -6339,6 +6435,12 @@ class Oneiron:
         @property
         def settlements(self) -> "Oneiron._VaultSieveSettlementsVerbs":
             return Oneiron._VaultSieveSettlementsVerbs(self._client)
+    class _VaultSieveBudgetsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lower(self, spec):
+            """The owner, or a holder of engine.controls, lowers the sieve's per-pass budgets, each at or below its value in force; raising one stays the owner's act at vault.sieve.policy.set."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_budgets_lower(json.dumps(spec))))
     class _VaultSieveEvidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6720,6 +6822,24 @@ class Oneiron:
         def reset(self, spec):
             """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
             return json.loads(_translate(lambda: self._client.vault_step_up_totp_reset(json.dumps(spec))))
+    class _VaultStewardshipVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def rules(self) -> "Oneiron._VaultStewardshipRulesVerbs":
+            return Oneiron._VaultStewardshipRulesVerbs(self._client)
+    class _VaultStewardshipRulesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def period(self) -> "Oneiron._VaultStewardshipRulesPeriodVerbs":
+            return Oneiron._VaultStewardshipRulesPeriodVerbs(self._client)
+    class _VaultStewardshipRulesPeriodVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner, or a holder of engine.controls, sets how often one standing stewardship rule falls due; the change writes an engine-control receipt."""
+            return json.loads(_translate(lambda: self._client.vault_stewardship_rules_period_set(json.dumps(spec))))
     class _VaultStructuralVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

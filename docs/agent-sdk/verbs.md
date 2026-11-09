@@ -174,6 +174,8 @@ both bindings and their export-census tests in one change.
 - `vault.affect.wellness.policy.configure`
 - `vault.affect.wellness.policy.get`
 - `vault.agent.run_effect.answer`
+- `vault.agent_health.calls`
+- `vault.agent_health.cards`
 - `vault.agents.base`
 - `vault.agents.create`
 - `vault.agents.dreaming.get`
@@ -528,7 +530,9 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.lineage`
 - `vault.consolidation.pin`
 - `vault.consolidation.promote`
+- `vault.consolidation.selection_timing.set`
 - `vault.consolidation.status`
+- `vault.consolidation.strength.set`
 - `vault.consolidation.wake.status`
 - `vault.consults.get`
 - `vault.conversations.create`
@@ -544,6 +548,7 @@ both bindings and their export-census tests in one change.
 - `vault.craft_candidates.answer`
 - `vault.craft_candidates`
 - `vault.critic.review`
+- `vault.curator.cadence.set`
 - `vault.custody.members.drain.begin`
 - `vault.custody.members.drain.commit`
 - `vault.custody.members.drain.folder`
@@ -560,6 +565,7 @@ both bindings and their export-census tests in one change.
 - `vault.delivery_window.policy.put`
 - `vault.delivery_window.policy.retract`
 - `vault.devices.predecessor.name`
+- `vault.diagnostics.evidence`
 - `vault.diagnostics.get`
 - `vault.diagnostics.list`
 - `vault.disclosure.ceiling.clear`
@@ -575,6 +581,7 @@ both bindings and their export-census tests in one change.
 - `vault.drafters.revert_as`
 - `vault.drafters.status`
 - `vault.dreamer.follower.keyframe`
+- `vault.dreamer.projector.set`
 - `vault.edges.provenance`
 - `vault.embedding_spaces.bind`
 - `vault.embedding_spaces.declare`
@@ -619,6 +626,7 @@ both bindings and their export-census tests in one change.
 - `vault.evals.labels.blocked`
 - `vault.evals.labels.pick`
 - `vault.evals.sufficiency`
+- `vault.evaluation.retune_thresholds.set`
 - `vault.explain.gate`
 - `vault.explain.memory`
 - `vault.export`
@@ -672,6 +680,7 @@ both bindings and their export-census tests in one change.
 - `vault.free_time.policy.get`
 - `vault.free_time.policy.set`
 - `vault.free_time.policy.set_as`
+- `vault.free_time.schedule.set`
 - `vault.gate.checker.get`
 - `vault.gate.checker.set`
 - `vault.gate.policy.get`
@@ -909,6 +918,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.relay.decide`
 - `vault.proactivity.digest.get`
 - `vault.proactivity.digest`
+- `vault.proactivity.period.set`
 - `vault.productivity.create`
 - `vault.productivity.tree`
 - `vault.projects.confirm`
@@ -1148,6 +1158,7 @@ both bindings and their export-census tests in one change.
 - `vault.shares.issue_view_link`
 - `vault.shares.revoke`
 - `vault.shares.view`
+- `vault.sieve.budgets.lower`
 - `vault.sieve.cadence`
 - `vault.sieve.evidence`
 - `vault.sieve.evidence.replay`
@@ -1225,6 +1236,7 @@ both bindings and their export-census tests in one change.
 - `vault.standing_blocks.reconfigure`
 - `vault.step_up.passkeys.reset`
 - `vault.step_up.totp.reset`
+- `vault.stewardship.rules.period.set`
 - `vault.structural.put`
 - `vault.summaries.create`
 - `vault.summaries.edit`

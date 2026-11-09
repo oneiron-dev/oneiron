@@ -4,10 +4,10 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1359 facade rows, 4872 declarations.
-Inputs: 1279 of 1359 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1173 of 1359 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 20.
+Census: 1371 facade rows, 4886 declarations.
+Inputs: 1291 of 1371 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1184 of 1371 fully typed, 170 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Opaque serde_json::Value leaves: 123; unread shapes: 20.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -4687,6 +4687,39 @@ class AgentRunEffectAnswered(TypedDict):
     intent_ref: str
     resend: bool
     outcome: AgentRunEffectAnswerOutcome
+class AgentHealthCallsRequest(TypedDict):
+    agent_ref: str
+    since: int
+    limit: NotRequired[int | None]
+CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
+class CallOutcomeRefusedBody(TypedDict):
+    code: str
+class CallOutcomeRefused(TypedDict):
+    refused: CallOutcomeRefusedBody
+CallOutcome = Literal["ok"] | CallOutcomeRefused
+class CallAttemptRef(TypedDict):
+    attempt: EntityId
+    generation: int
+class CallReceipt(TypedDict):
+    receipt_ref: str
+    at: int
+    transport: CallTransport
+    verb: str
+    actor_ref: str
+    actor_class: str
+    credential_ref: NotRequired[str | None]
+    carrier_machine: NotRequired[str | None]
+    outcome: CallOutcome
+    request_digest: str
+    result_digest: NotRequired[str | None]
+    action_digest: NotRequired[str | None]
+    attempt_ref: NotRequired[CallAttemptRef | None]
+    served: list[str]
+    served_records: NotRequired[list[RecordRef]]
+class AgentCallReceipt(TypedDict):
+    receipt_ref: str
+    call: CallReceipt
+AgentHealthCardsRequest = TypedDict("AgentHealthCardsRequest", {"from": int, "to": int, "limit": NotRequired[int | None]})
 class BaseAgentPrincipal(TypedDict):
     name: str
     id: EntityId
@@ -12100,6 +12133,14 @@ class ConsolidationPromotion(TypedDict):
     rejected: list[ConsolidationRejection]
     input_evidence: list[ConsolidationEvidenceSource]
     output_evidence: list[ConsolidationEvidenceSource]
+class ConsolidationSelectionTimingSetRequest(TypedDict):
+    soak_ms: int
+    recency_window_ms: int
+EngineControlClass = Literal["maintenance_cadence", "work_budget", "wake_cadence", "knowledge_recipe"]
+EngineControlChange = TypedDict("EngineControlChange", {"by": str, "owner": bool, "class": EngineControlClass, "knob": str, "value": str, "changed_at": int})
+class EngineControlChangeEntry(TypedDict):
+    id: EntityId
+    change: EngineControlChange
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
 class DreamerAttemptView(TypedDict):
@@ -12113,6 +12154,9 @@ class DreamerAttemptView(TypedDict):
     created_at: int
     updated_at: int
     parked: NotRequired[DreamerParkedAttemptView | None]
+class ConsolidationStrengthSetRequest(TypedDict):
+    archive_below: float
+    quiet_ms: int
 class ConsolidationWakeStatusRequest(TypedDict):
     job_ref: NotRequired[str | None]
     wake_ref: NotRequired[str | None]
@@ -12488,6 +12532,9 @@ class CriticReviewOutcome(TypedDict):
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
     spawn_attempt_ref: NotRequired[str | None]
+class CuratorCadenceSetRequest(TypedDict):
+    minimum_age_secs: int
+    cadence_secs: int
 class CustodyMemberRef(TypedDict):
     target_id: str
 class AckPosition(TypedDict):
@@ -12645,6 +12692,14 @@ class DeliveryWindowPolicyRetractRequest(TypedDict):
 class DevicePredecessor(TypedDict):
     client: str
     device_key: str
+class DiagnosticEvidenceRequest(TypedDict):
+    attempt: AttemptId
+    generation: NotRequired[int | None]
+    run_ref: NotRequired[str | None]
+class DiagnosticEvidence(TypedDict):
+    causes: list[HealthCauseSource]
+    spend: NotRequired[SpendScope | None]
+    step_feedback: list[Any]
 class DiagnosticsGetRequest(TypedDict):
     diagnostic_ref: str
 class DiagnosticsListRequest(TypedDict):
@@ -12841,6 +12896,8 @@ class DrafterStatus(TypedDict):
     events: list[DrafterEvent]
 class DreamerFollowerKeyframeResult(TypedDict):
     sessions_marked: int
+class DreamerProjectorSetRequest(TypedDict):
+    min_new_statements: int
 class EdgeProvenanceRequest(TypedDict):
     source_ref: str
     edge_kind: str
@@ -12969,11 +13026,6 @@ class EmbeddingSpaceProbePutRequest(TypedDict):
     targets: NotRequired[list[EntityId]]
     source_refs: NotRequired[list[EntityId]]
     author: str
-EngineControlClass = Literal["maintenance_cadence", "work_budget", "wake_cadence", "knowledge_recipe"]
-EngineControlChange = TypedDict("EngineControlChange", {"by": str, "owner": bool, "class": EngineControlClass, "knob": str, "value": str, "changed_at": int})
-class EngineControlChangeEntry(TypedDict):
-    id: EntityId
-    change: EngineControlChange
 IdentityKind = Literal["PERSON", "ORG", "PLACE"]
 class IdentityHints(TypedDict):
     name: NotRequired[str | None]
@@ -13737,6 +13789,10 @@ class EvalLabelPickRequest(TypedDict):
     decision: str
     case: EntityId
     choose_b: bool
+class RetuneThresholdsSetRequest(TypedDict):
+    prompts_score_regression: float
+    weights_score_regression: float
+    manifest_thresholds_score_regression: float
 class ExplainGateRequest(TypedDict):
     receipt: str
 class ExplainGateNotice(TypedDict):
@@ -14471,6 +14527,10 @@ class FreeTimePolicySetRequest(TypedDict):
     agent: str
     expected_revision: int
     policy: NotRequired[FreeTimePolicyInput | None]
+class FreeTimeScheduleSetRequest(TypedDict):
+    agent: str
+    expected_revision: int
+    schedule: FreeTimeSchedule
 VerdictMode = Literal["shadow", "enforce"]
 class VerdictBinding(TypedDict):
     model: ModelId
@@ -18536,6 +18596,8 @@ class ProactivityDigestView(TypedDict):
     voice_style: str
 class ProactivityDigestRequest(TypedDict):
     id: NotRequired[str | None]
+class ProactivityPeriodSetRequest(TypedDict):
+    period_secs: int
 ProductivityCreateRole = Literal["goal", "milestone", "habit"]
 class ProductivityCreateRequest(TypedDict):
     role: ProductivityCreateRole
@@ -19013,31 +19075,6 @@ class ManifestEntry(TypedDict):
     version: str
     at: int
     revision: NotRequired[tuple[EntityId, RevisionRef] | None]
-CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
-class CallOutcomeRefusedBody(TypedDict):
-    code: str
-class CallOutcomeRefused(TypedDict):
-    refused: CallOutcomeRefusedBody
-CallOutcome = Literal["ok"] | CallOutcomeRefused
-class CallAttemptRef(TypedDict):
-    attempt: EntityId
-    generation: int
-class CallReceipt(TypedDict):
-    receipt_ref: str
-    at: int
-    transport: CallTransport
-    verb: str
-    actor_ref: str
-    actor_class: str
-    credential_ref: NotRequired[str | None]
-    carrier_machine: NotRequired[str | None]
-    outcome: CallOutcome
-    request_digest: str
-    result_digest: NotRequired[str | None]
-    action_digest: NotRequired[str | None]
-    attempt_ref: NotRequired[CallAttemptRef | None]
-    served: list[str]
-    served_records: NotRequired[list[RecordRef]]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
     kinds: NotRequired[list[str] | None]
@@ -22100,6 +22137,10 @@ class SharedBriefView(TypedDict):
     html: str
     citations: list[SharedBriefCitation]
     born_with: BornWith
+class SieveBudgetsLowerRequest(TypedDict):
+    max_turns_per_pass: int
+    max_scan_per_pass: int
+    max_text_bytes_per_pass: int
 class WakeCadenceRequest(TypedDict):
     ...
 AgentWakeRole = Literal["companion", "leader", "worker"]
@@ -23132,6 +23173,9 @@ class StepUpTotpResetRequest(TypedDict):
 class StepUpTotpReset(TypedDict):
     person: str
     removed: int
+class StewardshipRulePeriodSetRequest(TypedDict):
+    rule: str
+    every_secs: int
 class TextIndexField(TypedDict):
     field: str
     value: str

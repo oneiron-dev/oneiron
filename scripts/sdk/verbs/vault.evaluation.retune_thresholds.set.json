@@ -1,0 +1,15 @@
+{
+  "name": "vault.evaluation.retune_thresholds.set",
+  "description": "The owner, or a holder of engine.controls, sets the score regressions past which tuned prompts, weights and manifest thresholds are retuned; the change writes an engine-control receipt.",
+  "input": "crate::task_verb::sdk::RetuneThresholdsSetRequest",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::set_retune_thresholds_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}

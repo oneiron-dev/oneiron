@@ -361,24 +361,25 @@ impl Vault {
         Ok(())
     }
 
-    /// A holder of `engine.controls` sets the proactivity digest's period. Its grouping and urgent flags and
-    /// the presentation stay as the owner set them (untangle 6.6b; maintenance cadence),
-    /// through the one check, with a receipt naming it. Returns the receipt.
+    /// The owner, by its proof, or a holder of `engine.controls` sets the proactivity digest's
+    /// period. Its grouping and urgent flags and the presentation stay as the owner set them
+    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
+    /// Untangle 6.6d gives it its verb. Returns the receipt.
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
-    /// row's own validation; store failures.
-    pub fn set_proactivity_period_as_holder(
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_proactivity_period_by(
         &self,
-        holder: EntityId,
+        actor: crate::federation::EngineControlActor<'_>,
         period_secs: u64,
     ) -> Result<EntityId> {
         if period_secs == 0 {
             return Err(invalid());
         }
         let receipt = self.apply_engine_control(
-            crate::federation::EngineControlActor::Holder(holder),
+            actor,
             crate::federation::EngineControlClass::MaintenanceCadence,
             "DREAMER_PROACTIVITY_CADENCE",
             &crate::federation::rendered_change(&serde_json::json!({
@@ -400,6 +401,23 @@ impl Vault {
         )?;
         self.store.notify_proactivity_changes();
         Ok(receipt)
+    }
+
+    /// [`Self::set_proactivity_period_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_proactivity_period_by`].
+    pub fn set_proactivity_period_as_holder(
+        &self,
+        holder: EntityId,
+        period_secs: u64,
+    ) -> Result<EntityId> {
+        self.set_proactivity_period_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            period_secs,
+        )
     }
     /// An agent may draft this row in chat; only the authenticated owner's
     /// confirmation writes it. Edits affect the next digest, not past rows.
