@@ -1,0 +1,94 @@
+//! Hooks for the integration tests, compiled only under
+//! `--cfg oneiron_test_support` and reached through
+//! [`crate::test_doors::turn_programs`]. Not API.
+//!
+//! They plant an arming and the wake a landed turn owes it as the arm door
+//! and the turn's writer leave them, without pinning a SKILL, and read what
+//! a machine holds and decided.
+
+use super::authority::TurnProgramAuthority;
+use super::types::{LandedTurnRef, ProgramRecipePin, TurnProgramArming};
+use super::{ADMISSION, ARM, WAKE};
+use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::error::{Error, Result};
+use crate::{EdgeActorClass, EntityId, Vault};
+
+/// Arms a program for the agent `actor` in `conversation` at `armed_at`,
+/// sealed by the verified slip `proof` and the instrument `binding`, then
+/// records the wake TURN `turn`, landed at `landed_at`, owes it, as the
+/// turn's writer does. Answers the registration.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plant_slip_wake(
+    vault: &Vault,
+    actor: EntityId,
+    proof: &VerifiedSlip,
+    binding: &InvocationSlipBinding,
+    conversation: EntityId,
+    turn: EntityId,
+    armed_at: u64,
+    landed_at: u64,
+) -> Result<EntityId> {
+    let authority = TurnProgramAuthority::slip(actor, EdgeActorClass::Agent, proof, binding)
+        .ok_or_else(|| Error::InvalidConfig("the slip seals no turn program authority".into()))?;
+    let registration = vault.new_entity_id()?;
+    let definition = ProgramRecipePin {
+        skill: registration,
+        version: "1".into(),
+        content_hash: "0".repeat(64),
+        entry: "main".into(),
+        contract_digest: [0; 32],
+        executor: "test".into(),
+        args: "{}".into(),
+    };
+    let arming = TurnProgramArming {
+        registration,
+        actor,
+        actor_class: authority.class_byte(),
+        conversation: Some(conversation),
+        revision: definition.revision(),
+        definition,
+        armed_at,
+    };
+    let landed = LandedTurnRef {
+        turn,
+        conversation,
+        landed_at,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        ARM.put(vault, txn, &(actor, registration), &arming)?;
+        let owed = super::wake::record_turn_program_wakes_in_txn(vault, txn, &authority, &landed)?;
+        if owed == 1 {
+            Ok(())
+        } else {
+            Err(Error::InvalidConfig(format!(
+                "the planted arming owes {owed} wakes, not one"
+            )))
+        }
+    })?;
+    Ok(registration)
+}
+
+/// Whether this machine owes the wake TURN `turn` owes `registration`.
+pub(crate) fn wake_owed_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    WAKE.contains(vault, &txn, &(turn, registration))
+}
+
+/// How many decisions this machine holds for the wake TURN `turn` owes
+/// `registration`: admission rows, queued or refused.
+pub(crate) fn wake_decisions_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<usize> {
+    let txn = vault.store.env.read_txn()?;
+    let all: &[u8] = &[];
+    let mut decisions = 0;
+    for row in ADMISSION.iter_from(vault, &txn, all)? {
+        let (_, record) = row?;
+        if record.wake.turn.turn == turn && record.wake.registration == registration {
+            decisions += 1;
+        }
+    }
+    Ok(decisions)
+}
