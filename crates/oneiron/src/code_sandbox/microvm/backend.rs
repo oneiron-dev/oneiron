@@ -482,7 +482,8 @@ impl fmt::Debug for DevProcessBackend {
     }
 }
 
-pub(super) fn backend_error(backend: &'static str, detail: impl Into<String>) -> Error {
+/// The typed failure of the named backend, with its detail.
+pub fn backend_error(backend: &'static str, detail: impl Into<String>) -> Error {
     Error::Code(CodeError::MicroVmBackendError {
         backend,
         detail: detail.into(),
