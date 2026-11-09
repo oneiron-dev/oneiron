@@ -9,12 +9,13 @@
 
 use oneiron::authority::{HostSlipIssuer, SlipCaveat};
 use oneiron::claim::{ScopedReadActorKey, base_world_id};
+use oneiron::code_document::CodeSpanAnchor;
 use oneiron::code_memory::{
     AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AttachCodeMemory,
     BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CODE_MEMORY_MAX_VALUES_PER_SLOT,
     CodeMemoryAnchor, CodeMemoryContractKind, CodeMemoryLocator, CodeMemoryPayloadRef,
-    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemoryRevision, CodeMemorySlotName,
-    CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
+    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemorySlotName, CodeMemorySlotValue,
+    ProvenanceMaterialKind, SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
 use oneiron::error::{CodeError, RegistryError};
@@ -158,10 +159,18 @@ fn other_slot() -> CodeMemorySlotName {
     CodeMemorySlotName::new("policy.contract").expect("valid slot name")
 }
 
+/// A locator is a cursor-anchored span on the symbol's file document at one
+/// version (FIX 7810, 029b5966b0a, replaced the path-at-revision locator).
+/// Each `path` gets its own cursors, so two paths never share a locator.
 fn locator(path: &str) -> CodeMemoryLocator {
     CodeMemoryLocator {
-        path_at_revision: path.to_owned(),
-        revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+        span: CodeSpanAnchor {
+            document_id: [0xD0; 32],
+            start: path.as_bytes().to_vec(),
+            end: path.as_bytes().to_vec(),
+            content_hash: [0xD1; 32],
+        },
+        version: vec![(1, 0)],
         validity: range(1_780_000_000),
     }
 }
@@ -240,10 +249,14 @@ fn transfer(
     }
 }
 
-/// The `path_at_revision` STORED on `symbol_id`'s attachment row for
-/// `payload` — the locator half of the dual anchor as it actually persists,
-/// read back through the public attachment door.
-fn attachment_path(vault: &Vault, symbol_id: EntityId, payload: CodeMemoryPayloadRef) -> String {
+/// The locator STORED on `symbol_id`'s attachment row for `payload` — the
+/// locator half of the dual anchor as it actually persists, read back
+/// through the public attachment door.
+fn attachment_locator(
+    vault: &Vault,
+    symbol_id: EntityId,
+    payload: CodeMemoryPayloadRef,
+) -> CodeMemoryLocator {
     let rows = vault
         .code_memory_attachments(symbol_id)
         .expect("attachment rows");
@@ -251,7 +264,7 @@ fn attachment_path(vault: &Vault, symbol_id: EntityId, payload: CodeMemoryPayloa
         .into_iter()
         .find(|attachment| attachment.payload == payload)
         .expect("the surviving payload keeps an attachment row");
-    row.anchor.locator.path_at_revision
+    row.anchor.locator
 }
 
 fn human(vault: &Vault, byte: u8) -> WriteActor {
@@ -582,7 +595,7 @@ fn invalid_anchor_transfers_are_typed() {
 /// The LOCATOR IS PER PAYLOAD, never per operation.
 ///
 /// A second attach into the same slot may not restamp the first payload's
-/// `path_at_revision`, and a transfer relabels only what it actually moved:
+/// locator, and a transfer relabels only what it actually moved:
 /// a destination-only payload keeps the locator it was attached under even
 /// though the merged slot is rewritten around it.
 #[test]
@@ -613,11 +626,14 @@ fn locators_survive_later_attaches_and_untouched_transfers() {
     .expect("a second attach into the SAME slot");
 
     assert_eq!(
-        attachment_path(&vault, from, first),
-        "src/first.rs",
+        attachment_locator(&vault, from, first),
+        locator("src/first.rs"),
         "the older payload keeps the locator it was attached under"
     );
-    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+    assert_eq!(
+        attachment_locator(&vault, from, second),
+        locator("src/second.rs")
+    );
 
     // The destination already holds an unrelated payload in the same slot.
     attach(
@@ -634,24 +650,27 @@ fn locators_survive_later_attaches_and_untouched_transfers() {
         .expect("explicit copy");
 
     assert_eq!(
-        attachment_path(&vault, to, destination_only),
-        "src/destination.rs",
+        attachment_locator(&vault, to, destination_only),
+        locator("src/destination.rs"),
         "a payload this transfer never moved is not relabelled by `to_locator`"
     );
     for moved in [first, second] {
         assert_eq!(
-            attachment_path(&vault, to, moved),
-            "src/after.rs",
+            attachment_locator(&vault, to, moved),
+            locator("src/after.rs"),
             "a payload that DID move carries the transfer's own locator"
         );
     }
 
     assert_eq!(
-        attachment_path(&vault, from, first),
-        "src/first.rs",
+        attachment_locator(&vault, from, first),
+        locator("src/first.rs"),
         "a copy leaves the source locators untouched too"
     );
-    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+    assert_eq!(
+        attachment_locator(&vault, from, second),
+        locator("src/second.rs")
+    );
 }
 
 /// Contract collisions resolve exactly like slot collisions: the destination

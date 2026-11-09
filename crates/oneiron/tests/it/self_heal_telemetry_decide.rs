@@ -5,10 +5,10 @@
 use std::sync::Mutex;
 
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionLadder, DecisionProvider, DecisionQuestion,
-    DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
+    DecisionQuestion, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
+    ProviderPin,
 };
-use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::self_heal::DiagnosticEventClass;
 use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use oneiron::store::RetrievalRunRecord;
@@ -37,16 +37,11 @@ impl DecisionProvider for HostHead {
             version: "3".into(),
         }
     }
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-        _: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.asked
             .lock()
             .expect("the asked log is never poisoned")
-            .push((question.clone(), evidence.to_vec()));
+            .push((call.question.clone(), call.evidence.to_vec()));
         let probability = (self.answer != DecisionAnswer::Abstain).then_some(0.9);
         Ok(ProviderDecision {
             answer: self.answer.clone(),
