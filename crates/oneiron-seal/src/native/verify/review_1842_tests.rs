@@ -248,7 +248,17 @@ fn public_verifier_uses_four_byte_eol_tolerance_consistently() {
     let signer = test_ca("eol-signer");
     let signed = append_sig_revision(&base_input(), &signer, "eol", None, AT_UNIX);
     let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
-    for tail in [b"".as_slice(), b"\n", b"\r\n", b"\n\r\n", b"\r\n\r\n"] {
+    // Rule 5 conversion (072a918f8b6, #3385): an %%EOF's CR/LF run belongs to
+    // its revision however long it is, so the five-byte run passes like the
+    // shorter ones; a non-EOL byte after the signed range still fails.
+    for tail in [
+        b"".as_slice(),
+        b"\n",
+        b"\r\n",
+        b"\n\r\n",
+        b"\r\n\r\n",
+        b"\n\r\n\r\n",
+    ] {
         let mut bytes = signed.clone();
         bytes.extend_from_slice(tail);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
@@ -263,7 +273,7 @@ fn public_verifier_uses_four_byte_eol_tolerance_consistently() {
             Modifications::Clean(crate::api::ModificationLevel::None)
         );
     }
-    for tail in [b"\n\r\n\r\n".as_slice(), b"\nx"] {
+    for tail in [b"\nx".as_slice()] {
         let mut bytes = signed.clone();
         bytes.extend_from_slice(tail);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
