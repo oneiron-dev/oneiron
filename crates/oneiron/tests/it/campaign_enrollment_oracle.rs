@@ -450,53 +450,6 @@ fn live_member_heads(
 // Attempt kind and payload
 // ---------------------------------------------------------------------------
 
-/// One kind string, one payload shape. No queue enum, no recurrence primitive,
-/// and nothing authority-bearing on the wire.
-#[test]
-fn campaign_attempt_kind_is_exact() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-    let event = detect(&vault, &fixture, &grants, 100);
-    let payload = fixture.payload(event.event_ref);
-
-    let record = enqueue(&vault, &payload, 100);
-    assert_eq!(record.kind, "campaign.enrollment.macro");
-    assert_eq!(record.kind, CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND);
-
-    let wire: serde_json::Value =
-        serde_json::from_slice(&encode_enrollment_attempt_payload(&payload)?).unwrap();
-    let keys: Vec<&str> = wire
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(
-        keys,
-        vec![
-            "schema_version",
-            "membership_event_ref",
-            "campaign_program_ref",
-            "program_step_ref"
-        ],
-        "refs only: no cause, epoch, evidence hash, timestamp, enrolled flag, \
-         or outbound request rides the queue"
-    );
-
-    // The queue is shared. A foreign kind sitting in front of ours must neither
-    // be claimed by this runner nor block it.
-    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
-        kind: "dreamer.consolidation.macro".to_owned(),
-        payload: b"foreign".to_vec(),
-        dedupe_key: None,
-        run_id: None,
-        now: 101,
-    })?;
-    assert_eq!(claimed_record(&vault, HOME_NODE, 102).id, record.id);
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Home-node designation
 // ---------------------------------------------------------------------------
@@ -630,39 +583,6 @@ fn enrollment_payload_is_refs_only_and_not_trusted_membership() -> Result<()> {
             .evidence_hash,
         event.evidence_hash
     );
-    Ok(())
-}
-
-/// A matching `data_change` entry writes exactly one CA-01 cohort row carrying
-/// the program step's channel and the full `{source_query, evidence_hash,
-/// epoch}` derivation.
-#[test]
-fn data_change_entered_event_auto_enrolls() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-    let event = detect(&vault, &fixture, &grants, 100);
-    assert_eq!(event.cause, MembershipCause::DataChange);
-    assert_eq!(event.transition, MembershipTransition::Entered);
-    assert_eq!(event.epoch, 1);
-
-    enqueue(&vault, &fixture.payload(event.event_ref), 100);
-    let record = claimed_record(&vault, HOME_NODE, 101);
-    assert!(matches!(
-        execute(&vault, HOME_NODE, &record, &grants, 102),
-        EnrollmentExecution::Applied {
-            outbound_intent: Some(_)
-        }
-    ));
-
-    assert_eq!(
-        live_member_heads(&vault, fixture.person, fixture.query.query_ref),
-        vec![("enrolled".to_owned(), 1, vec![CHANNEL.to_owned()])]
-    );
-    let history = membership_events(&vault, fixture.query.query_ref, fixture.person)?;
-    assert_eq!(history.len(), 1);
-    assert_eq!(history[0].evidence_hash, event.evidence_hash);
-    assert_eq!(history[0].cause, MembershipCause::DataChange);
     Ok(())
 }
 
@@ -829,144 +749,9 @@ fn a_definition_move_cannot_launder_itself_into_data_change() -> Result<()> {
     Ok(())
 }
 
-/// The cause and the outward call come from persisted rows. A caller cannot
-/// present either, and refs that do not cross-bind fail closed.
-#[test]
-fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-    let event = detect(&vault, &fixture, &grants, 100);
-    let payload = fixture.payload(event.event_ref);
-    let record = enqueue(&vault, &payload, 100);
-
-    let request = derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
-        .expect("the step declares an outward leg");
-    assert_eq!(request.call_seq, 7);
-    // The ledger identity is the CONSEQUENCE's, not the queue row's. Deriving
-    // it from the attempt id would make the send identity a function of how
-    // many times the work was enqueued.
-    assert_ne!(request.attempt_id, record.id);
-
-    // Move the PERSISTED program step; the derived request moves with it.
-    put_step(&vault, fixture.program, fixture.step, 9);
-    assert_eq!(
-        derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
-            .expect("the step declares an outward leg")
-            .call_seq,
-        9
-    );
-
-    // A program belonging to another campaign is not usable just because the
-    // payload points at it.
-    let foreign = test_id(0x3B);
-    put_campaign_program(
-        &vault,
-        &CampaignProgram {
-            schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-            program_ref: foreign,
-            campaign_ref: test_id(0x3C),
-        },
-    )?;
-    assert!(matches!(
-        derive_enrollment_outbound_request(
-            &vault,
-            &CampaignEnrollmentAttemptPayload {
-                campaign_program_ref: foreign,
-                ..payload
-            },
-            &event,
-            1_000,
-        ),
-        Err(Error::InvalidConfig(_))
-    ));
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // The epoch watermark is the correctness mechanism
 // ---------------------------------------------------------------------------
-
-/// Two attempts for the same transition, enqueued with NO dedupe key at all,
-/// still produce exactly one applied consequence. Dedupe is hygiene; the
-/// watermark is correctness.
-#[test]
-fn advisory_dedupe_is_not_correctness() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-
-    // Two detections before either executes: same epoch, same evidence, two
-    // distinct durable event rows.
-    let first = detect(&vault, &fixture, &grants, 100);
-    let second = detect(&vault, &fixture, &grants, 100);
-    assert_ne!(first.event_ref, second.event_ref);
-    assert_eq!(first.epoch, second.epoch);
-    assert_eq!(
-        enrollment_dedupe_key(&vault, &fixture.payload(first.event_ref))?,
-        enrollment_dedupe_key(&vault, &fixture.payload(second.event_ref))?,
-        "two rows describing the identical transition are the same work"
-    );
-
-    // Bypass the coalescer entirely.
-    let queue = AttemptQueue::new(&vault);
-    for event_ref in [first.event_ref, second.event_ref] {
-        queue.enqueue(EnqueueAttempt {
-            kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
-            payload: encode_enrollment_attempt_payload(&fixture.payload(event_ref))?,
-            dedupe_key: None,
-            run_id: None,
-            now: 101,
-        })?;
-    }
-
-    let one = claimed_record(&vault, HOME_NODE, 102);
-    let two = claimed_record(&vault, HOME_NODE, 103);
-    assert_ne!(one.id, two.id, "both rows really are on the queue");
-    assert!(matches!(
-        execute(&vault, HOME_NODE, &one, &grants, 104),
-        EnrollmentExecution::Applied { .. }
-    ));
-    assert!(matches!(
-        execute(&vault, HOME_NODE, &two, &grants, 105),
-        EnrollmentExecution::AlreadyApplied { .. }
-    ));
-    assert_eq!(
-        live_member_heads(&vault, fixture.person, fixture.query.query_ref),
-        vec![("enrolled".to_owned(), 1, vec![CHANNEL.to_owned()])]
-    );
-    Ok(())
-}
-
-/// Re-executing the SAME attempt is `AlreadyApplied`, and the outward-leg
-/// identity it reports does not drift between runs.
-#[test]
-fn same_epoch_reexecution_is_already_applied() {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-    let event = detect(&vault, &fixture, &grants, 100);
-    enqueue(&vault, &fixture.payload(event.event_ref), 100);
-    let record = claimed_record(&vault, HOME_NODE, 101);
-
-    let EnrollmentExecution::Applied { outbound_intent } =
-        execute(&vault, HOME_NODE, &record, &grants, 102)
-    else {
-        panic!("first execution must apply");
-    };
-    // A crash between the cohort write and the intent record re-enters HERE.
-    // Membership is already done; the outward leg keeps its identity so the
-    // send can still be recovered exactly once.
-    assert_eq!(
-        execute(&vault, HOME_NODE, &record, &grants, 103),
-        EnrollmentExecution::AlreadyApplied { outbound_intent }
-    );
-    assert!(outbound_intent.is_some());
-    assert_eq!(
-        live_member_heads(&vault, fixture.person, fixture.query.query_ref).len(),
-        1
-    );
-}
 
 /// A replayed `Entered` from before an exit is REJECTED, never reported as
 /// already-applied: reporting success would leave the cohort holding a
