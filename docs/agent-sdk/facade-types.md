@@ -424,7 +424,7 @@ export type IdentityMentionView = { mention: MentionProvenance; name: string; st
 /** `oneiron::vault_shape::member::ShapePreset` */
 export type ShapePreset = "personal" | "family" | "team" | "org" | "community"
 /** `oneiron::vault_shape::member::ShapeMemberRole` */
-export type ShapeMemberRole = "owner" | "admin" | "member" | "viewer"
+export type ShapeMemberRole = "owner" | "admin" | "steward" | "member" | "viewer"
 /** `oneiron::vault_shape::ShapeCeiling` */
 export type ShapeCeiling = "auto" | "proposed"
 /** `oneiron::vault_shape::skill::ShapeSkillSource` */
@@ -2818,7 +2818,7 @@ export type InspectionResolved = { state: InspectionState; handle: InspectionHan
 /** `oneiron::verbs::shared::SharedVaultRequest` */
 export type SharedVaultRequest = { vault_id: string }
 /** `oneiron::federation::grant::FederationGrantRole` */
-export type FederationGrantRole = "owner" | "admin" | "member" | "viewer" | "auditor" | "delegate" | "guest"
+export type FederationGrantRole = "owner" | "admin" | "steward" | "member" | "viewer" | "auditor" | "delegate" | "guest"
 /** `oneiron::federation::pending_act::ActExecution` */
 export type ActExecution = { request: string; receipt?: string | null }
 /** `oneiron::federation::pending_act::PendingAuthorityAct` */

@@ -1336,6 +1336,12 @@ fn federation_grant_default_rows() -> Value {
                     "org:reset-shared-project-access",
                 ]),
             },
+            // The Steward reads and derives across the vault root, archives
+            // inside its grant and deletes in scope; never an admin power.
+            Row::RoleDefault {
+                role: Role::Steward,
+                scope: scope(&crate::federation::grant_scope::STEWARD_VERBS),
+            },
             Row::RoleDefault {
                 role: Role::Member,
                 scope: scope(&["read", "write"]),
