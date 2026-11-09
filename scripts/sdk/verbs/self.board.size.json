@@ -1,0 +1,12 @@
+{
+  "name": "self.board.size",
+  "description": "Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn.",
+  "input": "crate::task_verb::sdk::BoardSizeRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_size_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

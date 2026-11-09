@@ -1,0 +1,14 @@
+{
+  "name": "mount",
+  "description": "Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash.",
+  "input": "crate::memory::graph_fs_doors::GraphFsMountRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsMounted",
+  "call": "memory.graph_fs_mount(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

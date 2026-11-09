@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.preferences.get",
+  "description": "Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority.",
+  "input": "SkillOptimizeGoalRequest",
+  "output": "Option<crate::skill_optimize::SkillTradeoffPreferences>",
+  "call": "crate::task_verb::sdk::skill_optimize_preferences_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.get\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

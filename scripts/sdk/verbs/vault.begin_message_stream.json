@@ -1,0 +1,13 @@
+{
+  "name": "vault.begin_message_stream",
+  "description": "Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation.",
+  "input": "crate::memory::BeginMessageStreamRequest",
+  "output": "crate::memory::MessageStreamHandle",
+  "call": "memory.messages_begin_stream(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

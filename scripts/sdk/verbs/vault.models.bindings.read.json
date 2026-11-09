@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.bindings.read",
+  "description": "Reads the currently active manifest binding for a model role.",
+  "input": "crate::llm::catalog_doors::ModelBindingRead",
+  "output": "crate::llm::manifest::ModelBinding",
+  "call": "memory.vault().model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.read\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

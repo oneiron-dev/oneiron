@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.library.retired",
+  "description": "The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why.",
+  "input": "crate::task_verb::sdk::BrowserLibraryRetiredInput",
+  "output": "crate::task_verb::sdk::BrowserLibraryRetiredOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.library_retired(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetiredInput>",
+    "description": "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

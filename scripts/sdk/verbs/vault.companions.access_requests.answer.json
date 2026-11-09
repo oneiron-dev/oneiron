@@ -1,0 +1,16 @@
+{
+  "name": "vault.companions.access_requests.answer",
+  "description": "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.",
+  "input": "crate::task_verb::sdk::CompanionAccessRequestAnswerRequest",
+  "output": "crate::task_verb::sdk::CompanionAccessRequestAnswered",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.companions.access_requests.answer\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

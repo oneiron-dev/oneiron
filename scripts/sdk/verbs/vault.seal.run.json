@@ -1,0 +1,16 @@
+{
+  "name": "vault.seal.run",
+  "description": "Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority.",
+  "input": "crate::self_heal::audit::doors::SealRunRequest",
+  "output": "crate::self_heal::audit::doors::SealRunReceipt",
+  "call": "crate::self_heal::audit::doors::run_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.run\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

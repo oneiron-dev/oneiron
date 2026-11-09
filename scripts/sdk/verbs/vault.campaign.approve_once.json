@@ -1,0 +1,16 @@
+{
+  "name": "vault.campaign.approve_once",
+  "description": "The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks.",
+  "input": "CampaignEnrollmentApproveOnceRequest",
+  "output": "crate::consent::lifecycle::ConsentActReceipt",
+  "call": "crate::task_verb::sdk::approve_campaign_enrollment_once(memory.vault(), &memory.embedded_owner(\"vault.campaign.approve_once\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

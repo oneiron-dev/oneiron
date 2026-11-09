@@ -1,0 +1,15 @@
+{
+  "name": "vault.records.erase_confirm",
+  "description": "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead.",
+  "input": "crate::task_verb::sdk::RecordEraseConfirmRequest",
+  "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::RecordEraseOutcome>",
+  "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?)",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

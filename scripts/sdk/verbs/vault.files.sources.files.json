@@ -1,0 +1,16 @@
+{
+  "name": "vault.files.sources.files",
+  "description": "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates.",
+  "input": "crate::task_verb::sdk::FilesSourceFilesRequest",
+  "output": "crate::task_verb::sdk::FilesSourceFiles",
+  "call": "crate::task_verb::sdk::files_source_files_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

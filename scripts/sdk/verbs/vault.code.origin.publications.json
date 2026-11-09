@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.publications",
+  "description": "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement.",
+  "input": "crate::memory::origin_doors::OriginPublicationsRequest",
+  "output": "crate::memory::origin_doors::OriginPublicationsView",
+  "call": "memory.origin_publications_as(&memory.embedded_owner(\"vault.code.origin.publications\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

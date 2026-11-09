@@ -1,0 +1,10 @@
+{
+  "name": "vault.turn_programs.disarm",
+  "description": "Disarms one of the caller's own armed turn programs; true when it was armed.",
+  "input": "crate::dreamer_runner::DisarmTurnProgram",
+  "output": "bool",
+  "call": "memory.disarm_turn_program(input.registration)?",
+  "scope": "Write",
+  "openapi": true,
+  "section": false
+}

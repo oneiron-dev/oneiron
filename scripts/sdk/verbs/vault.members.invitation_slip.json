@@ -1,0 +1,15 @@
+{
+  "name": "vault.members.invitation_slip",
+  "description": "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound.",
+  "input": "crate::task_verb::sdk::InvitationSlipRequest",
+  "output": "crate::task_verb::sdk::InvitationSlip",
+  "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}
