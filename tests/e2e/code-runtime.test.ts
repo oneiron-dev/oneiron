@@ -681,6 +681,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       const witnessed = await engine.client.call("vault.witness", {
         conversation_ref: "03101010101010101010101010101010",
         turn_ref: "03202020202020202020202020202020",
+        occurred_at: 1769947200,
         messages: [{ author: "user", message_type: "dialogue",
           content: "Record the first parcel, then ask before delivering the second.", is_visible: true, order: 0 }],
       } satisfies FacadeInput<"vault.witness">);
@@ -807,7 +808,9 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       expect(waits.length).toBeGreaterThan(0);
       expect(waits.some(row => JSON.stringify(row.outcome).includes(groupHex))).toBe(true);
       expect(waits.some(row => JSON.stringify(row.outcome).includes(`"picked":"${optionDeliver}"`))).toBe(true);
-      expect(resumed.resultsCount).toBe(2);
+      // r1, the delivered wait reply (wait0) and r3: the reply is a named result too (engine_executor/repl/persistence.rs:91-131).
+      expect(resumed.resultsCount).toBe(3);
+      expect(resumed.results).toHaveLength(3);
       const evidence = await engine.client.call("vault.code.step_evidence", { run_ref: parked.run_id });
       if (!evidence) throw new Error("Resumed run has no public step evidence");
       expect(evidence.completed_steps).toBe(2);
@@ -832,7 +835,9 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       const terminal = await codeRuntime03CallTool<CodeRuntime03ExecuteContent>(engine.mcp, tools, "execute_code", { run_ref: runRef, task });
       expect(terminal.result.status).toBe("complete");
       expect(terminal.steps_run).toBe(0);
-      expect(terminal.resultsCount).toBe(2);
+      // r1, the delivered wait reply (wait0) and r3: the reply is a named result too (engine_executor/repl/persistence.rs:91-131).
+      expect(terminal.resultsCount).toBe(3);
+      expect(terminal.results).toHaveLength(3);
       expect(terminal.results.map(card => card.name ?? card.handle).sort()).toEqual(resumed.results.map(card => card.name ?? card.handle).sort());
       expect(terminal.results.map(card => card.preview).sort()).toEqual(resumed.results.map(card => card.preview).sort());
       expect(providers.seenFixtureCalls).toHaveLength(2);
