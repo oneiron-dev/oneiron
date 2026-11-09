@@ -128,12 +128,28 @@ fn typed_fixture_refuses_first_party_import_and_unknown_credential_args() {
     }
 }
 
+/// The conformance fixture's stream of `result.txt` (open, one chunk, close).
+const STREAM_RESULT_TXT: &str = "      (call $open (i32.const 4128) (i32.const 25) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (local.set $file (i64.load (i32.const 1608)))
+      (if (local.get $length)
+        (then (call $chunk (local.get $file) (local.get $source) (local.get $length) (i32.const 1600)))
+        (else (call $chunk (local.get $file) (i32.const 4192) (i32.const 28) (i32.const 1600))))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (call $close (local.get $file) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))";
+
 #[test]
 fn typed_component_claim_proposal_refuses_the_whole_step() {
-    let fixture = conformance::WAT.replace(
-        "(i32.store (i32.const 2048) (i32.const 0))",
-        "(i32.store (i32.const 2048) (i32.const 1))",
-    );
+    // The fixture streams result.txt and returns no proposal (#2664, FIX 367):
+    // drop the stream and return one claim candidate (case 0, zeroed payload).
+    let fixture = conformance::WAT
+        .replace(
+            "(i32.store (i32.const 1040) (i32.const 0))",
+            "(i32.store (i32.const 1040) (i32.const 1)) (i32.store (i32.const 2048) (i32.const 0))",
+        )
+        .replace(STREAM_RESULT_TXT, "");
+    assert!(!fixture.contains("(call $open"), "the stream calls are gone");
     let (_temp, root) = scratch();
     let mut bytes = Vec::new();
     input(
@@ -307,7 +323,10 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
         .expect("deadline");
     let path = root.clone();
     let worker = std::thread::spawn(move || serve_localtest(guest, &path));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"hello", "version":GUEST_PROTOCOL_VERSION})
+    );
     let component = real_foreign_component();
     let mut start = start(component.len());
     start["source"] = "propose.delete('/mnt/workspace/removed'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/destination'); finish('ok');".into();
@@ -318,14 +337,18 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
             json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
         );
     }
-    put(
-        &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/removed", "bytes":b"old"}),
-    );
-    put(
-        &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/moved", "bytes":b"identity"}),
-    );
+    // Each seeded file streams as file_open, a chunk, then file_close (#5006).
+    for (path, bytes) in [
+        ("/mnt/workspace/removed", &b"old"[..]),
+        ("/mnt/workspace/moved", &b"identity"[..]),
+    ] {
+        put(
+            &mut host,
+            json!({"type":"file_open", "path":path, "len":bytes.len()}),
+        );
+        put(&mut host, json!({"type":"file_chunk", "bytes":bytes}));
+        put(&mut host, json!({"type":"file_close"}));
+    }
     put(&mut host, json!({"type":"ready"}));
     assert_eq!(
         get(&mut host),
@@ -355,7 +378,10 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
         .expect("deadline");
     let path = root.clone();
     let worker = std::thread::spawn(move || serve_localtest(guest, &path));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"hello", "version":GUEST_PROTOCOL_VERSION})
+    );
     let component = real_foreign_component();
     let mut start = start(component.len());
     start["source"] =
@@ -367,10 +393,13 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
             json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
         );
     }
+    // The seeded file streams as file_open, a chunk, then file_close (#5006).
     put(
         &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/old", "bytes":b"old"}),
+        json!({"type":"file_open", "path":"/mnt/workspace/old", "len":3}),
     );
+    put(&mut host, json!({"type":"file_chunk", "bytes":b"old"}));
+    put(&mut host, json!({"type":"file_close"}));
     put(&mut host, json!({"type":"ready"}));
     assert_eq!(get(&mut host), json!({"type":"finish", "status":1}));
     assert!(worker.join().expect("guest thread").is_err());

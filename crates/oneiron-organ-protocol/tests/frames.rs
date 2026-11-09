@@ -75,7 +75,8 @@ fn reply_of_nils(count: u32) -> Vec<u8> {
             notes: Notes::default(),
         }),
     });
-    let encoded = rmp_serde::to_vec_named(&reply).expect("encode");
+    // The protocol's own codec (5b61e287afc): its Value is not serde-transparent.
+    let encoded = oneiron_organ_protocol::to_vec(&reply).expect("encode");
     let key = b"\xa6report\xc0";
     let at = encoded
         .windows(key.len())
