@@ -4,7 +4,12 @@ use oneiron::code_run::CodeRunDeterminism;
 use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
 use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
-use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatJudge, SeatJudgment, SeatTask};
+use oneiron::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
+    DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
+use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::llm::{
     LlmCapability, LlmCatalogCost, LlmCatalogEntry, ModelTierRef as Tier, ReasoningEffort,
 };
@@ -25,28 +30,56 @@ struct Backend {
     scripts: Mutex<VecDeque<String>>,
     requests: Mutex<Vec<LlmRequest>>,
 }
+/// The seat pick's head (the pick is typed decisions through the host's
+/// ladder since 4c541a578f5, #1608): it picks `model` whenever the model
+/// question offers it, keeps the first effort rung, and counts the picks.
 struct Judge {
     model: ModelId,
     calls: AtomicUsize,
 }
-impl SeatJudge for Judge {
-    fn judge(
+impl DecisionProvider for Judge {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "fixture-seat-judge".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        let AnswerContract::Choice { options } = &call.question.contract else {
+            panic!("the seat pick asks Choice questions");
+        };
+        let answer = if options.iter().any(|option| option == self.model.as_str()) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            assert!(!call.state["task"]["task"].as_str().unwrap_or_default().is_empty());
+            self.model.to_string()
+        } else {
+            // The effort question: the chosen model's first rung.
+            "default".to_owned()
+        };
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Choice(answer),
+            probability: Some(0.99),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+/// The receipt's `why` beside the decided pick.
+struct Why;
+impl SeatNotes for Why {
+    fn why(
         &self,
         task: &SeatTask,
-        candidates: &[SeatCandidate],
-    ) -> oneiron::Result<SeatJudgment> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
+        _candidates: &[SeatCandidate],
+        _model: &ModelId,
+        _effort: ReasoningEffort,
+        _deadline: &RetrievalDeadline,
+    ) -> oneiron::Result<String> {
         assert!(!task.task.is_empty());
-        assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate.model == self.model)
-        );
-        Ok(SeatJudgment {
-            model: self.model.clone(),
-            effort: None,
-            why: "The owner's code-task description fits this run".into(),
-        })
+        Ok("The owner's code-task description fits this run".into())
     }
 }
 // One request per call: the provider's run gate wraps it.
@@ -72,6 +105,8 @@ impl LlmBackend for Backend {
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -118,14 +153,6 @@ pub(super) struct CodeMode {
 }
 
 fn code_mode_server(scripts: Vec<String>) -> CodeMode {
-    code_mode_server_with(scripts, None)
-}
-
-/// [`code_mode_server`], with shadow mode's type check when `check` is set.
-pub(super) fn code_mode_server_with(
-    scripts: Vec<String>,
-    check: Option<Arc<oneiron_code_check::ShadowCheck>>,
-) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
@@ -186,12 +213,16 @@ pub(super) fn code_mode_server_with(
                     output_per_million: "1".into(),
                     cache_read_per_million: None,
                     cache_write_per_million: None,
+                    currency: None,
                 }),
                 capabilities: vec![LlmCapability::Reasoning],
                 metadata: BTreeMap::new(),
             },
             scores: BTreeMap::new(),
             fetched_at: BTreeMap::new(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .unwrap();
     vault
@@ -238,11 +269,26 @@ pub(super) fn code_mode_server_with(
         },
     )
     .unwrap()
-    .with_model_seat_router(judge.clone(), "code-task");
-    let provider = match check {
-        Some(check) => provider.with_code_check(check),
-        None => provider,
-    };
+    .with_model_seat_router(
+        SeatDecisions {
+            ladder: HeldLadder {
+                big: Some(judge.clone() as Arc<dyn DecisionProvider>),
+                ..HeldLadder::unstaffed()
+            },
+            principal: seeded_test_entity_id(0x0024_6506),
+            dial: DecisionDial {
+                first: DecisionRung::Big,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: DecisionBandPolicy::default(),
+            model_wording: "Which model should run this code-mode task?".into(),
+            effort_wording: "At which effort should the chosen model run it?".into(),
+            budget: std::time::Duration::from_secs(30),
+            notes: Arc::new(Why),
+        },
+        "code-task",
+    );
     let config = crate::mcp::McpCodeModeProvider::executor_config(
         &provider,
         &vault,
