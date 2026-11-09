@@ -1,9 +1,12 @@
 //! Owner-submitted durable model steps over the engine's existing step executor.
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use super::super::{
     BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, ResponseFormat,
 };
+use super::retry::TransportRetries;
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
@@ -61,15 +64,19 @@ pub struct ModelStepReceipt {
 /// Submit or resume the caller's own logical step. Successes AND terminal
 /// failures are durable; replay neither multiplies retries nor sends a failed
 /// request again. The invocation claim only serializes live entries, while
-/// the step's own checkpoints recover across process restarts.
+/// the step's own checkpoints recover across process restarts. A send the
+/// backend holds unsent while its offer rests for its health spends no
+/// declared attempt: the step waits for the offer back up to `rest_wait`, in
+/// all (FIX 11226).
 pub async fn submit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: ModelStepSubmit,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
+    rest_wait: Duration,
 ) -> MemoryResult<ModelStepReceipt> {
-    submit(vault, owner, input, Some((backend, guard)))
+    submit(vault, owner, input, Some((backend, guard, rest_wait)))
         .await?
         .ok_or_else(|| {
             MemoryError::from(Error::InvariantViolation(
@@ -110,7 +117,7 @@ async fn submit(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: ModelStepSubmit,
-    execution: Option<(&dyn LlmBackend, &BudgetGuard)>,
+    execution: Option<(&dyn LlmBackend, &BudgetGuard, Duration)>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     let actor = owner.revalidate(vault)?;
@@ -250,14 +257,17 @@ async fn submit(
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
     };
-    let outcome = if let Some((backend, guard)) = execution {
+    let outcome = if let Some((backend, guard, rest_wait)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
             guard,
             row.input.request.clone(),
             &FallbackRegistry::standard(),
-            usize::from(row.input.retry.max_attempts - 1),
+            TransportRetries {
+                max: usize::from(row.input.retry.max_attempts - 1),
+                rest_wait,
+            },
         )
         .await
     } else {

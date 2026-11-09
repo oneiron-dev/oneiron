@@ -79,6 +79,7 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
                 ..
             }
             | RetryableLlmError::RateLimited { .. }
+            | RetryableLlmError::HealthRest { .. }
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
             | RetryableLlmError::StreamCut

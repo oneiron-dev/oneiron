@@ -106,6 +106,9 @@ async fn submit(
         meter.reserve_units(),
         read.on_budget_exhausted,
     );
+    // A send held unsent while its offer rests for its health spends no
+    // attempt; the step waits for the offer as any call does (FIX 11226).
+    let rest_wait = ladder.step_rest_wait();
     let backend = StepBackend { ladder, run };
     let runtime = tokio::runtime::Handle::current();
     let server = Arc::clone(server);
@@ -117,6 +120,7 @@ async fn submit(
             input,
             &backend,
             &guard,
+            rest_wait,
         ))
     })
     .await
