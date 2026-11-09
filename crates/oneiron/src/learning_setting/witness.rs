@@ -1,11 +1,14 @@
-//! Native records of the owner PUT acts behind numeric seed and pin rows.
+//! Native records of the PUT acts behind numeric seed and pin rows: the
+//! owner's, and a holder's of `engine.controls`.
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use super::{SettingRow, SettingScope};
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::temporal::TimeRange;
@@ -22,20 +25,10 @@ pub(super) fn put_in_txn(
     scope: &SettingScope,
     row: &SettingRow,
 ) -> Result<EntityId> {
-    let scope_tag = match scope {
-        SettingScope::Vault => "vault",
-        SettingScope::Goal(_) => "goal",
-        SettingScope::Project(_) => "project",
-        SettingScope::Type(_) => "type",
-    };
     let candidate = ClaimCandidate::new(
         PREDICATE,
         ClaimSubject::Entity(owner.entity_ref()),
-        Value::Map(vec![
-            (Value::from("key"), Value::from(row.key.as_str())),
-            (Value::from("mode"), Value::from(row.mode.as_str())),
-            (Value::from("scope_tag"), Value::from(scope_tag)),
-        ]),
+        act_value(scope, row),
         1.0,
     );
     let envelope = WriteEnvelope::new(
@@ -51,6 +44,57 @@ pub(super) fn put_in_txn(
     let id = vault.store.clock.entity_id()?;
     // The owner already decided this act. The typed door retains the normal
     // structural and source-trust checks without a second consent ladder.
+    vault.put_reserved_claim_in_txn(
+        txn,
+        &id,
+        &body,
+        TimeRange {
+            start: row.at,
+            end: row.at,
+        },
+        row.at,
+    )?;
+    Ok(id)
+}
+
+/// What a PUT act's witness names: the key, the mode and the scope's kind.
+fn act_value(scope: &SettingScope, row: &SettingRow) -> Value {
+    let scope_tag = match scope {
+        SettingScope::Vault => "vault",
+        SettingScope::Goal(_) => "goal",
+        SettingScope::Project(_) => "project",
+        SettingScope::Type(_) => "type",
+    };
+    Value::Map(vec![
+        (Value::from("key"), Value::from(row.key.as_str())),
+        (Value::from("mode"), Value::from(row.mode.as_str())),
+        (Value::from("scope_tag"), Value::from(scope_tag)),
+    ])
+}
+
+/// The PUT act of a holder of `engine.controls` (untangle 6.6b): the
+/// engine observed an act its one check admitted in this writer, so the
+/// witness is `Observed` and `Auto`, about the holder. It is never the
+/// owner's own word (`UserStated`), and the engine-control receipt beside it
+/// names the holder, the class and the value.
+pub(super) fn holder_put_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    holder: EntityId,
+    scope: &SettingScope,
+    row: &SettingRow,
+) -> Result<EntityId> {
+    let mut body = ClaimBody::new(
+        PREDICATE,
+        ClaimSubject::Entity(holder),
+        act_value(scope, row),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.valid_from = Some(row.at);
+    body.source = Some(ClaimSource::Observed);
+    let id = vault.store.clock.entity_id()?;
     vault.put_reserved_claim_in_txn(
         txn,
         &id,
