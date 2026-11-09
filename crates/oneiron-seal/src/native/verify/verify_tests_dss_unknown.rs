@@ -157,14 +157,20 @@ mod tests {
         let shadow = test_ca("issuer");
         let later = Some(AT_UNIX + 10_800);
         // Row 1: read at the provisional time itself; the shadow is found at
-        // once. Row 2: read two hours later, when the shadow's CRL is stale,
-        // so the material fails early, before the shadow scan; the probe's
-        // re-read at the provisional time, under the real anchors, finds it.
-        for (row, verified_at) in [
-            ("shadow CRL fresh", AT_UNIX),
-            ("shadow CRL stale at the verification time", AT_UNIX + 7200),
+        // once. Row 2: read two hours later, when the anchor's genuine CRL is
+        // stale, so the material fails early, before the shadow scan; the
+        // probe's re-read at the provisional time, under the real anchors,
+        // finds the shadow. (A shadow's own stale CRL is about nothing in the
+        // chains and never fails early: Engine call Q-C = A.)
+        for (row, verified_at, genuine_next) in [
+            ("genuine CRL fresh", AT_UNIX, later),
+            (
+                "genuine CRL stale at the verification time",
+                AT_UNIX + 7200,
+                NEXT_UPDATE,
+            ),
         ] {
-            let genuine = build_crl(&anchor, THIS_UPDATE, later, None, vec![]);
+            let genuine = build_crl(&anchor, THIS_UPDATE, genuine_next, None, vec![]);
             let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
             let unknown = build_ocsp_full(
                 &anchor,
@@ -222,5 +228,110 @@ mod tests {
                 "{row}"
             );
         }
+    }
+    #[test]
+    fn missing_root_probe_keeps_a_genuine_failure_and_an_unknown() {
+        // Hostile input, one row per shape (Sol, report-unknown-4 section 3).
+        // A certificate path is left unresolved and the material failed at
+        // the verification time, so the missing-root probe re-reads it at the
+        // provisional time. A genuine failure that persists there, or an
+        // authenticated `unknown` found there, is what the check reports,
+        // never a missing trust root: treating every covered certificate as a
+        // root would exempt them from the very checks that found it.
+        let anchor = test_ca("issuer-a");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        // Row 1: the anchor's genuine CRL about the leaf is stale at both
+        // times. A TSA chain whose root is no anchor is covered, and its
+        // root's authenticated `unknown` names the TSA certificate. The
+        // anchor itself is not in /Certs.
+        let tsa_root = test_ca("tsa-root");
+        let tsa_der = leaf_under(&tsa_root, "tsa");
+        let stale = build_crl(&anchor, AT_UNIX - 7200, Some(AT_UNIX - 60), None, vec![]);
+        let tsa_unknown = unknown_for(&tsa_root, &tsa_der);
+        let failing = dss_doc(
+            &[leaf_der.clone(), tsa_der.clone(), tsa_root.cert_der.clone()],
+            &[stale],
+            &[tsa_unknown],
+        );
+        // Row 2: the anchor's genuine CRL is fresh at the provisional time
+        // and stale two hours later; its authenticated `unknown` for the
+        // leaf is fresh at both.
+        let fresh_then_stale = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let leaf_unknown = build_ocsp_full(
+            &anchor,
+            leaf.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 10_800),
+            x509_ocsp::CertStatus::unknown(),
+            AT_UNIX - 60,
+            &anchor,
+            false,
+        );
+        let unknown_then = dss_doc(
+            std::slice::from_ref(&leaf_der),
+            &[fresh_then_stale],
+            &[leaf_unknown],
+        );
+        let rows = [
+            (
+                "genuine CRL about the leaf stale at both times",
+                failing,
+                vec![leaf_der.clone(), tsa_der.clone(), tsa_root.cert_der.clone()],
+                AT_UNIX,
+                (
+                    VerifyCheckStatus::Fail,
+                    Some(VerifyFindingCode::ValidationMaterialInvalid),
+                ),
+            ),
+            (
+                "unknown for the leaf at the provisional time",
+                unknown_then,
+                vec![leaf_der.clone()],
+                AT_UNIX + 7200,
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::RevocationStatusUnknown),
+                ),
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (row, doc, covered_ders, verified_at, expected) in rows {
+            let limits = process_operation_limits();
+            let memory = limits.memory.ledger().unwrap();
+            let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
+            let covered_refs: Vec<&[u8]> = covered_ders.iter().map(Vec::as_slice).collect();
+            let covered = covered_of(&covered_refs);
+            let mut checks = Checks::new(limits);
+            verify_dss(
+                &doc,
+                &anchors,
+                &covered,
+                verified_at,
+                &memory,
+                &mut checks,
+                limits,
+            )
+            .unwrap();
+            let first = dss_finding(&checks);
+            checks
+                .not_run(VerifyCheckKind::TimestampCertificatePath)
+                .unwrap();
+            classify_missing_material_root(
+                &doc,
+                &anchors,
+                &covered,
+                AT_UNIX,
+                &memory,
+                limits,
+                &mut checks,
+            )
+            .unwrap();
+            let found = dss_finding(&checks);
+            if first.0 != VerifyCheckStatus::Fail || found != expected {
+                wrong.push(format!("{row}: first {first:?}, then {found:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "rows not as ruled: {wrong:#?}");
     }
 }
