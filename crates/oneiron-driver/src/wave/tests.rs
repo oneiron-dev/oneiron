@@ -46,11 +46,10 @@ struct NoLadderHost;
 impl PassExecutorFactory for NoLadderHost {
     type Exec<'p> = NoExecutor;
 
-    fn executor<'p>(
-        &'p mut self,
-        _guard: &'p oneiron::BudgetGuard,
-    ) -> oneiron::Result<NoExecutor> {
-        Err(oneiron::Error::InvalidConfig("the wave host tests run no Dreamer pass".into()))
+    fn executor<'p>(&'p mut self, _guard: &'p oneiron::BudgetGuard) -> oneiron::Result<NoExecutor> {
+        Err(oneiron::Error::InvalidConfig(
+            "the wave host tests run no Dreamer pass".into(),
+        ))
     }
 }
 
@@ -97,14 +96,24 @@ fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResu
         bad: false,
     };
     let host = WaveHost::new(&vault, planner, owner, EdgeActorClass::Human);
-    let landed = host.run_plan_once("planner-1", 100)?.expect("claimed");
+    // FIX 8599 (#4104): the cut goes through the fan-out launch door, which
+    // either applies it or holds it for the owner.
+    let oneiron::wave_orchestration::WaveApplyOutcome::Applied(landed) = host
+        .run_plan_once(&NoLadderHost, "planner-1", 100)?
+        .expect("claimed")
+    else {
+        panic!("the cut must apply, not be held for the owner");
+    };
     let first = landed.task_refs["first"];
     let second = landed.task_refs["second"];
     assert_eq!(landed.blocked_by_edges, 1);
     assert_eq!(host.planner.seen.borrow()[0].epic_task_ref, epic);
     assert_eq!(host.planner.seen.borrow()[0].objective, "do work");
     assert_eq!(host.ready_to_dispatch(&[first, second])?, vec![first]);
-    assert!(host.run_plan_once("planner-1", 101)?.is_none());
+    assert!(
+        host.run_plan_once(&NoLadderHost, "planner-1", 101)?
+            .is_none()
+    );
     vault
         .memory(owner, EdgeActorClass::Human)
         .land_task_result(
@@ -136,7 +145,7 @@ fn invalid_agent_cut_does_not_complete_attempt_or_land_tasks() -> WaveResult<()>
         owner,
         EdgeActorClass::Human,
     );
-    assert!(host.run_plan_once("planner-1", 100).is_err());
+    assert!(host.run_plan_once(&NoLadderHost, "planner-1", 100).is_err());
     let request = host.planner.seen.borrow();
     let attempt = AttemptQueue::new(&vault)
         .get(request[0].planner_attempt_ref)?
@@ -237,7 +246,10 @@ fn completed_cut_survives_restart_and_reclaim_without_a_second_plan() -> WaveRes
         owner,
         EdgeActorClass::Human,
     );
-    assert!(host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?.is_none());
+    assert!(
+        host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?
+            .is_none()
+    );
     assert_eq!(
         host.planner.0.get(),
         0,

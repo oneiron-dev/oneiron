@@ -201,6 +201,7 @@ impl DreamerAttemptExecutor for ShutdownRequestingExec {
         self.handle.shutdown();
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 40,
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -266,7 +267,7 @@ async fn shutdown_during_synchronous_pass_stops_at_the_next_attempt_boundary() {
 #[tokio::test]
 async fn shutdown_between_passes_stops_the_loop() {
     let (_dir, vault) = open_vault();
-    let (push, _wake, _hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, _wake, _hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     let factory = TestExecFactory {
         panics_left: 0,
         factory_panics_left: 0,
@@ -384,7 +385,7 @@ async fn budget_exhausted_with_due_deadline_does_not_busy_loop() {
         crate::AttemptQueueDeadlines::new(&vault, 1),
         Arc::clone(&now_ms),
     );
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     // No push producers: once the queue is empty the hybrid source
     // exhausts and the supervisor must stop.
     drop(wake);

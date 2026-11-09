@@ -8,6 +8,14 @@ use oneiron::{
     DREAMER_GRACEFUL_WRAP_WINDOW_MS, DreamerConsolidationScope, DreamerRunnerStore, WakeTrigger,
 };
 
+/// The runner store's old 128-byte budget-id ceiling and the 106-byte base it
+/// left for `{base}:p{n}`, which #2709 (Rule 5: counted, not capped) removed
+/// from the driver and the store. Kept here, under their old names, only so
+/// the tests that pin the old refusal compile unchanged and run once for
+/// their ruling (test rules v2, "run before cut").
+const MAX_RUNNER_BUDGET_ID_LEN: usize = 128;
+const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - 22;
+
 #[test]
 fn durable_pass_budget_id_is_deterministic_per_index() {
     assert_eq!(durable_pass_budget_id("wake", 0), "wake:p0");
@@ -58,7 +66,7 @@ fn widest_derived_pass_budget_id_fits_the_runner_store_ceiling() {
 #[tokio::test]
 async fn over_long_budget_base_refuses_to_run_instead_of_spinning() {
     let (_dir, vault) = open_vault();
-    let (push, _wake, _hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, _wake, _hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     let factory = TestExecFactory {
         panics_left: 0,
         factory_panics_left: 0,
@@ -331,7 +339,7 @@ async fn pre_admission_factory_error_redrives_push_tick_after_backoff() {
     let (_dir, vault) = open_vault();
     let attempt = enqueue_micro(&vault, "redrive-after-factory-err", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     // Drop producers so the source exhausts after the re-driven pass
@@ -388,7 +396,7 @@ async fn shutdown_during_preadmission_redrive_exits_cleanly() {
     let (_dir, vault) = open_vault();
     enqueue_micro(&vault, "shutdown-redrive", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     // Keep producers alive so next_tick would otherwise wait forever —
