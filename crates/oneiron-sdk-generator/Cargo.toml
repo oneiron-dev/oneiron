@@ -1,0 +1,29 @@
+[package]
+name = "oneiron-sdk-generator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The SDK generator: writes the verb table's generated SDK outputs (a port of scripts/sdk/generate.py)"
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "oneiron_sdk_generator"
+doctest = false
+
+[[bin]]
+name = "oneiron-sdk-generator"
+path = "src/main.rs"
+
+[dependencies]
+# Python's dict: insertion order, a duplicate key keeping its first position. In the lock (2.14.2) through
+# serde_json; declared here, never borrowed transitively.
+indexmap = "2"
+regex = { workspace = true }
+# catalog_fragment.py's revision (SHA-256). Named as crates/oneiron names it; not a workspace dependency.
+sha2 = "0.10"
+
+[lints]
+workspace = true
