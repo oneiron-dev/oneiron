@@ -2,7 +2,7 @@
 
 use super::super::cms;
 use super::verify_chain_gates::{issuer_permits_crl_sign, key_usage_permits};
-use super::verify_dss_core::{EmbeddedCert, crl_signer_shadows};
+use super::verify_dss_core::{EmbeddedCert, crl_signer_authorized, crl_signer_shadows};
 use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 
 /// Seconds-since-epoch for an X.509 time choice.
@@ -119,10 +119,13 @@ pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool 
 /// or IDP-scoped CRL or one stale at `at_unix` is Unusable; one listing a
 /// covered serial is Revoked.
 ///
-/// A CRL is about the covered chains when its signer is the issuer of a
-/// covered non-anchor certificate: by key, or by a key a trust anchor
-/// vouches for under that issuer's name (a separate CRL-signing key, a
-/// rollover's link certificate, an anchored same-subject CA; ruling Q2).
+/// A CRL is about the covered chains when its signer has revocation
+/// authority over a covered non-anchor certificate: it issued it, or it
+/// holds a key that certificate's own issuer certified (a separate
+/// CRL-signing key, a rollover's link certificate; RFC 5280 §5.1.1.3,
+/// §5.2.1). A same-subject CA another trust anchor vouches for is no shadow
+/// (ruling Q2) but has no authority over another CA's certificates (RFC
+/// 5280 §8): its CRL claims nothing about them.
 /// What a CRL about nothing in the chains says (stale, scoped, a listing)
 /// claims nothing about them (Engine call Q-C = A, 10 Nov 07:23; Q4): it is
 /// returned unjudged, supplies no coverage, and still reaches the shadow
@@ -170,12 +173,13 @@ pub(super) fn crl_entry_valid<'a>(
         return Ok(Err(EvidenceRejection::Unverifiable));
     }
     // Relevance and listings: for each covered non-anchor certificate under
-    // this CRL's issuer name, the signer is its issuer or a vouched key
-    // (not a shadow), or a shadow. A vouched signer makes the CRL about
-    // the chains, and its listing of that certificate is a revocation; a
-    // shadow's listing is forged material about it, Unverifiable, never a
-    // failure a third party could append (lead ruling F). A listing of a
-    // certificate outside the covered chains claims nothing about them.
+    // this CRL's issuer name, the signer has revocation authority over it,
+    // is a shadow of its issuer, or is neither (a same-subject CA another
+    // anchor vouches for). Authority makes the CRL about the chains, and
+    // its listing of that certificate is a revocation; a shadow's listing is
+    // forged material about it, Unverifiable, never a failure a third party
+    // could append (lead ruling F). Any other listing, or a listing of a
+    // certificate outside the covered chains, claims nothing about them.
     let revoked = crl
         .tbs_cert_list
         .revoked_certificates
@@ -190,15 +194,15 @@ pub(super) fn crl_entry_valid<'a>(
         {
             continue;
         }
-        let vouched = !crl_signer_shadows(cert, issuer, embedded, anchors, covered, memory)?;
-        about_chain |= vouched;
+        let authorized = crl_signer_authorized(cert, issuer, embedded, anchors, memory)?;
+        about_chain |= authorized;
         if revoked
             .iter()
             .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
         {
-            if vouched {
+            if authorized {
                 revoked_listing = true;
-            } else {
+            } else if crl_signer_shadows(cert, issuer, embedded, anchors, covered, memory)? {
                 forged_listing = true;
             }
         }

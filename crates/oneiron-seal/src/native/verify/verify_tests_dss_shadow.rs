@@ -204,19 +204,31 @@ mod tests {
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
     #[test]
-    fn dss_crl_listing_by_a_vouched_key_is_a_revocation() {
-        // A key a trust anchor vouches for under the leaf's issuer name is
-        // the issuer's own revocation authority (ruling Q2), so its CRL is
-        // about the leaf's chain (Engine call Q-C = A): its listing of the
-        // leaf is a genuine revocation and fails, never forged material.
-        // One row per legitimate shape of the Q2 tests above, each now
-        // listing the leaf's serial.
+    fn dss_crl_counts_only_from_a_key_with_authority_over_the_leaf() {
+        // A same-subject CRL key the leaf's own issuer certified is that
+        // issuer's revocation authority (RFC 5280 §5.1.1.3, §5.2.1): its CRL is
+        // about the leaf's chain, and its listing of the leaf is a revocation
+        // that fails. A same-subject CA another trust anchor vouches for is no
+        // shadow (ruling Q2) but has no authority over the leaf (RFC 5280 §8,
+        // §6.3.3(f)): its CRL claims nothing about it (Engine call Q-C = A),
+        // whether it lists the leaf's serial or is stale, and beside the
+        // issuer's genuine CRL the material passes (Sol, report-shadow-f3
+        // section 2).
         let serial_of = |der: &[u8]| {
             x509_cert::Certificate::from_der(der)
                 .unwrap()
                 .tbs_certificate
                 .serial_number
         };
+        let failed = (
+            VerifyCheckStatus::Fail,
+            Some(VerifyFindingCode::ValidationMaterialInvalid),
+        );
+        let missing = (
+            VerifyCheckStatus::NotRun,
+            Some(VerifyFindingCode::ValidationMaterialUnavailable),
+        );
+        let passed = (VerifyCheckStatus::Pass, None);
         let anchor = test_ca("issuer");
         let anchor_leaf = leaf_under(&anchor, "leaf");
         let crl_signer = child_ca(&anchor, "issuer");
@@ -227,9 +239,9 @@ mod tests {
         let first = test_ca("issuer");
         let second = test_ca("issuer");
         let second_leaf = leaf_under(&second, "leaf");
-        let rows: Vec<(&str, Document, Vec<&TestCa>, &[u8])> = vec![
+        let rows: Vec<(&str, Document, Vec<&TestCa>, &[u8], _)> = vec![
             (
-                "a CA's separate CRL-signing key",
+                "the issuer's separate CRL-signing key lists the leaf",
                 dss_doc(
                     &[anchor_leaf.clone(), crl_signer.cert_der.clone()],
                     &[build_crl(
@@ -243,9 +255,10 @@ mod tests {
                 ),
                 vec![&anchor],
                 anchor_leaf.as_slice(),
+                failed,
             ),
             (
-                "a rolled-over key with its link certificate",
+                "the issuer's rolled-over key, with its link certificate, lists the leaf",
                 dss_doc(
                     &[old_leaf.clone(), new.cert_der.clone(), link_der],
                     &[build_crl(
@@ -259,9 +272,10 @@ mod tests {
                 ),
                 vec![&old],
                 old_leaf.as_slice(),
+                failed,
             ),
             (
-                "an anchored CA with the same subject",
+                "another anchored CA with the same subject lists the leaf's serial",
                 dss_doc(
                     std::slice::from_ref(&second_leaf),
                     &[build_crl(
@@ -275,18 +289,28 @@ mod tests {
                 ),
                 vec![&first, &second],
                 second_leaf.as_slice(),
+                missing,
+            ),
+            (
+                "another anchored CA's stale CRL beside the issuer's genuine CRL",
+                dss_doc(
+                    std::slice::from_ref(&second_leaf),
+                    &[
+                        build_crl(&first, AT_UNIX - 7200, Some(AT_UNIX - 60), None, vec![]),
+                        build_crl(&second, THIS_UPDATE, NEXT_UPDATE, None, vec![]),
+                    ],
+                    &[],
+                ),
+                vec![&first, &second],
+                second_leaf.as_slice(),
+                passed,
             ),
         ];
         let mut wrong = Vec::new();
-        for (row, doc, anchors, leaf) in rows {
+        for (row, doc, anchors, leaf, expected) in rows {
             let checks = material_check(&doc, &anchors, &[leaf]);
             let found = dss_finding(&checks);
-            if found
-                != (
-                    VerifyCheckStatus::Fail,
-                    Some(VerifyFindingCode::ValidationMaterialInvalid),
-                )
-            {
+            if found != expected {
                 wrong.push(format!("{row}: {found:?}"));
             }
         }
