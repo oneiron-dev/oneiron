@@ -90133,6 +90133,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "UnboundPass"
+     ],
+     "path": "src/test_doors/consolidation.rs",
+     "purpose": "One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -90149,7 +90162,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 2
+      "mod": 3
      }
     },
     {
@@ -98185,6 +98198,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_relationship_label.rs",
+     "purpose": "An extraction candidate never holds wider than its words' relationship label (S63E-RULED, live leak 1)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100486,9 +100507,9 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)"
     },
@@ -100656,8 +100677,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7234,
-   "test_files": 900
+   "source_files": 7235,
+   "test_files": 901
   },
   "oneiron-agent-runtime": {
    "files": [
