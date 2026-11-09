@@ -112,7 +112,7 @@ pub(super) fn fold_policy_manifest(
         };
         let decoded_row = store
             .manifest_memo()
-            .row(steward_body.as_deref().unwrap_or(body));
+            .row(steward_body.as_deref().unwrap_or(&body[..]));
         match &decoded_row.carrier {
             Some(DecodedManifestCarrier::Pack(pack)) => {
                 let decoded = pack.clone();
