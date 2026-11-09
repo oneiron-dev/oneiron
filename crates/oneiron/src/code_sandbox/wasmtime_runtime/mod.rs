@@ -5,18 +5,16 @@
 //! (for example an ABI conformance fixture); it makes no QuickJS provenance
 //! claim. No WASI, environment, filesystem or network imports are linked.
 
-mod isolated;
 #[cfg(test)]
 mod tests;
-mod typed;
-mod wire;
+#[doc(hidden)]
+pub mod wire;
 
 /// Types generated from the canonical guest/SDK WIT.
 pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit", world: "guest" });
 }
 
-use super::guest_error::guest_failure;
 use super::source::{PreparedSource, prepare_source};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
@@ -79,14 +77,14 @@ impl Default for ComponentBudget {
 /// Each invocation uses a fresh store. Authority comes only from its host bridge.
 pub struct WasmtimeComponentRuntime {
     engine: Engine,
-    component: Component,
-    component_bytes: std::sync::Arc<[u8]>,
-    foreign_egress: Option<std::sync::Arc<dyn oneiron_container::EgressRelay>>,
+    pub component: Component,
+    pub component_bytes: std::sync::Arc<[u8]>,
+    pub foreign_egress: Option<std::sync::Arc<dyn oneiron_container::EgressRelay>>,
     /// The host's measured disk floor foreign steps' proposed files spool on
     /// (FIX 7650); none spools them as before.
-    proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
-    budget: ComponentBudget,
-    adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
+    pub proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
+    pub budget: ComponentBudget,
+    pub adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
 
 impl WasmtimeComponentRuntime {
@@ -571,7 +569,7 @@ struct Bridge<'a> {
 }
 
 /// One streamed frame's target, owned for the trip to the host thread.
-enum StreamTarget {
+pub enum StreamTarget {
     Console,
     Finish { start: bool },
     Store { start: bool },
@@ -595,7 +593,7 @@ impl StreamTarget {
 #[derive(Default)]
 struct HeldOutput {
     console: Vec<u8>,
-    finish: Vec<u8>,
+    pub finish: Vec<u8>,
     files: Vec<(String, Vec<u8>)>,
 }
 
@@ -668,18 +666,18 @@ impl HeldOutput {
     }
 }
 
-struct State {
-    events: mpsc::SyncSender<HostEvent>,
-    limits: StoreLimits,
+pub struct State {
+    pub events: mpsc::SyncSender<HostEvent>,
+    pub limits: StoreLimits,
     /// The step's host calls, observed when its store drops (FIX 8676).
-    calls: typed::ComponentCallObservation,
-    message_bytes: usize,
+    pub calls: typed::ComponentCallObservation,
+    pub message_bytes: usize,
     /// The step's deadline stop: once set, every import traps instead of
     /// answering its guest (FIX 7703).
-    deadline_stop: Arc<AtomicBool>,
+    pub deadline_stop: Arc<AtomicBool>,
 }
 
-enum HostEvent {
+pub enum HostEvent {
     Call {
         name: &'static str,
         input: String,
@@ -693,6 +691,6 @@ enum HostEvent {
     Finished(Result<Stepped>),
 }
 
-fn failure(detail: &'static str) -> Error {
+pub fn failure(detail: &'static str) -> Error {
     Error::InvalidConfig(detail.to_owned())
 }

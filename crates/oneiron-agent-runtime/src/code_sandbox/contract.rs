@@ -1,5 +1,7 @@
 //! Sandbox boundary contracts are defined in the store layer.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 pub use crate::store::sandbox_contract::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
     SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,

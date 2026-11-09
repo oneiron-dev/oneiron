@@ -6,8 +6,8 @@ pub use oneiron_store::sandbox_import::*;
 /// One host import exposed at link time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SandboxLinkedImport {
-    pub(crate) name: &'static str,
-    pub(crate) class: SandboxImportClass,
+    pub name: &'static str,
+    pub class: SandboxImportClass,
 }
 
 impl SandboxLinkedImport {

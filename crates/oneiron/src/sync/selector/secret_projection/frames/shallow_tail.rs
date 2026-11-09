@@ -422,7 +422,7 @@ fn recompute_latest(skeleton: &mut Skeleton) {
 struct RootSnapshot {
     vv: Vec<(PeerID, Counter)>,
     frontiers: Vec<(PeerID, Counter)>,
-    maps: BTreeSet<String>,
+    pub maps: BTreeSet<String>,
     winners: BTreeMap<(String, String), (PeerID, Lamport, Option<LoroValue>)>,
 }
 

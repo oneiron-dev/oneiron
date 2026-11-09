@@ -24,16 +24,10 @@ where
 /// Output for a caller with no executor body store, on its actual shared disk floor.
 pub struct MicroVmOutputSpool {
     floor: Arc<dyn ProposalSpoolFloor>,
-    console: Option<SandboxProposalBodyWriter>,
-    finish: Option<SandboxProposalBodyWriter>,
+    pub console: Option<SandboxProposalBodyWriter>,
+    pub finish: Option<SandboxProposalBodyWriter>,
     store: Option<SandboxProposalBodyWriter>,
-    files: Vec<(String, SandboxProposalBodyWriter)>,
-}
-
-/// The selected observation and output files, retaining their admitted spools.
-pub struct MicroVmOutputBodies {
-    pub observation: Option<SandboxProposalBody>,
-    pub files: Vec<(String, SandboxProposalBody)>,
+    pub files: Vec<(String, SandboxProposalBodyWriter)>,
 }
 
 /// Every stream role, retained without choosing a step observation.
@@ -46,15 +40,6 @@ pub struct MicroVmOutputStreamBodies {
 }
 
 impl MicroVmOutputSpool {
-    pub fn new(floor: Arc<dyn ProposalSpoolFloor>) -> Self {
-        Self {
-            floor,
-            console: None,
-            finish: None,
-            store: None,
-            files: Vec::new(),
-        }
-    }
 
     /// Retains each role as received when the caller's result is not a selected observation.
     pub fn into_stream_bodies(self) -> Result<MicroVmOutputStreamBodies> {
@@ -79,17 +64,6 @@ impl MicroVmOutputSpool {
         })
     }
 
-    /// Selects finish for a completed step, otherwise console, as the executor does.
-    /// Untaken store frames and the unselected text are dropped without a second read.
-    pub fn into_step_bodies(self, done: bool) -> Result<MicroVmOutputBodies> {
-        let text = if done { self.finish } else { self.console };
-        let observation = text.map(SandboxProposalBodyWriter::finish).transpose()?;
-        let mut files = Vec::with_capacity(self.files.len());
-        for (path, writer) in self.files {
-            files.push((path, writer.finish()?));
-        }
-        Ok(MicroVmOutputBodies { observation, files })
-    }
 }
 
 impl MicroVmOutputSink for MicroVmOutputSpool {

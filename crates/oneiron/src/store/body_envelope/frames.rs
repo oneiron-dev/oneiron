@@ -343,7 +343,7 @@ pub(super) struct FrameWriter {
     buffer: Zeroizing<Vec<u8>>,
     index: u64,
     len: u64,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     overhead: Option<u64>,
 }
 
@@ -588,7 +588,7 @@ pub(crate) struct SealedStream<R> {
     layout: Option<Layout>,
     next: u64,
     done: bool,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     lines: LineCounter,
     out: Zeroizing<Vec<u8>>,
     at: usize,
@@ -735,7 +735,7 @@ pub(crate) struct SealingStream<R> {
     digest: Option<[u8; 32]>,
     next: u64,
     done: bool,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     out: Vec<u8>,
     at: usize,
 }

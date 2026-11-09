@@ -2,18 +2,24 @@
 //! used as a transport. The owner allowlist is an optional narrowing dial.
 
 mod dns;
-mod fixture;
-mod floor;
+#[doc(hidden)]
+pub mod fixture;
+#[doc(hidden)]
+pub mod floor;
 mod http;
-mod name_gate;
-mod quic;
-mod receipt;
+#[doc(hidden)]
+pub mod name_gate;
+#[doc(hidden)]
+pub mod quic;
+#[doc(hidden)]
+pub mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
 pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
-pub use floor::{ProcessDescriptorFloor, VaultHostFloor, guest_network_permits};
+pub use floor::ProcessDescriptorFloor;
+pub use floor::VaultHostFloor;
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
@@ -96,7 +102,7 @@ impl RawEndpointGrant {
 
 /// What admits a raw socket to an address (FIX 7652).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RawAuthority {
+pub enum RawAuthority {
     /// No allowlist, an allowlisted address or an owner raw endpoint grant:
     /// the guest's bytes go on unread.
     Open,
@@ -126,10 +132,10 @@ pub struct OpenEgressProxy {
     /// An ended binding admits nothing: it names the name to look up again
     /// when its address is used.
     bindings: Mutex<HashMap<IpAddr, HashMap<String, Instant>>>,
-    fixture: Option<std::path::PathBuf>,
+    pub fixture: Option<std::path::PathBuf>,
     /// The fixture origin's one upstream (FIX 8061), none unless the host
     /// set one through [`OpenEgressProxy::with_fixture_forward`].
-    fixture_forward: Option<FixtureForward>,
+    pub fixture_forward: Option<FixtureForward>,
     /// The QUIC flows whose opening ClientHello the datagram name gate
     /// holds or judged (FIX 8991).
     quic_flows: Arc<quic::FlowTable>,

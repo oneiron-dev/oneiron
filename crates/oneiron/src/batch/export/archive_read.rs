@@ -107,7 +107,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
 /// failed by any read error but an interrupted read's.
 struct CheckedMember<M> {
     member: M,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     count: u64,
     failed: bool,
 }

@@ -1,5 +1,7 @@
 //! Host-only image pins and jailer profile validation.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use super::refused;
 use crate::Result;
 use crate::code_sandbox::microvm::GuestImage;

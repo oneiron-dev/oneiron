@@ -1,5 +1,7 @@
 //! Descriptor-relative, no-symlink source snapshot for a foreign VM.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use super::refused;
 use crate::{
     Result,

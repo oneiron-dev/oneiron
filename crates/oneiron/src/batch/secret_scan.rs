@@ -617,7 +617,7 @@ fn detect_in(haystack: &str, door: Door, phrases: bool) -> Option<&'static str> 
 /// Recursively filters both credential field names and credential-shaped values.
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
-pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+pub fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
     sanitize_json_whole(value, null, release_reads_whole_json)
 }
 

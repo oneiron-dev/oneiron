@@ -81,7 +81,7 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
 #[cfg(unix)]
 struct HashingWriter<W> {
     inner: W,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
 }
 
 #[cfg(unix)]

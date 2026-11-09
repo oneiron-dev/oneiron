@@ -2,6 +2,8 @@
 //! stored as a result of the run when it is too large for one message. Once
 //! the reply is made, the host hears that its guest got it (FIX 3608).
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use serde_json::{Value, json};
 
 use super::admitted;

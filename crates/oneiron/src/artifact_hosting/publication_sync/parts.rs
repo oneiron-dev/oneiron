@@ -486,7 +486,7 @@ struct SpoolWriter<'a, 't> {
     entity: EntityId,
     part: Vec<u8>,
     written: u64,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     /// The spool write that failed, which the serializer saw only as an I/O
     /// error.
     failed: Option<Error>,

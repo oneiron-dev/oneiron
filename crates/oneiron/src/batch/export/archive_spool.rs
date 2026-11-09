@@ -39,7 +39,7 @@ pub(crate) struct RecordSpool {
     file: BufWriter<File>,
     rows: u64,
     bytes: u64,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
 }
 
 impl RecordSpool {

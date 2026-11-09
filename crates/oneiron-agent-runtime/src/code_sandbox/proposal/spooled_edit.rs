@@ -1,5 +1,7 @@
 //! Whole-file proposals compared with a spooled boot snapshot.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use super::{
     LOWER_FRAME, SandboxFileEdit, SandboxFileEditProposal, SandboxFileWriteProposal,
     SandboxProposalBody, SandboxProposalText, zeroed,

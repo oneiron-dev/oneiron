@@ -5,26 +5,25 @@
 //! There is no process-backend fallback. See `guest-protocol.md` for the
 //! externally built guest contract and the real-boot acceptance requirements.
 
-mod config;
 #[cfg(target_os = "linux")]
-mod egress;
-#[cfg(target_os = "linux")]
-mod launch;
-#[cfg(target_os = "linux")]
-mod oci_mounts;
+#[doc(hidden)]
+pub mod launch;
 #[cfg(target_os = "linux")]
 mod oci_session;
 #[cfg(target_os = "linux")]
-mod protocol;
-#[cfg(target_os = "linux")]
-mod snapshot;
+#[doc(hidden)]
+pub mod protocol;
 #[cfg(test)]
 mod tests;
 
-use super::microvm::{
-    CredentialEgressProxy, CredentialReadTransport, CredentialResolver, ExecutionBudget,
-    GuestImage, MicroVmBackend, MicroVmExit, MicroVmHandle, prepare_overlay_handle,
-};
+use super::microvm::CredentialEgressProxy;
+use super::microvm::CredentialReadTransport;
+use super::microvm::CredentialResolver;
+use super::microvm::ExecutionBudget;
+use super::microvm::GuestImage;
+use super::microvm::MicroVmBackend;
+use super::microvm::MicroVmExit;
+use super::microvm::MicroVmHandle;
 use super::{ProposalSpoolFloor, SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
 use crate::engine_executor::StepCancellation;
 use crate::error::CodeError;
@@ -36,8 +35,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub use config::{FirecrackerHostConfig, GuestArtifactPins};
-
 pub const FIRECRACKER_BACKEND_NAME: &str = "firecracker";
 pub const FIRECRACKER_BIN_ENV: &str = "ONEIRON_MICROVM_FIRECRACKER_BIN";
 pub const FIRECRACKER_ROOT_ENV: &str = "ONEIRON_MICROVM_ROOT";
@@ -46,7 +43,7 @@ pub const FIRECRACKER_CONFIG_ENV: &str = "ONEIRON_MICROVM_CONFIG";
 
 /// Prepared handles are capabilities belonging to this backend, not path inputs.
 pub struct FirecrackerBackend {
-    root: PathBuf,
+    pub root: PathBuf,
     config: Option<FirecrackerHostConfig>,
     transport: Option<Arc<dyn CredentialReadTransport>>,
     /// The host's measured disk floor guests' proposed files spool on
@@ -444,7 +441,7 @@ impl fmt::Debug for FirecrackerBackend {
     }
 }
 
-fn refused(detail: &'static str) -> Error {
+pub fn refused(detail: &'static str) -> Error {
     Error::Code(CodeError::MicroVmBackendError {
         backend: FIRECRACKER_BACKEND_NAME,
         detail: detail.to_owned(),

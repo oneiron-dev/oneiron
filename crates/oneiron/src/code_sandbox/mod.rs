@@ -18,16 +18,15 @@ pub mod wasmtime_boundary;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod wasmtime_runtime;
 
-mod adapter;
-mod contract;
-mod credential;
+#[doc(hidden)]
+pub mod adapter;
 /// Engine-owned open-web relay and owner-local receipts.
 pub mod egress;
 pub mod foreign;
 /// A guest program's own error text, masked before it leaves the host (FIX 9209).
 pub mod guest_error;
-mod paths;
-mod proposal;
+#[doc(hidden)]
+pub mod proposal;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
 /// in process, JavaScript passed through byte for byte (FIX 8276).
 pub use oneiron_code_source::source;
@@ -38,12 +37,17 @@ pub mod firecracker;
 /// MicroVM execution lane for foreign and ingested guest code.
 pub mod microvm;
 
-pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
-pub use self::contract::{
-    PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
-    SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,
-    SandboxGuestTier, SandboxImportClass, SandboxLinkedImport, SandboxLinkedImportEffects,
-};
+pub use self::adapter::SandboxBoundaryAdapter;
+pub use self::contract::PLAIN_JS_HOST_VERB_DTS;
+pub use self::contract::SANDBOX_JS_COMPONENT_NAME;
+pub use self::contract::SANDBOX_WIT_WORLD_NAME;
+pub use self::contract::SandboxBoundaryContract;
+pub use self::contract::SandboxComponentBoundary;
+pub use self::contract::SandboxGuestLanguage;
+pub use self::contract::SandboxGuestRuntime;
+pub use self::contract::SandboxGuestTier;
+pub use self::contract::SandboxImportClass;
+pub use self::contract::SandboxLinkedImport;
 pub use self::credential::{
     SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle,
     SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead, SandboxReadFile,

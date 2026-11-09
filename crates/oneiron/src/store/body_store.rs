@@ -308,7 +308,7 @@ fn copy_checked(
 
 /// What one body is, measured as its bytes stream past.
 pub(crate) struct BodyMeter {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     len: u64,
     newlines: u64,
     last: Option<u8>,

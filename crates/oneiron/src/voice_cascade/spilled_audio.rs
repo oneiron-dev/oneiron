@@ -207,7 +207,7 @@ pub struct SpilledFrame {
     spill: Option<BodySpill>,
     /// A spill that would not open: the frame stays in memory from here.
     spill_refused: bool,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     len: u64,
 }
 

@@ -2,6 +2,8 @@
 //! row's output, and, in an off-record room, what each verb hook bound to
 //! the search did. Projection only.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use serde_json::{Value, json};
 
 use crate::code_run::{MemorySearchHit, MemorySearchOutput, SelfMemorySearchResult};

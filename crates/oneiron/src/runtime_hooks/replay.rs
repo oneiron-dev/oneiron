@@ -457,7 +457,7 @@ impl Replay<'_> {
 struct PinnedReads<'p> {
     pins: &'p [HookReadPin],
     served: usize,
-    scratch: Vec<HookReadPin>,
+    pub scratch: Vec<HookReadPin>,
     /// The entry's reason once a read's history is gone.
     missing: Option<String>,
 }

@@ -1,0 +1,396 @@
+//! Lifted half of `oneiron::code_sandbox::microvm::overlay` (core split, `oneiron-agent-runtime`): the items below moved out of
+//! `oneiron`; the items that stay there are re-exported here, so paths in this crate resolve as before.
+
+pub use oneiron::code_sandbox::microvm::overlay::*;
+#[allow(unused_imports)]
+use crate::ext::*;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
+use crate::code_sandbox::SANDBOX_WORKSPACE_ROOT;
+use crate::code_sandbox::SandboxBoundaryContract;
+use crate::code_sandbox::SandboxDirectoryOpaqueProposal;
+use crate::code_sandbox::SandboxFileDeleteProposal;
+use crate::code_sandbox::SandboxFileWriteProposal;
+use crate::code_sandbox::SandboxMount;
+use crate::code_sandbox::SandboxMountTable;
+use crate::code_sandbox::SandboxProposalBody;
+use crate::code_sandbox::SandboxProposalWrite;
+use crate::code_sandbox::SandboxVirtualPath;
+use crate::EntityId;
+use crate::Error;
+use crate::Result;
+use super::backend::backend_error;
+use super::handle::MicroVmHandle;
+use crate::error::CodeError;
+
+/// Provisions the overlay + egress layout every backend shares.
+///
+/// The base mount is recorded read-only on the handle and is not created or
+/// touched here; only the upper directory the guest writes into is made.
+///
+/// # Errors
+///
+/// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the contract is not
+/// propose-only or the overlay directory cannot be created.
+pub fn prepare_overlay_handle(
+    root: &Path,
+    backend: &'static str,
+    contract: &SandboxBoundaryContract,
+    mounts: &SandboxMountTable,
+) -> Result<MicroVmHandle> {
+    if contract.links_write_imports() || !contract.has_proposal_delta_channel() {
+        return Err(backend_error(backend, "guest contract is not propose-only"));
+    }
+
+    ensure_private_scratch_root(root, backend)?;
+
+    let base_root =
+        mounts.resolve_host_path(&SandboxVirtualPath::try_new(SANDBOX_WORKSPACE_ROOT)?)?;
+    let vm_id = EntityId::now().to_hex();
+    let (vm_root, scratch) = super::scratch::provision(root, &vm_id, backend)?;
+    let overlay_upper = vm_root.join("upper");
+    fs::create_dir(&overlay_upper)
+        .map_err(|error| backend_error(backend, overlay_io_detail("upper", &error)))?;
+
+    Ok(MicroVmHandle::new(
+        vm_id,
+        contract.tier(),
+        base_root,
+        overlay_upper,
+        vm_root.join("egress.sock"),
+    )?
+    .with_scratch(scratch))
+}
+
+fn ensure_private_scratch_root(root: &Path, backend: &'static str) -> Result<()> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata) => validate_scratch_root(root, backend, &metadata)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(root).map_err(|error| {
+                backend_error(backend, scratch_root_io_detail(root, "create", &error))
+            })?;
+            let metadata = fs::symlink_metadata(root).map_err(|error| {
+                backend_error(backend, scratch_root_io_detail(root, "inspect", &error))
+            })?;
+            validate_scratch_root(root, backend, &metadata)?;
+        }
+        Err(error) => {
+            return Err(backend_error(
+                backend,
+                scratch_root_io_detail(root, "inspect", &error),
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            backend_error(backend, scratch_root_io_detail(root, "chmod 0700", &error))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_scratch_root(
+    root: &Path,
+    backend: &'static str,
+    metadata: &fs::Metadata,
+) -> Result<()> {
+    if metadata.file_type().is_symlink() {
+        return Err(backend_error(
+            backend,
+            format!("scratch root `{}` is a symlink", root.display()),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(backend_error(
+            backend,
+            format!("scratch root `{}` is not a directory", root.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        // SAFETY: `geteuid` has no preconditions and only reads the process's
+        // effective user identity; it dereferences no caller-provided pointer.
+        let expected_uid = unsafe { libc::geteuid() };
+        validate_scratch_root_owner(root, backend, metadata.uid(), expected_uid)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(super) fn validate_scratch_root_owner(
+    root: &Path,
+    backend: &'static str,
+    actual_uid: u32,
+    expected_uid: u32,
+) -> Result<()> {
+    if actual_uid != expected_uid {
+        return Err(backend_error(
+            backend,
+            format!(
+                "scratch root `{}` has unexpected ownership: expected owner uid {expected_uid}, actual owner uid {actual_uid}",
+                root.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn scratch_root_io_detail(root: &Path, operation: &str, error: &std::io::Error) -> String {
+    format!(
+        "scratch root `{}` {operation} failed: {}",
+        root.display(),
+        error.kind()
+    )
+}
+
+/// Collects an overlay upper directory into typed review proposals.
+/// Proposal export spools overlay files without a per-file size bound.
+/// A whiteout is a deletion; an opaque marker is a directory hide request.
+/// A whiteout paired with a new file does not prove a rename of one document:
+/// explicit rename intent must come from the guest protocol.
+///
+/// Backends share this so the "writes are proposals" shape is identical across
+/// the dev and isolating lanes. The base mount is never opened here.
+///
+/// # Errors
+///
+/// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay root is missing or
+/// invalid, an entry vanishes during traversal, or an entry has a non-UTF-8
+/// name, is a symlink, or is an unsupported type.
+pub fn collect_overlay_writes(
+    upper_root: &Path,
+    mount: SandboxMount,
+) -> Result<Vec<SandboxProposalWrite>> {
+    let root_metadata = fs::symlink_metadata(upper_root).map_err(|error| {
+        overlay_error(format!(
+            "overlay root `{}` is unavailable: {}",
+            upper_root.display(),
+            error.kind()
+        ))
+    })?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(overlay_error(format!(
+            "overlay root `{}` is a symlink",
+            upper_root.display()
+        )));
+    }
+    if !root_metadata.is_dir() {
+        return Err(overlay_error(format!(
+            "overlay root `{}` is not a directory",
+            upper_root.display()
+        )));
+    }
+
+    let mut files = BTreeMap::<OverlayKey, SandboxProposalWrite>::new();
+    let mut stack = vec![(upper_root.to_path_buf(), String::new())];
+    while let Some((dir, prefix)) = stack.pop() {
+        walk_overlay_dir(&dir, &prefix, mount, &mut files, &mut stack)?;
+    }
+
+    Ok(files.into_values().collect())
+}
+
+/// Keep directory effects separate from file effects, even if a real file is
+/// literally named `.opaque` in that directory. Opaque markers sort first, so
+/// a reviewer applying the list in order hides lower children before writes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum OverlayKey {
+    Opaque(String),
+    File(String),
+}
+
+pub(super) fn walk_overlay_dir(
+    dir: &Path,
+    prefix: &str,
+    mount: SandboxMount,
+    files: &mut BTreeMap<OverlayKey, SandboxProposalWrite>,
+    stack: &mut Vec<(PathBuf, String)>,
+) -> Result<()> {
+    // The root and each nested directory may carry the kernel's opaque xattr.
+    // An OCI-style .wh..wh..opq marker is handled as an entry below.
+    if is_opaque(dir)? {
+        let path = SandboxVirtualPath::try_new(if prefix.is_empty() {
+            mount.root().to_owned()
+        } else {
+            format!("{}/{prefix}", mount.root())
+        })?;
+        files.insert(
+            OverlayKey::Opaque(path.as_str().to_owned()),
+            SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
+        );
+    }
+    let entries = fs::read_dir(dir).map_err(|error| {
+        overlay_error(format!(
+            "overlay directory `{}` disappeared or cannot be read: {}",
+            dir.display(),
+            error.kind()
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        let entry_path = entry.path();
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| overlay_error("overlay entry name is not utf-8"))?;
+        let metadata = fs::symlink_metadata(&entry_path)
+            .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        if metadata.is_symlink() {
+            return Err(overlay_error(format!(
+                "overlay entry `{name}` is a symlink"
+            )));
+        }
+
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if name == ".wh..wh..opq" {
+            if !metadata.is_file() || metadata.len() != 0 {
+                return Err(overlay_error("invalid opaque directory marker"));
+            }
+            let path = SandboxVirtualPath::try_new(if prefix.is_empty() {
+                mount.root().to_owned()
+            } else {
+                format!("{}/{prefix}", mount.root())
+            })?;
+            files.insert(
+                OverlayKey::Opaque(path.as_str().to_owned()),
+                SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
+            );
+            continue;
+        }
+        if let Some(target) = name.strip_prefix(".wh.") {
+            if target.is_empty() || !metadata.is_file() || metadata.len() != 0 {
+                return Err(overlay_error("invalid whiteout marker"));
+            }
+            let target = if prefix.is_empty() {
+                target.to_owned()
+            } else {
+                format!("{prefix}/{target}")
+            };
+            add_delete(&target, mount, files)?;
+            continue;
+        }
+        #[cfg(unix)]
+        if metadata.file_type().is_char_device() {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.rdev() != 0 {
+                return Err(overlay_error(format!(
+                    "overlay entry `{relative}` is not a whiteout"
+                )));
+            }
+            add_delete(&relative, mount, files)?;
+            continue;
+        }
+        if metadata.is_dir() {
+            stack.push((entry_path, relative));
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(overlay_error(format!(
+                "overlay entry `{relative}` is not a plain file"
+            )));
+        }
+
+        // The file is spooled as it is read, never held whole: a proposed
+        // file has no size bound (Rule 5).
+        let mut file = fs::File::open(&entry_path)
+            .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
+        let body = SandboxProposalBody::copy_from(&mut file)?;
+
+        let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
+        if files
+            .insert(
+                OverlayKey::File(path.as_str().to_owned()),
+                SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, body)),
+            )
+            .is_some()
+        {
+            return Err(overlay_error("overlay path has conflicting entries"));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn overlay_io_detail(class: &str, error: &std::io::Error) -> String {
+    format!("overlay {class} io failed: {}", error.kind())
+}
+
+fn add_delete(
+    relative: &str,
+    mount: SandboxMount,
+    files: &mut BTreeMap<OverlayKey, SandboxProposalWrite>,
+) -> Result<()> {
+    let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
+    if files
+        .insert(
+            OverlayKey::File(path.as_str().to_owned()),
+            SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
+        )
+        .is_some()
+    {
+        return Err(overlay_error("overlay path has conflicting entries"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn is_opaque(dir: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let path = CString::new(dir.as_os_str().as_bytes())
+        .map_err(|_| overlay_error("invalid overlay directory name"))?;
+    for key in [c"trusted.overlay.opaque", c"user.overlay.opaque"] {
+        let mut value = [0_u8; 2];
+        // SAFETY: both C strings and the writable buffer remain valid for the call.
+        let size = unsafe {
+            libc::lgetxattr(
+                path.as_ptr(),
+                key.as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+            )
+        };
+        if size == -1 {
+            let error = std::io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+            ) {
+                continue;
+            }
+            return Err(overlay_error(overlay_io_detail("opaque xattr", &error)));
+        }
+        if size == 1 && value[0] == b'y' {
+            return Ok(true);
+        }
+        return Err(overlay_error("invalid overlay opaque xattr"));
+    }
+    Ok(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_opaque(_dir: &Path) -> Result<bool> {
+    Ok(false)
+}
+
+/// Reclaim crash leftovers when an isolating backend starts, before it accepts VMs.
+#[cfg(all(unix, any(test, feature = "microvm-firecracker")))]
+pub(in crate::code_sandbox) fn reap_overlay_scratch(
+    root: &Path,
+    backend: &'static str,
+) -> Result<()> {
+    ensure_private_scratch_root(root, backend)?;
+    super::scratch::reap(root, backend)
+}

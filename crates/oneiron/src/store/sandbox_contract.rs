@@ -267,9 +267,9 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
 /// untrusted guests link no write imports and use proposal deltas only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SandboxBoundaryContract {
-    tier: SandboxGuestTier,
-    runtime: SandboxGuestRuntime,
-    linked_imports: &'static [SandboxLinkedImport],
+    pub tier: SandboxGuestTier,
+    pub runtime: SandboxGuestRuntime,
+    pub linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
     credential_call_effect: SandboxCredentialEffect,
     host_services: bool,

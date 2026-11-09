@@ -50,10 +50,14 @@
 //! name admits is unchanged, as the ruling says, and that includes the
 //! short-header packets of an admitted connection.
 
-mod crypto;
-mod flows;
-mod initial;
-mod reassembly;
+#[doc(hidden)]
+pub mod crypto;
+#[doc(hidden)]
+pub mod flows;
+#[doc(hidden)]
+pub mod initial;
+#[doc(hidden)]
+pub mod reassembly;
 
 pub(super) use self::flows::{FlowTable, Release};
 use self::flows::{Frames, Opened, Step};

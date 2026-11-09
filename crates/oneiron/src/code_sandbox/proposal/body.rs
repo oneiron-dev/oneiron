@@ -5,7 +5,8 @@
 //! A body spooled on a host's measured spool ([`SandboxProposalBody::spool_floored`])
 //! admits each append on the shared disk floor before writing it (FIX 7650).
 
-mod text;
+#[doc(hidden)]
+pub mod text;
 pub use text::SandboxProposalText;
 
 use super::spool::{ProposalSpoolClaim, ProposalSpoolFloor};
@@ -21,14 +22,14 @@ use std::{
 /// the one file, which is removed when the last body or reader drops.
 #[derive(Clone)]
 pub struct SandboxProposalBody {
-    spooled: Arc<Spooled>,
-    offset: u64,
-    len: u64,
-    digest: [u8; 32],
+    pub spooled: Arc<Spooled>,
+    pub offset: u64,
+    pub len: u64,
+    pub digest: [u8; 32],
 }
 
-struct Spooled {
-    file: Mutex<File>,
+pub struct Spooled {
+    pub file: Mutex<File>,
     /// The floor claim the file holds until the last clone drops, given
     /// back after the file is closed.
     _claim: Option<Box<dyn ProposalSpoolClaim>>,
@@ -196,9 +197,9 @@ const READ_FRAME: usize = 1024 * 1024;
 
 /// A body still being written. Nothing reads it until [`Self::finish`].
 pub struct SandboxProposalBodyWriter {
-    file: File,
-    len: u64,
-    hasher: blake3::Hasher,
+    pub file: File,
+    pub len: u64,
+    pub hasher: blake3::Hasher,
     /// The floor claim each append is admitted on (FIX 7650); none for a
     /// body spooled where no floor was lent. Given back after the file.
     claim: Option<Box<dyn ProposalSpoolClaim>>,

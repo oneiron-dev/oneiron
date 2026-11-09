@@ -7,9 +7,8 @@ use super::{
 use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
 use std::io::Read;
 
-mod body;
-mod spool;
-mod spooled_edit;
+#[doc(hidden)]
+pub mod body;
 pub use body::{
     SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter, SandboxProposalText,
 };
@@ -242,11 +241,11 @@ impl SandboxFileWriteProposal {
 }
 
 /// One comparison buffer while a write is lowered; never a size bound.
-const LOWER_FRAME: usize = 1024 * 1024;
+pub const LOWER_FRAME: usize = 1024 * 1024;
 
 /// `len` zero bytes in memory reserved first: host memory that cannot hold
 /// them refuses as [`out_of_memory`], before anything is read (FIX 8674).
-fn zeroed(len: usize) -> Result<Vec<u8>> {
+pub fn zeroed(len: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(len).map_err(out_of_memory)?;
     bytes.resize(len, 0);
@@ -279,10 +278,10 @@ impl SandboxClaimProposal {
 /// Reviewable delta emitted for one foreign/untrusted write intent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SandboxProposalDelta {
-    id: EntityId,
-    tier: SandboxGuestTier,
+    pub id: EntityId,
+    pub tier: SandboxGuestTier,
     approval: ClaimApprovalStatus,
-    write: SandboxProposalWrite,
+    pub write: SandboxProposalWrite,
 }
 
 impl SandboxProposalDelta {

@@ -333,7 +333,7 @@ impl BlobStore for Vault {
 /// A blob read as it streams, hashed so the whole read can be checked.
 struct BlobDigestReader<'a> {
     inner: &'a mut dyn std::io::Read,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
 }
 
 impl std::io::Read for BlobDigestReader<'_> {

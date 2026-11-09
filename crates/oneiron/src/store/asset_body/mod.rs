@@ -779,7 +779,7 @@ impl BodyDir {
 pub(crate) struct CheckedAssetBody {
     file: BodyFile,
     facts: AssetBodyFacts,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     read: u64,
     checked: bool,
 }

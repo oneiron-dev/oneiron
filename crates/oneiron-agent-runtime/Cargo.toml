@@ -1,0 +1,18 @@
+[package]
+name = "oneiron-agent-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The code_sandbox half of the oneiron engine, lifted above the core crate"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+
+[lints]
+workspace = true

@@ -126,7 +126,7 @@ impl<'f> BlobBodyFile<'f> {
 /// [`BlobBodyFile::checked_reader`]'s reader.
 pub(crate) struct CheckedBodyRead<'f> {
     file: &'f File,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     read: u64,
     len: u64,
     blake3: [u8; 32],

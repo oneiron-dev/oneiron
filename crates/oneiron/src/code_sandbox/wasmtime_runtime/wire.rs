@@ -15,14 +15,8 @@ use crate::engine_executor::{
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
-use describe::{names_one_target, result_ref, secret_handle};
-use reply::guest_reply;
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-mod describe;
-mod reply;
-mod search;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -168,7 +162,7 @@ fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<S
 /// Runs one host operation the step is admitted to make: refused once the
 /// step is cancelled, and failed when a cancel lands while it runs. The
 /// operation itself settles; the step never sees its answer (FIX 600).
-fn admitted<T>(cancel: &StepCancellation, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn admitted<T>(cancel: &StepCancellation, operation: impl FnOnce() -> Result<T>) -> Result<T> {
     cancel.check()?;
     let answer = operation();
     cancel.check()?;
@@ -548,7 +542,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
 ];
 
 /// One dispatched call's reply body, before its budget envelope.
-fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
+pub fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
         // A row's answer is its output, framed as every verb's is: the type
         // its row names (`output` in `scripts/sdk/verbs/`).

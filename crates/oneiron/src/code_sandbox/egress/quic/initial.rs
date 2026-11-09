@@ -11,7 +11,7 @@
 
 /// The QUIC versions whose Initials the gate opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Version {
+pub enum Version {
     /// QUIC version 1 (RFC 9000).
     One,
     /// QUIC version 2 (RFC 9369).
@@ -19,15 +19,6 @@ pub(super) enum Version {
 }
 
 impl Version {
-    /// The version a long header's version field names, if the gate knows
-    /// it. Version 0 is Version Negotiation.
-    const fn from_wire(version: u32) -> Option<Self> {
-        match version {
-            0x0000_0001 => Some(Self::One),
-            0x6b33_43cf => Some(Self::Two),
-            _ => None,
-        }
-    }
 
     /// The packet type a long header's two type bits name in this version
     /// (RFC 9000 17.2, RFC 9369 3.2).
@@ -147,35 +138,12 @@ pub(super) fn crypto_frames(payload: &[u8]) -> Result<Vec<(u64, &[u8])>, &'stati
 }
 
 /// A cursor over QUIC wire fields.
-struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
+pub struct Reader<'a> {
+    pub bytes: &'a [u8],
+    pub at: usize,
 }
 
 impl<'a> Reader<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, at: 0 }
-    }
-
-    const fn is_empty(&self) -> bool {
-        self.at >= self.bytes.len()
-    }
-
-    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
-        let end = self.at.checked_add(len)?;
-        let taken = self.bytes.get(self.at..end)?;
-        self.at = end;
-        Some(taken)
-    }
-
-    fn u8(&mut self) -> Option<u8> {
-        self.take(1).map(|bytes| bytes[0])
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        let bytes = self.take(4)?;
-        Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-    }
 
     /// A connection ID: a length byte, at most 20 in versions 1 and 2, and
     /// that many bytes.
@@ -189,7 +157,7 @@ impl<'a> Reader<'a> {
 
     /// A variable-length integer (RFC 9000 16): its first two bits give its
     /// width of 1, 2, 4 or 8 bytes, and the rest its value.
-    fn varint(&mut self) -> Option<u64> {
+    pub fn varint(&mut self) -> Option<u64> {
         let first = *self.bytes.get(self.at)?;
         let bytes = self.take(1_usize << (first >> 6))?;
         Some(
@@ -199,26 +167,6 @@ impl<'a> Reader<'a> {
                     (value << 8) | u64::from(*byte)
                 }),
         )
-    }
-
-    /// An ACK frame's fields after its type (RFC 9000 19.3).
-    fn ack(&mut self, ecn: bool) -> Option<()> {
-        // Largest Acknowledged and ACK Delay.
-        self.varint()?;
-        self.varint()?;
-        let ranges = self.varint()?;
-        // First ACK Range, then each Gap and ACK Range Length.
-        self.varint()?;
-        for _ in 0..ranges {
-            self.varint()?;
-            self.varint()?;
-        }
-        if ecn {
-            for _ in 0..3 {
-                self.varint()?;
-            }
-        }
-        Some(())
     }
 
     /// A CRYPTO frame's offset and data (RFC 9000 19.6).

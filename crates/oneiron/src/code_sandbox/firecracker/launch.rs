@@ -1,6 +1,7 @@
 //! Jailer launch, resource ceilings and process custody for one microVM.
 
-use super::{FirecrackerHostConfig, config, protocol, refused};
+use super::protocol;
+use super::refused;
 use crate::{
     Result,
     code_sandbox::{
@@ -299,8 +300,8 @@ fn ensure_private_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) struct JailCustody {
-    path: std::path::PathBuf,
+pub struct JailCustody {
+    pub path: std::path::PathBuf,
     cgroup: std::path::PathBuf,
 }
 impl Drop for JailCustody {

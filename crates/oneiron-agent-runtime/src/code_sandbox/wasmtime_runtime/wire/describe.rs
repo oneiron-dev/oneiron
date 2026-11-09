@@ -3,6 +3,8 @@
 //! A describe naming more than one target is never routed here: it goes on
 //! to its typed row, whose one selector check refuses it (FIX 3256).
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use crate::engine_executor::{JsResultRef, JsResultTarget};
 use serde_json::Value;
 

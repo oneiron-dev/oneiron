@@ -38,7 +38,7 @@ pub(super) struct Sending {
     body: AssetBodyRef,
     source: Source,
     sent: u64,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     /// The most body bytes one Data frame may carry to the receiver.
     wanted: u32,
     _pin: Option<ResultBodyPin>,

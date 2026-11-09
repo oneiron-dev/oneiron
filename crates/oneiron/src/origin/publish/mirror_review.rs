@@ -26,7 +26,7 @@ pub(super) struct RefSection {
 
 /// A section being built: its digest, pages and counts.
 struct Section {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     pages: Vec<OriginPublishReviewPage>,
     page: Vec<OriginPublishReviewItem>,
     paths: BTreeSet<String>,

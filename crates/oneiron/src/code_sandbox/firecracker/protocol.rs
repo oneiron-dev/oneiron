@@ -115,7 +115,7 @@ enum HostFrame<'a> {
     },
 }
 
-pub(in crate::code_sandbox) struct GuestProgram<'a> {
+pub struct GuestProgram<'a> {
     pub component: &'a [u8],
     pub source: &'a str,
 }
@@ -159,7 +159,7 @@ pub(in crate::code_sandbox) fn exchange(
     clippy::too_many_arguments,
     reason = "the exchange takes the guest's stream, program, budget, policies, spool and token"
 )]
-pub(in crate::code_sandbox) fn exchange_cancellable(
+pub fn exchange_cancellable(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
     program: GuestProgram<'_>,

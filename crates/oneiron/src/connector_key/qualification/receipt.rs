@@ -171,7 +171,7 @@ impl ConnectorQualificationReceipt {
 }
 
 pub(super) struct QualificationEvidence {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     pub(super) calls: usize,
     pub(super) result_types: BTreeSet<String>,
 }

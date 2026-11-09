@@ -22,7 +22,7 @@ use crate::store::{BodyDir, BodyMint, BodySpill};
 pub(crate) struct AssetBodySpool {
     dir: BodyDir,
     spill: Option<BodySpill>,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     offered: AssetBodyFacts,
     received: u64,
 }

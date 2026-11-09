@@ -1,4 +1,6 @@
 //! Snapshot caller-selected directories without following descendant host links.
+#[allow(unused_imports)]
+use crate::ext::*;
 use crate::Result;
 use oneiron_container::GuestSpec;
 use std::{

@@ -41,7 +41,7 @@ const IMPORT_SCRATCH_REPO: &str = "repo";
 /// head's whole history, and the base and head it was proved for. Opaque:
 /// no path, URL or credential leaves it, and dropping it removes the store.
 pub struct FetchedExternalGit {
-    scratch: tempfile::TempDir,
+    pub scratch: tempfile::TempDir,
     repo: GitWireRepo,
     base: GitOid,
     head: GitOid,

@@ -34,25 +34,6 @@ pub enum EgressNameRefusal {
     Ungranted { target: SocketAddr, name: String },
 }
 
-impl EgressNameRefusal {
-    /// The refusal's stable reason.
-    #[must_use]
-    pub const fn reason(&self) -> &'static str {
-        match self {
-            Self::Unverifiable { .. } => "egress_name_unverifiable",
-            Self::Ungranted { .. } => "egress_name_ungranted",
-        }
-    }
-
-    /// The address and port the refused stream was connected to.
-    #[must_use]
-    pub const fn target(&self) -> SocketAddr {
-        match self {
-            Self::Unverifiable { target, .. } | Self::Ungranted { target, .. } => *target,
-        }
-    }
-}
-
 /// What a stream's opening bytes say so far.
 enum Opening {
     /// More bytes decide it.
@@ -68,7 +49,7 @@ enum Opening {
 /// The TLS handshake record type.
 const HANDSHAKE: u8 = 0x16;
 /// The ClientHello handshake message type.
-pub(super) const CLIENT_HELLO: u8 = 1;
+pub const CLIENT_HELLO: u8 = 1;
 /// The server_name extension (RFC 6066 3).
 const SERVER_NAME: u16 = 0;
 
@@ -288,16 +269,6 @@ fn host(bytes: &[u8]) -> Option<String> {
 struct Fields<'a>(&'a [u8]);
 
 impl<'a> Fields<'a> {
-    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
-        let (head, rest) = self.0.split_at_checked(len)?;
-        self.0 = rest;
-        Some(head)
-    }
-
-    fn u16(&mut self) -> Option<u16> {
-        self.take(2)
-            .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
-    }
 
     fn vec8(&mut self) -> Option<&'a [u8]> {
         let len = usize::from(self.take(1)?[0]);

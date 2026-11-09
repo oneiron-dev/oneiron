@@ -156,7 +156,7 @@ impl StagedAssetBody {
 /// What a body is, measured as its bytes stream past: what its manifest
 /// needs and what its classification reads.
 struct StageMeter {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     xxh32: xxhash_rust::xxh32::Xxh32,
     len: u64,
     head: Vec<u8>,

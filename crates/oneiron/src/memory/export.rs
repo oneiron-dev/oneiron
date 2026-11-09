@@ -154,7 +154,7 @@ pub enum ExportAnswer {
 /// as its bytes arrive (FIX 3676).
 #[derive(Default)]
 pub struct ExportDigest {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     bytes: u64,
 }
 

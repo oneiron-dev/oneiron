@@ -11,6 +11,8 @@
 //! reaches the send before it succeeds. The request keeps its room until its
 //! relay has ended, even when the VM's channel is gone. Rebuild the code
 //! guest image from the same commit as this host: both speak one wire.
+#[allow(unused_imports)]
+use crate::ext::*;
 use oneiron_container::{
     EgressRelay, RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay,
 };

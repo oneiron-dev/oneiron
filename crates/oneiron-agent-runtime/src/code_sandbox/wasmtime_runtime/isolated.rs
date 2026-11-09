@@ -1,4 +1,6 @@
 //! Finite foreign steps use the selected backend, never an engine worker.
+#[allow(unused_imports)]
+use crate::ext::*;
 use super::*;
 use crate::code_sandbox::{
     SandboxMountTable, foreign::execute_foreign_code_on, microvm::MicroVmBackend,

@@ -83,7 +83,8 @@ mod leaf_delivery;
 mod masked_files;
 mod owner_door;
 mod pending_restore;
-mod reveal;
+#[doc(hidden)]
+pub mod reveal;
 pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
 mod sighted_file;
@@ -186,11 +187,18 @@ pub use self::reveal::{
     SecretRevealAnswered, SecretRevealAsk, SecretRevealCause, SecretRevealDecision,
     SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
-pub(crate) use self::reveal::{
-    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
-    erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
-};
+pub(crate) use self::reveal::RepoFileKeys;
+pub(crate) use self::reveal::RepoFileOriginal;
+pub(crate) use self::reveal::RepoFileReadDisclosure;
+pub(crate) use self::reveal::RepoFileRevealDelivery;
+pub(crate) use self::reveal::RepoFileRevealTarget;
+pub(crate) use self::reveal::RepoFileSight;
+pub(crate) use self::reveal::RevealAsker;
+pub(crate) use self::reveal::RevealAuthority;
+pub(crate) use self::reveal::SecretRevealWait;
+pub(crate) use self::reveal::erase_reveal_actor_in_txn;
+pub(crate) use self::reveal::reveal_value_in_txn;
+pub use self::reveal::parse_secret_handle;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
 pub(crate) use self::storage_seal::{

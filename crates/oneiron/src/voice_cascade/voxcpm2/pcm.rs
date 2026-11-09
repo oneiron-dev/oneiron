@@ -98,7 +98,7 @@ pub struct PcmSpool {
     inline_limit: u64,
     inline: Vec<u8>,
     spill: Option<BodySpill>,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     len: u64,
 }
 

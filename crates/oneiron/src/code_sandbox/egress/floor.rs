@@ -27,13 +27,7 @@ use crate::host_descriptors::descriptor_line;
 use crate::work_line::{LinePermit, LineShortage};
 
 /// Permits of the descriptor line guests' network work holds now.
-static GUEST_PERMITS: AtomicU64 = AtomicU64::new(0);
-
-/// How many of the process's descriptor permits guests' network work holds
-/// now: one for each descriptor and each worker thread (FIX 6304).
-pub fn guest_network_permits() -> u64 {
-    GUEST_PERMITS.load(Ordering::Relaxed)
-}
+pub static GUEST_PERMITS: AtomicU64 = AtomicU64::new(0);
 
 /// The process's descriptor line, as guests' network work takes it: a
 /// permit for each descriptor and each worker thread. It charges no bytes.
@@ -52,14 +46,7 @@ impl HostNetFloor for ProcessDescriptorFloor {
 }
 
 /// One bundle's permits, counted in [`guest_network_permits`] until they go.
-struct GuestPermits(Vec<LinePermit>);
-
-impl GuestPermits {
-    fn counted(permits: Vec<LinePermit>) -> Self {
-        GUEST_PERMITS.fetch_add(permits.len() as u64, Ordering::Relaxed);
-        Self(permits)
-    }
-}
+pub struct GuestPermits(Vec<LinePermit>);
 
 impl Drop for GuestPermits {
     fn drop(&mut self) {
@@ -73,7 +60,7 @@ impl Drop for GuestPermits {
 /// before an attachment charges the attached floor from then on.
 #[derive(Default)]
 pub struct VaultHostFloor {
-    attached: RwLock<Option<Arc<dyn HostNetFloor>>>,
+    pub attached: RwLock<Option<Arc<dyn HostNetFloor>>>,
 }
 
 impl HostNetFloor for VaultHostFloor {
@@ -94,45 +81,3 @@ impl HostNetFloor for VaultHostFloor {
     }
 }
 
-impl Vault {
-    /// Attaches the floor `attach` builds as this vault's host floor
-    /// (FIX 6299): every relay a run on this vault opens charges it from
-    /// then on. The floor a previous host attached goes first, and its hold
-    /// on the descriptor line's policy with it, so the vault's host served
-    /// again takes the policy back. Permits held keep their owners.
-    pub fn attach_host_net_floor(&self, attach: impl FnOnce() -> Arc<dyn HostNetFloor>) {
-        let mut attached = self
-            .host_net_floor
-            .attached
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        drop(attached.take());
-        *attached = Some(attach());
-    }
-
-    /// This vault's host floor ([`VaultHostFloor`]), for a relay that owns
-    /// its handle: a short session's own relay among them (FIX 6300).
-    pub fn host_net_floor(&self) -> Arc<dyn HostNetFloor> {
-        Arc::clone(&self.host_net_floor) as Arc<dyn HostNetFloor>
-    }
-
-    /// Takes `fds` descriptors and `workers` threads of this vault's host
-    /// floor, looked up now, as a run's relay charges it. For a host relay
-    /// that serves no run (FIX 7333).
-    ///
-    /// # Errors
-    /// Returns the floor's `WouldBlock` back-pressure when it is full.
-    pub fn acquire_host_net_floor(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
-        self.host_net_floor.acquire(fds, workers)
-    }
-
-    /// Takes `bytes` of this vault's host floor, looked up now, as a run's
-    /// relay charges its paused request and answer bodies; a vault no host
-    /// attached a floor to charges no bytes.
-    ///
-    /// # Errors
-    /// Returns the floor's `WouldBlock` back-pressure when it is full.
-    pub fn acquire_host_net_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
-        self.host_net_floor.acquire_bytes(bytes)
-    }
-}

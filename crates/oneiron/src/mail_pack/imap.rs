@@ -666,7 +666,7 @@ pub(super) fn digest_variant_id(header_id: &str, digest: &[u8; 32]) -> String {
 /// [`header_digest`] reads line ends; fed a part at a time.
 #[derive(Default)]
 struct WholeDigest {
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     /// The last byte fed.
     previous: u8,
 }

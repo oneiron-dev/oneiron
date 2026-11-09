@@ -39,56 +39,6 @@ impl GuestImage {
         Ok(self)
     }
 
-    #[must_use]
-    pub fn new(
-        kernel: impl Into<PathBuf>,
-        rootfs: impl Into<PathBuf>,
-        component: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            kernel: kernel.into(),
-            rootfs: rootfs.into(),
-            component: component.into(),
-            source: String::new(),
-            oci: None,
-        }
-    }
-
-    /// Select source for a reusable interpreter component. Empty source is
-    /// valid for a component with its own embedded entry program.
-    #[must_use]
-    pub fn with_source(mut self, source: impl Into<String>) -> Self {
-        self.source = source.into();
-        self
-    }
-
-    /// Checks that every image artifact is present before a guest is booted.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when an artifact is missing. The
-    /// message names the artifact class, never the host path.
-    pub fn ensure_present(&self, backend: &'static str) -> Result<()> {
-        if self.source.len() > 1024 * 1024 {
-            return Err(backend_error(
-                backend,
-                "guest source exceeds message budget",
-            ));
-        }
-        for (class, path) in [
-            ("kernel", &self.kernel),
-            ("rootfs", &self.rootfs),
-            ("component", &self.component),
-        ] {
-            if !path.exists() {
-                return Err(backend_error(
-                    backend,
-                    format!("guest image artifact `{class}` is missing"),
-                ));
-            }
-        }
-        Ok(())
-    }
 }
 
 impl fmt::Debug for GuestImage {
@@ -106,75 +56,12 @@ impl fmt::Debug for GuestImage {
 /// rendering redacts them so they cannot leak into guest-visible diagnostics.
 #[derive(Clone)]
 pub struct MicroVmHandle {
-    id: String,
-    tier: SandboxGuestTier,
-    base_root: PathBuf,
-    overlay_upper: PathBuf,
-    egress_socket: PathBuf,
-    scratch: Option<super::scratch::ScratchHandle>,
-}
-
-impl MicroVmHandle {
-    /// Creates a handle for a VM a backend has prepared.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when the VM id is blank or
-    /// contains control characters.
-    pub fn new(
-        id: impl Into<String>,
-        tier: SandboxGuestTier,
-        base_root: impl Into<PathBuf>,
-        overlay_upper: impl Into<PathBuf>,
-        egress_socket: impl Into<PathBuf>,
-    ) -> Result<Self> {
-        let id = id.into();
-        let trimmed = id.trim();
-        if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
-            return Err(backend_error("microvm", "vm id must be a non-blank label"));
-        }
-        Ok(Self {
-            id: trimmed.to_owned(),
-            tier,
-            base_root: base_root.into(),
-            overlay_upper: overlay_upper.into(),
-            egress_socket: egress_socket.into(),
-            scratch: None,
-        })
-    }
-
-    pub(super) fn with_scratch(mut self, scratch: super::scratch::ScratchHandle) -> Self {
-        self.scratch = Some(scratch);
-        self
-    }
-
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub const fn tier(&self) -> SandboxGuestTier {
-        self.tier
-    }
-
-    /// Host root of the read-only base mount. Never written through this handle.
-    #[must_use]
-    pub fn base_root(&self) -> &Path {
-        &self.base_root
-    }
-
-    /// Host root of the overlay upper directory the guest writes into.
-    #[must_use]
-    pub fn overlay_upper(&self) -> &Path {
-        &self.overlay_upper
-    }
-
-    /// Host endpoint of the VM-internal egress channel owned by the adapter.
-    #[must_use]
-    pub fn egress_socket(&self) -> &Path {
-        &self.egress_socket
-    }
+    pub id: String,
+    pub tier: SandboxGuestTier,
+    pub base_root: PathBuf,
+    pub overlay_upper: PathBuf,
+    pub egress_socket: PathBuf,
+    pub scratch: Option<super::scratch::ScratchHandle>,
 }
 
 impl fmt::Debug for MicroVmHandle {
@@ -214,14 +101,6 @@ impl Default for ExecutionBudget {
 }
 
 impl ExecutionBudget {
-    #[must_use]
-    pub const fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self {
-        Self {
-            wall_clock_secs,
-            mem_mib,
-            pids,
-        }
-    }
 
     /// True when every axis of the budget is actually bounded. A zero on any
     /// axis is treated as "unbounded" and refused by backends.

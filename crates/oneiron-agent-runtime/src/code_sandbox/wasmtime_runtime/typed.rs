@@ -1,5 +1,7 @@
 //! Canonical typed WIT imports over the bounded engine-host channel.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use super::{HostEvent, State, StreamTarget, bindings::*, failure};
 use crate::Result;
 use crate::code_sandbox::SandboxBoundaryContract;

@@ -25,58 +25,17 @@ use crate::error::CodeError;
 /// There is deliberately no commit verb here: overlay writes become
 /// [`SandboxProposalDelta`] values and stop.
 pub struct MicroVmSandboxAdapter {
-    contract: SandboxBoundaryContract,
+    pub contract: SandboxBoundaryContract,
     mounts: SandboxMountTable,
-    backend: Box<dyn MicroVmBackend>,
-    vm: MicroVmHandle,
+    pub backend: Box<dyn MicroVmBackend>,
+    pub vm: MicroVmHandle,
     proxy: CredentialEgressProxy,
-    proposal_deltas: Vec<SandboxProposalDelta>,
-    credential_injections: Vec<CredentialInjection>,
+    pub proposal_deltas: Vec<SandboxProposalDelta>,
+    pub credential_injections: Vec<CredentialInjection>,
     overlay_collected: bool,
 }
 
 impl MicroVmSandboxAdapter {
-    /// Prepares a VM for `tier` and arms its credential proxy.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CodeError::MicroVmBackendError`](crate::error::CodeError::MicroVmBackendError) when `tier` is not a propose-only
-    /// tier, or when the backend fails to prepare the VM or bind the egress
-    /// transport.
-    pub fn new(
-        tier: SandboxGuestTier,
-        mounts: SandboxMountTable,
-        backend: Box<dyn MicroVmBackend>,
-        resolver: Arc<dyn CredentialResolver>,
-        allowlist: CredentialAllowlist,
-    ) -> Result<Self> {
-        let contract = SandboxBoundaryContract::for_tier(tier);
-        if !contract.has_proposal_delta_channel() || contract.links_write_imports() {
-            return Err(backend_error(
-                backend.name(),
-                "microVM lane accepts propose-only guest tiers only",
-            ));
-        }
-
-        let vm = backend.prepare(&contract, &mounts)?;
-        let mut proxy = CredentialEgressProxy::new(allowlist, resolver);
-        if let Err(error) = backend.proxy_credentials(&vm, proxy.resolver()) {
-            backend.cleanup(&vm);
-            return Err(error);
-        }
-        proxy.arm();
-
-        Ok(Self {
-            contract,
-            mounts,
-            backend,
-            vm,
-            proxy,
-            proposal_deltas: Vec::new(),
-            credential_injections: Vec::new(),
-            overlay_collected: false,
-        })
-    }
 
     /// Attaches the SAME existing egress relay to the credential proxy for
     /// per-decision receipts. Additive builder; the proxy stays silent
@@ -85,51 +44,6 @@ impl MicroVmSandboxAdapter {
     pub fn with_credential_relay(mut self, relay: Arc<dyn oneiron_container::EgressRelay>) -> Self {
         self.proxy.set_credential_relay(relay);
         self
-    }
-
-    #[must_use]
-    pub fn session_manifest(&self) -> Option<oneiron_container::SessionManifest> {
-        self.backend.session_manifest(&self.vm)
-    }
-
-    #[must_use]
-    pub fn backend_name(&self) -> &'static str {
-        self.backend.name()
-    }
-
-    #[must_use]
-    pub const fn contract(&self) -> SandboxBoundaryContract {
-        self.contract
-    }
-
-    #[must_use]
-    pub const fn vm(&self) -> &MicroVmHandle {
-        &self.vm
-    }
-
-    #[must_use]
-    pub fn proposal_deltas(&self) -> &[SandboxProposalDelta] {
-        &self.proposal_deltas
-    }
-
-    #[must_use]
-    pub fn credential_injections(&self) -> &[CredentialInjection] {
-        &self.credential_injections
-    }
-
-    /// Runs the guest image under `budget`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) after overlay export is sealed;
-    /// otherwise propagates the backend's run failure.
-    pub fn run(
-        &mut self,
-        image: &GuestImage,
-        budget: ExecutionBudget,
-        output: &mut dyn MicroVmOutputSink,
-    ) -> Result<MicroVmExit> {
-        self.run_cancellable(image, budget, &StepCancellation::never(), output)
     }
 
     /// [`Self::run`] for a step `cancel` may stop (FIX 600): the backend ends
@@ -184,70 +98,6 @@ impl MicroVmSandboxAdapter {
         self.overlay_collected = true;
         Ok(deltas)
     }
-}
-
-/// Opens `relative` under the mount `root` for reading, each directory
-/// relative to the one before through its descriptor, and no component a
-/// symlink (FIX 17063): what the caller then checks and reads is the entry
-/// this walk named, whatever moves on the path meanwhile. An entry that is
-/// no plain file is refused before it is opened, as before; the caller's
-/// check of the open handle is the one that binds. `shown` names the entry
-/// in a refusal.
-#[cfg(unix)]
-fn open_base_entry(root: &Path, relative: &Path, shown: &str) -> Result<fs::File> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, open, openat, statat};
-    use rustix::io::Errno;
-    let failed = |error: Errno, symlink: &str| match error {
-        Errno::NOENT | Errno::NOTDIR => Error::EntityNotFound,
-        Errno::LOOP => Error::Code(CodeError::MicroVmOverlayError {
-            detail: format!("base mount entry {shown} {symlink}"),
-        }),
-        _ => Error::Code(CodeError::MicroVmOverlayError {
-            detail: format!("base mount read failed for {shown}"),
-        }),
-    };
-    let directory = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    let mut dir =
-        open(root, directory, Mode::empty()).map_err(|error| failed(error, "is unreachable"))?;
-    let components: Vec<_> = relative.components().collect();
-    let Some((last, parents)) = components.split_last() else {
-        return Err(overlay_error(format!(
-            "base mount entry {shown} is not a plain file"
-        )));
-    };
-    for component in parents {
-        dir = openat(
-            &dir,
-            component.as_os_str(),
-            directory | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(|error| failed(error, "crosses a symlinked directory"))?;
-    }
-    let kind = statat(&dir, last.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
-        .map(|stat| FileType::from_raw_mode(stat.st_mode))
-        .map_err(|error| failed(error, "is a symlink"))?;
-    match kind {
-        FileType::RegularFile => {}
-        FileType::Symlink => {
-            return Err(Error::Code(CodeError::MicroVmOverlayError {
-                detail: format!("base mount entry {shown} is a symlink"),
-            }));
-        }
-        _ => {
-            return Err(overlay_error(format!(
-                "base mount entry {shown} is not a plain file"
-            )));
-        }
-    }
-    let file = openat(
-        &dir,
-        last.as_os_str(),
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|error| failed(error, "is a symlink"))?;
-    Ok(fs::File::from(file))
 }
 
 /// [`open_base_entry`] where no descriptor walk is built: each component

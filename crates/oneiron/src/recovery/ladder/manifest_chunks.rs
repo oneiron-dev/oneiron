@@ -17,7 +17,7 @@ pub(in crate::recovery) struct ManifestChunks {
 struct ChunkHash {
     key: String,
     bytes: Vec<u8>,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     next: usize,
 }
 

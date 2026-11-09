@@ -27,7 +27,8 @@ mod shadow_step;
 mod skill_call;
 mod stack_floor;
 mod step_evidence;
-mod store;
+#[doc(hidden)]
+pub mod store;
 mod turn_hooks;
 mod type_feedback;
 mod types;
@@ -60,13 +61,24 @@ pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_o
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
-pub(crate) use self::store::{
-    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
-    holds_reply_content, is_result_output_path, mask_known_text, observation_output_path,
-    parse_result_read_path, result_handle_json, result_read_path_for, resumed_output_wait,
-    script_output_path, store_agent_verb_write_answer, store_ordinal_base,
-    store_result_output_path, terminal_output_seq, write_receipt_result_output_path,
-};
+pub(crate) use self::store::RESULT_READ_ROOT;
+pub(crate) use self::store::bridge_result_output_path;
+pub(crate) use self::store::clean_for_context;
+pub(crate) use self::store::holds_reply_content;
+pub(crate) use self::store::is_result_output_path;
+pub(crate) use self::store::mask_known_text;
+pub(crate) use self::store::observation_output_path;
+pub(crate) use self::store::parse_result_read_path;
+pub(crate) use self::store::result_handle_json;
+pub(crate) use self::store::result_read_path_for;
+pub(crate) use self::store::resumed_output_wait;
+pub(crate) use self::store::script_output_path;
+pub(crate) use self::store::store_agent_verb_write_answer;
+pub(crate) use self::store::store_ordinal_base;
+pub(crate) use self::store::store_result_output_path;
+pub(crate) use self::store::terminal_output_seq;
+pub(crate) use self::store::write_receipt_result_output_path;
+pub use self::store::RESULT_REPLY_INLINE_BYTES;
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
     ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,

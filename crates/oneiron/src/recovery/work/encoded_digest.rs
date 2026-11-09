@@ -12,7 +12,7 @@ enum Phase {
 
 pub(super) struct EncodedDigest {
     bytes: Vec<u8>,
-    hasher: blake3::Hasher,
+    pub hasher: blake3::Hasher,
     next: usize,
     phase: Phase,
 }

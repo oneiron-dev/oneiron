@@ -18,55 +18,54 @@
 //! Backend routing lives in `select_backend_for_tier` and nowhere else;
 //! [`SandboxBoundaryContract::for_tier`] stays a pure value constructor.
 
-mod adapter;
+#[doc(hidden)]
+pub mod adapter;
 #[cfg(target_os = "linux")]
 mod container;
 #[cfg(target_os = "linux")]
-pub use container::{CONTAINER_BACKEND_NAME, ContainerBackend};
-#[cfg(target_os = "linux")]
 #[path = "../firecracker/protocol.rs"]
-mod protocol;
+#[doc(hidden)]
+pub mod protocol;
 #[cfg(target_os = "linux")]
 #[path = "../firecracker/snapshot.rs"]
 mod snapshot;
 #[cfg(target_os = "linux")]
-fn refused(detail: impl Into<String>) -> crate::Error {
+pub fn refused(detail: impl Into<String>) -> crate::Error {
     backend::backend_error("isolated-guest", detail)
 }
 
-mod backend;
-mod credential;
-mod handle;
-mod output;
-mod overlay;
-mod scratch;
+#[doc(hidden)]
+pub mod backend;
+#[doc(hidden)]
+pub mod credential;
+#[doc(hidden)]
+pub mod handle;
+#[doc(hidden)]
+pub mod output;
+#[doc(hidden)]
+pub mod overlay;
+#[doc(hidden)]
+pub mod scratch;
 
 pub use self::adapter::MicroVmSandboxAdapter;
-#[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
-pub use self::backend::DevProcessBackend;
-pub use self::backend::{
-    DEV_BACKEND_NAME, MicroVmBackend, dev_backend_compiled, firecracker_backend_compiled,
-    select_backend_for_session, select_backend_for_tier,
-};
+pub use self::backend::MicroVmBackend;
+pub use self::backend::select_backend_for_tier;
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
     CredentialReadTransport, CredentialResolver, EGRESS_PROXY_NAME, SANDBOX_EGRESS_ABI_KEY_HOST,
     SANDBOX_EGRESS_ABI_KEY_SCHEME, egress_destination_from_args,
 };
 pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, OciGuestImage};
-pub use self::output::{
-    MicroVmOutputBodies, MicroVmOutputSink, MicroVmOutputSpool, MicroVmOutputStreamBodies,
-};
-#[cfg(all(unix, feature = "microvm-firecracker"))]
-pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
-pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
+pub use self::output::MicroVmOutputSink;
+pub use self::output::MicroVmOutputSpool;
+pub use self::output::MicroVmOutputStreamBodies;
 
 // Re-anchors the `super::firecracker` path inside `backend.rs`: the flat
 // microvm.rs resolved `super` to the parent `code_sandbox` module, while the
 // split child resolves it to this module. The alias keeps the moved body
 // byte-identical.
 #[cfg(feature = "microvm-firecracker")]
-use super::firecracker;
+pub use super::firecracker;
 
 #[cfg(test)]
 mod tests;

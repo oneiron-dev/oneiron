@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 /// One QUIC connection as its opening Initial names it: the target, the
 /// version and the Destination Connection ID. An alias has the same form,
 /// with the server's Source Connection ID.
-pub(super) type FlowKey = (SocketAddr, Version, Vec<u8>);
+pub type FlowKey = (SocketAddr, Version, Vec<u8>);
 
 /// The CRYPTO frames of one datagram's Initials, as offset and bytes, or
 /// why they cannot be read.
@@ -60,8 +60,8 @@ pub(super) struct Opened {
 }
 
 /// The QUIC flows of one proxy.
-pub(in crate::code_sandbox::egress) struct FlowTable {
-    maps: Mutex<FlowMaps>,
+pub struct FlowTable {
+    pub maps: Mutex<FlowMaps>,
     /// Woken when a flow's release settles.
     settled: Condvar,
     /// How long a flow lives after it starts or settles: the egress
@@ -71,9 +71,9 @@ pub(in crate::code_sandbox::egress) struct FlowTable {
 
 /// The flows by key, and each alias with the key of the flow it names.
 #[derive(Default)]
-struct FlowMaps {
-    flows: HashMap<FlowKey, Flow>,
-    aliases: HashMap<FlowKey, FlowKey>,
+pub struct FlowMaps {
+    pub flows: HashMap<FlowKey, Flow>,
+    pub aliases: HashMap<FlowKey, FlowKey>,
     /// A sweeper thread ends this table's flows on their deadlines.
     sweeping: bool,
 }
@@ -82,7 +82,7 @@ struct Flow {
     /// When the flow, its alias and what it holds are dropped.
     expires: Instant,
     /// The largest packet number of its Initials the gate opened.
-    largest: u64,
+    pub largest: u64,
     /// The client's Source Connection ID in its first Initial: the
     /// Destination Connection ID of the server's replies.
     client_scid: Vec<u8>,
@@ -111,9 +111,9 @@ enum FlowState {
 }
 
 /// A datagram held for its flow, and the floor room it holds.
-struct HeldDatagram {
-    bytes: Vec<u8>,
-    room: HostNetPermit,
+pub struct HeldDatagram {
+    pub bytes: Vec<u8>,
+    pub room: HostNetPermit,
 }
 
 /// What a datagram's Initials do to their flow.
@@ -132,35 +132,6 @@ pub(super) enum Step<'a> {
 }
 
 impl FlowTable {
-    /// An empty table whose flows live `lifetime`.
-    pub(in crate::code_sandbox::egress) fn new(lifetime: Duration) -> Self {
-        Self {
-            maps: Mutex::new(FlowMaps::default()),
-            settled: Condvar::new(),
-            lifetime,
-        }
-    }
-
-    /// The key of the flow an Initial to `target` in `version` with `dcid`
-    /// belongs to, found by its own key or through an alias, and the
-    /// largest packet number of that flow's Initials the gate opened.
-    pub(super) fn connection(
-        &self,
-        target: SocketAddr,
-        version: Version,
-        dcid: &[u8],
-    ) -> Option<(FlowKey, u64)> {
-        let mut maps = self.maps.lock().ok()?;
-        maps.sweep();
-        let key = (target, version, dcid.to_vec());
-        let key = if maps.flows.contains_key(&key) {
-            key
-        } else {
-            maps.aliases.get(&key)?.clone()
-        };
-        let largest = maps.flows.get(&key)?.largest;
-        Some((key, largest))
-    }
 
     /// Makes `server_scid` the alias of the one admitted flow at `target` in
     /// `version` whose client's Source Connection ID is `client_scid`. No
@@ -421,39 +392,15 @@ fn after(lifetime: Duration) -> Instant {
 /// and sends what the flow held. Dropping it settles the flow: refused if
 /// [`Release::refuse`] said so, else admitted. It wakes the calls that
 /// wait for the flow, and drops the held datagrams and their room.
-pub(in crate::code_sandbox::egress) struct Release<'a> {
+pub struct Release<'a> {
     table: &'a FlowTable,
-    key: FlowKey,
+    pub key: FlowKey,
     hello: Vec<u8>,
     hello_room: Vec<HostNetPermit>,
-    held: Vec<Vec<u8>>,
+    pub held: Vec<Vec<u8>>,
     _held_room: Vec<HostNetPermit>,
     /// Boxed, so a release stays small beside the outcomes that carry it.
-    refusal: Option<Box<EgressDatagramNameRefusal>>,
-}
-
-impl<'a> Release<'a> {
-    fn new(
-        table: &'a FlowTable,
-        key: FlowKey,
-        crypto: CryptoStream,
-        held: Vec<HeldDatagram>,
-    ) -> Self {
-        let (hello, hello_room) = crypto.into_hello();
-        let (held, held_room) = held
-            .into_iter()
-            .map(|datagram| (datagram.bytes, datagram.room))
-            .unzip();
-        Self {
-            table,
-            key,
-            hello,
-            hello_room,
-            held,
-            _held_room: held_room,
-            refusal: None,
-        }
-    }
+    pub refusal: Option<Box<EgressDatagramNameRefusal>>,
 }
 
 impl Release<'_> {
@@ -462,15 +409,6 @@ impl Release<'_> {
         &self.hello
     }
 
-    /// The datagrams the flow held, raw, in arrival order.
-    pub(in crate::code_sandbox::egress) fn held(&self) -> &[Vec<u8>] {
-        &self.held
-    }
-
-    /// Settles the flow refused for `refusal`; nothing it held is sent.
-    pub(super) fn refuse(mut self, refusal: EgressDatagramNameRefusal) {
-        self.refusal = Some(Box::new(refusal));
-    }
 }
 
 impl Drop for Release<'_> {
