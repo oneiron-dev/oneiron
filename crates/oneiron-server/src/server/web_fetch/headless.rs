@@ -228,7 +228,7 @@ fn start_guest(
     readiness: &BrowserReadinessCell,
 ) -> Result<BrowserSession, BrowserError> {
     let backend = select_backend_for_session(
-        &oneiron::code_sandbox::SANDBOX_BACKENDS,
+        &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,
