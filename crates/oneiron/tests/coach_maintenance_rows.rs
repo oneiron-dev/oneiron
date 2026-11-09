@@ -98,3 +98,28 @@ fn the_coach_tunes_the_dreamers_maintenance_rows() {
         projector
     );
 }
+
+/// The C1 family: the Coach sets the Dreamer's wake policy, in force, with a
+/// receipt in the wake-cadence class.
+#[test]
+fn the_coach_tunes_the_dreamers_wake_policy() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let coach = coach(&vault).expect("the Coach");
+    vault.provision_system_agent_grants().expect("first mint");
+
+    let mut policy = vault.dreamer_wake_policy().expect("wake policy");
+    policy.longest_wait_secs += 60;
+    vault
+        .set_dreamer_wake_policy_as_holder(coach, policy)
+        .expect("wake policy");
+    assert_eq!(vault.dreamer_wake_policy().expect("wake policy"), policy);
+    let changes = vault.engine_control_changes(&owner).expect("receipts");
+    let [(_, change)] = changes.as_slice() else {
+        panic!("one receipt, found {}", changes.len());
+    };
+    assert_eq!(change.knob, "DREAMER_WAKE_POLICY");
+    assert_eq!(change.class, EngineControlClass::WakeCadence);
+    assert_eq!(change.by, coach);
+}
