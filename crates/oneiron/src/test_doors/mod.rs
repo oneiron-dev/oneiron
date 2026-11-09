@@ -4,5 +4,6 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod callable_skill;
 pub mod live_run_claim_put;
 pub mod run_hold;
