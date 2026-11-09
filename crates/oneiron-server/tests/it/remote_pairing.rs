@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, PairingPrincipal, format_pairing_link};
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::memory::{ClaimInput, MemoryError, RecallScope, WitnessTurn};
+use oneiron::memory::{MemoryError, RecallScope, ScopedClaimInput, WitnessTurn};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_remote::OneironClient;
 use oneiron_server::build_app;
@@ -70,6 +70,7 @@ impl Fixture {
                     actor_class: class.map(str::to_owned),
                     org_ref: None,
                     write_facet: None,
+                    comm: None,
                 },
             )
             .unwrap();
@@ -96,6 +97,7 @@ impl Fixture {
                     actor_class: Some("human".into()),
                     org_ref: None,
                     write_facet: None,
+                    comm: None,
                 },
             )
             .unwrap();
@@ -109,7 +111,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
 }
 
 fn paired(link: &str) -> OneironClient {
-    let (url, credential) = OneironClient::pair(link).unwrap();
+    let (url, credential, _comm) = OneironClient::pair(link).unwrap();
     OneironClient::connect(&url, &credential).unwrap()
 }
 
@@ -121,6 +123,19 @@ fn bare_slip(credential: &str) -> String {
         .rsplit_once('.')
         .unwrap();
     format!("v2.slip.{slip}")
+}
+
+/// The four-axis position a fresh vault's owner writes a claim at: base
+/// reality, the owner's substrate facet, every relationship, the default
+/// project (`vault.claims.upsert` takes it explicitly, DOOR-003 #2847).
+fn owner_claim_scope(person: &str) -> serde_json::Value {
+    let person = EntityId::from_hex(person).unwrap();
+    serde_json::json!({
+        "world_id": oneiron::claim::base_world_id().to_hex(),
+        "scope_facet_id": oneiron::claim::substrate_facet_id(person).unwrap().to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    })
 }
 
 fn code(result: Result<impl Sized, MemoryError>) -> String {
@@ -145,19 +160,21 @@ fn turn() -> WitnessTurn {
 async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
+    let scope = owner_claim_scope(&fixture.person);
     let found = blocking(move || {
         let client = paired(&link);
-        let witnessed = client.witness(&turn()).unwrap();
-        let claim: ClaimInput = serde_json::from_value(serde_json::json!({
+        let witnessed = client.vault_witness(&turn()).unwrap();
+        let claim: ScopedClaimInput = serde_json::from_value(serde_json::json!({
             "predicate": "preference.travel.seat",
             "subject_ref": witnessed.turn_short_id,
             "value": {"seat": "window"}, "confidence": 1.0, "source": "user_stated",
+            "scope": scope,
         }))
         .unwrap();
-        let claimed = client.claim_upsert(&claim).unwrap();
+        let claimed = client.vault_claims_upsert(&claim).unwrap();
         let effort = oneiron_remote::parse_effort("medium").unwrap();
         client
-            .recall(
+            .vault_recall(
                 "window seat",
                 effort,
                 &RecallScope::default(),
@@ -165,9 +182,14 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
-        let receipts = client.receipts(100).unwrap();
+        let receipts = client.vault_receipts(100, &[], None).unwrap().receipts;
         receipts
             .iter()
             .any(|receipt| receipt.receipt_ref == claimed.receipt_ref)
@@ -205,11 +227,16 @@ async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
     let pack = blocking(move || {
         let effort = oneiron_remote::parse_effort("medium").unwrap();
         paired(&link)
-            .recall(
+            .vault_recall(
                 "window seat",
                 effort,
                 &RecallScope::default(),
                 10,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -294,14 +321,14 @@ async fn read_only_paired_client_cannot_export_another_actors_private_note() {
     let (generic, typed) = blocking(move || {
         let client = paired(&link);
         (
-            client.agent_verb("export", serde_json::json!({"format":"json"})),
-            client.export(Some("json")),
+            client.agent_verb("vault.export", serde_json::json!({"format":"json"})),
+            client.vault_export(Some("json")),
         )
     })
     .await;
     for result in [
         generic.map(|value| value.to_string()),
-        typed.map(|value| value.rendered),
+        typed.map(|value| serde_json::to_string(&value).unwrap()),
     ] {
         let error = result.unwrap_err();
         assert_eq!(error.code, "FORBIDDEN");
@@ -314,7 +341,8 @@ async fn read_only_paired_client_cannot_export_another_actors_private_note() {
 async fn logged_slip_reconnects_without_the_minting_host_secret() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
-    let (_mint_origin, credential) = blocking(move || OneironClient::pair(&link).unwrap()).await;
+    let (_mint_origin, credential, _comm) =
+        blocking(move || OneironClient::pair(&link).unwrap()).await;
     let public_server =
         Arc::new(SyncServer::new(fixture.vault.clone(), SyncServerConfig::default()).unwrap());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -327,7 +355,7 @@ async fn logged_slip_reconnects_without_the_minting_host_secret() {
     let read = blocking(move || {
         OneironClient::connect(&url, &credential)
             .unwrap()
-            .receipts(10)
+            .vault_receipts(10, &[], None)
     })
     .await;
     task.abort();
@@ -343,7 +371,10 @@ async fn back_to_back_calls_each_spend_a_fresh_nonce() {
     let link = fixture.owner_link();
     let (first, second) = blocking(move || {
         let client = paired(&link);
-        (client.receipts(10), client.receipts(10))
+        (
+            client.vault_receipts(10, &[], None),
+            client.vault_receipts(10, &[], None),
+        )
     })
     .await;
     assert!(first.is_ok() && second.is_ok());
@@ -354,9 +385,9 @@ async fn a_bare_slip_without_its_key_is_unauthorized() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
     let refused = blocking(move || {
-        let (url, credential) = OneironClient::pair(&link).unwrap();
+        let (url, credential, _comm) = OneironClient::pair(&link).unwrap();
         let client = OneironClient::connect(&url, &bare_slip(&credential)).unwrap();
-        code(client.receipts(10))
+        code(client.vault_receipts(10, &[], None))
     })
     .await;
     assert_eq!(refused, "UNAUTHORIZED");
@@ -367,11 +398,11 @@ async fn a_slip_with_the_wrong_key_is_unauthorized() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
     let refused = blocking(move || {
-        let (url, credential) = OneironClient::pair(&link).unwrap();
+        let (url, credential, _comm) = OneironClient::pair(&link).unwrap();
         let (slip, _seed) = credential.rsplit_once('.').unwrap();
         let wrong = format!("{slip}.{}", "11".repeat(32));
         let client = OneironClient::connect(&url, &wrong).unwrap();
-        code(client.receipts(10))
+        code(client.vault_receipts(10, &[], None))
     })
     .await;
     assert_eq!(refused, "UNAUTHORIZED");
@@ -413,7 +444,7 @@ async fn a_link_for_a_holder_that_is_not_an_entity_is_unauthorized_at_pair() {
 async fn a_slip_with_no_actor_class_is_forbidden_at_the_verb() {
     let fixture = Fixture::serve().await;
     let (link, _) = fixture.link(READ_WRITE, &fixture.person, None);
-    let refused = blocking(move || code(paired(&link).receipts(10))).await;
+    let refused = blocking(move || code(paired(&link).vault_receipts(10, &[], None))).await;
     assert_eq!(refused, "FORBIDDEN");
 }
 
@@ -421,7 +452,7 @@ async fn a_slip_with_no_actor_class_is_forbidden_at_the_verb() {
 async fn a_read_only_slip_is_forbidden_to_write() {
     let fixture = Fixture::serve().await;
     let (link, _) = fixture.link(&["core:read"], &fixture.person, Some("human"));
-    let refused = blocking(move || code(paired(&link).witness(&turn()))).await;
+    let refused = blocking(move || code(paired(&link).vault_witness(&turn()))).await;
     assert_eq!(refused, "FORBIDDEN");
 }
 
@@ -431,15 +462,15 @@ async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
     let link = fixture.owner_link();
     let vault = fixture.vault.clone();
     let refused = blocking(move || {
-        let (url, credential) = OneironClient::pair(&link).unwrap();
+        let (url, credential, _comm) = OneironClient::pair(&link).unwrap();
         let client = OneironClient::connect(&url, &credential).unwrap();
-        client.receipts(10).unwrap();
+        client.vault_receipts(10, &[], None).unwrap();
         let slip = CapabilitySlip::from_token(&bare_slip(&credential)).unwrap();
         let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
         vault
             .revoke_capability_slip(&issuer, slip.claims.slip_id)
             .unwrap();
-        code(client.receipts(10))
+        code(client.vault_receipts(10, &[], None))
     })
     .await;
     assert_eq!(refused, "UNAUTHORIZED");
@@ -451,7 +482,7 @@ async fn host_secret_without_a_holder_proof_is_not_a_credential() {
     let origin = fixture.origin.clone();
     let refused = blocking(move || {
         let client = OneironClient::connect(&origin, SECRET).unwrap();
-        code(client.receipts(10))
+        code(client.vault_receipts(10, &[], None))
     })
     .await;
     // An issuer secret is key material, not an owner-grade bearer.

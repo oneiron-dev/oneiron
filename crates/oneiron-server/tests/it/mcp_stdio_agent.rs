@@ -1165,6 +1165,13 @@ fn seed_failed_task_and_open_turn(
         oneiron::task_verb::sdk::TaskCreateRequest {
             spec: json!("a task whose run fails"),
             label: None,
+            assignee: None,
+            intent_key: None,
+            brief: None,
+            ttl: None,
+            parent_ref: None,
+            due_at: None,
+            watch: false,
         },
     )
     .unwrap();
@@ -1202,6 +1209,16 @@ fn seed_failed_task_and_open_turn(
     ));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     bind_owner(&vault, &host, owner);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let project_signer = vault.owner_project_signer(&issuer).unwrap();
+    let owner_proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
     let root = vault.root_project().unwrap();
     let project = oneiron::EntityId::now();
     let mut record =
@@ -1222,6 +1239,8 @@ fn seed_failed_task_and_open_turn(
                 use ed25519_dalek::Signer;
                 Ok(host.sign(message).to_bytes().to_vec())
             },
+            &owner_proof,
+            &project_signer,
         )
         .expect("the owner's signed project birth");
     let room = record.home_room.clone();
@@ -1252,7 +1271,7 @@ fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityI
     assert_eq!(host.verifying_key().to_bytes(), issuer.binding_key());
     let host_key = issuer.public_key();
     let fold = vault.authority_fold().unwrap();
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)

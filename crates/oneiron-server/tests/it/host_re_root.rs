@@ -121,11 +121,16 @@ fn sigterm(mut server: Server) {
 
 fn recall(client: &OneironClient) -> Result<bool, String> {
     client
-        .recall(
+        .vault_recall(
             "Varnholt orchard ladder",
             RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -172,10 +177,10 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     let vault_id = json(oneiron(&["whoami", vault_arg], &config, OLD))["vault_id"].clone();
     assert!(vault_id.is_string(), "rooted: {vault_id}");
     let first = serve(&config, OLD, port, &dir.path().join("serve-1.log"));
-    let (url, owner_credential) = OneironClient::pair(link.as_str().unwrap()).unwrap();
+    let (url, owner_credential, _comm) = OneironClient::pair(link.as_str().unwrap()).unwrap();
     let owner = OneironClient::connect(&url, &owner_credential).unwrap();
     owner
-        .witness(&WitnessTurn {
+        .vault_witness(&WitnessTurn {
             conversation_ref: "55555555555555555555555555555555".into(),
             turn_ref: None,
             messages: vec![WitnessMessage {
@@ -186,8 +191,12 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     assert_eq!(recall(&owner), Ok(true));
@@ -319,7 +328,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
         NEW,
     ));
     let _second = serve(&config, NEW, port, &dir.path().join("serve-2.log"));
-    let (url, owner_credential) = OneironClient::pair(link.as_str().unwrap()).unwrap();
+    let (url, owner_credential, _comm) = OneironClient::pair(link.as_str().unwrap()).unwrap();
     let owner = OneironClient::connect(&url, &owner_credential).unwrap();
     assert_eq!(recall(&owner), Ok(true), "what was saved is still found");
     let new_agent = OneironClient::connect(&origin, agent["credential"].as_str().unwrap()).unwrap();
