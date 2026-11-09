@@ -35,6 +35,8 @@ fn input(text: &str) -> EncoderInput {
         context: Vec::new(),
         language: None,
         speaker: None,
+        following: Vec::new(),
+        register: Default::default(),
     }
 }
 

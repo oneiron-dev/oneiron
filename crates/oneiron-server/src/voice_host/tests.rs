@@ -83,6 +83,9 @@ fn fixture() -> (
             voice_session_ref: None,
         }),
         shutdown: ManagedShutdown::new(),
+        speculative_auth: None,
+        phone: None,
+        owner_policy: oneiron::policy_model::PolicyModelConfig::default(),
     }).unwrap();
     (dir, vault, host, budget, calls)
 }

@@ -207,6 +207,8 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
             repo: None,
             git_ref: "refs/heads/main".to_owned(),
             serve: serve.clone(),
+            holder: None,
+            recipients: Vec::new(),
         },
         &value,
     )
@@ -225,6 +227,8 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
         SecretRotateArgs {
             name: "cli-token".to_owned(),
             serve,
+            holder: None,
+            recipients: Vec::new(),
         },
         &read_secret_value(&b"cli synthetic rotated"[..]).unwrap(),
     )

@@ -865,7 +865,9 @@ fn owner_rung(endpoint: &str) -> crate::config::remote_embedder::RemoteEmbedderC
             allow: Vec::new(),
             deny: Vec::new(),
             allow_all: true,
+            remote_evidence: None,
         }),
+        key_secret: None,
     }
 }
 
@@ -1967,7 +1969,9 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
                 allow: vec![allow.to_hex(), late.to_hex()],
                 deny: vec![deny.to_hex()],
                 allow_all: false,
+                remote_evidence: None,
             }),
+            key_secret: None,
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
         let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
@@ -2044,7 +2048,9 @@ fn remote_section(
             allow: vec![allow.to_hex()],
             deny: Vec::new(),
             allow_all: false,
+            remote_evidence: None,
         }),
+        key_secret: None,
     }
 }
 
