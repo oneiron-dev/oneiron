@@ -194,33 +194,10 @@ impl FixtureVault {
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
-        fs::create_dir_all(staging.join(VAULT_DIR))?;
-        let clock = FakeClock::at(FAKE_EPOCH);
-        {
-            let vault = Vault::open(staging.join(VAULT_DIR), config(&clock))?;
-            seed(&vault, &clock).map_err(FixtureError::Seed)?;
-        }
-        // A seed that bound key custody or a page seal left state beside the
-        // vault, and the custody row names this directory's absolute path: a
-        // byte copy would share the original's keys, not own its own.
-        let mut beside: Vec<String> = fs::read_dir(&staging)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name != VAULT_DIR)
-            .collect();
-        if !beside.is_empty() {
-            beside.sort();
+        if let Err(error) = seed_into(&staging, name, config, seed) {
             let _ = fs::remove_dir_all(&staging);
-            return Err(FixtureError::Record(format!(
-                "the seed of {name:?} left {beside:?} beside the vault (key custody or a page seal); a copy of it \
-                 would share those keys. Seed without protected publication, or build per test."
-            )));
+            return Err(error);
         }
-        let ended_at = clock.now();
-        fs::write(
-            staging.join(RECORD_FILE),
-            serde_json::json!({"name": name, "ended_at": ended_at}).to_string(),
-        )?;
         match fs::rename(&staging, &dir) {
             Ok(()) => {}
             // Another process won the race: use its fixture, drop ours.
@@ -230,6 +207,15 @@ impl FixtureVault {
             Err(error) => return Err(error.into()),
         }
         Self::read(&dir)?.ok_or_else(|| FixtureError::Record(format!("{} vanished", dir.display())))
+    }
+
+    /// The fixture a seeding run wrote into `dir` ([`seed_into`], or the
+    /// `oneiron-testkit-seed` binary); `None` when `dir` holds none.
+    ///
+    /// # Errors
+    /// The record is unreadable.
+    pub fn at(dir: &Path) -> Result<Option<Self>, FixtureError> {
+        Self::read(dir)
     }
 
     /// An empty vault: opened once, nothing seeded.
@@ -278,6 +264,85 @@ impl FixtureVault {
             temp,
             clock: FakeClock::at(self.ended_at),
         })
+    }
+}
+
+/// Seeds a fixture into `dir`, which must be absent or empty: the vault at
+/// `dir/vault`, opened process-owned (so owner verbs run) on a fake clock at
+/// [`FAKE_EPOCH`] with the config `config` makes, seeded by `seed`, closed,
+/// and recorded in `dir/fixture.json`. Returns the fake time the seed ended
+/// at.
+///
+/// # Errors
+/// `dir` holds something, the vault cannot be opened, the seed fails, or the
+/// seed left anything beside the vault directory (key custody or a page
+/// seal: their rows name this vault's absolute path, so a byte copy would
+/// share the original's keys instead of owning its own).
+pub fn seed_into<C, F>(dir: &Path, name: &str, config: C, seed: F) -> Result<u64, FixtureError>
+where
+    C: FnOnce(&FakeClock) -> VaultConfig,
+    F: FnOnce(&Vault, &FakeClock) -> Result<(), SeedError>,
+{
+    if dir.exists() && fs::read_dir(dir)?.next().is_some() {
+        return Err(FixtureError::Record(format!("{} is not empty", dir.display())));
+    }
+    fs::create_dir_all(dir.join(VAULT_DIR))?;
+    let clock = FakeClock::at(FAKE_EPOCH);
+    {
+        let vault = Vault::open_owned(dir.join(VAULT_DIR), config(&clock))?;
+        seed(&vault, &clock).map_err(FixtureError::Seed)?;
+    }
+    let mut beside: Vec<String> = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|entry| entry != VAULT_DIR)
+        .collect();
+    if !beside.is_empty() {
+        beside.sort();
+        return Err(FixtureError::Record(format!(
+            "the seed of {name:?} left {beside:?} beside the vault (key custody or a page seal); a copy of it \
+             would share those keys. Seed without protected publication, or build per test."
+        )));
+    }
+    let ended_at = clock.now();
+    fs::write(
+        dir.join(RECORD_FILE),
+        serde_json::json!({"name": name, "ended_at": ended_at}).to_string(),
+    )?;
+    Ok(ended_at)
+}
+
+/// A seed read from JSONL, as fixture seeds under `tests/fixtures/` are
+/// written: one JSON object per line, run in order as the vault's embedded
+/// owner through the public verb door. Blank lines and lines starting with
+/// `#` are skipped.
+///
+/// - `{"verb": "<dotted verb name>", "input": {...}}` runs that verb;
+/// - `{"advance_secs": <n>}` moves the fake clock forward.
+///
+/// A line that fails stops the seed with its line number.
+pub fn jsonl_seed(text: &str) -> impl FnOnce(&Vault, &FakeClock) -> Result<(), SeedError> + '_ {
+    move |vault, clock| {
+        let owner = crate::door::owner(vault).map_err(|error| format!("the owner: {error}"))?;
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let at = index + 1;
+            let step: serde_json::Value =
+                serde_json::from_str(line).map_err(|error| format!("seed line {at}: {error}"))?;
+            if let Some(secs) = step.get("advance_secs").and_then(serde_json::Value::as_u64) {
+                clock.advance(secs);
+            } else if let Some(verb) = step.get("verb").and_then(serde_json::Value::as_str) {
+                let input = step.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
+                crate::door::invoke(&owner, verb, input)
+                    .map_err(|error| format!("seed line {at} ({verb}): {error}"))?;
+            } else {
+                return Err(format!("seed line {at}: neither `verb` nor `advance_secs`").into());
+            }
+        }
+        Ok(())
     }
 }
 
