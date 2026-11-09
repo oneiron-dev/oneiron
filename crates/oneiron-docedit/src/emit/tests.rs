@@ -13,6 +13,7 @@ use crate::design_plan::{CompileError, Outcome, TraceOutcome, compile};
 use crate::graphic::{AssetRecord, GraphicLimits};
 use crate::graphic::{GraphicError, Origin};
 use crate::native_patch::chart_data;
+use crate::resource::Resources;
 use crate::retained_opc::Package;
 use crate::retained_opc::{Relationship, rels_name};
 use flate2::{Compression, write::ZlibEncoder};
@@ -145,7 +146,7 @@ impl Fixture {
 
     fn parts(parts: &[(&str, String)]) -> Self {
         Self::new(
-            Package::open(&archive(parts), limits()).unwrap(),
+            Package::open(&archive(parts), limits(), &Resources::measuring()).unwrap(),
             &the_brief(),
         )
     }
@@ -226,7 +227,7 @@ fn text(shape: &ShapeView) -> Vec<String> {
 }
 
 fn reopen(candidate: &Candidate) -> Package {
-    Package::open(&candidate.bytes, limits()).unwrap()
+    Package::open(&candidate.bytes, limits(), &Resources::measuring()).unwrap()
 }
 
 #[test]
@@ -672,7 +673,7 @@ fn oracle_template() -> Package {
         writer.write_all(&body).unwrap();
     }
     let bytes = writer.finish().unwrap().into_inner();
-    Package::open(&bytes, limits()).unwrap()
+    Package::open(&bytes, limits(), &Resources::measuring()).unwrap()
 }
 
 /// The deck the Office oracle opened clean (run b13a-2536-3); the ONE-2528
