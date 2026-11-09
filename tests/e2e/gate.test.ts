@@ -15,8 +15,9 @@ afterAll(suite.flush);
 /**
  * Authority and consent, in plan order. GATE-01, 03, 04, 06, 07 and 08 are written as the subset their
  * doors drive today, each named for exactly that subset (E2E-PARTIAL); each case's note lists what stays
- * unproved and the missing door. GATE-02 and GATE-05 remain TODO. GATE-09 exercises the authorized write burst.
- * suite.todo registers real test.todo cases and mandatory BLOCKED report rows.
+ * unproved and the missing door. GATE-02 and GATE-05 are pending doors (Engine CORE-FOUR-SKIPS = A): each
+ * reports SKIPPED with its missing door and FIX row until 2026-12-01, then FAIL. GATE-09 exercises the
+ * authorized write burst.
  * Do not turn a partial claim write or a schema lookup into passing coverage.
  *
  * Authored inputs and independent oracles: fixtures/gate/scenarios.json,
@@ -265,7 +266,10 @@ type Gate02VerdictRole = {
 type Gate02Verdict =
   | { value: "allow" | "hold"; calibrated_confidence: number; basis: boolean }
   | { provider_failure: true };
-suite.todo(test, "GATE-02", "waits on a public door that runs a Dreamer consolidation whose candidate write the enforced checker judges; vault.gate.checker.set needs a vault model manifest, and a plain claim upsert never consults the checker");
+// Pending door (Engine CORE-FOUR-SKIPS = A): SKIPPED with its door and FIX row until the deadline, then FAIL.
+suite.pendingDoor(test, "GATE-02",
+  "waits on a public door that runs a Dreamer consolidation whose candidate write the enforced checker judges; vault.gate.checker.set needs a vault model manifest, and a plain claim upsert never consults the checker. Veto-only content checker should work",
+  { fix: "FIX 22527", deadline: "2026-12-01" });
 
 // GATE-03 — Policy manifest defaults and owner control should work.
 // DEC-0005 PolicyManifest; ARCH-0040 #mcp-actor-ceilings; identity #authority-log.
@@ -445,7 +449,10 @@ type Gate05DelegatedSlice = {
   read: { projects: Ref[]; records: Ref[] };
   actions: { class: string; budget: number }[];
 };
-suite.todo(test, "GATE-05", "waits on typed attenuating agent delegation, parent-grant revoke and delegated read/action grant setup");
+// Pending door (Engine CORE-FOUR-SKIPS = A).
+suite.pendingDoor(test, "GATE-05",
+  "waits on typed attenuating agent delegation, parent-grant revoke and delegated read/action grant setup. Delegation attenuation and subtree revoke should work",
+  { fix: "FIX 22528", deadline: "2026-12-01" });
 
 // GATE-06 — Catastrophe floor scoped bypass should work.
 // DEC-0006 #bypass-grant; OF-465. This is not ordinary stop-asking.
