@@ -20932,6 +20932,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CompiledSandboxBackends"
+     ],
+     "path": "src/code_sandbox/compiled_backends.rs",
+     "purpose": "The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature…",
+     "surface": {
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SandboxLinkedImportEffects"
      ],
      "path": "src/code_sandbox/contract.rs",
@@ -21264,7 +21277,8 @@
      "kind": "src",
      "notable": [
       "DevProcessBackend",
-      "MicroVmBackend"
+      "MicroVmBackend",
+      "SandboxBackends"
      ],
      "path": "src/code_sandbox/microvm/backend.rs",
      "purpose": "The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations",
@@ -21273,7 +21287,7 @@
       "crate-vis": 2,
       "fn": 6,
       "struct": 1,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -21393,7 +21407,7 @@
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
       "mod": 8,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -99052,6 +99066,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/sandbox_backend_selection.rs",
+     "purpose": "Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs",
      "purpose": "(a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and…",
      "surface": {}
@@ -99389,7 +99411,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100728,8 +100750,8 @@
    },
    "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7244,
-   "test_files": 898
+   "source_files": 7245,
+   "test_files": 899
   },
   "oneiron-android": {
    "files": [
