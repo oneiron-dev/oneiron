@@ -434,7 +434,7 @@ impl EgressRelay for OpenEgressProxy {
     /// The vault's host floor ([`VaultHostFloor`]), looked up at each
     /// charge: the process's descriptor line until a host attaches its own.
     fn host_net_floor(&self) -> &dyn HostNetFloor {
-        &*self.vault.host_net_floor
+        &**self.vault.runtime().host_net_floor()
     }
     fn record_abandoned(&self, manifest: &oneiron_container::SessionManifest) -> io::Result<()> {
         self.vault
