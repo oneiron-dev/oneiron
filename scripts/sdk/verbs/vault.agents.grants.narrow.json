@@ -11,6 +11,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
   "host_door_proof": "owner"
 }
