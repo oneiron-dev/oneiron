@@ -234,7 +234,7 @@ fn config_validate_rejects_zero_local_node_id() {
 async fn zero_local_node_id_refuses_to_run_instead_of_ticking() {
     let (_dir, vault) = open_vault();
     enqueue_micro(&vault, "never-touched", 10);
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);
