@@ -130,9 +130,9 @@ def crc(text):
     return f'{zlib.crc32(text.encode("utf-8")):08x}'
 
 
-def row_pair(row):
-    'A row as the log carries it: its input and output values (`None` where a key is absent).'
-    return [row.get('input'), row.get('output')]
+def row_fields(row):
+    'A row as the log carries it: its `input` and `output`, a key absent where the row has none.'
+    return {key: row[key] for key in ('input', 'output') if key in row}
 
 
 def ir_key(key):
@@ -147,6 +147,8 @@ def state_dump(inv):
         'decls': [[ir_key(key), decl['name'], decl['params'], decl['ir']] for key, decl in inv.decls.items()],
         'order': [ir_key(key) for key in inv.order],
         'names': sorted(name for name in inv.names if isinstance(name, str)),
+        'names_not_str': sorted((name for name in inv.names if not isinstance(name, str)),
+                                key=lambda name: (type(name).__name__, json.dumps(name))),
         'fallbacks': [list(entry) for entry in inv.fallbacks],
         'opaques': [list(entry) for entry in inv.opaques],
         'variants': [[name, meta] for name, meta in inv.variants.items()],
@@ -212,6 +214,7 @@ def record(log_path, out_dir, marker_dir):
         top = state['depth'] == 0
         if top:
             log.write(json.dumps([method, [ident(inv)] + args]) + '\n')
+            log.flush()   # a call that raises still leaves its line
         state['depth'] += 1
         try:
             result = run()
@@ -232,9 +235,9 @@ def record(log_path, out_dir, marker_dir):
             return logged('names.update', self.owner, [added], lambda: set.update(self, *others))
 
     def init(self, root, rows):
-        pairs = [row_pair(row) for row in rows]
-        instances.append((self, [{'input': i, 'output': o} for i, o in pairs]))
-        logged('Inventory', self, [pairs], lambda: orig['__init__'](self, root, rows))
+        fields = [row_fields(row) for row in rows]
+        instances.append((self, fields))
+        logged('Inventory', self, [fields], lambda: orig['__init__'](self, root, rows))
         names = LoggedNames(self.names)
         names.owner = self
         self.names = names
@@ -246,7 +249,7 @@ def record(log_path, out_dir, marker_dir):
     Inventory.py_type = lambda self, text, prefix='Facade.': logged(
         'py_type', self, [text, prefix], lambda: orig['py_type'](self, text, prefix))
     Inventory.census = lambda self, rows: logged(
-        'census', self, [[row_pair(row) for row in rows]], lambda: orig['census'](self, rows))
+        'census', self, [[row_fields(row) for row in rows]], lambda: orig['census'](self, rows))
     Inventory.typescript = lambda self, lines: logged(
         'typescript', self, [lines], lambda: orig['typescript'](self, lines))
     Inventory.python = lambda self, lines: logged('python', self, [lines], lambda: orig['python'](self, lines))

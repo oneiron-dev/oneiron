@@ -14,7 +14,8 @@ use super::reader::{
     strip_comments,
 };
 use super::{
-    EAGER, EXTERNAL, Ir, ItemKey, Key, STRING, crate_dir, holds, index_error, substring_not_found,
+    EAGER, EXTERNAL, Ir, ItemKey, Key, RECURSION_LIMIT, STRING, crate_dir, holds, index_error,
+    recursion_error, substring_not_found,
 };
 use crate::error::GenerateError;
 use crate::py::re::compile;
@@ -283,7 +284,7 @@ impl Index {
         let mut uses = Uses::default();
         if let Some(text) = self.files.get(&key) {
             for found in USE.captures_iter(text) {
-                for (alias, path) in expand_use(&[], &strip_comments(&found[1]))? {
+                for (alias, path) in expand_use(&[], &strip_comments(&found[1]), 0)? {
                     if alias == "*" {
                         uses.globs.push(path);
                     } else {
@@ -541,7 +542,16 @@ impl Index {
 }
 
 /// Port of facade_types.py:501-518 (`Index.expand_use`): a `use` tree as (alias, path) pairs; `*` for a glob.
-fn expand_use(prefix: &[String], tree: &str) -> Result<Vec<(String, Vec<String>)>, GenerateError> {
+/// `depth` counts the braces open around `tree`: Python recurses once per brace, so a tree nested as deep as its
+/// recursion limit is Python's `RecursionError`, not an exhausted native stack.
+fn expand_use(
+    prefix: &[String],
+    tree: &str,
+    depth: usize,
+) -> Result<Vec<(String, Vec<String>)>, GenerateError> {
+    if depth >= RECURSION_LIMIT {
+        return Err(recursion_error());
+    }
     let tree = strip(tree).trim_start_matches(':');
     let pieces = |text: &str| -> Vec<String> {
         text.split("::")
@@ -554,7 +564,7 @@ fn expand_use(prefix: &[String], tree: &str) -> Result<Vec<(String, Vec<String>)
         let head = [prefix, &pieces(&tree[..brace])].concat();
         let mut out = Vec::new();
         for part in split_top(slice(tree, brace + 1, tree.len() - 1), b',') {
-            out.extend(expand_use(&head, part)?);
+            out.extend(expand_use(&head, part, depth + 1)?);
         }
         return Ok(out);
     }
@@ -746,4 +756,49 @@ pub(crate) fn deserialize_fn_end(text: &str) -> Option<usize> {
     search_bounded(&FN, text, 0, true, true)
         .and_then(|found| found.get(0))
         .map(|m| m.end())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_use_reads_trees_and_refuses_nesting_past_the_recursion_limit() {
+        // Python 3.14.7, Index.expand_use(index, [], t):
+        // 'a::{b, c::{self, d as e}, f::*, _g as _}' -> [('b', ['a', 'b']), ('c', ['a', 'c']),
+        //   ('e', ['a', 'c', 'd']), ('*', ['a', 'f'])]
+        let pairs = |items: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
+            items
+                .iter()
+                .map(|(alias, path)| {
+                    (
+                        (*alias).to_owned(),
+                        path.iter().map(|s| (*s).to_owned()).collect(),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            expand_use(&[], "a::{b, c::{self, d as e}, f::*, _g as _}", 0).ok(),
+            Some(pairs(&[
+                ("b", &["a", "b"]),
+                ("c", &["a", "c"]),
+                ("e", &["a", "c", "d"]),
+                ("*", &["a", "f"]),
+            ]))
+        );
+        // '{' * n + 'A' + '}' * n: n = 3000 gives [('A', ['A'])]; n = 20001 raises RecursionError. The port counts
+        // the braces open (its recursion), so at the limit the next brace is refused.
+        assert_eq!(
+            expand_use(&[], "{A}", RECURSION_LIMIT - 2).ok(),
+            Some(pairs(&[("A", &["A"])]))
+        );
+        assert_eq!(
+            expand_use(&[], "{A}", RECURSION_LIMIT - 1)
+                .err()
+                .map(|e| e.to_string())
+                .as_deref(),
+            Some("RecursionError: maximum recursion depth exceeded")
+        );
+    }
 }
