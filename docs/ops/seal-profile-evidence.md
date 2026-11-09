@@ -113,7 +113,10 @@ native seal organ to publish this reporting change.
 DSS verification distinguishes invalid evidence from an unresolved revocation
 check. Bound certificate-only material without enough revocation coverage records
 `validation_material` as `not_run` with `validation_material_unavailable`.
-An authenticated OCSP `unknown` records `not_run` with `revocation_status_unknown`.
+An authenticated OCSP `unknown` about a covered non-anchor certificate (one in a
+signer or TSA chain) records `not_run` with `revocation_status_unknown`. An
+`unknown` about any other certificate says nothing about the chain and changes
+nothing: material unrelated to the chain never changes a genuine result.
 These typed findings appear in `checks`; the existing `reasons` list still holds
 failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
 never a passed B-LT/B-LTA validation-material check.

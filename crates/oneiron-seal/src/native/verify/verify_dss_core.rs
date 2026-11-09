@@ -15,8 +15,9 @@ use super::verify_sig_pipeline::Checks;
 /// validate — CRLs against an embedded/anchored issuer cert with a fresh
 /// thisUpdate/nextUpdate window and no in-scope serial on its revoked list,
 /// OCSP responses with signature, responder authorization, cert-serial
-/// binding and freshness; only `good` supplies coverage, while authenticated
-/// `unknown` is unresolved. Optional `/VRI` does not preempt these global
+/// binding and freshness; only `good` supplies coverage, while an
+/// authenticated `unknown` about a covered non-anchor certificate is
+/// unresolved. Optional `/VRI` does not preempt these global
 /// arrays. The material must also
 /// speak about the document's covered CMS signer/TSA chains: every covered
 /// certificate must appear in `/Certs` or be a trust anchor. A present DSS
@@ -213,10 +214,10 @@ fn material_valid(
         }
     };
     // Every OCSP entry must be valid; collect the DERs of the target
-    // certificates the valid responses bind to with a `good` status, read
-    // in place.
+    // certificates the valid responses bind to with a `good` status, and of
+    // those with an `unknown` status, read in place.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
-    let mut ocsp_unknown = false;
+    let mut ocsp_unknown_targets: Vec<&[u8]> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
         DssArray::Malformed => return Ok(MaterialValidity::Invalid),
@@ -230,8 +231,9 @@ fn material_valid(
                     return Ok(MaterialValidity::Invalid);
                 };
                 memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
-                ocsp_unknown |= evidence.unknown;
+                memory.admit_len::<&[u8]>(evidence.unknown_targets.len())?;
                 ocsp_targets.extend(evidence.good_targets);
+                ocsp_unknown_targets.extend(evidence.unknown_targets);
             }
         }
     }
@@ -243,10 +245,19 @@ fn material_valid(
     // Anchor certificates ride anchor trust and need no coverage. A
     // cert-only DSS or otherwise insufficient valid coverage is unresolved,
     // never a profile pass. Invalid evidence has already failed above.
+    // An authenticated `unknown` counts only when it names a covered
+    // non-anchor certificate, one in a signer or TSA chain this report
+    // covers. An `unknown` about any other certificate says nothing about
+    // the chain, and material unrelated to the chain never changes a genuine
+    // result (EN 319 102-1 §5.1.3 and §5.2.6.4 step 4).
     let mut covered_ok = true;
+    let mut ocsp_unknown = false;
     for cert in covered {
         if anchors.iter().any(|anchor| anchor.der == cert.der) {
             continue;
+        }
+        if ocsp_unknown_targets.contains(&cert.der.as_slice()) {
+            ocsp_unknown = true;
         }
         let mut crl_covered = false;
         for issuer in &crl_issuers {
