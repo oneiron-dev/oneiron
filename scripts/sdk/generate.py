@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-'Generate agent SDK transports from the verb table (scripts/sdk/verbs/); --check never writes; --out-dir writes
-every output under a directory (build scripts read the build-time outputs from there).'
+'''Generate agent SDK transports from the verb table (scripts/sdk/verbs/); --check never writes; --out-dir writes
+every output under a directory (build scripts read the build-time outputs from there).'''
 import argparse
 import functools
 import json

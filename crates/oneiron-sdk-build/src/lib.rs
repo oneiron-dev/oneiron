@@ -16,7 +16,8 @@ use std::process::Command;
 use std::{env, fs};
 
 /// Where a build that cannot run the generator is pointed.
-pub const README_SECTION: &str = "README.md, section \"Building from source\" (Python 3 runs the SDK generator)";
+pub const README_SECTION: &str =
+    "README.md, section \"Building from source\" (Python 3 runs the SDK generator)";
 
 /// The inputs the generator reads beside the Rust crates its type inventory parses (`CRATES` in
 /// `scripts/sdk/facade_types.py`, read from that file): the verb table and the generator, and the hand-written
@@ -40,7 +41,8 @@ const INPUTS: &[&str] = &[
 /// When the workspace, `OUT_DIR` or an output cannot be found, or the generator cannot run or fails: a build
 /// script reports by panicking.
 pub fn generate(outputs: &[&str]) {
-    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    let manifest =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
     let root = manifest
         .ancestors()
         .find(|dir| dir.join("scripts/sdk/generate.py").is_file())
@@ -68,7 +70,9 @@ pub fn generate(outputs: &[&str]) {
         let text = fs::read(&from).unwrap_or_else(|error| {
             panic!("the SDK generator wrote no {output} ({error}); see {README_SECTION}")
         });
-        let name = Path::new(output).file_name().expect("an output names a file");
+        let name = Path::new(output)
+            .file_name()
+            .expect("an output names a file");
         let to = out_dir.join(name);
         // An unchanged output keeps its time, so nothing that includes it rebuilds.
         if fs::read(&to).ok().as_deref() != Some(text.as_slice()) {
@@ -125,7 +129,11 @@ fn collect(path: &Path, files: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let child = entry.path();
         let name = entry.file_name();
-        if name == "generated" || name == "target" || name == "node_modules" || name == "__pycache__" {
+        if name == "generated"
+            || name == "target"
+            || name == "node_modules"
+            || name == "__pycache__"
+        {
             continue;
         }
         collect(&child, files);
@@ -138,13 +146,14 @@ fn run_generator(root: &Path, shared: &Path, run: &Path) {
     fs::create_dir_all(shared).expect("create the shared SDK output directory");
     let staging = shared.join(format!(
         "{}.staging-{}",
-        run.file_name().and_then(|name| name.to_str()).unwrap_or("run"),
+        run.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("run"),
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&staging);
-    let python = env::var("ONEIRON_PYTHON").unwrap_or_else(|_| {
-        if cfg!(windows) { "python" } else { "python3" }.to_owned()
-    });
+    let python = env::var("ONEIRON_PYTHON")
+        .unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.to_owned());
     let status = Command::new(&python)
         .arg(root.join("scripts/sdk/generate.py"))
         .arg("--out-dir")
