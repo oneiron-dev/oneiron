@@ -182,3 +182,25 @@ fn a_caller_that_does_not_read_the_turn_learns_nothing_of_it() -> TestResult {
     assert!(answer.spans.is_empty());
     Ok(())
 }
+
+#[test]
+fn a_bound_read_filter_narrows_the_words_a_turn_serves() -> TestResult {
+    let (_dir, vault) = open()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let turn = witnessed_turn(&memory)?;
+
+    // A filter that admits TURN rows only reads the TURN, but not the MESSAGE
+    // rows its words come from: the source is withheld, never served.
+    let turns_only = oneiron::memory::ReadFilterInput {
+        entity_types: Some(std::collections::BTreeSet::from([
+            oneiron::registry::ENTITY_TYPE_TURN,
+        ])),
+        ..oneiron::memory::ReadFilterInput::default()
+    };
+    let answer = spans(&memory.with_read_filter(Some(&turns_only)), turn, None, &[])?;
+    assert_eq!(answer.status, EvidenceSourceStatus::Withheld);
+    assert_eq!(answer.version, None);
+    assert!(answer.spans.is_empty());
+    Ok(())
+}
