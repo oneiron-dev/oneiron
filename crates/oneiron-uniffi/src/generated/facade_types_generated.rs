@@ -68394,14 +68394,35 @@ pub struct ProgramHoldReleaseView {
     pub effected: bool,
 }
 
+/// `oneiron::memory::dreamer::DreamerParkCauseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamerParkCauseView {
+    #[serde(rename = "provider_unavailable")]
+    ProviderUnavailable,
+    #[serde(rename = "executor_error")]
+    ExecutorError,
+    #[serde(rename = "checkpoint")]
+    Checkpoint,
+    #[serde(rename = "retry")]
+    Retry,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "signal")]
+    Signal,
+    #[serde(rename = "other")]
+    Other,
+}
+
 /// `oneiron::dreamer_runner::park_release::ReleaseParkedAttemptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseParkedAttemptRequest {
     #[serde(rename = "attempt")]
     pub attempt: String,
-    #[serde(rename = "reason")]
-    pub reason: String,
+    #[serde(rename = "cause")]
+    pub cause: DreamerParkCauseView,
     #[serde(rename = "parked_at")]
     pub parked_at: u64,
     #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
@@ -68520,27 +68541,6 @@ pub struct ConsolidationLineageRequest {
     pub from_step: Option<String>,
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-}
-
-/// `oneiron::memory::dreamer::DreamerParkCauseView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DreamerParkCauseView {
-    #[serde(rename = "provider_unavailable")]
-    ProviderUnavailable,
-    #[serde(rename = "executor_error")]
-    ExecutorError,
-    #[serde(rename = "checkpoint")]
-    Checkpoint,
-    #[serde(rename = "retry")]
-    Retry,
-    #[serde(rename = "paused")]
-    Paused,
-    #[serde(rename = "cancelled")]
-    Cancelled,
-    #[serde(rename = "signal")]
-    Signal,
-    #[serde(rename = "other")]
-    Other,
 }
 
 /// `oneiron::memory::dreamer::DreamerParkedAttemptView`.

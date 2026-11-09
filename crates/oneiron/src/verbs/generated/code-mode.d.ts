@@ -4397,7 +4397,7 @@ declare namespace Sdk {
   type ProgramHoldReleaseAction = "stop" | "resume_validated";
   type ReleaseTurnProgramHoldRequest = { attempt: string; reason: string; parked_at: number; action: ProgramHoldReleaseAction; note?: string | null };
   type ProgramHoldReleaseView = { attempt: string; action: ProgramHoldReleaseAction; released: string; state: string; effected: boolean };
-  type ReleaseParkedAttemptRequest = { attempt: string; reason: string; parked_at: number; note?: string | null };
+  type ReleaseParkedAttemptRequest = { attempt: string; cause: DreamerParkCauseView; parked_at: number; note?: string | null };
   type ParkReleaseView = { attempt: string; released: string; cause: string; state: string };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
