@@ -204,6 +204,13 @@ cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
 
 The second command runs the `sync` build with the slow set included.
 
+Some integration tests reach crate-private items through `oneiron::test_doors`,
+which builds only under `--cfg oneiron_test_support` (never a cargo feature):
+
+```sh
+RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test <file>
+```
+
 - [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
 - [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,
   export, and owner approvals.
