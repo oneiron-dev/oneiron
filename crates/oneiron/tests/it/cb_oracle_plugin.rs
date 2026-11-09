@@ -507,20 +507,19 @@ mod plugin_fixture {
     use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
     use oneiron::config::VaultConfig;
     use oneiron::context_board::{
-        AgentLane, AgentRow, AgentsSection, BoardBlockHeader, BoardBudgetRequest, BoardFrame,
-        BoardLegend, BoardSection, PLUGIN_SECTION_BUDGET_POLICY_REF, PluginInstallExecutor,
-        PluginInstallOrigin, PluginInstallSource, PluginInstallTarget, PluginResult,
-        PluginSectionAdmission, PluginSectionError, PluginSectionInstallProposal,
-        PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot,
-        SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId, SectionManifest,
-        SectionManifestEnvelope, SectionManifestProvenance, SectionPolicy, SectionVerbRef,
-        ShedRank, SkillLifecycleSource, StateFamilyRef, TaskBoardStatus, TaskRow, TasksSection,
-        assemble_task_agent_sections, execute_approved_plugin_section_install,
-        propose_plugin_section_install, render_board_block, render_plugin_sections,
-    };
-    use oneiron::context_board::{
         ApprovedPluginIdentity, AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow,
         pending_plugin_proposal_rows, render_plugin_proposal_section,
+    };
+    use oneiron::context_board::{
+        BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLegend, BoardSection,
+        PLUGIN_SECTION_BUDGET_POLICY_REF, PluginInstallExecutor, PluginInstallOrigin,
+        PluginInstallSource, PluginInstallTarget, PluginResult, PluginSectionAdmission,
+        PluginSectionError, PluginSectionInstallProposal, PluginSectionRegistry, PluginSectionRow,
+        PluginSectionSnapshot, SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId,
+        SectionManifest, SectionManifestEnvelope, SectionManifestProvenance, SectionPolicy,
+        SectionVerbRef, ShedRank, SkillLifecycleSource, StateFamilyRef, TaskBoardStatus, TaskRow,
+        TasksSection, assemble_tasks_section, execute_approved_plugin_section_install,
+        propose_plugin_section_install, render_board_block, render_plugin_sections,
     };
     use oneiron::dreamer_plugin_suggest::{
         PackCandidate, PluginSuggestJob, PluginSuggestionDisposition, TestPackCatalog,
@@ -1000,20 +999,27 @@ mod plugin_fixture {
                     ladder_disposition: None,
                     counter_task_ref: None,
                     cancel_pathology: None,
+                    widening: None,
+                    due_at: None,
+                    fits: Vec::new(),
                 }],
                 overflow: None,
             };
-            let agents = AgentsSection {
-                rows: vec![AgentRow {
-                    id: "ag_1".to_owned(),
-                    lane: AgentLane::Child,
-                    line: format!("ag_1 idle lane=child label={}", values[3]),
-                    harness_label: None,
-                }],
-            };
-            let [tasks_section, agents_section] =
-                assemble_task_agent_sections(&tasks, &agents).expect("frame adapter");
-            vec![worlds, memories, tasks_section, agents_section]
+            let tasks_section = assemble_tasks_section(&tasks, Vec::new()).expect("frame adapter");
+            // The PEOPLE ruling (6bef6393118, ARCH-0067) removed the AGENTS
+            // section; ROOM holds its core slot, pinned and never shed.
+            let room = BoardSection::new(
+                "ROOM",
+                vec![format!("pr1 present human label={}", values[3])],
+                Vec::new(),
+                Vec::new(),
+                SectionPolicy {
+                    pinned: true,
+                    shed_rank: None,
+                },
+            )
+            .expect("fixture room section");
+            vec![worlds, memories, tasks_section, room]
         }
 
         fn all_sections_owned(
