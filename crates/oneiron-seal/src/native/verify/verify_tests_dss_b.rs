@@ -66,8 +66,12 @@ pub(crate) mod tests {
         // Same-subject fake-issuer shadowing on the CRL path: a real
         // covered leaf issued by anchor A; /Certs orders [leaf, F] where F
         // is attacker self-signed with subject DN == A's DN. A fresh EMPTY
-        // CRL signed by F (issuer = A's DN) must fail ValidationMaterial —
-        // never pass, never AbsentAllowed.
+        // CRL signed by F (issuer = A's DN) is forged presented material:
+        // never pass, never AbsentAllowed. Lead ruling F (SEAL-SHADOW-ETSI,
+        // 10 Nov 06:50): anyone holding the signed PDF can append a DSS, so
+        // it rolls up to indeterminate, NotRun with the visible sub-indication
+        // ValidationMaterialPossibleTampering, as EN 319 102-1 discards
+        // unusable revocation data.
         let anchor = test_ca("issuer");
         let leaf_der = leaf_under(&anchor, "leaf");
         let fake = test_ca("issuer");
@@ -84,7 +88,10 @@ pub(crate) mod tests {
             usize::MAX,
             &mut checks,
         );
-        assert_material_fails(&checks);
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     #[test]

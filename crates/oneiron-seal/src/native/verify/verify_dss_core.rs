@@ -295,13 +295,16 @@ fn material_valid(
         }
     }
     // Evidence authenticated by a same-subject/different-key shadow of a
-    // covered certificate's issuer fails here: a CRL whose signer names the
-    // issuer's subject, did not sign the certificate, and holds a key no
-    // trust anchor vouches for is forged material about it, so it is
-    // invalid, never merely unavailable (#5937 kept missing evidence
-    // unresolved). The shadow takes precedence over every unresolved result;
-    // beside complete genuine coverage it is disregarded, as EN 319 102-1
-    // disregards unauthorized revocation data.
+    // covered certificate's issuer is caught here: a CRL whose signer names
+    // the issuer's subject, did not sign the certificate, and holds a key no
+    // trust anchor vouches for is forged material about it, never merely
+    // unavailable (#5937 kept missing evidence unresolved). Anyone holding
+    // the signed PDF can append a DSS, so forged presented material cannot
+    // turn the verdict into failed: it is NotRun with the sub-indication
+    // ValidationMaterialPossibleTampering, which rolls up to indeterminate
+    // and is always a reason (lead ruling F; EN 319 102-1 discards unusable
+    // revocation data). It takes precedence over every other unresolved
+    // result; beside complete genuine coverage it is disregarded.
     if ocsp_unknown || !covered_ok {
         for cert in covered {
             if anchors.iter().any(|anchor| anchor.der == cert.der) {
@@ -309,7 +312,9 @@ fn material_valid(
             }
             for signer in &crl_issuers {
                 if crl_signer_shadows(cert, signer, &embedded, anchors, covered, memory)? {
-                    return Ok(MaterialValidity::Forged);
+                    return Ok(MaterialValidity::Unresolved(
+                        VerifyFindingCode::ValidationMaterialPossibleTampering,
+                    ));
                 }
             }
         }

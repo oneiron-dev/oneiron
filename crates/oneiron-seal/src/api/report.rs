@@ -57,6 +57,11 @@ pub enum VerifyFindingCode {
     ValidationMaterialInvalid,
     ValidationMaterialUnavailable,
     RevocationStatusUnknown,
+    /// Presented revocation material that is forged (a CRL signed by a
+    /// same-subject shadow of a covered certificate's issuer): the check is
+    /// NotRun, so the verdict is indeterminate, and this sub-indication is
+    /// always a reason (lead ruling F, SEAL-SHADOW-ETSI).
+    ValidationMaterialPossibleTampering,
     DocumentTimestampInvalid,
     ModificationNotAllowed,
     NoSignature,
@@ -249,14 +254,17 @@ impl VerifyReport {
     }
     #[must_use]
     pub fn reasons(&self) -> Vec<VerifyFindingCode> {
+        // Failed checks' findings, and a possible-tampering sub-indication
+        // though its check is NotRun: the user sees it (lead ruling F).
         let mut reasons: Vec<_> = self
             .checks()
-            .filter_map(|c| {
-                if c.status == VerifyCheckStatus::Fail {
-                    c.finding
-                } else {
-                    None
-                }
+            .filter_map(|c| match (c.status, c.finding) {
+                (VerifyCheckStatus::Fail, finding) => finding,
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                ) => Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                _ => None,
             })
             .collect();
         if self
@@ -343,5 +351,60 @@ mod tests {
         json["verdict"] = serde_json::json!("failed");
         let back: VerifyReport = serde_json::from_value(json).unwrap();
         assert_eq!(back.verdict(), VerifyVerdict::Passed);
+    }
+
+    #[test]
+    fn possible_tampering_is_indeterminate_and_a_visible_reason() {
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50): forged presented
+        // revocation material rolls up to indeterminate, and its
+        // sub-indication is a reason the user sees, though its check is
+        // NotRun. Another NotRun finding stays out of the reasons.
+        let r = VerifyReport {
+            artifact_sha256: [0; 32],
+            active_content: ActiveContentFacts::default(),
+            revisions: vec![],
+            modifications: Modifications::NotRun,
+            anomalies: vec![],
+            checks: vec![
+                VerifyCheck {
+                    kind: VerifyCheckKind::ValidationMaterial,
+                    status: VerifyCheckStatus::NotRun,
+                    finding: Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                },
+                VerifyCheck {
+                    kind: VerifyCheckKind::CertificatePath,
+                    status: VerifyCheckStatus::NotRun,
+                    finding: Some(VerifyFindingCode::TrustRootUnavailable),
+                },
+            ],
+            signatures: vec![SignatureReport {
+                id: "sig-0".into(),
+                kind: SignatureKind::Signature,
+                byte_range: ByteRangeEvidence {
+                    values: [0; 4],
+                    well_formed: false,
+                    covers_to: None,
+                    file_len: 0,
+                },
+                coverage: Coverage::Unclear,
+                revision_coverage: None,
+                digest: None,
+                profile: None,
+                integrity: VerifyVerdict::Indeterminate,
+                trust: VerifyCheckStatus::NotRun,
+                checks: vec![],
+            }],
+        };
+        assert_eq!(r.verdict(), VerifyVerdict::Indeterminate);
+        assert_eq!(
+            r.reasons(),
+            vec![VerifyFindingCode::ValidationMaterialPossibleTampering]
+        );
+        let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["verdict"], "indeterminate");
+        assert_eq!(
+            json["reasons"],
+            serde_json::json!(["validation_material_possible_tampering"])
+        );
     }
 }

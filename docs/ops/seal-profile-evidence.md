@@ -105,8 +105,9 @@ The existing report rollup remains unchanged: `not_run` is not `pass`, so
 an unsupported envelope cannot make the document pass self-verification.
 Supported CAdES and document-timestamp handlers retain their validation.
 The finding travels in the existing per-envelope `checks` array; the
-report's top-level `reasons` remains failure-only. Rebuild and hash-pin the
-native seal organ to publish this reporting change.
+report's top-level `reasons` does not list it (`reasons` holds failures, and
+only the possible-tampering sub-indication below among `not_run` findings).
+Rebuild and hash-pin the native seal organ to publish this reporting change.
 
 ## Unresolved DSS evidence
 
@@ -121,38 +122,43 @@ nothing: material unrelated to the chain never changes a genuine result. An
 chain certificate with that issuer and serial even when it binds first to
 another certificate (a second encoding, or a second certificate with the same
 serial).
-These typed findings appear in `checks`; the existing `reasons` list still holds
-failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
-never a passed B-LT/B-LTA validation-material check.
+These typed findings appear in `checks`; the `reasons` list holds failed-check
+reasons, plus `validation_material_possible_tampering` (below). A `not_run` check
+rolls up to an indeterminate verdict, never a passed B-LT/B-LTA
+validation-material check.
 
-The rule: forged or unverifiable presented material is invalid (`fail`,
-`validation_material_invalid`); missing or authenticated-unknown material is
-unavailable (`not_run`). Unverifiable means it fails verification against the
-issuer it claims. Material that claims nothing about the signer's certificates,
-such as a CRL from an unrelated issuer, is missing coverage.
+The rule: missing or authenticated-unknown material is unavailable (`not_run`).
+Material that claims nothing about the signer's certificates, such as a CRL from
+an unrelated issuer, is missing coverage. Forged presented revocation material,
+a CRL signed by a shadow of a covered certificate's issuer, is `not_run` with
+`validation_material_possible_tampering`.
 
 A CRL signed by a shadow of a covered certificate's issuer is forged. The shadow
 carries the issuer's subject, did not sign the certificate, and holds a key no
 trust anchor vouches for: no anchor carries that subject and key, and no anchor
 or covered chain certificate issued a certificate for them. A CA's separate
 CRL-signing key, a key rollover's link certificate and a same-subject anchored
-CA are vouched for, so they are never shadows. A shadow makes the result invalid
-wherever it would otherwise be unavailable or unknown; beside complete genuine
-coverage it is disregarded, and the material passes. A shadow failure is never
-read as a missing trust root: when a timestamp's root is unavailable, the retry
-that treats covered certificates as provisional roots first re-reads the
-material under the real anchors, and a shadow found there, even one an earlier
-failure hid, keeps it a failure.
+CA are vouched for, so they are never shadows. A shadow reports possible
+tampering wherever the result would otherwise be unavailable or unknown; beside
+complete genuine coverage it is disregarded, and the material passes. When a
+timestamp's root is unavailable, the retry that treats covered certificates as
+provisional roots first re-reads the material under the real anchors at the
+retry's time; a shadow found there, even one an earlier failure hid, is reported
+as possible tampering, never as a missing trust root.
 
-Oneiron's evidence policy is stricter than ETSI EN 319 102-1 here: the standard
-reports unverifiable revocation evidence as INDETERMINATE
-(CERTIFICATE_CHAIN_GENERAL_FAILURE), while Oneiron reports forged material as a
-failed verdict so that the tampering signal stays visible.
+Anyone holding a signed PDF can append a DSS without breaking its signatures, so
+presented material must not turn an unresolved check into a failed verdict. This
+case follows ETSI EN 319 102-1, which discards unusable revocation data and
+reports INDETERMINATE: the verdict is indeterminate, and
+`validation_material_possible_tampering` is always in `reasons`, so the user sees
+the tampering sub-indication.
 
 Malformed material, bad signatures, bad binding, unauthorized or stale responses,
-and proven revocation remain failures. Unknown status is reported only after the
-whole response's binding, authorization, freshness and signature checks pass;
-invalid evidence takes precedence. Seal-time OCSP gathering still accepts only
+and proven revocation remain failures (`fail`, `validation_material_invalid`);
+FIX row [SEAL-REPORT-EN-319-102-1-ROLLUP] holds the EN-aligned rollup for them.
+Unknown status is reported only after the whole response's binding,
+authorization, freshness and signature checks pass; invalid evidence takes
+precedence. Seal-time OCSP gathering still accepts only
 all-good responses covering the requested certificate.
 
 An optional `/VRI` index does not preempt validation of the existing global DSS
@@ -160,5 +166,6 @@ certificate and revocation arrays. The verifier does not parse that index or add
 an old-format reader. Invalid global material still fails, and an index without
 any global arrays does not establish validation material.
 
-Rebuild and hash-pin the native seal organ to publish these two finding codes.
-No report shape, SDK type, configuration or numerical policy changes.
+Rebuild and hash-pin the native seal organ to publish these three finding codes
+and the possible-tampering reason. The report's shape is unchanged: `reasons`
+stays a list of finding codes. No configuration or numerical policy changes.

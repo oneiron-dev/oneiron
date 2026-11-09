@@ -1,8 +1,9 @@
-//! Verifier tests: same-subject shadow CRL signers (lead ruling
-//! SEAL-SHADOW-ETSI, 10 Nov 05:38). A shadow is a CRL signer that carries a
-//! covered certificate's issuer subject, did not sign it, and holds a key no
-//! trust anchor vouches for. It makes the DSS material invalid wherever the
-//! result would otherwise be unresolved; legitimate same-subject keys are
+//! Verifier tests: same-subject shadow CRL signers (lead rulings
+//! SEAL-SHADOW-ETSI, 10 Nov 05:38, and F, 06:50). A shadow is a CRL signer
+//! that carries a covered certificate's issuer subject, did not sign it, and
+//! holds a key no trust anchor vouches for. Wherever the result would
+//! otherwise be unresolved, it reports NotRun with the sub-indication
+//! ValidationMaterialPossibleTampering; legitimate same-subject keys are
 //! never shadows.
 
 #[cfg(test)]
@@ -15,7 +16,7 @@ mod tests {
     use super::super::verify_sig_pipeline::Checks;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::*;
-    use crate::api::{VerifyCheckKind, VerifyFindingCode};
+    use crate::api::{VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
     use crate::memory::testing::process_operation_limits;
 
     const THIS_UPDATE: u64 = AT_UNIX - 3600;
@@ -57,45 +58,36 @@ mod tests {
     }
 
     #[test]
-    fn dss_crl_shadow_beside_covered_target_fails_when_coverage_is_incomplete() {
-        // The anchor's genuine CRL covers the leaf, and an attacker's
-        // self-signed certificate with the anchor's subject signs a second
-        // CRL. A second leaf, under another anchor, has no coverage, so the
-        // result would be unavailable: the shadow makes it invalid.
+    fn dss_crl_shadow_beside_covered_target_is_possible_tampering() {
+        // Hostile input, one row per shape. In each, the anchor's genuine CRL
+        // covers the leaf, and an attacker's self-signed certificate with the
+        // anchor's subject signs a second CRL. Where the result would
+        // otherwise be unresolved, the shadow reports possible tampering
+        // instead: NotRun with ValidationMaterialPossibleTampering (lead
+        // rulings SEAL-SHADOW-ETSI Q3 and F).
         let anchor = test_ca("issuer");
         let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
         let shadow = test_ca("issuer");
+        let genuine = || build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let forged = || build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        // Row 1: a second leaf, under another anchor, has no coverage, so the
+        // result would be ValidationMaterialUnavailable.
         let other = test_ca("other-ca");
         let second_der = leaf_under(&other, "second-leaf");
-        let genuine = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let doc = dss_doc(
+        let incomplete = dss_doc(
             &[
                 leaf_der.clone(),
                 second_der.clone(),
                 shadow.cert_der.clone(),
             ],
-            &[genuine, forged],
+            &[genuine(), forged()],
             &[],
         );
-        let checks = material_check(&doc, &[&anchor, &other], &[&leaf_der, &second_der]);
-        assert_material_fails(&checks);
-    }
-
-    #[test]
-    fn dss_crl_shadow_beside_covered_target_fails_over_ocsp_unknown() {
-        // The anchor's genuine CRL covers the leaf, a shadow signs a second
-        // CRL, and the anchor's authenticated OCSP response says `unknown`
-        // for the leaf. The result would be RevocationStatusUnknown: the
-        // shadow makes it invalid. The response carries its responder
-        // certificate, so its by-name responder ID resolves to the anchor,
-        // not to the shadow in /Certs.
-        let anchor = test_ca("issuer");
-        let leaf_der = leaf_under(&anchor, "leaf");
-        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
-        let shadow = test_ca("issuer");
-        let genuine = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        // Row 2: the anchor's authenticated OCSP response says `unknown` for
+        // the leaf, so the result would be RevocationStatusUnknown. The
+        // response carries its responder certificate, so its by-name
+        // responder ID resolves to the anchor, not to the shadow in /Certs.
         let unknown = build_ocsp_full(
             &anchor,
             leaf.tbs_certificate.serial_number,
@@ -106,13 +98,36 @@ mod tests {
             &anchor,
             true,
         );
-        let doc = dss_doc(
+        let unknown_leaf = dss_doc(
             &[leaf_der.clone(), shadow.cert_der.clone()],
-            &[genuine, forged],
+            &[genuine(), forged()],
             &[unknown],
         );
-        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
-        assert_material_fails(&checks);
+        let rows: [(&str, &Document, &[&TestCa], &[&[u8]]); 2] = [
+            (
+                "coverage incomplete",
+                &incomplete,
+                &[&anchor, &other],
+                &[leaf_der.as_slice(), second_der.as_slice()],
+            ),
+            (
+                "authenticated unknown for the leaf",
+                &unknown_leaf,
+                &[&anchor],
+                &[leaf_der.as_slice()],
+            ),
+        ];
+        for (row, doc, anchors, covered) in rows {
+            let checks = material_check(doc, anchors, covered);
+            assert_eq!(
+                dss_finding(&checks),
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering)
+                ),
+                "{row}"
+            );
+        }
     }
 
     #[test]
