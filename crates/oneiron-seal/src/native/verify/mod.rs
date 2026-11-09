@@ -20,6 +20,8 @@ mod verify_sig_pipeline;
 #[cfg(test)]
 mod verify_tests_dss_b;
 #[cfg(test)]
+mod verify_tests_dss_shadow;
+#[cfg(test)]
 mod verify_tests_fixtures_dss_a;
 #[cfg(test)]
 mod verify_tests_lta_probes;
