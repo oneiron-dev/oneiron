@@ -201,7 +201,10 @@ pub(super) fn anchors(
 /// a failed or malformed DSS. A failure on forged presented material (a
 /// shadow CRL signer) is never a missing-root symptom and stays as it is:
 /// treating every covered certificate as a root would exempt it from the
-/// very check that found the forgery.
+/// very check that finds the forgery. So before the probe the material is
+/// re-read at the same time under the real `anchors`; a shadow found there
+/// (it may have been hidden by an earlier failure at the first reading's
+/// time) keeps the failure too.
 pub(super) fn classify_missing_material_root(
     doc: &Document,
     anchors: &[EmbeddedCert],
@@ -224,6 +227,11 @@ pub(super) fn classify_missing_material_root(
             c.kind == VerifyCheckKind::ValidationMaterial && c.status == VerifyCheckStatus::Fail
         })
     {
+        return Ok(());
+    }
+    let mut real = Checks::new(limits);
+    verify_dss(doc, anchors, covered, at, memory, &mut real, limits)?;
+    if real.material_forged {
         return Ok(());
     }
     let mut probe = Checks::new(limits);
