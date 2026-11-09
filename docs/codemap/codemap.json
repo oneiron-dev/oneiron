@@ -3001,7 +3001,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/engine/reclaim.rs",
@@ -3122,6 +3122,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PauseKind",
+      "RunState"
+     ],
+     "path": "src/attempt_queue/lifecycle.rs",
+     "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3141,7 +3156,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 9,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -98985,6 +99000,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle.rs",
+     "purpose": "The run lifecycle (untangle slice 5.0c): the interventions, the budget hold and lease reclaim move an…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_state.rs",
+     "purpose": "The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -99122,7 +99153,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100650,8 +100681,8 @@
    },
    "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7240,
-   "test_files": 896
+   "source_files": 7241,
+   "test_files": 898
   },
   "oneiron-android": {
    "files": [
