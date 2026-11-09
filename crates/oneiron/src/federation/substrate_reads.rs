@@ -23,13 +23,15 @@ pub(crate) enum SubstrateRead {
     /// The learning dials, the read side of `engine.controls`: any of its
     /// four classes reads them, since a read changes nothing.
     Dials,
+    /// A project's intake goal (untangle 6.6d, F4): the Steward `read` verb.
+    Goal,
 }
 
 impl SubstrateRead {
     /// The Steward verbs that admit the read: any one of them does.
     const fn grants(self) -> &'static [&'static str] {
         match self {
-            Self::Evidence => &[grant_scope::STEWARD_READ_VERB],
+            Self::Evidence | Self::Goal => &[grant_scope::STEWARD_READ_VERB],
             Self::Dials => &grant_scope::ENGINE_CONTROLS_VERBS,
         }
     }
@@ -120,7 +122,7 @@ pub(crate) fn admit_substrate_read_by(
         MEMORY_CODE_FORBIDDEN,
         &format!(
             "{verb} reads for the vault owner, or for a holder of a Steward grant naming `{}`",
-            read.grant()
+            read.grants().join("` or `")
         ),
         &["Ask the owner for the grant; the Coach holds it by default."],
     ))

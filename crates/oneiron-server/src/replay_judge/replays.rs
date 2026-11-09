@@ -133,7 +133,7 @@ impl ServeReplayJudge {
         };
         Ok(self
             .vault
-            .project_intake_goal_for_coach(project)?
+            .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
             .map(|record| {
                 let axes: Vec<Value> = record
                 .primary_axes
