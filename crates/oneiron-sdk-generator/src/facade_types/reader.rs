@@ -796,6 +796,10 @@ mod tests {
         assert_eq!(skip("\"unclosed", 0), 9);
         assert_eq!(skip("// c\nx", 0), 4);
         assert_eq!(skip("/* a /* b */ c */x", 0), 17);
+        // An unclosed block comment runs to the end (facade_types.py:157, which no corpus run reaches): 12, 4, 3.
+        assert_eq!(skip("/* a /* b */", 0), 12);
+        assert_eq!(skip("/* …", 0), 6);
+        assert_eq!(skip("/*/", 0), 3);
         assert_eq!(skip("'…' x", 0), 5);
         assert_eq!(skip("'a x", 0), 1);
         assert_eq!(skip(r"'\n' x", 0), 4);
