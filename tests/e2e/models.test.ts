@@ -324,7 +324,7 @@ ${models01Config(providers)}`, { mode: 0o600 });
       "--oneironer", "endpoint", "--oneironer-url", providers.urls.tagger!,
       "--oneironer-checkpoint-sha16", models01Checkpoint, "--oneironer-label-count", "1"],
     undefined, LIMITS.readyMs, true, true);
-    if (initialized.exitCode !== 0) throw new CliError(initialized, "models01-init");
+    if (initialized.exitCode !== 0) throw new CliError(initialized, "vault-init");
     // Init has no timeout/stack flags and rewrites these tables. Set public host policy after it.
     const written = await readFile(config, "utf8");
     expect(written.match(/^\[embedder\]$/gm)).toHaveLength(1);
@@ -339,7 +339,7 @@ ${models01Config(providers)}`, { mode: 0o600 });
     await writeFile(config, configured, { mode: 0o600 });
     const bootstrap = await bootstrapCli.run(["token", "bootstrap", "--url", url, "--config", config],
       undefined, LIMITS.readyMs, true);
-    if (bootstrap.exitCode !== 0) throw new CliError(bootstrap, "models01-bootstrap");
+    if (bootstrap.exitCode !== 0) throw new CliError(bootstrap, "owner-bootstrap");
     const link = bootstrap.stdout.trim(); redactor.add(link);
     await models01Release(); await models01Launch();
     const sdk = new SdkProcessDriver(build, root, env);
@@ -357,7 +357,7 @@ ${models01Config(providers)}`, { mode: 0o600 });
       pairActor: async (principalRef: string) => {
         const result = await cli.run(["token", "pair", "--url", url, "--principal-ref", principalRef, "--actor-class", "agent"],
           undefined, LIMITS.requestMs, true);
-        if (result.exitCode !== 0) throw new CliError(result, "models01-agent-pair");
+        if (result.exitCode !== 0) throw new CliError(result, "actor-pair");
         const actorLink = result.stdout.trim(); redactor.add(actorLink);
         const actor = await sdk.pair(actorLink);
         return new Models01HttpClient(url, { credential: actor.credential, artifacts, label: "models01-non-owner" });
@@ -397,7 +397,9 @@ async function models01RefusalReceipt(client: Models01HttpClient, error: PublicH
   if (typeof ref !== "string") throw new Error("Refusal has no receiptRef");
   expect(ref).toMatch(/^call:[a-f0-9]{32}$/);
   expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(ref);
-  const receipt = await client.call("vault.receipts.get", { receipt_ref: ref });
+  // The ref is returned before the deferred receipt commit lands: poll the read.
+  const receipt = await awaitPublic(() => client.call("vault.receipts.get", { receipt_ref: ref }),
+    value => value !== null, { label: `models01 refusal receipt ${verb}` });
   expect(receipt).toMatchObject({ receipt_ref: ref, verb: `v1/core/facade/${verb}`,
     outcome: { refused: { code: error.error!.code } }, ...(actorRef ? { actor_ref: actorRef, actor_class: "agent" } : {}) });
   return ref;
@@ -955,7 +957,7 @@ type ModelReceipt = FacadeResult<"ai.steps.receipt">;
 type ModelFailure = Extract<NonNullable<ModelReceipt["result"]>, { status: "failed" }>["failure"];
 type ModelStepVerb = "ai.steps.submit" | "ai.steps.receipt";
 interface ModelTerminal { input: ModelSubmit; receipt: ModelReceipt }
-interface ModelOffer { name: string; url: string; nativeJson: boolean }
+interface ModelOffer { name: string; url: string; nativeJson: boolean; timeoutSecs?: number }
 interface ModelFailureScenario {
   id: string;
   sequences: {
@@ -977,7 +979,7 @@ function modelStepConfig(offers: readonly ModelOffer[]): string {
 kind = "local-openai-compat"
 base_url = ${JSON.stringify(offer.url)}
 revision = "rev-a"
-timeout_secs = 1
+timeout_secs = ${offer.timeoutSecs ?? 1}
 request_compression = false
 capabilities = ${offer.nativeJson ? '["json_response"]' : '[]'}
 `).join("") + `\n[models.roles.generative_reasoner]\nrungs = [\n` +
@@ -1144,7 +1146,9 @@ suite.test(test, "MODELS-03", "Fatal model failure is explicit, declared determi
   ] });
   try {
     const origin = await refusedModelOrigin();
-    const offers: ModelOffer[] = Object.entries(providers.urls).map(([name, url]) => ({ name, url, nativeJson: name === "m03-fallback" }));
+    const offers: ModelOffer[] = Object.entries(providers.urls).map(([name, url]) => ({ name, url, nativeJson: name === "m03-fallback",
+      // The Started hold spans a receipt read and a duplicate submit; only it gets a 5 s budget.
+      ...(name === "m03-started" ? { timeoutSecs: 5 } : {}) }));
     offers.push({ name: "m03-refused", url: origin, nativeJson: false });
     const engine = await EngineFixture.start({ id: "MODELS-03", profile, serverConfig: modelStepConfig(offers) });
     try {
@@ -1700,8 +1704,11 @@ async function models09Refused(
   // Authenticated facade refusals carry OF-538 call receipts, including owner preflight refusals.
   expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
   if (typeof receiptRef !== "string") throw new Error("MODELS-09 refusal lacks receiptRef");
-  const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
-  expect(receipt).toMatchObject({ receipt_ref: receiptRef, verb, actor_ref: actorRef,
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  // The ref is returned before the deferred receipt commit lands: poll the read.
+  const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null, { label: `models09 refusal receipt ${verb}` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, verb: `v1/core/facade/${verb}`, actor_ref: actorRef,
     outcome: { refused: { code } } });
   return receiptRef;
 }
@@ -1828,7 +1835,7 @@ enabled = false
       route: "own_server", slot: "llm", tier: before.tier });
 
     const scope = await models09OwnerBaseClaimScope(owner, ownerRef);
-    const witness = await owner.call("vault.witness", { conversation_ref: "models09-history", occurred_at: 1_800_000_000,
+    const witness = await owner.call("vault.witness", { conversation_ref: "09000000000000000000000000000006", occurred_at: 1_767_225_600,
       messages: [{ author: "user", message_type: "dialogue", content: "Two independent model evaluation items.",
         is_visible: true, order: 0 }] });
     const turn = (await owner.call("vault.get", { entity_ref: witness.turn_short_id })).value;
@@ -1838,7 +1845,7 @@ enabled = false
     for (const [index, unit] of units.entries()) {
       const claim = await owner.call("vault.claims.upsert", { id: unit, subject_ref: turn.id_hex,
         predicate: `fixture.item.${index === 0 ? "a" : "b"}`, value: facts.heldOutLabels[index]!.item,
-        confidence: 1, source: "user_stated", scope, occurred_at: 1_800_000_000 });
+        confidence: 1, source: "user_stated", scope, occurred_at: 1_767_225_600 });
       expect(claim.approval).toBe("auto");
       expect((await owner.call("vault.get", { entity_ref: claim.claim_short_id })).value?.id_hex).toBe(unit);
     }
