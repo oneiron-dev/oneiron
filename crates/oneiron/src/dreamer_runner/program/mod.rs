@@ -47,6 +47,8 @@ mod resume;
 mod run;
 mod stop_recovery;
 mod stop_sends;
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_hooks;
 mod types;
 mod wake;
 mod withdrawn;
