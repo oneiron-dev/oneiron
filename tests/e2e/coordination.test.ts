@@ -6,7 +6,7 @@ import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -70,8 +70,15 @@ interface Coordination01ProjectBody {
   budget_share?: { project_id: string; parent_id: string; share_bps: number } | null;
 }
 const COORDINATION01_AT = 1769947200; // Public setup input, never an engine clock override.
-const COORDINATION01_DECIDE = { method: "POST", path: "/v1/chat/completions", model: "project-decider" } as const;
-const COORDINATION01_DRAFT = { method: "POST", path: "/v1/chat/completions", model: "project-drafter" } as const;
+/** The host-configured decision wording; the Big rung sends it as the first system text (big_rung.rs:319-328). */
+const COORDINATION01_DECISION_WORDING = "You answer one typed question about the state you are given.";
+/** The typed project question is a buffered call: `stream: false` (wire.rs:146-149, ladder/generation.rs:167-188). */
+const COORDINATION01_DECIDE = { method: "POST", path: "/v1/chat/completions", model: "project-decider",
+  fields: { stream: false }, system: COORDINATION01_DECISION_WORDING } as const;
+/** Code-mode executor runs stream (ai_host/code_mode.rs:676-705, wire.rs:146-149). The executor's own
+ * system prompt is generated, so it is never matched; only the stable streaming contract is. */
+const COORDINATION01_DRAFT = { method: "POST", path: "/v1/chat/completions", model: "project-drafter",
+  fields: { stream: true, stream_options: { include_usage: true } } } as const;
 
 async function coordination01Scenario(): Promise<Coordination01Scenario> {
   const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
@@ -100,7 +107,7 @@ model = "decider:project-decider"
 [models.decisions.big]
 role = "checker"
 version = "e2e-v1"
-wording = "You answer one typed question about the state you are given."
+wording = ${JSON.stringify(COORDINATION01_DECISION_WORDING)}
 reply = "json"
 [models.code_mode]
 prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
@@ -167,6 +174,11 @@ async function coordination01Refused(call: Promise<unknown>, status: number, cod
 function coordination01Minted(cards: readonly Coordination01Card[]): Coordination01Card[] {
   return cards.filter(card => typeof card.state === "object");
 }
+/** The scripted step each provider request on `origin` was answered by, in arrival order; a request
+ * no step accepted reads as null, so unexpected traffic is visible here and fails providers.close(). */
+function coordination01Answered(providers: ScriptedProviders, origin: "decider" | "drafter"): (string | null)[] {
+  return providers.seenFixtureCalls.filter(call => call.origin === origin).map(call => call.fixtureId);
+}
 /** One house-drafted card: the owner's on-record message, a scripted typed YES from the real
  * project-question ladder, and the house drafter's scripted code calling vault.projects.propose. */
 async function coordination01HouseCard(engine: EngineFixture, providers: ScriptedProviders, conversation: string,
@@ -186,8 +198,8 @@ async function coordination01HouseCard(engine: EngineFixture, providers: Scripte
   const proposal = { card_id, source_message_ref: message, goal, picks };
   providers.enqueue({ id: `coordination01-draft-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
     request: COORDINATION01_DRAFT,
-    response: openaiText(`coordination01-draft-${index}`, "project-drafter",
-      `await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`,
+    response: openaiStream(`coordination01-draft-${index}`, "project-drafter",
+      [`await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`],
       { inputTokens: 512, outputTokens: 128 }) });
   providers.releaseBarrier(decide);
   const cards = await awaitPublic(() => engine.client.call("vault.projects.proposals", { conversation_ref: conversation }),
@@ -296,16 +308,26 @@ suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an ag
     expect(coordination01Minted(beforeTap)).toHaveLength(0);
     expect(await client.call("vault.rooms.list", {})).toEqual(roomsBefore);
 
-    // The person's one tap. The leader's goal-intake run may call the house model zero or more times.
+    // Until the tap, the models answered exactly two project questions and two house drafts.
+    expect(coordination01Answered(providers, "decider")).toEqual(["coordination01-yes-1", "coordination01-yes-2"]);
+    expect(coordination01Answered(providers, "drafter")).toEqual(["coordination01-draft-1", "coordination01-draft-2"]);
+
+    // The person's one tap. The minted leader's goal-intake run (proposal.rs:536-578) is answered by ONE
+    // ordinary FIFO step, never a standing responder: any further drafter request is unscripted and
+    // fails providers.close(), and a missing intake run fails its barrier.
     providers.enqueue({ id: "coordination01-intake", origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
-      standing: true, request: COORDINATION01_DRAFT,
-      response: openaiText("coordination01-intake", "project-drafter", `finish("goal intake waits for the owner");`,
+      request: COORDINATION01_DRAFT, barrier: "coordination01-intake",
+      response: openaiStream("coordination01-intake", "project-drafter", [`finish("goal intake waits for the owner");`],
         { inputTokens: 512, outputTokens: 16 }) });
     const minted = await client.call("vault.projects.confirm",
       { card_id: "coordination01-card-2", action_id: "mint_project", occurred_at: COORDINATION01_AT });
     expect(minted.card_id).toBe("coordination01-card-2");
     expect(minted.project_id).toMatch(/^[a-f0-9]{32}$/);
     expect(minted.grant_ref.length).toBeGreaterThan(0);
+    await providers.awaitBarrier("coordination01-intake");
+    providers.releaseBarrier("coordination01-intake");
+    expect(coordination01Answered(providers, "drafter"))
+      .toEqual(["coordination01-draft-1", "coordination01-draft-2", "coordination01-intake"]);
 
     const project = await coordination01Entity(client, minted.project_id);
     expect(project.kind).toBe("PROJECT");
@@ -359,6 +381,10 @@ suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an ag
     expect(roomsReplay.length - roomsAfter.length).toBe(scenario.expected.confirmReplayAddsProjects);
     expect(roomsReplay).toEqual(roomsAfter);
     expect(await client.call("vault.projects.proposals", { conversation_ref: conversation })).toEqual(afterTap);
+    // The replay ran nothing: no further question, draft or intake reached a model.
+    expect(coordination01Answered(providers, "decider")).toEqual(["coordination01-yes-1", "coordination01-yes-2"]);
+    expect(coordination01Answered(providers, "drafter"))
+      .toEqual(["coordination01-draft-1", "coordination01-draft-2", "coordination01-intake"]);
   } finally {
     const errors: string[] = [];
     try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
@@ -1135,8 +1161,11 @@ async function coordination08Run(
   providers.enqueue({
     id: `coordination08-${label}`, origin: "chat", role: "generative_reasoner",
     purpose: `${label}'s own code-mode run applies its refusal dial`,
-    request: { method: "POST", path: "/v1/chat/completions", model: coordination08Model },
-    response: openaiText(`coordination08-${label}`, coordination08Model, program, { inputTokens: 256, outputTokens: 96 }),
+    // The engine-native executor streams on a local-openai-compat provider (wire.rs:146-149),
+    // so its one program arrives as an SSE stream, never a buffered completion.
+    request: { method: "POST", path: "/v1/chat/completions", model: coordination08Model,
+      fields: { stream: true, stream_options: { include_usage: true } } },
+    response: openaiStream(`coordination08-${label}`, coordination08Model, [program], { inputTokens: 256, outputTokens: 96 }),
   });
   const posted = await engine.client.call("tasks.create", {
     spec: { title: request }, label: `coordination-08-${label}`, assignee: { agent_def: { agent_def_ref: agent } },
@@ -1157,11 +1186,16 @@ async function coordination08Run(
 /* COORDINATION-08 (partial, Engine E2E-PARTIAL option A).
  * Promise: an agent's declared refusal dial decides what its own refusal of the TASK it runs
  *   becomes: voice records one objection (replay adds none) and the work proceeds, bond veto
- *   declines only that act, the none and full ends both apply from a live dial edit, the record
- *   survives a restart, and the owner cannot refuse on the agent's behalf.
+ *   declines only that act, the none and full ends both apply from a live dial edit, and the
+ *   record survives a restart.
  * Doors: HTTP facade vault.agents.create/get/update, vault.conversations.create, vault.witness,
- *   vault.get, tasks.create, describe, tasks.refuse (owner, refused); the agents' own engine-native
- *   code-mode runs call run-only tasks.refuse (host-bound lease), driven by ScriptedProviders.
+ *   vault.get, tasks.create, describe, tasks.refuse (owner, unknown-live-run status check); the
+ *   agents' own engine-native code-mode runs call run-only tasks.refuse (host-bound lease),
+ *   driven by ScriptedProviders.
+ * Unproved: the owner refusing on the agent's behalf against the agent's REAL live run. It needs
+ *   that run's issued handle (self.run.attach, the agent's own credential) while the run is still
+ *   live; attach answers Busy while the model entry is held at a provider barrier, so no
+ *   deterministic public hold is established. The final call checks only an unknown run.
  * Unproved: the leadership-chat half (two same-vault project leaders talking, public fact crossing,
  *   private fact withheld): needs two publicly confirmed projects with person-anchored leaders and
  *   a scripted receiver run; not attempted here.
@@ -1170,7 +1204,7 @@ async function coordination08Run(
  * Unproved: the in-run return values are not public; the scripts throw unless they match, so a
  *   mismatch surfaces as an unsettled TASK or an unscripted extra model call.
  */
-suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, none and full apply live, and the owner cannot refuse for it", async () => {
+suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, and none and full apply live", async () => {
   const c = await coordination08Scenario();
   const providers = await ScriptedProviders.start({ id: "coordination08-runs", origins: ["chat"], steps: [] });
   const engine = await EngineFixture.start({ id: "COORDINATION-08", profile, serverConfig: `
@@ -1276,13 +1310,13 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect((await coordination08TaskBody(owner, veto.task)).refusal).toEqual(vetoBody.refusal);
     expect((await coordination08Status(owner, veto.task)).phase).toEqual({ phase: "terminal", disposition: "rejected" });
 
-    // ---- Failure step: the owner cannot refuse on the agent's behalf (no live run is the owner's).
-    // Asserted as the refusal's own status, as self.run.attach answers it (live_runs.rs:118-124).
-    // DEFECT today: the facade maps live_run_unavailable to 500 (live_run_doors.rs:266-268,
-    // errors.rs:196-197); see the report.
+    // ---- Failure step: unknown-live-run status check. A well-formed handle naming no issued run
+    // is refused with the guard's own 403, not 500 (guards 8f218ef07cc; live_runs.rs:118-134,
+    // errors.rs:196-207). It does not test the owner against the agent's real live run.
     let ownerRefusal: PublicHttpError | undefined;
     try {
-      await owner.call("tasks.refuse", { live_run: `lr1.${personal}.00000000000000000000000000000000`,
+      // An authored run id that no run was issued under; never an AGENT_DEF id standing in for one.
+      await owner.call("tasks.refuse", { live_run: `lr1.${coordination08InputId("unknown-run")}.00000000000000000000000000000000`,
         spec: { domain: "bond", reasonRef: `tn_${personalReason}`, at: refusedAt } });
     } catch (error) {
       if (!(error instanceof PublicHttpError)) throw error;
