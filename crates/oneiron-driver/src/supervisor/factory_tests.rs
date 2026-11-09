@@ -206,7 +206,7 @@ async fn empty_completed_pass_redrives_then_completes_without_second_push() {
     let (_dir, vault) = open_vault();
     let attempt = enqueue_micro(&vault, "empty-then-complete", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);
@@ -358,14 +358,22 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() -> Resu
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 11_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
-    assert_eq!(
-        executor.execute(&admitted, &mut ctx).await.expect("tagged"),
-        DreamerAttemptExecution::Completed { completed_units: 0 },
+    assert!(
+        matches!(
+            executor.execute(&admitted, &mut ctx).await.expect("tagged"),
+            DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                ..
+            }
+        ),
         "a tagged event never reaches the partition decoder"
     );
     assert_eq!(
@@ -377,7 +385,8 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() -> Resu
     // A real SessionEnd queues the deterministic substitution-miner MESO job.
     // The same factory delegates that ordinary consolidation attempt to its
     // inner executor under the very System actor that planned above.
-    let session = match vault.mint_session(20)? {
+    let sitting = vault.local_session_key(oneiron::EntityId::from_bytes([0x5D; 16])?)?;
+    let session = match vault.mint_session(sitting, 20)? {
         oneiron::SessionMintOutcome::Minted(id) => id,
         other => panic!("expected new session: {other:?}"),
     };
@@ -385,7 +394,7 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() -> Resu
         &session,
         oneiron::SessionClosePredicate::Explicit,
         21,
-        &oneiron::SessionEndWake::none(0),
+        &oneiron::SessionEndWake::none(session, 0),
     )?;
     let store = DreamerRunnerStore::new(&vault);
     let outcome = store.admit_next_consolidation(
@@ -410,10 +419,13 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() -> Resu
     else {
         panic!("session end must admit a MESO miner: {outcome:?}");
     };
-    assert_eq!(
+    assert!(matches!(
         executor.execute(&admitted, &mut ctx).await?,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
-    );
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            ..
+        }
+    ));
     Ok(())
 }
 
@@ -731,6 +743,73 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
         Some("evidence")
     );
     Ok(())
+}
+
+#[derive(Clone, Default)]
+struct HostMirror {
+    events: Arc<std::sync::Mutex<Vec<oneiron::LinearIssueChange>>>,
+    remote: Arc<std::sync::Mutex<std::collections::BTreeMap<String, oneiron::MirroredTaskFields>>>,
+}
+
+impl oneiron::LinearChangeSource for HostMirror {
+    fn changes_since(
+        &mut self,
+        _cursor: Option<&str>,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearChangePage> {
+        Ok(oneiron::LinearChangePage {
+            changes: std::mem::take(&mut *self.events.lock().expect("source events")),
+            next_cursor: None,
+        })
+    }
+}
+
+impl oneiron::LinearEgress for HostMirror {
+    fn create_issue(
+        &mut self,
+        _operation_id: [u8; 32],
+        task: oneiron::EntityId,
+        fields: &oneiron::MirroredTaskFields,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        self.remote
+            .lock()
+            .expect("remote state")
+            .insert(task.to_hex(), fields.clone());
+        Ok(oneiron::LinearIssueChange {
+            event_id: format!("create-{}", task.to_hex()),
+            issue: oneiron::LinearIssueRef {
+                issue_id: task.to_hex(),
+                team_id: "team".into(),
+                identifier: task.to_hex(),
+            },
+            updated_at_ms: 1000,
+            fields: fields.clone(),
+        })
+    }
+
+    fn update_issue_conditional(
+        &mut self,
+        _operation_id: [u8; 32],
+        issue: &oneiron::LinearIssueRef,
+        expected_base: &std::collections::BTreeMap<String, [u8; 32]>,
+        fields: &oneiron::MirroredTaskFields,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        let mut remote = self.remote.lock().expect("remote state");
+        if remote
+            .get(&issue.issue_id)
+            .map(oneiron::MirroredTaskFields::field_hashes)
+            .as_ref()
+            != Some(expected_base)
+        {
+            return Err(oneiron::LinearSyncError::RemoteChanged);
+        }
+        remote.insert(issue.issue_id.clone(), fields.clone());
+        Ok(oneiron::LinearIssueChange {
+            event_id: format!("update-{}", issue.issue_id),
+            issue: issue.clone(),
+            updated_at_ms: 2000,
+            fields: fields.clone(),
+        })
+    }
 }
 
 #[test]
