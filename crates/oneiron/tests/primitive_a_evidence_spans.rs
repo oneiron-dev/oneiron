@@ -6,7 +6,7 @@
 //!
 //! Public paths only: the generated engine fn `oneiron::verbs::vault_evidence_spans`.
 
-use oneiron::memory::{Memory, MemoryResult};
+use oneiron::memory::{Memory, MemoryResult, WitnessAssertions};
 use oneiron::snapshot_read::{
     EvidenceRange, EvidenceSourceStatus, EvidenceSpans, EvidenceSpansRequest, SourceVersion,
 };
@@ -23,15 +23,17 @@ fn open() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
     Ok((dir, vault))
 }
 
-fn said(content: &str, order: u64) -> WitnessMessage {
+fn said(content: &str, order: u32) -> WitnessMessage {
     WitnessMessage {
         id: None,
         author: WitnessAuthor::User,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: None,
         is_visible: true,
         order,
+        quote: None,
     }
 }
 
@@ -41,8 +43,10 @@ fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::E
     let receipt = memory.witness(&WitnessTurn {
         conversation_ref: String::new(),
         turn_ref: None,
+        thread_audience: None,
         messages: vec![said("hello there", 0), said("second line", 1)],
         occurred_at: 900,
+        assertions: WitnessAssertions::default(),
     })?;
     Ok(receipt.turn_id)
 }
