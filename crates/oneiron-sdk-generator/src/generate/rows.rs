@@ -763,6 +763,7 @@ impl Generator {
             .collect();
         let mut generator = Self {
             root,
+            hand_declared_cache: super::common::HandDeclaredCache::new(),
             rows,
             manifest,
             host_rows: Vec::new(),
