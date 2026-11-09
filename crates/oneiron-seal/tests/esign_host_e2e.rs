@@ -786,7 +786,13 @@ fn a_verdict_whose_report_is_too_large_still_crosses()
     let verdict = sealer.verify(&many_long_named_fields())?;
     assert_eq!(verdict.verdict, SealVerdict::Failed);
     let report: serde_json::Value = serde_json::from_slice(&verdict.report_json)?;
-    assert_eq!(report["omitted_over_bytes"], MAX_REPORT_JSON_BYTES);
+    // Rule 5 conversion (7de2f0302b4, #3372): the verify report travels
+    // whole, and MAX_REPORT_JSON_BYTES is the `[limits]` row's threshold,
+    // not a cut. The report past it crosses in full: no omission stub, and
+    // its own verdict inside.
+    assert!(verdict.report_json.len() > MAX_REPORT_JSON_BYTES);
+    assert!(report.get("omitted_over_bytes").is_none());
+    assert_eq!(report["verdict"], "failed");
     Ok(())
 }
 
