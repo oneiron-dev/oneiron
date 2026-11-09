@@ -4,13 +4,15 @@
 
 use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_memory::BlocksWriteContext;
+use oneiron::deletion::DeleteReason;
 use oneiron::edge::EdgeKind;
 use oneiron::feeds::{
     FeedAckRequest, FeedEntryKind, FeedOp, FeedPage, FeedPosition, FeedReadRequest, FeedSelector,
     FeedSource, FeedStart, FeedSubscribeRequest,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON};
+use oneiron::{ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -392,4 +394,91 @@ fn an_edge_is_fed_only_while_edges_are_followed() {
         vec![FeedOp::EdgeAdded, FeedOp::EdgeRemoved],
         "{page:?}"
     );
+}
+
+/// Review #6942: the Blocks door writes its edge rows past the batch's edge seam, and an edges
+/// follower still sees a Blocks edge added and removed through it.
+#[test]
+fn a_blocks_edge_reaches_an_edges_follower_through_its_own_door() {
+    let (_dir, vault) = open();
+    let key = owner_key(&vault);
+    let subscription = follow_from(&vault, &key, FeedSource::Edges, FeedStart::Head);
+    let (blocker, blocked) = (put_symbol(&vault), put_symbol(&vault));
+    let actor = WriteActor::new(put_person(&vault), EdgeActorClass::Human);
+    let context = || BlocksWriteContext {
+        actor: &actor,
+        source: ClaimSource::UserStated,
+    };
+
+    vault
+        .insert_blocks_edge(blocker, blocked, context())
+        .expect("blocker blocks blocked");
+    assert!(
+        vault
+            .remove_blocks_edge(blocker, blocked, context())
+            .expect("unblock")
+    );
+    let page = read(&vault, &key, subscription);
+    assert_eq!(
+        edge_ops(&page, blocker, blocked, "blocks"),
+        vec![FeedOp::EdgeAdded, FeedOp::EdgeRemoved],
+        "{page:?}"
+    );
+}
+
+/// Review #6942: a hard delete scrubs the edge rows naming the deleted entity before its tear,
+/// and the tear's cascade over the entity's edges writes none back. A follower from the
+/// beginning finds no edge row naming it, shown or withheld: the hard delete of an entity with an
+/// edge leaves the page as the hard delete of one without does.
+#[test]
+fn a_hard_delete_leaves_no_edge_row_naming_the_deleted_end() {
+    let (_dir, vault) = open();
+    let key = owner_key(&vault);
+    let subscription = follow_from(&vault, &key, FeedSource::Edges, FeedStart::Beginning);
+    let (from, to, lone) = (put_person(&vault), put_person(&vault), put_person(&vault));
+    vault
+        .put_edge(&from, EdgeKind::Supports, &to, 0.5)
+        .expect("edge");
+    let before = read(&vault, &key, subscription);
+    assert_eq!(
+        edge_ops(&before, from, to, "supports"),
+        vec![FeedOp::EdgeAdded],
+        "{before:?}"
+    );
+
+    vault
+        .delete_entity_with_reason(&lone, DeleteReason::UserHardDelete)
+        .expect("hard delete of an entity with no edge");
+    let control = read(&vault, &key, subscription);
+    vault
+        .delete_entity_with_reason(&to, DeleteReason::UserHardDelete)
+        .expect("hard delete of the edge's target");
+    let after = read(&vault, &key, subscription);
+
+    assert!(
+        after.entries.iter().all(|entry| entry
+            .edge
+            .as_ref()
+            .is_none_or(|edge| edge.source != to && edge.target != to)),
+        "no entry names the deleted end: {after:?}"
+    );
+    assert_eq!(
+        after.withheld.saturating_sub(control.withheld),
+        control.withheld.saturating_sub(before.withheld),
+        "no withheld row names the deleted end: {control:?} then {after:?}"
+    );
+}
+
+fn put_symbol(vault: &Vault) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_CODE_SYMBOL,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"symbol",
+        )
+        .expect("code symbol");
+    id
 }
