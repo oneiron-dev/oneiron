@@ -18526,7 +18526,7 @@
      "path": "src/code_run/dispatcher/session_verbs.rs",
      "purpose": "The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -19291,13 +19291,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/run_verb_call.rs",
      "purpose": "The run rows as typed calls (OF-181)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -47864,7 +47864,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 209,
+      "mod": 208,
       "re-export": 105
      }
     },
@@ -58344,7 +58344,7 @@
      "path": "src/off_record/lifecycle/overlay_writes.rs",
      "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -92336,16 +92336,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/verb_catalog.rs",
-     "purpose": "Verb catalog vocabulary used by core admission and action surfaces",
-     "surface": {
-      "const": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "ActAnswer",
       "DetailsOnDevice",
@@ -93119,7 +93109,7 @@
      "path": "src/verbs/generated/run_verb_catalog.rs",
      "purpose": "—",
      "surface": {
-      "const": 1,
+      "const": 3,
       "enum": 1,
       "fn": 4
      }
@@ -93144,9 +93134,10 @@
      "path": "src/verbs/generated/verb_catalog.rs",
      "purpose": "—",
      "surface": {
-      "const": 1,
+      "const": 2,
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 17
+      "fn": 19
      }
     },
     {
@@ -94150,7 +94141,7 @@
      "purpose": "The owner's custody doors as typed rows (WILL L04 row 04, FIX 4993): `vault.secrets.register`…",
      "surface": {
       "fn": 6,
-      "re-export": 2,
+      "re-export": 1,
       "struct": 18
      }
     },
@@ -100621,13 +100612,6 @@
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
-    "verb_catalog": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
-    },
     "verbs": {
      "files": 130,
      "impl_vault": false,
@@ -100694,7 +100678,7 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7244,
+   "source_files": 7243,
    "test_files": 895
   },
   "oneiron-android": {
@@ -124021,7 +124005,7 @@
      "path": "src/api/facade/generated/host_door_rows.rs",
      "purpose": "The host-door rows whose door checks its caller before the row's verb hooks run (FIX 1763), one variant…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -124185,7 +124169,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/admission.rs",
@@ -124671,7 +124655,7 @@
      "path": "src/api/facade/owner_binding.rs",
      "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -141669,7 +141653,7 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 65,
+   "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1829,
    "test_files": 182
