@@ -1,10 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { ScriptedProviders } from "./support/providers.ts";
+import { ScriptedProviders, openaiStream } from "./support/providers.ts";
 import { defineFile, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -106,14 +107,29 @@ suite.todo(test, "RUNS-01", "waits on a public door that activates a first-party
  * No polling-model calls while A waits. Do not replace children with two
  * unrelated root requests or treat tasks.answer as approval of an outbound act.
  *
- * Missing (main e79eb76df3e): fan-out admission now exists (vault.fanout.spawn
- * from an attached live run), but no typed branch wait/Query/Signal read binds
- * the human wait, its matching answer, the cached settlement and the resumed
- * child to the same live branch. vault.runs.branches.get invents no wait class
- * (task_verb/run_doors.rs:14-18); a facade `wait` binds a detached step with
- * run_id None (ask_facade/wait.rs:77-130), so it is not branch A's checkpoint.
+ * Now public: holding a live parent run. A parent agent TASK whose code-mode program
+ * asks and waits parks on a durable wait that keeps its lease and live entry
+ * (resident_pump.rs:491-523, live_runs.rs:320-341); the agent's own paired
+ * credential then gets its handle from self.run.attach, and self.agents.spawn
+ * or vault.fanout.spawn admits real children under it.
+ * Missing: a public read of a child branch's durable wait. A child that asks a
+ * human parks, but no door returns that wait's ask handle, wait class or bound
+ * recipient, so the authorized person cannot address tasks.answer to it:
+ * - a self.agents.spawn child has no TASK and inherits run_id None
+ *   (dispatch.rs:218-224, coordination.rs:343), so vault.runs.branches.get
+ *   (needs task_ref) and GET /v1/core/run-tree (needs run_id) cannot read it;
+ * - a vault.fanout.spawn child has a TASK, but RunBranchView.asks holds only
+ *   run-tree signal asks (run_tree/signal.rs:55-92), TaskStatusView.asks lists
+ *   asks only for a TASK in Blocked (highway_status.rs:267-275), and an in-run
+ *   ask does not block its TASK;
+ * - vault.runs.checkpoint shows committed steps, and parked waits only after
+ *   they resume (CheckpointView.resumed).
+ * Do not compute the ask's group_ref, read a private queue or use execute_code.
+ * Fixture rule for the full case: one chat origin serves every agent run in
+ * strict FIFO order (providers.ts:215-218), so admit child A, wait for its park,
+ * then admit child B; never two children with outstanding model calls at once.
  */
-suite.todo(test, "RUNS-02", "waits on a typed branch wait/Signal read binding a human wait, its matching answer and the resumed child to one live branch (Only waiting branch pauses should work)");
+suite.todo(test, "RUNS-02", "waits on a public read of a child branch's durable wait (its ask handle, wait class and bound recipient) for a child admitted under an attached live run (Only waiting branch pauses should work)");
 
 type Runs03Branch = FacadeResult<"vault.runs.branches.get">["branches"][number];
 type Runs03Outcome<T> = { readonly value: T } | { readonly refused: { readonly status: number; readonly code: string } };
@@ -931,51 +947,322 @@ suite.test(test, "RUNS-07", "Consolidation root trusts only its own pin and coun
   expect(revisions.size).toBe(scenario.expected.rootPinnedRevisionCount);
 });
 
-/* RUNS-08 — Fanout preserves slots and cap should work.
- * Rows: OF-393, OF-290, OF-532. ARCH-0026 #swarm-fanout; ARCH-0079 #work,
- * #width. Oracle: runs-scenarios / RUNS-08. MCP + HTTP, not HTTP-only.
- *
- * Existing HTTP/SDK:
- *   tasks.wave({ epic_task_ref, planner_ref, objective, constraints? })
- *     -> { attempt_ref, state }
- *   vault.fanout.launch({ launch_ref }) -> FanoutLaunchView | null
- *     { launch_ref, plan_digest, statement, held?, task_refs, ... }
- *   statement: { agent_count, consult_count, task_count, per_peer, expected,
- *                unit, cap?, over_available, more_would_buy?, width_check?, ... }
- *   vault.fanout.resume({ launch_ref, plan_digest,
- *     ruling: approve_once|approve_and_remember|deny, remembered_cap? })
- *     -> FanoutLaunchView
- * The estimate/approval doors exist. They are NOT a typed batched spawn/result
- * slot API. TaskAskResult is ask evidence/settlement, not spawn-order slots.
- * Canon batch: one slot per input, input-order results despite completion
- * order; a child failure/budget exhaustion is an error in its own slot.
- * Shared reserve/settle/refund draws from ONE parent hard spend cap. Width
- * has no count cap; the huge-width check is never a limit. Manual approval
- * pauses; Auto checks/escalates; full access proceeds (owner 2026-10-17).
- *
- * Use tool-first MCP discovery + the actual typed fanout tool once it exists;
- * inspect the held plan by HTTP and approve its exact digest in manual mode.
- * Exercise fixture widths 3 and 26 (finite probes, not proof of unboundedness).
- * Require declared count, per-peer breakdown, expected dollars + hard cap
- * BEFORE launch. Let children finish in reverse order, with one scripted
- * structural failure. Verify slot/result identity against input, surviving
- * siblings and no abort-all. In the constrained variant exhaust the shared
- * cap: affected slots may error/park, but total settled+reserved spend cannot
- * multiply by width. Read real cost/reservation receipts and refunds; never
- * use provider call count or copied child budgets as the shared-spend oracle.
- *
- * Missing: the typed doors now exist (vault.fanout.spawn/slots/launch/resume/
- * resume_as/ack, tasks.wave, vault.budgets.lease/settlements). Two public
- * prerequisites do not: (1) an owner door that sets the fan-out approval mode
- * to manual. set_consult_fanout_policy has no server caller and the shipped
- * mode is auto with threshold 1000, so widths 3/26 raise no check. (2) A
- * deterministic public way to hold a task-bound live run between entries,
- * which spawn needs as its live_run handle: the attach guard spans a whole
- * entry, and a run leaves at settlement unless it parks. A refusal-only probe
- * (bad handle 400, stranger resume 403, absent launch null) proves no slot,
- * statement or cap and is not written. Do not use execute_code or an internal plan.
+/** RUNS-08 authored inputs (fixture discriminant, not a wire DTO). */
+interface Runs08Scenario {
+  id: "RUNS-08";
+  inputs: { widths: number[]; approvalMode: string };
+  expected: {
+    resultsStayInInputSlots: boolean;
+    countAloneCausesRefusal: boolean;
+    planStatesDollarsAndCapBeforeLaunch: boolean;
+    enforcedBudgetScopes: number;
+    capMultipliedByWidth: boolean;
+  };
+}
+const RUNS08_MODEL = "runs08-agent";
+/** The parent TASK's pinned budget, in its tree's unit: the one hard cap every child draws on. */
+const RUNS08_BUDGET = 500_000;
+/** 2026-10-17T00:00:00Z, the fixture's authored day: a setup input, never a clock change. */
+const RUNS08_OCCURRED = 1792195200;
+const RUNS08_USAGE = { inputTokens: 256, outputTokens: 96 } as const;
+
+function runs08InputId(label: string): string {
+  return createHash("sha256").update(`runs-e2e:RUNS-08:${label}`).digest("hex").slice(0, 32);
+}
+async function runs08Scenario(): Promise<Runs08Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("runs-scenarios");
+  const row = data.scenarios.find(item => item.id === "RUNS-08");
+  if (!row) throw new Error("Missing RUNS-08 fixture scenario");
+  return row as Runs08Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+async function runs08Agent(client: PublicHttpClient, label: string): Promise<string> {
+  const agent_def_ref = runs08InputId(label);
+  const created = await client.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `RUNS-08 ${label}`, version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+/** A witnessed TURN the parent's ask cites: actually written, never a fabricated ref. */
+async function runs08Turn(client: PublicHttpClient, content: string): Promise<string> {
+  const conversation = await client.call("vault.conversations.create", {
+    body: {}, occurred_start: RUNS08_OCCURRED, occurred_end: RUNS08_OCCURRED, learned_at: RUNS08_OCCURRED,
+  });
+  const witnessed = await client.call("vault.witness", {
+    conversation_ref: conversation.id, occurred_at: RUNS08_OCCURRED,
+    messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
+  });
+  const turn = (await client.call("vault.get", { entity_ref: witnessed.turn_short_id })).value;
+  expect(turn?.kind).toBe("TURN");
+  if (!turn) throw new Error("Question TURN is not readable");
+  return turn.id_hex;
+}
+/** The parent TASK's brief: a pinned budget opens its hard spend scope (create_facade.rs:581-583). */
+function runs08Brief(ownerRef: string, request: string): Facade.QueueTaskBrief {
+  return {
+    schema: 1,
+    type_ref: { node_id: runs08InputId("task-type"), tree_version: 1 },
+    objective: request,
+    intent: { need: request, care: "light" },
+    constraints: { pins: { budget: RUNS08_BUDGET } },
+    success: { question: "Did the batch go out under the one parent cap?",
+      criteria: { yes_if_all: [{ text: "Every child is admitted in its input slot under the parent's cap." }] } },
+    settled: [],
+    escalation: { to: { people: [ownerRef] }, triggers: [], default: "proceed", reversibility: "reversible_read" },
+  };
+}
+/** One step: ask the owner, then wait on that ask, which parks the run with its lease (read.rs:209-230). */
+function runs08ParkProgram(ownerRef: string, questionTurn: string): string {
+  return [
+    `const receipt = await ask({ intent_key: "runs08/parent-hold", who: { people: ["${ownerRef}"] },`,
+    `  what: { reference: { turn: "${questionTurn}" }, revision: 1, context_refs: [],`,
+    `    options: { proceed: { label: "Proceed" }, stop: { label: "Stop" } } } });`,
+    `await wait({ handle: receipt.handle, step_key: "runs08/parent-hold" });`,
+  ].join("\n");
+}
+function runs08Children(agent_ref: string, width: number, tag: string): Facade.FanoutChildInput[] {
+  return Array.from({ length: width }, (_, index) => ({
+    agent_ref, label: `runs08-${tag}-slot-${index}`, prompt: `Survey batch ${tag}, slot ${index} of ${width}.`,
+  }));
+}
+async function runs08Refusal(call: Promise<unknown>): Promise<{ status: number; code: string | undefined; message: string | undefined }> {
+  try {
+    await call;
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    return { status: error.reply.status, code: error.error?.code, message: error.error?.message };
+  }
+  throw new Error("Expected a public refusal");
+}
+function runs08Launch(answer: FacadeResult<"vault.fanout.resume">): Facade.FanoutLaunchView {
+  if (!("launch_ref" in answer)) throw new Error(`vault.fanout.resume answered ${JSON.stringify(answer)}, not a launch`);
+  return answer;
+}
+/** A well-formed digest that differs from the frozen one in its last digit. */
+function runs08OtherDigest(digest: string): string {
+  return `${digest.slice(0, 63)}${digest.endsWith("0") ? "1" : "0"}`;
+}
+/** The held batch, read before any child exists: its statement, its hold and its input-order slots. */
+function runs08ExpectHeldBatch(view: Facade.FanoutBatchView, parentTask: string,
+  children: readonly Facade.FanoutChildInput[]): Facade.SpendCapView {
+  expect(view.parent_task_ref).toBe(parentTask);
+  expect(view.launch.plan_digest).toMatch(/^[0-9a-f]{64}$/);
+  expect(view.launch.held?.denied).toBe(false);
+  expect(view.launch.task_refs).toEqual([]);
+  const statement = view.launch.statement;
+  expect(statement.task_count).toBe(children.length);
+  expect(statement.agent_count).toBe(children.length);
+  expect(statement.consult_count).toBe(0);
+  // Width alone raises no check under the shipped threshold, and never refuses.
+  expect(statement.width_check ?? null).toBeNull();
+  expect(Number.isFinite(statement.expected.units)).toBe(true);
+  // Every part is either priced into the dollar subtotal or named as unpriced.
+  expect((statement.priced_subtotal_usd_micros ?? null) !== null || statement.unpriced_parts.length > 0).toBe(true);
+  const cap = statement.cap;
+  if (!cap) throw new Error("The held plan states no cap");
+  expect(cap.cap_units).toBeGreaterThan(0);
+  expect(cap.cap_units).toBeLessThanOrEqual(RUNS08_BUDGET);
+  expect(view.slots.map(slot => slot.index)).toEqual(children.map((_, index) => index));
+  expect(view.slots.map(slot => slot.input)).toEqual([...children]);
+  for (const slot of view.slots) {
+    expect(slot.state).toBe("held");
+    expect(slot.task_ref ?? null).toBeNull();
+    expect(slot.attempts).toEqual([]);
+  }
+  const hard = view.accounting.hard_cap;
+  if (!hard) throw new Error("The batch names no hard cap lease");
+  expect(hard.lease.hard).toBe(true);
+  expect(hard.lease.cap_units).toBeLessThanOrEqual(RUNS08_BUDGET);
+  return cap;
+}
+
+/* RUNS-08 (partial, Engine E2E-PARTIAL option A).
+ * Promise: a live agent's batched fan-out states its count, expected spend and one shared
+ *   cap before anything launches, waits for the owner's approval of that exact plan digest
+ *   (the agent cannot approve it, a stale digest is refused), and keeps every child in its
+ *   input slot; a denied batch stays held with nothing minted; both survive a restart.
+ * Doors: HTTP facade vault.agents.create, vault.conversations.create, vault.witness, vault.get,
+ *   tasks.create, vault.runs.branches.get, vault.runs.checkpoint, self.run.attach (the agent's
+ *   own paired credential), vault.fanout.spawn (through the attached handle),
+ *   vault.fanout.launch, vault.fanout.resume, vault.fanout.slots; engine.restart(). The parent
+ *   is a real TASK-bound agent run whose scripted program asks the owner and parks on that ask.
+ * Unproved: manual approval mode. No public door sets it (set_consult_fanout_policy has no
+ *   server caller; the typed policy manifest has no fan-out axis). The shipped auto mode with
+ *   no decision model asks no model and holds every launch for the owner, which this proves.
+ * Unproved: per-peer breakdown (agent children carry no per-peer row; only consults do).
+ * Unproved: reverse completion order and a scripted structural failure in slot 1: the children's
+ *   model requests are identical on the wire, so no script can address one child. Children run on
+ *   one standing reply; their terminal states are not asserted.
+ * Unproved: shared reserve/settle/refund receipts and the constrained-budget variant; MCP
+ *   tool-first discovery (HTTP only here).
  */
-suite.todo(test, "RUNS-08", "waits on an owner door that sets manual fan-out approval and a deterministic public hold of a task-bound live run for vault.fanout.spawn (Fanout preserves slots and cap should work)");
+suite.test(test, "RUNS-08", "A live agent's batched fan-out states its count, expected spend and one shared cap before launch, launches only on the owner's approval of that exact plan digest, and keeps every child in its input slot", async () => {
+  const c = await runs08Scenario();
+  const [narrowWidth, wideWidth] = c.inputs.widths;
+  if (narrowWidth === undefined || wideWidth === undefined) throw new Error("Fixture names no widths");
+  const providers = await ScriptedProviders.start({ id: "runs08-runs", origins: ["chat"], steps: [] });
+  // No [models.decisions.*] and no [models.decision_read]: the fan-out ladder holds only its rule
+  // rung, which abstains on a fresh vault, so auto mode surfaces every launch to the owner.
+  const engine = await EngineFixture.start({ id: "RUNS-08", profile, serverConfig: `
+[models.providers.runs08chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "runs-v1"
+[models.roles.generative_reasoner]
+model = "runs08chat:${RUNS08_MODEL}"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const parentAgent = await runs08Agent(owner, "runs08-parent");
+    const childAgent = await runs08Agent(owner, "runs08-child");
+    const question = await runs08Turn(owner, "Hold the survey batch parent until the owner answers.");
+
+    // ---- The parent: a real TASK-bound agent run that parks on its own ask, keeping its lease. ----
+    providers.enqueue({
+      id: "runs08-parent", origin: "chat", role: "generative_reasoner",
+      purpose: "the parent agent's code-mode run asks the owner and parks on that ask",
+      // The engine-native executor streams on a local-openai-compat provider (wire.rs:146-149).
+      request: { method: "POST", path: "/v1/chat/completions", model: RUNS08_MODEL,
+        fields: { stream: true, stream_options: { include_usage: true } } },
+      response: openaiStream("runs08-parent", RUNS08_MODEL, [runs08ParkProgram(ownerRef, question)], RUNS08_USAGE),
+    });
+    const request = "Fan the visitor survey out to one batch of agents.";
+    const posted = await owner.call("tasks.create", {
+      spec: { title: request }, label: "runs-08-parent", assignee: { agent_def: { agent_def_ref: parentAgent } },
+      intent_key: "runs-08/parent/post", brief: runs08Brief(ownerRef, request),
+    });
+    expect(posted.approval).toBe("auto");
+    expect(posted.effected).toBe(true);
+    const route = posted.route;
+    if (!route || !("AgentDispatch" in route)) throw new Error(`Parent TASK routed ${JSON.stringify(route)}`);
+    const task = posted.task_ref;
+    if (!task) throw new Error("Parent TASK has no task_ref");
+    const branches = await owner.call("vault.runs.branches.get", { task_ref: task });
+    expect(branches.branches).toHaveLength(1);
+    const run = branches.branches[0]?.branch;
+    if (!run) throw new Error("Parent TASK has no branch");
+    // Its asking step committed: no provider call remains in the entry.
+    const stepped = await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: run }),
+      view => view !== null && view.completed_steps >= 1, { label: "RUNS-08 parent run commits its asking step" });
+    expect(stepped?.completed_steps).toBe(1);
+    // The parked run keeps its lease.
+    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+    const agent = await engine.pairActor({ principalRef: parentAgent, actorClass: "agent", scope: ["core:read", "core:write"] });
+    const attached = await agent.client.call("self.run.attach", { run });
+    expect(attached.live_run.startsWith(`lr1.${run}.`)).toBe(true);
+
+    // ---- The narrow batch: held before launch, with its statement and input-order slots. ----
+    const narrowChildren = runs08Children(childAgent, narrowWidth, "narrow");
+    const narrow = await agent.client.call("vault.fanout.spawn", {
+      live_run: attached.live_run, spec: { intent_key: "runs08/narrow", children: narrowChildren },
+    });
+    expect(c.expected.planStatesDollarsAndCapBeforeLaunch).toBe(true);
+    const narrowCap = runs08ExpectHeldBatch(narrow, task, narrowChildren);
+    const narrowRef = narrow.launch.launch_ref;
+    // The owner inspects the held plan by HTTP: the same digest and statement the spawn froze.
+    const shown = await owner.call("vault.fanout.launch", { launch_ref: narrowRef });
+    expect(shown?.plan_digest).toBe(narrow.launch.plan_digest);
+    expect(shown?.statement).toEqual(narrow.launch.statement);
+    expect(shown?.held?.denied).toBe(false);
+
+    // ---- The wide batch: count alone refuses nothing, and width never multiplies the cap. ----
+    const wideChildren = runs08Children(childAgent, wideWidth, "wide");
+    const wide = await agent.client.call("vault.fanout.spawn", {
+      live_run: attached.live_run, spec: { intent_key: "runs08/wide", children: wideChildren },
+    });
+    expect(c.expected.countAloneCausesRefusal).toBe(false);
+    const wideCap = runs08ExpectHeldBatch(wide, task, wideChildren);
+    const wideRef = wide.launch.launch_ref;
+    expect(wideRef).not.toBe(narrowRef);
+    expect(wide.launch.plan_digest).not.toBe(narrow.launch.plan_digest);
+    expect(c.expected.capMultipliedByWidth).toBe(false);
+    expect(c.expected.enforcedBudgetScopes).toBe(1);
+    expect(wideCap.scope ?? null).toBe(narrowCap.scope ?? null);
+    expect(wideCap.cap_units).toBe(narrowCap.cap_units);
+    expect(wide.accounting.hard_cap?.lease.scope).toBe(narrow.accounting.hard_cap?.lease.scope);
+
+    // ---- Failure steps: the agent cannot approve its own batch; a stale digest is refused. ----
+    const selfApproval = await runs08Refusal(agent.client.call("vault.fanout.resume", {
+      launch_ref: narrowRef, plan_digest: narrow.launch.plan_digest, ruling: "approve_once",
+    }));
+    expect(selfApproval.status).toBe(403);
+    const stale = await runs08Refusal(owner.call("vault.fanout.resume", {
+      launch_ref: narrowRef, plan_digest: runs08OtherDigest(narrow.launch.plan_digest), ruling: "approve_once",
+    }));
+    expect(stale.status).toBe(409);
+    expect(stale.code).toBe("INVALID_STATE");
+    expect(stale.message).toBe("fan-out launch digest does not match the frozen plan");
+    const unmoved = await owner.call("vault.fanout.launch", { launch_ref: narrowRef });
+    expect(unmoved?.held?.denied).toBe(false);
+    expect(unmoved?.task_refs).toEqual([]);
+
+    // ---- The owner approves the exact digest shown; the wide batch is denied. ----
+    // Launched children run as real agent runs. Their requests are identical on the wire, so one
+    // standing reply answers each, in any order, any number of times (zero included).
+    providers.enqueue({
+      id: "runs08-children", origin: "chat", role: "generative_reasoner", standing: true,
+      purpose: "each launched child's code-mode run finishes its slot",
+      request: { method: "POST", path: "/v1/chat/completions", model: RUNS08_MODEL,
+        fields: { stream: true, stream_options: { include_usage: true } } },
+      response: openaiStream("runs08-child", RUNS08_MODEL, [`finish("Survey slot done.");`], RUNS08_USAGE),
+    });
+    const approved = runs08Launch(await owner.call("vault.fanout.resume", {
+      launch_ref: narrowRef, plan_digest: narrow.launch.plan_digest, ruling: "approve_once",
+    }));
+    expect(approved.plan_digest).toBe(narrow.launch.plan_digest);
+    expect(approved.statement).toEqual(narrow.launch.statement);
+    expect(approved.held ?? null).toBeNull();
+    expect(approved.task_refs).toHaveLength(narrowWidth);
+    expect(new Set(approved.task_refs).size).toBe(narrowWidth);
+    const denied = runs08Launch(await owner.call("vault.fanout.resume", {
+      launch_ref: wideRef, plan_digest: wide.launch.plan_digest, ruling: "deny",
+    }));
+    expect(denied.held?.denied).toBe(true);
+    expect(denied.task_refs).toEqual([]);
+
+    // ---- Launched children keep their input slots; the denied batch minted nothing. ----
+    expect(c.expected.resultsStayInInputSlots).toBe(true);
+    const launched = await owner.call("vault.fanout.slots", { launch_ref: narrowRef });
+    if (!launched) throw new Error("The launched batch is not readable");
+    expect(launched.slots.map(slot => slot.index)).toEqual(narrowChildren.map((_, index) => index));
+    expect(launched.slots.map(slot => slot.input)).toEqual(narrowChildren);
+    expect(launched.slots.map(slot => slot.task_ref ?? null)).toEqual(approved.task_refs);
+    for (const slot of launched.slots) {
+      expect(slot.state).not.toBe("held");
+      if (!slot.task_ref) throw new Error(`Slot ${slot.index} has no TASK`);
+      expect((await owner.call("vault.get", { entity_ref: slot.task_ref })).value?.kind).toBe("TASK");
+    }
+    const stillWide = await owner.call("vault.fanout.slots", { launch_ref: wideRef });
+    expect(stillWide?.slots).toHaveLength(wideWidth);
+    expect(stillWide?.slots.every(slot => slot.state === "held" && (slot.task_ref ?? null) === null)).toBe(true);
+
+    // ---- Failure step: restart. The ruling, the frozen plan and the slot identities are durable. ----
+    await engine.restart();
+    const afterNarrow = await owner.call("vault.fanout.launch", { launch_ref: narrowRef });
+    expect(afterNarrow?.plan_digest).toBe(approved.plan_digest);
+    expect(afterNarrow?.statement).toEqual(approved.statement);
+    expect(afterNarrow?.task_refs).toEqual(approved.task_refs);
+    expect(afterNarrow?.held ?? null).toBeNull();
+    const afterWide = await owner.call("vault.fanout.launch", { launch_ref: wideRef });
+    expect(afterWide?.held?.denied).toBe(true);
+    expect(afterWide?.task_refs).toEqual([]);
+    const afterSlots = await owner.call("vault.fanout.slots", { launch_ref: narrowRef });
+    expect(afterSlots?.slots.map(slot => slot.input)).toEqual(narrowChildren);
+    expect(afterSlots?.slots.map(slot => slot.task_ref ?? null)).toEqual(approved.task_refs);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+});
 
 /* RUNS-09 — Proactive commitment waits for authorization should work.
  * Rows: OF-187, OF-194. ARCH-0026 #wake-model; ARCH-0067 #tasks.
