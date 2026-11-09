@@ -1005,7 +1005,7 @@ fn an_executor_error_park_raises_the_notice_and_resumes_only_at_release() -> Res
         &owner,
         &crate::dreamer_runner::ReleaseParkedAttemptRequest {
             attempt: crate::entity_id::bytes_to_hex_lower(queued.attempt.id.as_bytes()),
-            reason: parked.reason.clone(),
+            cause: crate::memory::DreamerParkCauseView::ExecutorError,
             parked_at: parked.parked_at,
             note: None,
         },

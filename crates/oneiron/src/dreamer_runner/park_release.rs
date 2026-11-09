@@ -3,8 +3,9 @@
 //!
 //! An ExecutorError park and a private Other park wait on an owner act: a budget, a consent, a seat or a peer. No
 //! resumer retries them blindly (constraint C5), boot included. Each such park raises one owner notice in its own
-//! write, and the vault's authenticated owner releases it, against the exact park a read showed him (its reason and
-//! when it was parked), so a park that changed since refuses and nothing moves. The release resumes the park as the
+//! write, and the vault's authenticated owner releases it, against the exact park a read showed him (its cause and
+//! when it was parked, as `vault.consolidation.status` and the owner's lineage show them), so a park that changed
+//! since refuses and nothing moves. The release resumes the park as the
 //! same try and resolves its notice. In slice 6.5 typed waits replace this door for budget, consent, seat and peer:
 //! the matching signal resumes the park.
 
@@ -18,6 +19,7 @@ use crate::error::{Error, Result};
 use crate::inbox::{
     NotificationEvent, NotificationKind, NotificationSource, decode_notification_body,
 };
+use crate::memory::DreamerParkCauseView;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -36,9 +38,9 @@ const RELEASE_NOTE: &str = "the owner released the parked try";
 pub struct ReleaseParkedAttemptRequest {
     /// 32-hex id of the parked try (`job:` prefix allowed).
     pub attempt: String,
-    /// The park's exact reason and the time it was parked, as a read showed them: a park that changed since
-    /// refuses.
-    pub reason: String,
+    /// The park's cause and the time it was parked, as a read showed them (`vault.consolidation.status`, the
+    /// owner's lineage): a park that changed since refuses.
+    pub cause: DreamerParkCauseView,
     pub parked_at: u64,
     /// The owner's note on the try's queue row.
     #[serde(default)]
@@ -111,8 +113,8 @@ pub(crate) fn raise_park_release_notice_in_txn(
 }
 
 /// Releases one parked try as the vault's authenticated owner: the owner is revalidated in the writer; the park
-/// must be one only the owner's release resumes (the park resume table's OwnerRelease row), with exactly the reason
-/// and park time the request names; a settled try is never reopened. The owner's intervention is recorded on the
+/// must be one only the owner's release resumes (the park resume table's OwnerRelease row), with exactly the cause
+/// and park time the request names, as the owner's reads show them; a settled try is never reopened. The owner's intervention is recorded on the
 /// queue row, the park resumes as the same try under its own owner token, and its notice is resolved for the owner.
 ///
 /// # Errors
@@ -150,7 +152,7 @@ fn release_in_txn(
     if !park.resumable_by(ParkResumer::OwnerRelease) {
         return Err(Error::EntityNotFound);
     }
-    if park.reason != input.reason || park.parked_at != input.parked_at {
+    if DreamerParkCauseView::from(park.cause) != input.cause || park.parked_at != input.parked_at {
         return Err(Error::ConcurrentWrite(
             "the parked try changed since it was read",
         ));
