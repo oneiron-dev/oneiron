@@ -18,7 +18,7 @@
         "outOfScopeError": "FORBIDDEN",
         "crossVaultCredentialError": "UNAUTHORIZED",
         "timeUnits": "Unix seconds",
-        "modelRoutes": "none",
+        "modelRoutes": "none, except BOOT-06: one scripted generative_reasoner (boot-code) per program",
         "isolation": "A=window, B=aisle; identical witnessed text, distinct entity IDs and owners"
       },
       "scenarios": [
@@ -38,12 +38,12 @@
       "path": "execute-mode-design.json",
       "source": {
         "uri": "independent-oracle:oneiron-boot-execute-mode-canon-design",
-        "revision": "2026-10-18-v1"
+        "revision": "2026-11-10-v2"
       },
       "licence": "CC0-1.0",
-      "sha256": "6af573928c427b5c0d7a528e6a31542ad0c5ea50e1b8eed09132af020817eb3e",
+      "sha256": "22d9adcd00f7a16c0d48f199ebc38dee816552f5235fb1e9c65c970603ed6ffa",
       "expectedFacts": {
-        "blocked": "Read-only and propose-only execute_code admission must exist without granting core:write.",
+        "blocked": "Read-only and propose-only execute_code admission exists without granting core:write.",
         "proposalApproval": "proposed",
         "provenance": "Actor is credential-bound; source is host-bound; foreign input grants no authority.",
         "bindingSnapshot": "5ecd5af5bea2c70e25760f0583f276790f49fba4"
