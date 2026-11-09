@@ -28,7 +28,7 @@ pub trait CodeSandboxEgressQuicReassemblyCryptoStreamExt {
     fn whole(&self) -> Result<bool, &'static str>;
     /// The whole ClientHello handshake message and the floor room it holds,
     /// once [`Self::whole`] is true.
-    fn into_hello(mut self) -> (Vec<u8>, Vec<HostNetPermit>);
+    fn into_hello(self) -> (Vec<u8>, Vec<HostNetPermit>);
     /// The first handshake message's type and body length, once the
     /// stream's first four bytes are in.
     fn header(&self) -> Option<(u8, usize)>;

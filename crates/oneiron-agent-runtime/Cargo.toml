@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The code_sandbox half of the oneiron engine, lifted above the core crate"
+description = "The agent runtime above the oneiron core crate: the code sandbox (wasmtime, microVM and egress)"
 repository.workspace = true
 homepage.workspace = true
 
@@ -13,6 +13,28 @@ doctest = false
 
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-container = { path = "../oneiron-container" }
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
+wasmtime = { version = "=48.0.3", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "std", "wat"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+blake3 = { workspace = true, features = ["zeroize"] }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+tar = { version = "=0.4.46", default-features = false }
+tempfile = "3"
+tracing = { version = "0.1" }
+uuid = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+rustix = { version = "1.1", features = ["fs", "process"] }
+
+[features]
+# Forwarded to the core crate, whose code_sandbox half and callers share these gates.
+code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
+microvm-firecracker = ["oneiron/microvm-firecracker"]
+microvm-dev = ["oneiron/microvm-dev"]
 
 [lints]
 workspace = true

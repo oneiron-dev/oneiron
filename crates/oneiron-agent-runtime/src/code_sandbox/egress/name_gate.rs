@@ -11,16 +11,16 @@ use super::*;
 pub trait CodeSandboxEgressNameGateEgressNameRefusalExt {
     /// The refusal's stable reason.
     #[must_use]
-    const fn reason(&self) -> &'static str;
+    fn reason(&self) -> &'static str;
     /// The address and port the refused stream was connected to.
     #[must_use]
-    const fn target(&self) -> SocketAddr;
+    fn target(&self) -> SocketAddr;
 }
 
 impl CodeSandboxEgressNameGateEgressNameRefusalExt for EgressNameRefusal {
     /// The refusal's stable reason.
     #[must_use]
-    const fn reason(&self) -> &'static str {
+    fn reason(&self) -> &'static str {
             match self {
                 Self::Unverifiable { .. } => "egress_name_unverifiable",
                 Self::Ungranted { .. } => "egress_name_ungranted",
@@ -29,7 +29,7 @@ impl CodeSandboxEgressNameGateEgressNameRefusalExt for EgressNameRefusal {
 
     /// The address and port the refused stream was connected to.
     #[must_use]
-    const fn target(&self) -> SocketAddr {
+    fn target(&self) -> SocketAddr {
             match self {
                 Self::Unverifiable { target, .. } | Self::Ungranted { target, .. } => *target,
             }

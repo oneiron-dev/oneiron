@@ -10,13 +10,13 @@ use crate::ext::*;
 pub trait CodeSandboxEgressQuicInitialVersionExt {
     /// The version a long header's version field names, if the gate knows
     /// it. Version 0 is Version Negotiation.
-    const fn from_wire(version: u32) -> Option<Self>;
+    fn from_wire(version: u32) -> Option<Self>;
 }
 
 impl CodeSandboxEgressQuicInitialVersionExt for Version {
     /// The version a long header's version field names, if the gate knows
     /// it. Version 0 is Version Negotiation.
-    const fn from_wire(version: u32) -> Option<Self> {
+    fn from_wire(version: u32) -> Option<Self> {
             match version {
                 0x0000_0001 => Some(Self::One),
                 0x6b33_43cf => Some(Self::Two),
@@ -28,8 +28,8 @@ impl CodeSandboxEgressQuicInitialVersionExt for Version {
 /// Methods of [`Reader`] that moved out of `oneiron` with `code_sandbox::egress::quic::initial` (core split):
 /// an inherent impl stays in its type's crate, so here they are an extension trait.
 pub trait CodeSandboxEgressQuicInitialReaderExt<'a> {
-    const fn new(bytes: &'a [u8]) -> Self;
-    const fn is_empty(&self) -> bool;
+    fn new(bytes: &'a [u8]) -> Self;
+    fn is_empty(&self) -> bool;
     fn take(&mut self, len: usize) -> Option<&'a [u8]>;
     fn u8(&mut self) -> Option<u8>;
     fn u32(&mut self) -> Option<u32>;
@@ -38,11 +38,11 @@ pub trait CodeSandboxEgressQuicInitialReaderExt<'a> {
 }
 
 impl<'a> CodeSandboxEgressQuicInitialReaderExt<'a> for Reader<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
+    fn new(bytes: &'a [u8]) -> Self {
             Self { bytes, at: 0 }
         }
 
-    const fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
             self.at >= self.bytes.len()
         }
 

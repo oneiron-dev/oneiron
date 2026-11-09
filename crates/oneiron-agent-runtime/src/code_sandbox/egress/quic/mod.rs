@@ -67,7 +67,6 @@ pub mod reassembly;
 pub use crypto::CodeSandboxEgressQuicCryptoClientKeysExt;
 pub use flows::CodeSandboxEgressQuicFlowsFlowTableExt;
 pub use flows::CodeSandboxEgressQuicFlowsReleaseExt;
-pub use flows::CodeSandboxEgressQuicFlowsReleaseExt;
 pub use initial::CodeSandboxEgressQuicInitialVersionExt;
 pub use initial::CodeSandboxEgressQuicInitialReaderExt;
 pub use reassembly::CodeSandboxEgressQuicReassemblyCryptoStreamExt;

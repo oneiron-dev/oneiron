@@ -22,7 +22,7 @@ pub trait CodeSandboxMicrovmHandleGuestImageExt {
     /// Select source for a reusable interpreter component. Empty source is
     /// valid for a component with its own embedded entry program.
     #[must_use]
-    fn with_source(mut self, source: impl Into<String>) -> Self;
+    fn with_source(self, source: impl Into<String>) -> Self;
     /// Checks that every image artifact is present before a guest is booted.
     ///
     /// # Errors
@@ -101,11 +101,11 @@ pub trait CodeSandboxMicrovmHandleMicroVmHandleExt {
         overlay_upper: impl Into<PathBuf>,
         egress_socket: impl Into<PathBuf>,
     ) -> Result<Self>;
-    fn with_scratch(mut self, scratch: super::scratch::ScratchHandle) -> Self;
+    fn with_scratch(self, scratch: super::scratch::ScratchHandle) -> Self;
     #[must_use]
     fn id(&self) -> &str;
     #[must_use]
-    const fn tier(&self) -> SandboxGuestTier;
+    fn tier(&self) -> SandboxGuestTier;
     /// Host root of the read-only base mount. Never written through this handle.
     #[must_use]
     fn base_root(&self) -> &Path;
@@ -157,7 +157,7 @@ impl CodeSandboxMicrovmHandleMicroVmHandleExt for MicroVmHandle {
         }
 
     #[must_use]
-    const fn tier(&self) -> SandboxGuestTier {
+    fn tier(&self) -> SandboxGuestTier {
             self.tier
         }
 
@@ -184,12 +184,12 @@ impl CodeSandboxMicrovmHandleMicroVmHandleExt for MicroVmHandle {
 /// an inherent impl stays in its type's crate, so here they are an extension trait.
 pub trait CodeSandboxMicrovmHandleExecutionBudgetExt {
     #[must_use]
-    const fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self;
+    fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self;
 }
 
 impl CodeSandboxMicrovmHandleExecutionBudgetExt for ExecutionBudget {
     #[must_use]
-    const fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self {
+    fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self {
             Self {
                 wall_clock_secs,
                 mem_mib,

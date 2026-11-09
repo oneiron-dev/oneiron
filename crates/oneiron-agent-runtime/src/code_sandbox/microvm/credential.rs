@@ -129,13 +129,13 @@ pub trait CodeSandboxMicrovmCredentialCredentialInjectionExt {
     #[must_use]
     fn vm_id(&self) -> &str;
     #[must_use]
-    const fn credential(&self) -> &SandboxCredentialHandle;
+    fn credential(&self) -> &SandboxCredentialHandle;
     #[must_use]
-    const fn destination(&self) -> &CredentialDestination;
+    fn destination(&self) -> &CredentialDestination;
     /// Length of the injected material. The material itself is dropped at the
     /// boundary and is never stored on the receipt.
     #[must_use]
-    const fn injected_bytes(&self) -> usize;
+    fn injected_bytes(&self) -> usize;
 }
 
 impl CodeSandboxMicrovmCredentialCredentialInjectionExt for CredentialInjection {
@@ -145,19 +145,19 @@ impl CodeSandboxMicrovmCredentialCredentialInjectionExt for CredentialInjection 
         }
 
     #[must_use]
-    const fn credential(&self) -> &SandboxCredentialHandle {
+    fn credential(&self) -> &SandboxCredentialHandle {
             &self.credential
         }
 
     #[must_use]
-    const fn destination(&self) -> &CredentialDestination {
+    fn destination(&self) -> &CredentialDestination {
             &self.destination
         }
 
     /// Length of the injected material. The material itself is dropped at the
     /// boundary and is never stored on the receipt.
     #[must_use]
-    const fn injected_bytes(&self) -> usize {
+    fn injected_bytes(&self) -> usize {
             self.injected_bytes
         }
 }
@@ -170,9 +170,9 @@ pub trait CodeSandboxMicrovmCredentialCredentialEgressProxyExt {
     #[must_use]
     fn resolver(&self) -> &dyn CredentialResolver;
     #[must_use]
-    const fn is_armed(&self) -> bool;
+    fn is_armed(&self) -> bool;
     /// Marks the VM-internal transport as bound and ready.
-    const fn arm(&mut self);
+    fn arm(&mut self);
     /// Performs one allowlisted, read-only egress operation outside the guest.
     /// Material is scrubbed on success AND refusal. The guest gets no secret,
     /// request headers, host exception text, or reflected response body.
@@ -208,12 +208,12 @@ impl CodeSandboxMicrovmCredentialCredentialEgressProxyExt for CredentialEgressPr
         }
 
     #[must_use]
-    const fn is_armed(&self) -> bool {
+    fn is_armed(&self) -> bool {
             self.armed
         }
 
     /// Marks the VM-internal transport as bound and ready.
-    const fn arm(&mut self) {
+    fn arm(&mut self) {
             self.armed = true;
         }
 

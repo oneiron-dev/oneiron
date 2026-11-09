@@ -19,7 +19,7 @@ pub trait CodeSandboxEgressFixtureFixtureForwardExt {
     fn new(target: SocketAddrV4) -> Result<Self, FixtureForwardError>;
     /// The upstream's address and port.
     #[must_use]
-    const fn target(self) -> SocketAddrV4;
+    fn target(self) -> SocketAddrV4;
 }
 
 impl CodeSandboxEgressFixtureFixtureForwardExt for FixtureForward {
@@ -52,7 +52,7 @@ impl CodeSandboxEgressFixtureFixtureForwardExt for FixtureForward {
 
     /// The upstream's address and port.
     #[must_use]
-    const fn target(self) -> SocketAddrV4 {
+    fn target(self) -> SocketAddrV4 {
             self.0
         }
 }

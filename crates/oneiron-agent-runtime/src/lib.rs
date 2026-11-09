@@ -20,7 +20,6 @@ pub mod ext {
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicCryptoClientKeysExt;
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicFlowsFlowTableExt;
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicFlowsReleaseExt;
-    pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicFlowsReleaseExt;
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicInitialVersionExt;
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicInitialReaderExt;
     pub use crate::code_sandbox::egress::quic::CodeSandboxEgressQuicReassemblyCryptoStreamExt;

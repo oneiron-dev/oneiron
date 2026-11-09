@@ -50,9 +50,9 @@ pub trait CodeSandboxMicrovmAdapterMicroVmSandboxAdapterExt {
     #[must_use]
     fn backend_name(&self) -> &'static str;
     #[must_use]
-    const fn contract(&self) -> SandboxBoundaryContract;
+    fn contract(&self) -> SandboxBoundaryContract;
     #[must_use]
-    const fn vm(&self) -> &MicroVmHandle;
+    fn vm(&self) -> &MicroVmHandle;
     #[must_use]
     fn proposal_deltas(&self) -> &[SandboxProposalDelta];
     #[must_use]
@@ -125,12 +125,12 @@ impl CodeSandboxMicrovmAdapterMicroVmSandboxAdapterExt for MicroVmSandboxAdapter
         }
 
     #[must_use]
-    const fn contract(&self) -> SandboxBoundaryContract {
+    fn contract(&self) -> SandboxBoundaryContract {
             self.contract
         }
 
     #[must_use]
-    const fn vm(&self) -> &MicroVmHandle {
+    fn vm(&self) -> &MicroVmHandle {
             &self.vm
         }
 

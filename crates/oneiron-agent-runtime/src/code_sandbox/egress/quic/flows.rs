@@ -69,6 +69,10 @@ pub trait CodeSandboxEgressQuicFlowsReleaseExt<'a> {
         crypto: CryptoStream,
         held: Vec<HeldDatagram>,
     ) -> Self;
+    /// The datagrams the flow held, raw, in arrival order.
+    fn held(&self) -> &[Vec<u8>];
+    /// Settles the flow refused for `refusal`; nothing it held is sent.
+    fn refuse(self, refusal: EgressDatagramNameRefusal);
 }
 
 impl<'a> CodeSandboxEgressQuicFlowsReleaseExt<'a> for Release<'a> {
@@ -93,18 +97,7 @@ impl<'a> CodeSandboxEgressQuicFlowsReleaseExt<'a> for Release<'a> {
                 refusal: None,
             }
         }
-}
 
-/// Methods of [`Release`] that moved out of `oneiron` with `code_sandbox::egress::quic::flows` (core split):
-/// an inherent impl stays in its type's crate, so here they are an extension trait.
-pub trait CodeSandboxEgressQuicFlowsReleaseExt {
-    /// The datagrams the flow held, raw, in arrival order.
-    fn held(&self) -> &[Vec<u8>];
-    /// Settles the flow refused for `refusal`; nothing it held is sent.
-    fn refuse(mut self, refusal: EgressDatagramNameRefusal);
-}
-
-impl CodeSandboxEgressQuicFlowsReleaseExt for Release<'_> {
     /// The datagrams the flow held, raw, in arrival order.
     fn held(&self) -> &[Vec<u8>] {
             &self.held
@@ -115,3 +108,4 @@ impl CodeSandboxEgressQuicFlowsReleaseExt for Release<'_> {
             self.refusal = Some(Box::new(refusal));
         }
 }
+
