@@ -365,7 +365,7 @@ impl Vault {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Vault {
     /// TEST-ONLY: stands `agent`'s Steward grant with `verbs` and marks it,
     /// as a first mint leaves it, without the owner's signed act (a library
