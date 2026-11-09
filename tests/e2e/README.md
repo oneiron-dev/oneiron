@@ -87,6 +87,24 @@ the Observed producer (FIX 21842). These cases remain registered with their reas
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
 passing feature coverage.
 
+### Measured case status
+
+The runner sets each case's status in report.json (`results[i].status`, `statusBasis`, and
+`statusCounts` for the run). Nobody declares a case READY; a lane quotes the runner's status
+(E2E rules v2, VERDICT52-F3 "READY is measured").
+
+| Status | Measured when |
+|---|---|
+| PLANNED | No case body ran: `todo`, `skip`, `pendingDoor`, a `BlockedDoor`, or a red probe. |
+| PROBED | A `level: "probe"` case is green: every step answered and its effect was read back. |
+| WRITTEN | A `level: "assert"` case ran, green or red; the basis gives the red reason. |
+| PROVEN | An assert case is green and an earlier report has this ID red with a reason containing its declared `redReason`. |
+
+`suite.test`'s fifth argument is a deadline in ms, or `{level, redReason, deadlineMs}`; `level` defaults
+to `"assert"`. Earlier reports come from `E2E_PRIOR_REPORTS` (comma-separated report.json paths).
+The fleet job passes the earlier reports of the same file on that host. Without a declared
+`redReason` a green case stays WRITTEN: PROVEN is never inferred from just any red.
+
 ## EngineFixture
 
 ```ts

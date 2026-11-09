@@ -13,9 +13,55 @@ import type { BuildManifest, Profile, SuitePlan, PlannedFile } from "./fixtures.
 export const LIMITS = Object.freeze({ slots: 4, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
 export type Outcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
+/** How far a case has come, measured by the runner (E2E rules v2, VERDICT52-F3 "READY is measured"):
+ * PLANNED no case body has run; PROBED every step answered and its effect was read back; WRITTEN the
+ * assertions are in (green or red); PROVEN seen red for its declared reason, then green. */
+export type CaseStatus = "PLANNED" | "PROBED" | "WRITTEN" | "PROVEN";
+/** A probe case only drives each step and reads its effect back; an assert case carries the assertions. */
+export type CaseLevel = "probe" | "assert";
+export interface CaseOptions {
+  readonly level?: CaseLevel;
+  /** Part of the failure reason this case shows when the promise is broken. A green case is PROVEN only
+   * when an earlier report (E2E_PRIOR_REPORTS) has this ID red with a reason containing this text. */
+  readonly redReason?: string;
+  readonly deadlineMs?: number;
+}
 export interface IdResult {
   readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string;
   readonly cleanupError?: string; readonly harnessError?: string;
+  readonly level?: CaseLevel; readonly redReason?: string;
+  readonly status?: CaseStatus; readonly statusBasis?: string;
+}
+interface PriorResult extends IdResult { readonly source: string; readonly buildHead?: string }
+/** The runner's status for one result, from its outcome, its declared level and earlier reports of the same ID. */
+export function caseStatus(row: IdResult, priors: readonly PriorResult[]): { status: CaseStatus; statusBasis: string } {
+  const why = (row.reason ?? "").slice(0, 300);
+  if (!row.level) return { status: "PLANNED", statusBasis: row.outcome === "SKIPPED" || row.outcome === "BLOCKED"
+    ? `not written: ${why}` : `no case body ran: ${why}` };
+  if (row.outcome === "BLOCKED" || row.outcome === "SKIPPED") return { status: "PLANNED", statusBasis: `blocked: ${why}` };
+  if (row.level === "probe") return row.outcome === "PASS"
+    ? { status: "PROBED", statusBasis: "probe green: every step answered and its effect was read back" }
+    : { status: "PLANNED", statusBasis: `probe red: ${why}` };
+  if (row.outcome !== "PASS") return { status: "WRITTEN", statusBasis: `red: ${why}` };
+  if (!row.redReason) return { status: "WRITTEN", statusBasis: "green; no redReason declared, so PROVEN is not measured" };
+  const red = priors.find(prior => prior.outcome === "FAIL" && (prior.reason ?? "").includes(row.redReason!));
+  return red
+    ? { status: "PROVEN", statusBasis: `red for its reason in ${red.source}${red.buildHead ? ` at ${red.buildHead.slice(0, 12)}` : ""}, green now` }
+    : { status: "WRITTEN", statusBasis: `green; no earlier red containing "${row.redReason}" in E2E_PRIOR_REPORTS` };
+}
+/** Earlier report.json files (comma-separated paths) by ID; an unreadable one is skipped. */
+async function priorResults(paths: string | undefined): Promise<Map<string, PriorResult[]>> {
+  const byId = new Map<string, PriorResult[]>();
+  for (const path of (paths ?? "").split(",").map(item => item.trim()).filter(Boolean)) {
+    let report: { buildHead?: string; results?: IdResult[] };
+    try { report = JSON.parse(await readFile(path, "utf8")) } catch { continue }
+    for (const row of report.results ?? []) {
+      const list = byId.get(row.id) ?? [];
+      list.push({ ...row, source: path, ...(report.buildHead ? { buildHead: report.buildHead } : {}) });
+      byId.set(row.id, list);
+    }
+  }
+  return byId;
 }
 export class BlockedDoor extends Error { override name = "BlockedDoor" }
 export class DeadlineError extends Error { override name = "DeadlineError" }
@@ -284,8 +330,12 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
     registrations.add(id);
   };
   return {
-    test(test: Reporter["test"], id: string, name: string, body: () => void | Promise<void>, deadlineMs: number = LIMITS.flowMs): void {
+    /** A written case. The fifth argument is its deadline in ms, or {level, redReason, deadlineMs}. */
+    test(test: Reporter["test"], id: string, name: string, body: () => void | Promise<void>, options: number | CaseOptions = LIMITS.flowMs): void {
       if (selected.size && !selected.has(id)) return;
+      const declared: CaseOptions = typeof options === "number" ? { deadlineMs: options } : options;
+      const deadlineMs = declared.deadlineMs ?? LIMITS.flowMs;
+      const meta = { level: declared.level ?? "assert", ...(declared.redReason ? { redReason: declared.redReason } : {}) } as const;
       register(id);
       test(`${id} ${name}`, async () => {
         const flow = new FlowLifecycle(id, performance.now() + deadlineMs);
@@ -297,10 +347,10 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
             assertFlowActive();
             flow.finish();
             await closeOwnedResources();
-            results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started});
+            results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started,...meta});
           } catch (error) {
             results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
-              reason:redactor.text(error instanceof Error ? error.message : String(error))});
+              reason:redactor.text(error instanceof Error ? error.message : String(error)),...meta});
             // Bun must not inspect raw credential-bearing properties such as CliError.result.
             throw new Error(results.get(id)!.reason);
           } finally {
@@ -309,7 +359,7 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
             catch (error) {
               const prior = results.get(id);
               const cleanupError = redactor.text(String(error));
-              results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
+              results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError,...meta});
               throw new Error(cleanupError);
             }
             finally { await flush() }
@@ -537,12 +587,17 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   }
   for (const file of ready.files) for (const id of selectedIds(file))
     if (!results.has(id)) results.set(id,{id,outcome:"FAIL",durationMs:0,reason:"Suite deadline/interruption before completion"});
+  // The runner measures each case's status; nobody declares READY for a case.
+  const priors = await priorResults(process.env.E2E_PRIOR_REPORTS);
+  for (const [id,row] of results) results.set(id,{...row,...caseStatus(row,priors.get(id) ?? [])});
+  const statusCounts = Object.fromEntries((["PLANNED","PROBED","WRITTEN","PROVEN"] as const)
+    .map(status => [status,[...results.values()].filter(row => row.status === status).length]));
   const durationMs = performance.now()-started;
   const rows = plan.coverage.filter(row => row.tests.some(id => results.has(id))).map(row => ({...row,
     outcome:row.tests.every(id => results.get(id)?.outcome === "PASS") ? "PASS" :
       row.tests.every(id => ["PASS","SKIPPED"].includes(results.get(id)?.outcome ?? "")) ? "SKIPPED" : "BLOCKED"}));
   const success = !schedulerFailure && !interrupted && durationMs <= LIMITS.suiteMs && [...results.values()].every(r => r.outcome === "PASS" || r.outcome === "SKIPPED");
-  await artifacts.json("report.json",{profile,scope,success,durationMs,schedulerFailure,source:plan.source,buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,
+  await artifacts.json("report.json",{profile,scope,success,durationMs,schedulerFailure,statusCounts,source:plan.source,buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,
     buildHead:build.head,fixturePins:ready.fixturePins,realModel:build.realModel,fileDiagnostics,results:[...results.values()].sort((a,b) => a.id.localeCompare(b.id)),coverage:rows,excludedRows:plan.excludedRows});
   return success ? 0 : 1;
 }
