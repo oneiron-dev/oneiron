@@ -474,10 +474,10 @@ pub struct FeedAckRequest {
     pub through: Vec<FeedPosition>,
 }
 
-/// A request to end one of the caller's subscriptions.
+/// A request naming one of the caller's subscriptions: to end it, or to resync it past a gap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FeedUnsubscribeRequest {
+pub struct FeedSubscriptionRequest {
     #[serde(with = "crate::serialize::entity_ref")]
     #[schemars(with = "String")]
     pub subscription: EntityId,

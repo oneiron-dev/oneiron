@@ -31,9 +31,9 @@ fn put_person(vault: &Vault) -> EntityId {
     id
 }
 
-/// Subscribe, read, ack, list and unsubscribe, each through its verb: the page shows the PERSON
-/// written after subscribing, the ack moves the cursor so the next page is empty, and the
-/// subscription is the caller's until it ends.
+/// Subscribe, read, ack, list, resync and unsubscribe, each through its verb: the page shows the
+/// PERSON written after subscribing, the ack moves the cursor so the next page is empty, the
+/// resync stands it at the head, and the subscription is the caller's until it ends.
 #[test]
 fn the_feed_verbs_follow_one_subscription_from_subscribe_to_unsubscribe() {
     let (_dir, vault) = open();
@@ -55,6 +55,7 @@ fn the_feed_verbs_follow_one_subscription_from_subscribe_to_unsubscribe() {
         "vault.feeds.read",
         json!({"subscription": subscription}),
     );
+    assert_eq!(page["status"], "page", "{page}");
     let entries = page["entries"].as_array().expect("entries");
     assert!(
         entries
@@ -70,7 +71,11 @@ fn the_feed_verbs_follow_one_subscription_from_subscribe_to_unsubscribe() {
         "vault.feeds.ack",
         json!({"subscription": subscription, "through": through}),
     );
-    assert_eq!(acked["cursors"], through, "{acked}");
+    assert_eq!(
+        acked["cursors"].as_array().map(Vec::len),
+        Some(1),
+        "one sealed cursor per source: {acked}"
+    );
     let next = call(
         &memory,
         "vault.feeds.read",
@@ -80,6 +85,21 @@ fn the_feed_verbs_follow_one_subscription_from_subscribe_to_unsubscribe() {
 
     let listed = call(&memory, "vault.feeds.list", json!({}));
     assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
+    let resynced = call(
+        &memory,
+        "vault.feeds.resync",
+        json!({"subscription": subscription}),
+    );
+    assert_eq!(resynced["subscription"], subscription, "{resynced}");
+    assert_eq!(
+        call(
+            &memory,
+            "vault.feeds.read",
+            json!({"subscription": subscription}),
+        )["entries"],
+        json!([]),
+        "the resync stands at the head"
+    );
     assert_eq!(
         call(
             &memory,
