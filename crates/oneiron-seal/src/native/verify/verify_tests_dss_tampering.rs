@@ -15,6 +15,7 @@
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use der::Decode;
     use lopdf::{Dictionary, Document, Object, Stream};
 
     use super::super::verify_tests_fixtures_dss_a::tests::*;
@@ -68,6 +69,12 @@ mod tests {
         let ca = test_ca("dss-ca");
         let other = test_ca("dss-other");
         let unrelated = test_ca("unrelated-ca");
+        // A leaf its CA issued, and an attacker's self-signed certificate
+        // with the CA's subject (a shadow).
+        let leaf_ca = test_ca("issuer");
+        let leaf_der = leaf_under(&leaf_ca, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let shadow = test_ca("issuer");
         let no_crl_sign = ca_with_kus("no-crlsign", vec![rcgen::KeyUsagePurpose::DigitalSignature]);
         let delegate = ocsp_delegate_with_kus(
             &ca,
@@ -102,7 +109,7 @@ mod tests {
         let certs = vec![ca.cert_der.clone()];
         let tampering = VerifyFindingCode::ValidationMaterialPossibleTampering;
         let missing = VerifyFindingCode::ValidationMaterialUnavailable;
-        let rows: Vec<(&str, Document, &TestCa, VerifyFindingCode)> = vec![
+        let rows: Vec<(&str, Document, Vec<u8>, VerifyFindingCode)> = vec![
             (
                 "CRL whose signature no claimed issuer's key verifies",
                 dss_doc(
@@ -116,7 +123,7 @@ mod tests {
                     )],
                     &[],
                 ),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
@@ -132,43 +139,59 @@ mod tests {
                     )],
                     &[],
                 ),
-                &no_crl_sign,
+                no_crl_sign.cert_der.clone(),
                 tampering,
             ),
             (
                 "CRL entry that does not parse",
                 dss_doc(&certs, &[b"not a CRL".to_vec()], &[]),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "OCSP response whose signature does not verify",
                 dss_doc(&certs, &[], &[bad_signature_ocsp]),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "OCSP response signed by a responder nobody presents",
                 dss_doc(&certs, &[], &[good(&other, false)]),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "OCSP CertID bound to no validation-set certificate",
                 dss_doc(&certs, &[], &[unbound_ocsp]),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "OCSP delegate whose key usage lacks digitalSignature",
                 dss_doc(&certs, &[], &[good(&delegate, true)]),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "unsuccessful OCSP response",
                 dss_doc(&certs, &[], &[unsuccessful_ocsp]),
-                &ca,
+                ca.cert_der.clone(),
+                tampering,
+            ),
+            (
+                "shadow CRL listing the covered leaf's serial as revoked",
+                dss_doc(
+                    &[leaf_der.clone(), shadow.cert_der.clone()],
+                    &[build_crl(
+                        &shadow,
+                        THIS_UPDATE,
+                        NEXT_UPDATE,
+                        None,
+                        vec![leaf.tbs_certificate.serial_number.clone()],
+                    )],
+                    &[],
+                ),
+                leaf_der.clone(),
                 tampering,
             ),
             (
@@ -178,7 +201,7 @@ mod tests {
                     &[],
                     &[],
                 ),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
@@ -187,25 +210,25 @@ mod tests {
                     let certs = stream_array(doc, &certs);
                     dss_dict(vec![("Certs", certs), ("CRLs", Object::Integer(1))])
                 }),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "/DSS that is not a dictionary",
                 doc_with_dss(|_| Object::Integer(1)),
-                &ca,
+                ca.cert_der.clone(),
                 tampering,
             ),
             (
                 "DSS with no arrays",
                 doc_with_dss(|_| dss_dict(vec![])),
-                &ca,
+                ca.cert_der.clone(),
                 missing,
             ),
             (
                 "DSS whose only array is present but empty",
                 doc_with_dss(|_| dss_dict(vec![("CRLs", Object::Array(vec![]))])),
-                &ca,
+                ca.cert_der.clone(),
                 missing,
             ),
             (
@@ -221,12 +244,12 @@ mod tests {
                     )],
                     &[],
                 ),
-                &ca,
+                ca.cert_der.clone(),
                 missing,
             ),
         ];
         for (row, doc, covered, finding) in rows {
-            let checks = dss_check(&doc, &covered_of(&[&covered.cert_der]));
+            let checks = dss_check(&doc, &covered_of(&[&covered]));
             assert_eq!(
                 dss_finding(&checks),
                 (VerifyCheckStatus::NotRun, Some(finding)),
