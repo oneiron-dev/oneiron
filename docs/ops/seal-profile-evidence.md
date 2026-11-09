@@ -189,10 +189,11 @@ reports INDETERMINATE: the verdict is indeterminate, and
 the tampering sub-indication.
 
 FIX row [SEAL-REPORT-EN-319-102-1-ROLLUP] holds the EN-aligned rollup for the
-genuine failures (EN: TRY_LATER, REVOKED_NO_POE and the rest). Unknown status is
-reported only after the whole response's binding, authorization, freshness and
-signature checks pass. Seal-time OCSP gathering still accepts only all-good
-responses covering the requested certificate.
+genuine failures (EN: TRY_LATER, REVOKED_NO_POE and the rest). An unknown status
+counts only after the whole response's signature, binding and authorization
+checks pass and its own SingleResponse is fresh; freshness and status are judged
+per SingleResponse. Seal-time OCSP gathering still accepts only all-good responses
+covering the requested certificate.
 
 An optional `/VRI` index does not preempt validation of the existing global DSS
 certificate and revocation arrays. The verifier does not parse that index or add

@@ -467,7 +467,8 @@ pub(crate) struct NegativeClaim<'a> {
 /// under an authorized responder, with every SingleResponse bound to an
 /// embedded/anchored cert serial. A `good` SingleResponse fresh at the
 /// applicable time supplies coverage; an `unknown` is returned only after
-/// all bindings, authorization, freshness and the signature validate. The
+/// the signature, every binding and authorization validate and its own
+/// SingleResponse is fresh. The
 /// response's own certificates are held on `memory` as responder
 /// candidates (FIX 12260); memory refused is `Err`. A response that is not
 /// authentic is rejected as Unverifiable (lead ruling F): unparseable,
