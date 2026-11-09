@@ -178,7 +178,7 @@ fn goal_in_txn(
 ) -> Result<GoalRecord> {
     research::check_goal_current_in_txn(vault, txn, binding)?;
     let (current, goal) = vault
-        .project_intake_goal_in_txn(txn, project)?
+        .project_intake_goal_for_coach_in_txn(txn, project)?
         .ok_or(invalid("an archive requires an authenticated project goal"))?;
     if current != goal_ref
         || binding

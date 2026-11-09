@@ -317,7 +317,7 @@ fn goal_axis_anchor(
     let Some((project, _)) = goal.project else {
         return Ok(None);
     };
-    let Some(record) = vault.project_intake_goal(project)? else {
+    let Some(record) = vault.project_intake_goal_for_coach(project)? else {
         return Ok(None);
     };
     let Some(stated) = record

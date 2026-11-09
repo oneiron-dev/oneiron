@@ -212,7 +212,12 @@ pub use system_agent_grant::{
     SystemFunction,
 };
 pub(crate) use system_agent_grant::{
-    holds_system_agent_grant, standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
+    StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_verbs_in,
+    steward_grant_of_in, steward_rows_rewrite,
+};
+mod engine_controls;
+pub use engine_controls::{
+    ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 #[cfg(test)]
 mod shared_creation_tests;

@@ -331,4 +331,53 @@ impl Vault {
         let record = decode_goal_claim(&claim, project_id)?;
         Ok(Some((id, record)))
     }
+
+    /// [`Self::project_intake_goal`] as the Coach reads it (untangle 6.6,
+    /// GOAL-PRIVACY).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::project_intake_goal`].
+    pub fn project_intake_goal_for_coach(
+        &self,
+        project_id: EntityId,
+    ) -> Result<Option<GoalRecord>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .project_intake_goal_for_coach_in_txn(&txn, project_id)?
+            .map(|(_, record)| record))
+    }
+
+    /// [`Self::project_intake_goal_in_txn`] as the Coach reads it (untangle
+    /// 6.6, GOAL-PRIVACY): once a host has minted the Coach's Steward grant,
+    /// the goal claim is read through the Coach's own scoped read in the
+    /// same snapshot, so a goal it may not read (its grant narrowed off
+    /// `read`, revoked, or its binding gone) is absent. Before any mint, as
+    /// before.
+    pub(crate) fn project_intake_goal_for_coach_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project_id: EntityId,
+    ) -> Result<Option<(EntityId, GoalRecord)>> {
+        let Some((claim, record)) = self.project_intake_goal_in_txn(txn, project_id)? else {
+            return Ok(None);
+        };
+        let coach = crate::dreamer_runner::authority::coach_actor_id()?;
+        if crate::federation::steward_grant_of_in(&self.store, txn, coach)?.is_none() {
+            return Ok(Some((claim, record)));
+        }
+        let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(
+            coach,
+            EdgeActorClass::System,
+        ))
+        .ok_or_else(|| crate::error::Error::InvalidConfig("invalid Coach read key".into()))?;
+        if self
+            .scoped_read(key)
+            .entity_raw_live_in(txn, &claim)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        Ok(Some((claim, record)))
+    }
 }
