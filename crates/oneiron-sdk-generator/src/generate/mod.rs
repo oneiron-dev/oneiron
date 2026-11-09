@@ -4,6 +4,7 @@
 //! `Generator::new` (rows.rs) keeps that order; the emitters of later PRs read and mutate the one `Generator` in
 //! `outputs()`'s call order.
 
+mod common;
 mod docs;
 mod emit_core;
 mod emit_http;
@@ -108,6 +109,8 @@ impl Index<RowId> for RowStore {
 pub(crate) struct Generator {
     /// `ROOT`: the repository root, resolved.
     pub(crate) root: PathBuf,
+    /// `hand_declared`'s `functools.cache` (generate.py:456), by language.
+    pub(crate) hand_declared_cache: common::HandDeclaredCache,
     /// Every row object the sets below share.
     pub(crate) rows: RowStore,
     /// `MANIFEST['verbs']`.
