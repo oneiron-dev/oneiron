@@ -33,13 +33,11 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use zeroize::{Zeroize, Zeroizing};
 
-/// The verbs whose body carries a wiped encoding: `value_base64` in plaintext
-/// on register and rotate, `input_base64` (sealed ciphertext) on custody submit.
+/// The verbs whose body carries a wiped encoding: the custody rows, whose `custody` member
+/// (`value_base64` in plaintext on register and rotate, `input_base64`, sealed ciphertext, on custody
+/// submit) the verb table names.
 fn needs_wipe(verb: &str) -> bool {
-    matches!(
-        verb,
-        "vault.secrets.register" | "vault.secrets.rotate" | "vault.secrets.custody.submit"
-    )
+    oneiron::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb)
 }
 
 /// The real wiped encoding (`value_base64` or submit's `input_base64`) a
@@ -99,11 +97,7 @@ pub(crate) fn lift_custody_secret(verb: &str, input: &mut Value) -> Option<Zeroi
     if !needs_wipe(verb) {
         return None;
     }
-    let key = if verb == "vault.secrets.custody.submit" {
-        "input_base64"
-    } else {
-        "value_base64"
-    };
+    let key = oneiron::task_verb::sdk::AgentVerb::from_name(verb)?.custody_member()?;
     let Some(Value::String(held)) = input.get_mut(key) else {
         return None;
     };

@@ -336,3 +336,6 @@ harness = false
 
 [lints]
 workspace = true
+
+[build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }

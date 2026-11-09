@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.read_file",
+  "description": "Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation.",
+  "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_read_file(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

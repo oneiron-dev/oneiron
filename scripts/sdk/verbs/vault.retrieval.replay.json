@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.replay",
+  "description": "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used.",
+  "input": "crate::task_verb::sdk::RetrievalDiagnosticRequest",
+  "output": "crate::task_verb::sdk::RetrievalDiagnosticReplay",
+  "call": "crate::task_verb::sdk::retrieval_replay_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.replay\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

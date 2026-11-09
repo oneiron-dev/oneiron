@@ -52,7 +52,6 @@ use crate::lens::GeneratedLens;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 
 /// Key: (EVENT, card kind token).
@@ -705,9 +704,8 @@ fn check_in_lens(event_ref: EntityId, start: u64, copy: &CheckInCopy) -> Result<
         &CheckInCardModel {
             event_ref,
             scheduled_start_utc: start,
-            answer_action_id: AgentVerb::VaultCalendarCheckInAnswer.as_str().to_owned(),
-            recording_upload_action_id: AgentVerb::VaultCalendarTranscriptIngest
-                .as_str()
+            answer_action_id: crate::verb_names::VAULT_CALENDAR_CHECK_IN_ANSWER.to_owned(),
+            recording_upload_action_id: crate::verb_names::VAULT_CALENDAR_TRANSCRIPT_INGEST
                 .to_owned(),
         },
         copy,

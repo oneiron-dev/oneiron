@@ -1,0 +1,16 @@
+{
+  "name": "vault.hooks.regen.get",
+  "description": "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.",
+  "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+  "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+  "call": "memory.hooks_regen_record_as(&memory.embedded_owner(\"vault.hooks.regen.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

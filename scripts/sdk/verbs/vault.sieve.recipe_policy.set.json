@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.recipe_policy.set",
+  "description": "The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets.",
+  "input": "crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest",
+  "output": "crate::dreamer_wake::WakeRecipePolicy",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_recipe_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.recipe_policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

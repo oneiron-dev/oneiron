@@ -426,13 +426,6 @@ impl OffRecordSession<'_> {
         )
     }
 
-    /// Whether a run bound to a session writes `verb` into its room
-    /// ([`Self::prepare_session_write`]): `vault.notes.create` and
-    /// `vault.claims.upsert`.
-    pub(crate) fn writes_verb(verb: AgentVerb) -> bool {
-        matches!(verb.as_str(), "vault.notes.create" | "vault.claims.upsert")
-    }
-
     /// A code-mode verb call of a run bound to this session, prepared to
     /// stage in its room: `vault.notes.create` or `vault.claims.upsert`,
     /// written through `actor`'s handle under the run's `origin`, on `route`,

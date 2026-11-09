@@ -60,6 +60,7 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
         Role::Admin => GrantPreset::Admin,
+        Role::Steward => GrantPreset::Steward,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
         Role::Auditor => GrantPreset::ReadOnly,

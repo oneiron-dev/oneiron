@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `build.rs` | src | s | — | — | Generates the SDK outputs oneiron-code-check includes at build time (crates/oneiron-sdk-build) |
 | `examples/backend_screen.rs` | src | m | — | — | Fleet-only, sequential direction screen; no fallback and no default switch |
 | `examples/latency.rs` | src | s | — | — | Check latency on the synthetic fixtures, per backend: `cargo run --release -p oneiron-code-check --example… |
 | `src/lib.rs` | src | m | 7 struct · 5 enum · 1 trait · 8 fn · 1 const · 1 mod · 4 re-export · 1 crate-vis | BackendId, BackendKind, CheckConfigError, CheckFailure, CheckInput, CheckMode, CheckReport, CodeCheck +5 | A type check of code-mode programs, run beside them as feedback |

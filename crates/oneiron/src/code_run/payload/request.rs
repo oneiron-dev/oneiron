@@ -46,7 +46,7 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         SelfCall::AgentVerb(call) => {
             let verb = call.verb.as_str();
             let input = call.input.to_string();
-            if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+            if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
                 // Replay compares the exact input; write receipts ignore object-key order.
                 // Both fingerprints are host fields, never markers accepted from the caller.
                 request_map(vec![
@@ -243,7 +243,7 @@ pub(in crate::code_run) fn agent_verb_call_identity(
     let input = canonical_verb_input(input).to_string();
     let mut identity = verb.as_bytes().to_vec();
     identity.push(0);
-    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+    if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
         identity.extend_from_slice(blake3::hash(input.as_bytes()).as_bytes());
     } else {
         identity.extend(input.into_bytes());

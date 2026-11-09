@@ -1,0 +1,8 @@
+{
+  "name": "self.code.checkout.bind",
+  "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
+  "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoCheckoutBind"
+}

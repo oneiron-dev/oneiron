@@ -1,0 +1,18 @@
+{
+  "name": "execute_code",
+  "description": "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
+  "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
+  "output": "crate::memory::foreign_code::ForeignCodeRunResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_session": true,
+  "mcp_scope": "filtered",
+  "openapi": true,
+  "host_door_proof": "foreign_code"
+}

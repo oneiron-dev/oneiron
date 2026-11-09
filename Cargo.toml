@@ -107,6 +107,9 @@ oxc_transformer = "=0.152.0"
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 single_use_lifetimes = "deny"
+# The test-door cfg (Engine 19:23 HARNESS-GUARD): only the integration test command sets
+# `--cfg oneiron_test_support`; never a cargo feature, so no `--all-features` build reaches the doors.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oneiron_test_support)'] }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"

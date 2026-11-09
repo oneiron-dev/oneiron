@@ -1,0 +1,12 @@
+{
+  "name": "self.board.unfold",
+  "description": "Unfolds one section of the bound actor's context board; applies at the next turn.",
+  "input": "crate::task_verb::sdk::BoardSectionRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_unfold_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

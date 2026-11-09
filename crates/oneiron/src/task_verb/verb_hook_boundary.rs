@@ -37,8 +37,8 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop,
 };
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS};
-use crate::verb_catalog::CUSTODY_VALUE_ROWS;
+use crate::verb_names::{self, CUSTODY_VALUE_ROWS};
+use crate::verb_table::VerbTable;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 
@@ -80,7 +80,7 @@ impl HookSession {
 
 /// The session a call of row `verb` keeps its verb hooks' records and ask
 /// pauses for when it keeps no record (FIX 4283; Engine ruling 10-19): a
-/// `no_record` row (`NO_RECORD_ROWS`), or a call on `memory` in an anonymous
+/// `no_record` row ([`VerbTable::no_record`] of `verbs`), or a call on `memory` in an anonymous
 /// off-record session its principal is verified in
 /// (`Memory::keeps_no_record`, never a raw header claim). Its hooks still
 /// run. Their receipts and saved runs, and the call a hook's ask paused,
@@ -97,8 +97,12 @@ impl HookSession {
 /// # Errors
 ///
 /// A resume of a pause that is gone; storage errors.
-pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Option<HookSession>> {
-    hook_session_kept(memory, verb, false)
+pub fn hook_session(
+    memory: Option<&Memory<'_>>,
+    verbs: &dyn VerbTable,
+    verb: &str,
+) -> MemoryResult<Option<HookSession>> {
+    hook_session_kept(memory, verbs, verb, false)
 }
 
 /// [`hook_session`] of a call of row `verb` with `input`: a call that serves
@@ -114,17 +118,19 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
 /// As [`hook_session`].
 pub fn hook_session_for_call(
     memory: Option<&Memory<'_>>,
+    verbs: &dyn VerbTable,
     verb: &str,
     input: &Value,
     held: Option<&crate::off_record::RoomNoteHandle>,
 ) -> MemoryResult<Option<HookSession>> {
     let room_note = memory.is_some_and(|memory| memory.room_note_call(verb, input, held));
-    hook_session_kept(memory, verb, room_note)
+    hook_session_kept(memory, verbs, verb, room_note)
 }
 
 /// [`hook_session`], `room_note` the call serving a room NOTE.
 fn hook_session_kept(
     memory: Option<&Memory<'_>>,
+    verbs: &dyn VerbTable,
     verb: &str,
     room_note: bool,
 ) -> MemoryResult<Option<HookSession>> {
@@ -132,7 +138,7 @@ fn hook_session_kept(
     // A pause is resumed beside the invocation it paused; a call that names
     // none resumes nothing.
     let resume = memory.and_then(|memory| memory.invocation().and(memory.hook_ask()));
-    if !anonymous && !NO_RECORD_ROWS.contains(&verb) {
+    if !anonymous && !verbs.no_record(verb) {
         if let (Some(memory), Some(ask)) = (memory, resume)
             && let Some(invocation) = memory.invocation()
             && let Some(stop) = memory.vault().gone_hook_pause(invocation, ask)?
@@ -181,9 +187,13 @@ pub fn door_invocation(vault: &Vault, pre: &VerbHookPre) -> InvocationId {
 /// no record, under the same key its hooks keep on. `None` when it carries
 /// none.
 #[must_use]
-pub fn door_invocation_of(memory: &Memory<'_>, verb: &str) -> Option<InvocationId> {
+pub fn door_invocation_of(
+    memory: &Memory<'_>,
+    verbs: &dyn VerbTable,
+    verb: &str,
+) -> Option<InvocationId> {
     let invocation = memory.invocation()?;
-    if !memory.keeps_no_record() && !NO_RECORD_ROWS.contains(&verb) {
+    if !memory.keeps_no_record() && !verbs.no_record(verb) {
         return Some(invocation);
     }
     let vault = memory.vault();
@@ -361,10 +371,10 @@ pub use row_run::{
 pub(crate) use session::{session_row_call, session_row_post, session_row_pre};
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
-/// sends any other row to an ask.
+/// sends any other row to an ask. Row `verb` writes when `verbs` says so.
 #[must_use]
-pub fn row_domain(verb: &str) -> VerbDomain {
-    if AgentVerb::from_name(verb).is_some_and(AgentVerb::writes) {
+pub fn row_domain(verbs: &dyn VerbTable, verb: &str) -> VerbDomain {
+    if verbs.writes(verb) {
         VerbDomain::Write
     } else {
         VerbDomain::Read
@@ -379,8 +389,8 @@ pub fn row_domain(verb: &str) -> VerbDomain {
 /// # Errors
 ///
 /// When a hook may run and the handle's read key does not build.
-pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
-    let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
+pub fn row_call(memory: &Memory<'_>, verbs: &dyn VerbTable, verb: &str) -> MemoryResult<VerbCall> {
+    let mut call = VerbCall::for_memory(memory, verb, row_domain(verbs, verb))?;
     call.scope = memory
         .room_turn()
         .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
@@ -467,11 +477,7 @@ impl CustodySecret {
         if !CUSTODY_VALUE_ROWS.contains(&verb) {
             return None;
         }
-        let member = if verb == "vault.secrets.custody.submit" {
-            "input_base64"
-        } else {
-            "value_base64"
-        };
+        let member = verb_names::custody_member(verb)?;
         let Some(Value::String(held)) = args.get_mut(member) else {
             return None;
         };
@@ -508,7 +514,7 @@ fn stopped(stop: VerbHookStop) -> MemoryError {
 /// offline.
 #[must_use]
 pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
-    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
+    if verb.rsplit('/').next() != Some(verb_names::REVEAL_WAIT) {
         return None;
     }
     let mut masked = reply.clone();

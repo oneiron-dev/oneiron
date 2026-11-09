@@ -1,0 +1,14 @@
+{
+  "name": "vault.rooms.leave",
+  "description": "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership.",
+  "input": "crate::workspace_roster::RoomLeaveRequest",
+  "output": "crate::workspace_roster::RoomLeaveOutcome",
+  "call": "memory.rooms_leave(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$",
+    "room_ref": "=room"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,13 @@
+{
+  "name": "vault.code.waits.rebind_prepare",
+  "description": "Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it.",
+  "input": "crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest",
+  "output": "crate::memory::code_wait_doors::CodeWaitRebindPrepared",
+  "call": "memory.code_wait_rebind_prepare(input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -41,24 +41,8 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::{SessionAnswer, SessionRead};
-use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
-
-/// The verbs a session-bound run reads through the room's view: an explicit
-/// list, never "every verb that writes nothing". A read joins it only with
-/// its room enumeration and projection (neighbors, claim lists and history,
-/// hybrid search and recall do not have theirs yet).
-pub(super) fn session_read(verb: AgentVerb) -> Option<SessionRead> {
-    match verb.as_str() {
-        "vault.get" => Some(SessionRead::Get),
-        "vault.hydrate" => Some(SessionRead::Hydrate),
-        "vault.refs.resolve" => Some(SessionRead::RefsResolve),
-        "vault.search.bm25" => Some(SessionRead::SearchBm25),
-        "vault.receipts" => Some(SessionRead::Receipts),
-        _ => None,
-    }
-}
 
 /// Why a read in a room gives no answer: one typed reason per cause, and the
 /// one place each becomes the stable code the guest reads.
@@ -104,7 +88,7 @@ impl HostSelfDispatcher<'_> {
         {
             return None;
         }
-        session_read(call.verb)
+        call.verb.session_read()
     }
 
     /// `read`, the verb `call` names, in the run's room: admitted by the

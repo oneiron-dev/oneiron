@@ -1,0 +1,12 @@
+{
+  "name": "self.grants.ask",
+  "description": "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it.",
+  "input": "crate::memory::GrantAskRequest",
+  "output": "crate::memory::GrantAskReceipt",
+  "call": "memory.grants_ask(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

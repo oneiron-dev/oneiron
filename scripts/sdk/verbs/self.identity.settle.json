@@ -1,0 +1,13 @@
+{
+  "name": "self.identity.settle",
+  "description": "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask.",
+  "input": "crate::dreamer_runner::maintenance::identity::IdentityActNowRequest",
+  "output": "crate::dreamer_runner::maintenance::identity::IdentityActNow",
+  "call": "memory.identity_act_now(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

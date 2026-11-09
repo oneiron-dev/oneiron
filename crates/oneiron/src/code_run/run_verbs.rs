@@ -1,5 +1,5 @@
 //! The inputs and outputs of the verb-table rows a code run answers itself
-//! (`context: "run"` in `scripts/sdk/agent-verbs.json`).
+//! (`context: "run"` in `scripts/sdk/verbs/`).
 //!
 //! Each input is the object code mode's `vault.<row>(input)` takes. The guest
 //! bridge decodes it into the run's own typed `self.*` call, so a row keeps the

@@ -1,0 +1,16 @@
+{
+  "name": "vault.mesh.revoke_machine",
+  "description": "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing.",
+  "input": "crate::task_verb::sdk::MeshMachineRevokeRequest",
+  "output": "crate::task_verb::sdk::MeshMachineRevoked",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.revoke_machine\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

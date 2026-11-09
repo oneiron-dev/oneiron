@@ -276,3 +276,6 @@ mesh = [
   "dep:oneiron-mesh-transport",
   "dep:oneiron-remote",
 ]
+
+[build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }

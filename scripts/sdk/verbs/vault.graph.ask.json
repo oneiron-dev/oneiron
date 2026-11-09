@@ -1,0 +1,17 @@
+{
+  "name": "vault.graph.ask",
+  "input": "crate::receipt::GraphAskRequest",
+  "output": "crate::receipt::GraphAskOutcome",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "proposes": true,
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false
+}
