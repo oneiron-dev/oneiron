@@ -194,8 +194,9 @@ suite.test(test, "PORTABILITY-01", "Whole-vault five-format ownership export sho
 
   // On-record content: a diary entry, an attachment, a credential in a
   // message and another in a claim field.
+  // Diary and witness answer write markers, not gate receipts: observe the rows instead.
   const saved = await engine.client.call("self.memory.diary", { content: note });
-  await engine.awaitReceipt(saved.receipt_ref);
+  expect((await engine.client.call("vault.get", { entity_ref: saved.entry_id })).value).not.toBeNull();
   const artifact = await engine.client.call("vault.artifacts.create", {
     name: facts.attachment.name, media_type: facts.attachment.mediaType, content_base64: blob.toString("base64"),
   });
@@ -208,7 +209,8 @@ suite.test(test, "PORTABILITY-01", "Whole-vault five-format ownership export sho
     messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
       content: mask.prefix + mask.credential + mask.suffix }],
   });
-  await engine.awaitReceipt(witnessed.receipt_ref);
+  expect(witnessed.message_short_ids).toHaveLength(1);
+  expect((await engine.client.call("vault.get", { entity_ref: witnessed.message_short_ids[0]! })).value).not.toBeNull();
   const claim = await engine.client.call("vault.claims.upsert", {
     scope: await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef),
     predicate: mask.predicate, subject_ref: conversation.id,
@@ -332,7 +334,7 @@ suite.test(test, "PORTABILITY-02", "Owner same-build restore should work", async
   await configureStoppedFixture(engine, { platformKeystore: true });
   await engine.restart();
   const saved = await engine.client.call("self.memory.diary", { content: note });
-  await engine.awaitReceipt(saved.receipt_ref);
+  expect((await engine.client.call("vault.get", { entity_ref: saved.entry_id })).value).not.toBeNull();
   const artifact = await engine.client.call("vault.artifacts.create", {
     name: facts.attachment.name, media_type: facts.attachment.mediaType,
     content_base64: Buffer.from(blob).toString("base64"),
@@ -702,15 +704,16 @@ suite.test(test, "PORTABILITY-08", "Web fetch and bounded crawl should work", as
   expect(site.seen).toEqual(["/tides", "/tides"]);
 
   // crawl spends exactly its page budget and names what it left unvisited.
+  // Its frontier is breadth-first over each page's sorted, de-duplicated
+  // same-site links: after "/" come /ferry, /moved and /tides.
   site.seen.length = 0;
   const bounded = await engine.client.call("crawl", { seed_url: `${site.url}/`, page_budget: 2 });
-  expect(bounded.pages.map(page => page.canonical_url)).toEqual([`${site.url}/`, tidesUrl]);
+  expect(bounded.pages.map(page => page.canonical_url)).toEqual([`${site.url}/`, `${site.url}/ferry`]);
   expect(bounded.failed).toEqual([]);
   expect(bounded.completion.status).toBe("budget_exhausted");
   if (bounded.completion.status !== "budget_exhausted") throw new Error("Expected an exhausted crawl budget");
-  expect([...bounded.completion.unvisited_urls].sort())
-    .toEqual([`${site.url}/charts`, `${site.url}/ferry`, `${site.url}/moved`].sort());
-  expect(site.seen).toEqual(["/", "/tides"]);
+  expect([...bounded.completion.unvisited_urls].sort()).toEqual([`${site.url}/moved`, tidesUrl].sort());
+  expect(site.seen).toEqual(["/", "/ferry"]);
 
   // With room to finish, every same-site page lands once despite duplicate
   // links. The off-site link and the cross-site redirect never reach the other origin.
