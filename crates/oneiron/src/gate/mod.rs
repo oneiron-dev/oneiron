@@ -47,6 +47,7 @@ pub(crate) use docedit_resource::shipped_docedit_package_limits;
 pub(crate) mod dispatch_compliance;
 mod docx_budget;
 mod doors;
+mod derive_verdict;
 mod dreamer_grant;
 mod dreamer_precommit;
 mod dreamer_retry_policy;
@@ -84,6 +85,9 @@ mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
+pub(crate) use self::derive_verdict::{
+    DeriveAllowance, DeriveCapability, DeriveRefusal, derive_verdict_in_txn,
+};
 pub(crate) use self::dreamer_grant::{
     DREAMER_LANDING_ROWS_REF, DreamerLandingVerdict, body_with_steward_rows,
     dreamer_landing_verdict_in_txn, dreamer_rows_held,

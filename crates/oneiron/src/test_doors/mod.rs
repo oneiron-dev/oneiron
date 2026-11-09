@@ -5,5 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod consolidation;
+pub mod derivation_floor;
+pub mod derive;
 pub mod run_hold;
 pub mod steward;
