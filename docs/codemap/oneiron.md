@@ -3325,7 +3325,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/grant/wallet_ref.rs` | src | s | 4 crate-vis | — | The `wallet_ref` key of the FEDERATION_GRANT body (FIX 7766, Engine 19:59 = A): the host wallet an owner… |
 | `src/federation/grant_policy.rs` | src | m | 2 fn · 9 crate-vis | — | Vault-resident default capability rows for member-grant minting |
 | `src/federation/grant_policy/tests.rs` | test | m | — | — | — |
-| `src/federation/grant_scope.rs` | src | s | 2 crate-vis | — | Scope authority shared by the purpose-specific stored grant envelopes |
+| `src/federation/grant_scope.rs` | src | s | 3 crate-vis | — | Scope authority shared by the purpose-specific stored grant envelopes |
 | `src/federation/grant_travel.rs` | src | s | 5 crate-vis | — | The owner's grant travel door (OF-491, FIX 2998): which born-with text one federation grant's windows carry… |
 | `src/federation/guest.rs` | src | s | 2 struct · 4 fn · 3 const | GuestShareEnvelope, GuestShareEnvelopeBody | Guest-share envelope body and signed envelope codec |
 | `src/federation/membership_gate.rs` | src | m | 1 enum · 2 fn · 1 re-export · 9 crate-vis | MembershipStanding | Transaction-bound shared-vault membership write authorization |
@@ -3376,6 +3376,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_creation/training_setup.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 crate-vis | SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion | A shared vault's one training question, asked once at setup (OF-420 T3) |
 | `src/federation/shared_creation_tests.rs` | test | m | — | — | — |
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 9 fn · 1 const · 1 re-export · 9 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
+| `src/federation/steward_tests.rs` | test | s | — | — | The Steward role (ARCH-0043's seventh role, owner 9 Nov 2026): it reads and organises its own vault root… |
 | `src/federation/tables.rs` | src | s | — | — | The side tables `federation` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/federation/tests.rs` | test | XL | — | — | — |
 | `src/federation/vault_id_decimal.rs` | src | s | 2 crate-vis | — | A shared vault's id on the wire (OF-158): a decimal string, since a `u64` past 2^53 does not survive a… |
@@ -7626,7 +7627,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_shape/live_source.rs` | src | s | 5 crate-vis | — | What the live read says about how a skill and a channel identity were made (FIX 2668), so that adopting the… |
 | `src/vault_shape/manifest.rs` | src | s | 3 crate-vis | — | A policy manifest as a seed writes it (DEC-0005): its entity id and its exact MessagePack body, as hex |
 | `src/vault_shape/manifest_json.rs` | src | s | 3 crate-vis | — | A policy manifest's JSON form (FIX 2760): the same MessagePack body as a document a seed author can write by… |
-| `src/vault_shape/member.rs` | src | s | 2 struct · 2 enum · 2 fn · 4 crate-vis | ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick | Shared-vault membership as shape rows (ARCH-0043 presets as seeds) |
+| `src/vault_shape/member.rs` | src | s | 2 struct · 2 enum · 2 fn · 5 crate-vis | ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick | Shared-vault membership as shape rows (ARCH-0043 presets as seeds) |
 | `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 5 fn · 1 const · 13 re-export · 2 crate-vis | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `src/vault_shape/outbound_reach.rs` | src | s | 6 crate-vis | — | The reach's standing outbound grant rows (ARCH-0070 `shape:reach-line`, FIX 2801) |
 | `src/vault_shape/plan.rs` | src | m | 3 struct · 2 enum · 6 fn · 1 crate-vis | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
@@ -7684,9 +7685,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/follower_keyframe.rs` | src | s | 1 struct · 1 fn | DreamerFollowerKeyframeResult | The explicit owner request to keyframe follower sessions (FIX 8532) |
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
-| `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 3 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1389 fn · 4 const | — | — |
-| `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 19 fn · 2 const · 1 crate-vis | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 8 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput, RepoRegistrationView | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/verbs/grants.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 re-export · 1 crate-vis | GrantAnswer, GrantAnswerRequest, GrantAnswered | `self.grants.answer` (FIX 1379): the general answer to an access request, by the vault's owner or by the… |
