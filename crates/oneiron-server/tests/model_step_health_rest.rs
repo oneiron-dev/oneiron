@@ -85,6 +85,8 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
                 ),
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::OnDevice,
+                host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 serde_json::from_value::<LlmMessage>(
