@@ -368,6 +368,27 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemoryPutClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_memory_put_claim_requesting(
+            call,
+            read_as,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            false,
+        )
+    }
+
+    /// The claim put asking `approval` of the gates: code mode asks
+    /// Proposed; a caller's live run asks Auto first (FIX 3983).
+    /// `checker_review`: the put is a caller's live-run put, which names
+    /// itself to the gate whatever it asks, so the host's auto checker
+    /// reviews its Auto request and its Proposed resubmission keeps that
+    /// review's hold as a pending review (review 6908 P1).
+    pub(super) fn dispatch_memory_put_claim_requesting(
+        &self,
+        call: SelfMemoryPutClaimCall,
+        read_as: Option<ScopedReadActorKey>,
+        approval: crate::claim::ClaimApprovalStatus,
+        checker_review: bool,
+    ) -> Result<SelfDispatchOutcome> {
         // A position-narrowed slip places no row in core (FIX 10666).
         self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
@@ -378,7 +399,21 @@ impl HostSelfDispatcher<'_> {
             Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
             None => *call.candidate,
         };
-        let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
+        // A live run's put names itself to the gate, whose auto checker reviews it as it reviews a Dreamer
+        // write (FIX 3983, review 6881 P1). Its Proposed resubmission carries the same marker, so a checker
+        // hold parks it with a pending review instead of landing it unreviewed (review 6908 P1). Code mode
+        // carries no marker.
+        let producer = if checker_review {
+            vec![(
+                rmpv::Value::from(crate::gate::CHECKED_PRODUCER_PROVENANCE_KEY),
+                rmpv::Value::from(crate::gate::LIVE_RUN_CLAIM_PUT_PRODUCER),
+            )]
+        } else {
+            Vec::new()
+        };
+        let envelope = self
+            .write_envelope_with(SelfEffect::MemoryPutClaim, admission.as_ref(), producer)?
+            .with_approval(approval);
         // The write gate reads no facet; the stored body takes the vault
         // default when the write applies.
         let gate_body = candidate.clone().into_claim_body(
