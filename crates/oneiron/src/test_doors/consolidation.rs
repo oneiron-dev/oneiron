@@ -218,6 +218,33 @@ pub fn consolidate_unbound_turn(
     readable_space: Option<EntityId>,
     reply: &str,
 ) -> Result<UnboundPass> {
+    consolidate_unbound_turn_with_hidden(
+        vault,
+        words,
+        metadata,
+        None,
+        readable_space.as_slice(),
+        reply,
+    )
+}
+
+/// [`consolidate_unbound_turn`] with a second, hidden user MESSAGE of the
+/// same TURN carrying `hidden_metadata` when it is named: the TURN pins it,
+/// but its words are not projected into the transcript (review round 1 of
+/// #6903). The Dreamer gets a live `MessagesRead` grant on each of
+/// `readable_spaces`.
+///
+/// # Errors
+///
+/// As [`consolidate_unbound_turn`].
+pub fn consolidate_unbound_turn_with_hidden(
+    vault: &Vault,
+    words: &str,
+    metadata: Option<serde_json::Value>,
+    hidden_metadata: Option<serde_json::Value>,
+    readable_spaces: &[EntityId],
+    reply: &str,
+) -> Result<UnboundPass> {
     let speaker = EntityId::now();
     vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
     let conversation = EntityId::now();
@@ -228,7 +255,7 @@ pub fn consolidate_unbound_turn(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
-            messages: vec![WitnessMessage {
+            messages: std::iter::once(WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
@@ -238,13 +265,25 @@ pub fn consolidate_unbound_turn(
                 is_visible: true,
                 order: 0,
                 quote: None,
-            }],
+            })
+            .chain(hidden_metadata.map(|hidden| WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "kept out of the transcript".to_owned(),
+                parts: None,
+                metadata: Some(hidden),
+                is_visible: false,
+                order: 1,
+                quote: None,
+            }))
+            .collect(),
             occurred_at: 10,
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
     let actor = vault.dreamer_authority()?;
-    if let Some(space) = readable_space {
+    for &space in readable_spaces {
         vault.create_access_grant(
             &EntityId::now(),
             &AccessGrant {
