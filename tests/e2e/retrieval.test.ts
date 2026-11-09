@@ -636,9 +636,263 @@ suite.test(test, "RETRIEVAL-03", "Bitemporal widening should work", async () => 
   }
 });
 
-/* The stale producer and filtered claim reads exist. They do not provide the
- * complete caller-filter journey across recall/hydrate/neighbors/search. */
-suite.skip(test, "RETRIEVAL-04", "waits on caller ReadFilterInput bindings on recall, hydrate, neighbors and every search/read door; demote and list_filtered alone do not cover this ID [FIX 3977; qualif 17779]");
+/* RETRIEVAL-04 (partial): one world-limited reader, every facade read door it may use. */
+function retrieval04Receipt(receipt: ReadReceipt) {
+  readReceipt(receipt);
+  expect(receipt.requested.include_stale).toBe(true);
+  expect(receipt.actor_ceiling.include_stale).toBe(false);
+  expect(receipt.applied.include_stale).toBe(false);
+  expect(receipt.narrowed_axes).toContain("include_stale");
+  expect(receipt.replan_hint).toContain("include_stale");
+  expect(receipt.replan_hint).toContain("grant_scope");
+  expect(receipt.suppressed_count).toBe(0);
+}
+function retrieval04Absent(output: unknown, forbidden: readonly string[]) {
+  const serialized = JSON.stringify(output);
+  for (const value of forbidden) expect(serialized).not.toContain(value);
+}
+interface Retrieval04Pack extends ContextPackReply {
+  readonly stats: {
+    readonly candidates_considered: number; readonly entities_hydrated: number;
+    readonly neighbors_hydrated: number; readonly claims_suppressed: number;
+  };
+}
+interface Retrieval04QueryPage {
+  readonly items: { readonly id: string }[];
+  readonly meta: { readonly total: number; readonly countMode: string };
+  readonly narrowing: ReadReceipt;
+}
+interface Retrieval04HydrateBatch {
+  readonly narrowing: ReadReceipt;
+  readonly results: {
+    readonly ref: string; readonly outcome: string;
+    readonly result?: { readonly id?: string; readonly narrowing: ReadReceipt };
+    readonly error?: { readonly kind: string };
+  }[];
+}
+interface Retrieval04Refusal {
+  readonly error: { readonly code: string; readonly message: string; readonly receipt_ref?: string };
+  readonly narrowing?: ReadReceipt;
+  readonly value?: unknown;
+}
+
+// Promise: A world-limited reader stays clamped across restart on recall, point, lexical and graph reads, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world.
+// Doors: owner facade writes and HTTP edge action; reader facade recall/get/hydrate/BM25/neighbors, HTTP query/context-pack/batch hydrate; owner hydration and neighbor controls; restart.
+// Unproved: legacy vector/entity/edges row clamps need grant-admitting legacy read doors; MCP caveated-reader parity needs registered caveated-reader admission; proposed/stale/deleted/superseded lifecycle rows remain unexercised (producers exist); a world axis on receipts needs a public receipt field, not an invented narrowed_axes value.
+suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across restart on recall, point, lexical and graph reads, gets honest read receipts without hidden-claim counts, and cannot write into the hidden world", async () => {
+  const fixture = await scenario<{
+    rows: { label: string }[];
+    edges: { from: string; kind: string; to: string }[];
+    expected: { bothEndpointsReadable: boolean; neverWidens: boolean;
+      everyNarrowingExplained: boolean; unreadableNamesAndCountsAbsent: boolean };
+  }>("RETRIEVAL-04");
+  expect(fixture.rows.some(row => row.label === "readable")).toBe(true);
+  expect(fixture.rows.some(row => row.label === "private")).toBe(true);
+  expect(fixture.expected).toMatchObject({ bothEndpointsReadable: true, neverWidens: true,
+    everyNarrowingExplained: true, unreadableNamesAndCountsAbsent: true });
+  const edge = fixture.edges.find(row => row.from === "readable" && row.to === "private");
+  if (!edge) throw new Error("RETRIEVAL-04 requires the authored readable-to-private edge");
+  expect(edge.kind).toBe("about");
+  const engine = await EngineFixture.start({ id: "RETRIEVAL-04", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
+  try {
+    const at = utc("2026-02-01T12:00:00Z");
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const evidence = await witnessedText(engine, "This distinct person is Retrieval clamp reader.", at);
+    const person = await engine.client.call("vault.people.create", {
+      identity: { name: "Retrieval clamp reader" }, identity_evidence_refs: [evidence.message.id_hex],
+      occurred_at: at,
+    });
+    const guestId = person.person.id_hex;
+    expect(guestId).not.toBe(engine.pairedActor.principalRef);
+    const guest = await engine.pairActor({ principalRef: guestId, actorClass: "human", scope: ["core:read"] });
+    expect((await guest.client.call("self.actor", {})).actor_ref).toBe(guestId);
+    const { seed } = credentialParts(guest.credential);
+    const attenuated = await guest.client.call("self.credential.attenuate", {
+      holder_seed: [...Buffer.from(seed, "hex")], caveat: { scope: { kind: "ceiling", scope: {
+        worlds: { kind: "some", values: [scope.world_id] }, facets: { kind: "all" },
+        bands: { kind: "all" }, audience: { kind: "all" },
+        verbs: { kind: "some", values: ["core:read"] }, sensitivity: { kind: "all" },
+      } } },
+    });
+    expect(attenuated.token.startsWith("v2.slip.")).toBe(true);
+    // No holder transfer: binding_key is public, so retain the paired holder's seed.
+    const reader = new PublicHttpClient(engine.url, {
+      credential: `v2.cred.${attenuated.token.slice(8)}.${seed}`, artifacts: engine.artifacts,
+    });
+    const hiddenWorldName = "Retrieval private partition";
+    const hiddenWorld = await engine.client.call("vault.structural.put", {
+      kind: "WORLD", body: { name: hiddenWorldName, kind: "dream" }, occurred_at: at, learned_at: at,
+    });
+    const worldRead = await engine.client.call("vault.get", { entity_ref: hiddenWorld.id_hex });
+    expect(worldRead.value?.body).toMatchObject({ name: hiddenWorldName, kind: "dream" });
+    const token = "retrievalclampquartz";
+    const graphToken = "retrievalgraphquartz";
+    const readableText = `${token} ${graphToken} readable`;
+    const hiddenText = `${token} private`;
+    // claim() observes each commit receipt and hydrates the write as owner.
+    const readable = await claim(engine, scope, {
+      predicate: "profile.name", value: readableText, occurred_at: at, learned_at: at,
+    });
+    const hidden = await claim(engine, { ...scope, world_id: hiddenWorld.id_hex }, {
+      predicate: "profile.name", value: hiddenText, occurred_at: at, learned_at: at,
+    });
+    expect(readable.entity.body).toMatchObject({ val: readableText, life: "active" });
+    expect(hidden.entity.body).toMatchObject({ val: hiddenText, life: "active" });
+    expect(hidden.id).not.toBe(readable.id);
+    expect(readable.ref).toMatch(/^[^:]+:[a-f0-9]{2}$/);
+    expect(hidden.ref).toMatch(/^[^:]+:[a-f0-9]{2}$/);
+    const forbidden = [hiddenText, hidden.id, hidden.ref, hidden.ref.split(":")[0]!, hiddenWorld.id_hex, hiddenWorldName];
+    // This public memory action needs no live run and writes the exact CLAIM -> CLAIM edge.
+    const linked = await engine.client.raw<{ readonly outcome: { readonly kind: string } }>(
+      "POST", "/v1/core/actions/vault.edges.put", {
+        args: [{ kind: "json", value: { src: readable.id, kind: edge.kind, tgt: hidden.id, weight: 0.5 } }],
+        idempotencyKey: "retrieval-04-private-edge",
+      });
+    expect(linked.status).toBe(200);
+    expect(linked.body.outcome.kind).toBe("memory_edge_write");
+    const neighborInput: FacadeInput<"vault.neighbors"> = {
+      entity_ref: readable.id, opts: { edge_kind: edge.kind, limit: 20 }, filter: { include_stale: true },
+    };
+    const ownerEdges = await engine.client.call("vault.neighbors", neighborInput);
+    expect(ownerEdges.value.some(row => row.record?.id === hidden.id
+      && row.edge_kind === edge.kind && row.direction === "out")).toBe(true);
+    const ownerLexical = await engine.client.call("vault.search.bm25", { query: token, limit: 20 });
+    expect(sorted(ownerLexical.value.map(hit => hit.record!.id))).toEqual(sorted([readable.id, hidden.id]));
+    const recallInput: FacadeInput<"vault.recall"> = {
+      query: token, effort: "medium", limit: 20, format: "md", token_budget: 8192,
+      scope: { worlds: { kind: "all" }, kinds: ["semantic"] }, filter: { include_stale: true },
+    };
+    async function checkReader() {
+      const recalled = await reader.call("vault.recall", recallInput);
+      expect(recalled.items.map(item => item.value_text)).toEqual([readableText]);
+      expect(recalled.rendered).toBeTruthy();
+      retrieval04Receipt(recalled.narrowing);
+      retrieval04Absent(recalled, forbidden);
+      const visible = await reader.call("vault.get", { entity_ref: readable.id, filter: { include_stale: true } });
+      expect(visible.value?.id_hex).toBe(readable.id);
+      expect(visible.value?.body).toMatchObject({ val: readableText });
+      retrieval04Receipt(visible.narrowing);
+      retrieval04Absent(visible, forbidden);
+      const absent = await reader.call("vault.get", { entity_ref: hidden.id, filter: { include_stale: true } });
+      expect(absent.value).toBeNull();
+      retrieval04Receipt(absent.narrowing);
+      retrieval04Absent(absent, forbidden);
+      const lexical = await reader.call("vault.search.bm25", { query: token, limit: 20, filter: { include_stale: true } });
+      expect(lexical.value.map(hit => hit.record?.id)).toEqual([readable.id]);
+      retrieval04Receipt(lexical.narrowing);
+      retrieval04Absent(lexical, forbidden);
+      const neighbors = await reader.call("vault.neighbors", neighborInput);
+      expect(neighbors.value).toEqual([]);
+      retrieval04Receipt(neighbors.narrowing);
+      retrieval04Absent(neighbors, forbidden);
+      return { recalled, visible, absent, lexical, neighbors };
+    }
+    const before = await checkReader();
+    const visibleHydrate = await reader.call("vault.hydrate", { refs: [readable.ref], filter: { include_stale: true } });
+    expect(visibleHydrate.value.map(row => row.id_hex)).toEqual([readable.id]);
+    expect(visibleHydrate.value[0]!.body).toMatchObject({ val: readableText });
+    retrieval04Receipt(visibleHydrate.narrowing);
+    retrieval04Absent(visibleHydrate, forbidden);
+    const withheld = await reader.raw<Retrieval04Refusal>("POST", "/v1/core/facade/vault.hydrate", {
+      refs: [readable.ref, hidden.ref], filter: { include_stale: true },
+    } satisfies FacadeInput<"vault.hydrate">);
+    expect(withheld.status).toBe(404);
+    expect(withheld.body.error.code).toBe("NOT_FOUND");
+    expect(withheld.body.value).toBeUndefined();
+    expect(withheld.body.narrowing).toBeDefined();
+    retrieval04Receipt(withheld.body.narrowing!);
+    // A hydrate error may echo the supplied ref; only server-discovered payload is forbidden here.
+    retrieval04Absent(withheld.body, [hiddenText, hiddenWorldName, hiddenWorld.id_hex]);
+    const quality = await reader.call("vault.get", { entity_ref: readable.id, filter: { min_confidence: 1 } });
+    expect(quality.value).toBeNull();
+    readReceipt(quality.narrowing);
+    expect(quality.narrowing.requested.min_confidence).toBe(1);
+    expect(quality.narrowing.applied.min_confidence).toBe(1);
+    expect(quality.narrowing.replan_hint).toContain("grant_scope");
+    // This receipt can count the permitted claim removed by the quality filter, not the hidden world.
+    const query = await reader.raw<Retrieval04QueryPage>("POST", "/v1/core/query", {
+      query: token, limit: 20, view: "full", countMode: "exact", filter: { include_stale: true },
+    });
+    expect(query.status).toBe(200);
+    expect(query.body.items.map(row => row.id)).toEqual([readable.id]);
+    expect(query.body.meta.total).toBe(1);
+    expect(query.body.meta.countMode).toBe("estimate");
+    retrieval04Receipt(query.body.narrowing);
+    retrieval04Absent(query.body, forbidden);
+    const batch = await reader.raw<Retrieval04HydrateBatch>("POST", "/v1/core/batch/shortId/hydrate", {
+      refs: [readable.ref, hidden.ref], view: "full", filter: { include_stale: true },
+    });
+    expect(batch.status).toBe(200);
+    expect(batch.body.results).toHaveLength(2);
+    expect(batch.body.results[0]!.ref).toBe(readable.ref);
+    expect(batch.body.results[0]!.outcome).toBe("live");
+    expect(batch.body.results[0]!.result?.id).toBe(readable.id);
+    expect(batch.body.results[1]!.ref).toBe(hidden.ref);
+    expect(batch.body.results[1]!.outcome).toBe("not_found");
+    expect(batch.body.results[1]!.error?.kind).toBe("not_found");
+    expect(batch.body.results[1]!.result).toBeUndefined();
+    retrieval04Receipt(batch.body.narrowing);
+    retrieval04Receipt(batch.body.results[0]!.result!.narrowing);
+    // Batch refs are required echoes of caller inputs, not disclosed identifiers.
+    retrieval04Absent(batch.body.results.map(row => row.result), forbidden);
+    const packInput = { query: graphToken, limit: 20, hydrate: true, include_edges: true,
+      edge_hop: 1, max_neighbors: 20, view: "full", budget: { token_budget: 8192 },
+      filter: { include_stale: true } };
+    const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
+    expect(ownerPack.status).toBe(200);
+    expect(ownerPack.body.results.map(row => row.id)).toContain(readable.id);
+    expect(ownerPack.body.neighbors.map(row => row.id)).toContain(hidden.id);
+    const pack = await reader.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
+    expect(pack.status).toBe(200);
+    expect(pack.body.results.map(row => row.id)).toContain(readable.id);
+    expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
+    retrieval04Receipt(pack.body.narrowing);
+    retrieval04Absent(pack.body, forbidden);
+    expect(pack.body.stats.claims_suppressed).toBe(0);
+    expect(pack.body.stats.candidates_considered).toBe(pack.body.results.length);
+    expect(pack.body.stats.entities_hydrated).toBe(pack.body.results.length);
+    expect(pack.body.stats.neighbors_hydrated).toBe(pack.body.neighbors.length);
+    const refused = await reader.raw<Retrieval04Refusal>("POST", "/v1/core/facade/vault.claims.upsert", {
+      subject_ref: engine.pairedActor.principalRef, predicate: "profile.retrieval_forbidden",
+      value: "retrievalforbiddenquartz", confidence: 0.875, source: "user_stated",
+      scope: { ...scope, world_id: hiddenWorld.id_hex }, occurred_at: at, learned_at: at,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe("FORBIDDEN");
+    expect(refused.body.narrowing).toBeUndefined();
+    expect(refused.body.error.receipt_ref).toBeUndefined();
+    await engine.restart();
+    // Reuse the exact reader and credential; do not re-pair or re-attenuate after restart.
+    const after = await checkReader();
+    const durable = await engine.client.call("vault.hydrate", { refs: [readable.ref, hidden.ref] });
+    expect(durable.value.map(row => row.id_hex)).toEqual([readable.id, hidden.id]);
+    expect(durable.value[0]!.body).toMatchObject({ val: readableText, life: "active" });
+    expect(durable.value[1]!.body).toMatchObject({ val: hiddenText, life: "active" });
+    const durableEdges = await engine.client.call("vault.neighbors", neighborInput);
+    expect(durableEdges.value.some(row => row.record?.id === hidden.id
+      && row.edge_kind === edge.kind && row.direction === "out")).toBe(true);
+    const claimsAfterRefusal = await claimSet(engine);
+    expect(claimsAfterRefusal.map(row => row.claim_ref)).toContain(readable.id);
+    expect(claimsAfterRefusal.map(row => row.claim_ref)).toContain(hidden.id);
+    expect(claimsAfterRefusal.some(row => row.predicate === "profile.retrieval_forbidden")).toBe(false);
+    await engine.artifacts.json("retrieval-world-clamp.json", { before, after, visibleHydrate,
+      withheld: withheld.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
+      pack: pack.body, refused: refused.body, durable, durableEdges, claimsAfterRefusal });
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
+});
 
 /* RETRIEVAL-05: real reranker traffic and a held public HyDE work item. */
 suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", async () => {
