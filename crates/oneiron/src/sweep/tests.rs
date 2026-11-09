@@ -331,6 +331,7 @@ fn sweep_skips_not_due_job_while_processing_due_job() {
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         future,
+        future,
     )
     .unwrap();
     let not_due_key = write_h_row(&vault, 1_000, &not_due_value);
@@ -781,6 +782,7 @@ fn sweep_audit_counts_undecodable_receipt_as_missing() {
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         future,
+        future,
     )
     .unwrap();
     write_h_row(&vault, 4_242, &value);
@@ -810,7 +812,7 @@ fn sweep_malformed_scope_job_kept_loud_not_finalized() {
     };
     let now = crate::unix_seconds_now();
     let value =
-        encode_hard_erase_sweep_job(bad_scope, HardEraseSweepExtras::default(), now).unwrap();
+        encode_hard_erase_sweep_job(bad_scope, HardEraseSweepExtras::default(), now, now).unwrap();
     let key = write_h_row(&vault, 55, &value);
 
     let run = run_hard_erase_sweep(&vault).unwrap();
