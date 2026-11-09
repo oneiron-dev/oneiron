@@ -759,51 +759,270 @@ suite.test(test, "COORDINATION-03", "An agent joins a room only through an offer
   }
 });
 
-/* COORDINATION-04 — Recursive leader never widens its slice should work.
- * Rows: OF-389, OF-497, OF-180. Canon: ARCH-0079 #work, #stacking;
- * ARCH-0040 #mcp-actor-ceilings. Current host-rooted authority wins over the
- * older OF-180 ID-JAG/device ceremony prose; no alternate credential is made.
- *
- * Canon operation: leader spawns a subproject inside a TASK wrapper; its board
- * contains the parent leader and its scope/budget/roster only narrow.
- * Existing RUN-ONLY typed design (not a callable HTTP SDK method):
- *   self.leader.split({ leader?: string, slice?: Scope })
- *     -> { project, task, parent, leader, depth_remaining }
- *   self.agents.spawn({ need, prompt, intent_key, agent?, care?, notes?,
- *     model?, width?, pattern?, budget?, context?, context_from?, depth?,
- *     project?, objectives? })
- *     -> { state: "queued", kind: "agent_spawn", attempt, launch? }
- *      | { state: "proposed_widen", kind: "agent_spawn", proposal }
- * Parent TASK, parent project, actor and attempt are host-bound, never inputs.
- * Existing owner calls: vault.widen_proposals({ state? }) -> { proposals };
- * vault.widen_proposals.decline/approve({ proposal_id }).
- *
- * Drive the leader over MCP after its public typed binding exists. Require
- * one child leader, board containing parent leader, same wrapper TASK id and
- * child.parent=parent. Compare each read/write resource with the independent
- * parent set, child budget <= parent cap and child roster <= permitted roster.
- * Try the fixture's extra private bucket: a proposal, no added read or write,
- * no child attempt using it. Deny as parent board: nothing widens. Re-propose,
- * approve as an authorised board holder: only that exact extra slice lands,
- * receipted to the board act. The subleader's own approval cannot land it.
- * Parent narrowing must still clamp its descendants. Messages confer nothing.
- *
- * Missing: typed HTTP/SDK self.leader.split and self.agents.spawn with a
- * host-bound parent run, plus typed leader fixture setup. Existing code-mode
- * implementations/owner widen doors are not substitutes for that binding.
+/** COORDINATION-04 authored inputs (fixture discriminant, not a wire DTO). */
+interface Coordination04Scenario {
+  id: "COORDINATION-04";
+  inputs: {
+    parent: { leader: string; board: string[] };
+    child: { leader: string };
+    extraResource: { kind: string; key: string };
+  };
+  expected: {
+    leaderSelfApprovalWidens: boolean;
+    denialChangesAuthority: boolean;
+    boardApprovalAddsOnlyRequestedSlice: boolean;
+    widenReceiptNamesBoardActor: boolean;
+  };
+}
+type Coordination04Status = Extract<Facade.TaskOutcome, { kind: "snapshot" }>;
+type Coordination04Spawn = FacadeResult<"self.agents.spawn">;
+
+const coordination04Model = "coord-agent";
+function coordination04InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:COORDINATION-04:${label}`).digest("hex").slice(0, 32);
+}
+async function coordination04Scenario(): Promise<Coordination04Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(item => item.id === "COORDINATION-04");
+  if (!row) throw new Error("Missing COORDINATION-04 fixture scenario");
+  return row as Coordination04Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+async function coordination04Agent(client: PublicHttpClient, label: string): Promise<string> {
+  const agent_def_ref = coordination04InputId(label);
+  const created = await client.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `COORDINATION-04 ${label}`, version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+async function coordination04Status(client: PublicHttpClient, task_ref: string): Promise<Coordination04Status> {
+  const described = await client.call("describe", { handle: { kind: "task", task_ref } });
+  if (described.kind !== "task_status") throw new Error(`describe answered ${described.kind}, not task_status`);
+  const outcome = described.receipt.outcome;
+  if (outcome.kind !== "snapshot") throw new Error(`task status answered ${outcome.kind}, not a snapshot`);
+  return outcome;
+}
+/** The layers a stored context spec names, read from the proposal view's public JSON. */
+function coordination04Layers(spec: unknown): string[] {
+  if (spec === null || typeof spec !== "object" || Array.isArray(spec)) throw new Error("Expected a public context spec object");
+  const layers = (spec as { layers?: unknown }).layers;
+  if (layers === undefined) return [];
+  if (!Array.isArray(layers) || !layers.every(layer => typeof layer === "string")) throw new Error("Context spec layers are not strings");
+  return layers as string[];
+}
+async function coordination04Proposal(client: PublicHttpClient, proposal_id: string): Promise<Facade.WidenProposalView> {
+  const row = (await client.call("vault.widen_proposals", {})).proposals.find(item => item.proposal_id === proposal_id);
+  if (!row) throw new Error(`Widen proposal ${proposal_id} is not listed`);
+  return row;
+}
+/** A refused public call: its HTTP status, and the engine's own reason text. */
+async function coordination04Refused(call: Promise<unknown>, reason: string, status?: number, code?: string): Promise<void> {
+  let refusal: PublicHttpError | undefined;
+  try { await call; } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    refusal = error;
+  }
+  if (!refusal) throw new Error(`Expected a refusal (${reason}); the call succeeded`);
+  if (status === undefined) {
+    expect(refusal.reply.status).toBeGreaterThanOrEqual(400);
+    expect(refusal.reply.status).toBeLessThan(500);
+  } else expect(refusal.reply.status).toBe(status);
+  if (code !== undefined) expect(refusal.error?.code).toBe(code);
+  expect(refusal.error?.message ?? "").toContain(reason);
+}
+function coordination04Step(providers: ScriptedProviders, id: string, purpose: string, program: string, barrier?: string): void {
+  providers.enqueue({
+    id, origin: "chat", role: "generative_reasoner", purpose,
+    // The engine-native executor streams on a local-openai-compat provider (wire.rs:146-149).
+    request: { method: "POST", path: "/v1/chat/completions", model: coordination04Model,
+      fields: { stream: true, stream_options: { include_usage: true } } },
+    response: openaiStream(id, coordination04Model, [program], { inputTokens: 256, outputTokens: 96 }),
+    ...(barrier === undefined ? {} : { barrier }),
+  });
+}
+
+/* COORDINATION-04 (partial, Engine E2E-PARTIAL option A).
+ * Promise: a leader's live run cannot widen its own slice. A spawn asking for more than the run
+ *   holds is only a proposal (no child runs), the leader cannot approve it, the board's decline is
+ *   final and survives a restart, and only the board's approval lands exactly the asked slice.
+ * Doors: HTTP facade vault.agents.create, vault.conversations.create, vault.witness, vault.get,
+ *   tasks.create, describe, vault.runs.branches.get, vault.runs.checkpoint, self.run.attach and
+ *   self.agents.spawn (the leader's own paired credential), vault.widen_proposals / .approve /
+ *   .decline; pairActor; engine.restart(). The leader's code-mode run parks on its own ask/wait
+ *   (durable park keeps lease and live entry), driven by ScriptedProviders.
+ * Mapping: the fixture's extra private bucket is the context layer named by its key; board-human is
+ *   the vault owner (a root run has no board attempt: the root Owner answers, widen.rs:303-318).
+ * Unproved: self.leader.split (one child leader, board holding the parent leader, same wrapper
+ *   TASK, roster and budget 8 <= 24). It needs a run inside a project the agent leads with a
+ *   wrapper TASK assigned to her; an owner-created TASK runs in the root project. See the report.
+ * Unproved: parent narrowing clamping the child (no public door narrows a live run's slice), and
+ *   driving the leader over MCP (HTTP facade only).
  */
-/* COORDINATION-04 stays TODO.
- * Promise: a recursive leader can never widen its own slice; a widen it proposes lands only by the
- *   parent board's act, and a decline leaves the slice unchanged.
- * Doors that exist: vault.widen_proposals / .approve / .decline (owner host doors, widen_doors.rs:96-138).
- * Why no partial: a widen proposal is raised only by a dispatch that has a parent attempt
- *   (agent_dispatch/widen.rs:86-88, :111-113), that is, by self.agents.spawn inside a live leader run.
- *   No typed HTTP/SDK door dispatches with a parent attempt, so no real proposal exists to refuse,
- *   decline or approve, and no child slice exists to read back. Refusing approve/decline on ids the
- *   vault never issued, or an agent calling an owner door, is a door-auth check on an absent row, not
- *   the promise that a leader cannot widen its own slice.
- */
-suite.todo(test, "COORDINATION-04", "waits on typed HTTP/SDK self.agents.spawn and self.leader.split bound to a live parent leader run, the only source of a widen proposal");
+suite.test(test, "COORDINATION-04", "A leader's live run cannot widen its own slice: a wider spawn is only a proposal, the leader cannot approve it, the board's decline is final across a restart, and only the board's approval lands exactly the asked slice", async () => {
+  const c = await coordination04Scenario();
+  const extra = c.inputs.extraResource.key;
+  const providers = await ScriptedProviders.start({ id: "coordination04-runs", origins: ["chat"], steps: [] });
+  const engine = await EngineFixture.start({ id: "COORDINATION-04", profile, serverConfig: `
+[models.providers.coord04chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "coordination-v1"
+[models.roles.generative_reasoner]
+model = "coord04chat:${coordination04Model}"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    // board-human binds to the owner, as in COORDINATION-01: the root board answers as the owner.
+    expect(c.inputs.parent.board).toEqual(["board-human"]);
+    const leaderRef = await coordination04Agent(owner, c.inputs.parent.leader);
+    const workerRef = await coordination04Agent(owner, c.inputs.child.leader);
+    const leader = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    expect((await leader.client.call("self.actor", {})).actor_ref).toBe(leaderRef);
+
+    // The leader's run asks its owner a real question and parks on it (a durable wait).
+    const occurred = 1769947200; // Public setup input, never an engine clock override.
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    const witnessed = await owner.call("vault.witness", {
+      conversation_ref: conversation.id, occurred_at: occurred,
+      messages: [{ author: "user", message_type: "text", content: "Hold the route plan until I confirm.", is_visible: true, order: 0 }],
+    });
+    const turn = (await owner.call("vault.get", { entity_ref: witnessed.turn_short_id })).value;
+    expect(turn?.kind).toBe("TURN");
+    if (!turn) throw new Error("Question TURN is not readable");
+    coordination04Step(providers, "coordination04-leader", "the leader's run asks its owner and parks", [
+      `const asked = await ask({ intent_key: "coordination-04/leader/hold", who: { responder: { human: { actor_ref: "${ownerRef}" } } },`,
+      `  what: { reference: { turn: "${turn.id_hex}" }, revision: 1, options: { proceed: { label: "Proceed" } }, context_refs: [] } });`,
+      `await wait({ handle: asked.handle, step_key: "coordination-04/leader/hold" });`,
+    ].join("\n"));
+    const request = "Plan the public route with your workers.";
+    const posted = await owner.call("tasks.create", {
+      spec: { title: request }, label: "coordination-04-leader", assignee: { agent_def: { agent_def_ref: leaderRef } },
+      intent_key: "coordination-04/leader/post",
+      brief: {
+        schema: 1, type_ref: { node_id: coordination04InputId("task-type"), tree_version: 1 },
+        objective: request, intent: { need: request, care: "light" },
+        success: { question: "Did the leader plan the route inside its slice?",
+          criteria: { yes_if_all: [{ text: "The plan used only the slice the board granted." }] } },
+        settled: [],
+        escalation: { to: { people: [ownerRef] }, triggers: [], default: "proceed", reversibility: "reversible_read" },
+      },
+    });
+    expect(posted.effected).toBe(true);
+    const route = posted.route;
+    if (!route || !("AgentDispatch" in route)) throw new Error(`Leader TASK routed ${JSON.stringify(route)}`);
+    const task = posted.task_ref;
+    if (!task) throw new Error("Leader TASK has no task_ref");
+    const branches = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches;
+    expect(branches).toHaveLength(1);
+    const run = branches[0]!.branch;
+    // Barrier: the run's one step is committed, so its provider exchange is over (no Busy guard).
+    await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: run }),
+      view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-04 leader run commits its asking step" });
+    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+    expect((await coordination04Status(owner, task)).phase.phase).not.toBe("terminal");
+
+    // The leader attaches to her own parked run under her own credential.
+    const attached = await leader.client.call("self.run.attach", { run });
+    expect(attached.live_run.startsWith(`lr1.${run}.`)).toBe(true);
+    const spawnWide = (intent_key: string) => leader.client.call("self.agents.spawn", { live_run: attached.live_run, spec: {
+      need: "Read the private route bucket for the plan.", prompt: "Summarise the private route constraints.",
+      intent_key, agent: workerRef, context: { layers: [extra] } } });
+
+    // ---- A spawn wider than the run's slice is only a proposal: no child attempt. ----
+    const first: Coordination04Spawn = await spawnWide("coordination-04/widen/first");
+    if (first.state !== "proposed_widen") throw new Error(`Wider spawn answered ${first.state}, not proposed_widen`);
+    expect(first.kind).toBe("agent_spawn");
+    const pending = await owner.call("vault.widen_proposals", { state: "pending" });
+    expect(pending.proposals.map(row => row.proposal_id)).toEqual([first.proposal]);
+    const asked = pending.proposals[0]!;
+    expect(asked.parent_attempt).toBe(run);
+    expect(asked.board_attempt ?? null).toBeNull();
+    expect(asked.target_kind).toBe("agent");
+    expect(coordination04Layers(asked.parent_context)).toEqual([]);
+    expect(coordination04Layers(asked.requested_context)).toEqual([extra]);
+    expect(coordination04Layers(asked.widened_parent_context)).toEqual([extra]);
+    expect(asked.landed_attempt ?? null).toBeNull();
+
+    // ---- Failure step: the leader cannot approve (or decline) her own widening. ----
+    expect(c.expected.leaderSelfApprovalWidens).toBe(false);
+    await coordination04Refused(leader.client.call("vault.widen_proposals.approve", { proposal_id: first.proposal }),
+      "vault.widen_proposals.approve is the vault owner's", 403, "FORBIDDEN");
+    await coordination04Refused(leader.client.call("vault.widen_proposals.decline", { proposal_id: first.proposal }),
+      "vault.widen_proposals.decline is the vault owner's", 403, "FORBIDDEN");
+    const afterSelf = await coordination04Proposal(owner, first.proposal);
+    expect(afterSelf.state).toBe("pending");
+    expect(afterSelf.landed_attempt ?? null).toBeNull();
+
+    // ---- The board declines: nothing widens, and the decline is final. ----
+    expect(c.expected.denialChangesAuthority).toBe(false);
+    const declined = await owner.call("vault.widen_proposals.decline", { proposal_id: first.proposal });
+    expect(declined.state).toBe("declined");
+    expect(declined.landed_attempt ?? null).toBeNull();
+    expect(c.expected.widenReceiptNamesBoardActor).toBe(true);
+    expect(declined.declined_by).toBe(ownerRef);
+    expect(typeof declined.declined_at).toBe("number");
+    // The same request again does not reopen it, and a later approval cannot land it.
+    await coordination04Refused(spawnWide("coordination-04/widen/first"), "widen proposal was declined");
+    await coordination04Refused(owner.call("vault.widen_proposals.approve", { proposal_id: first.proposal }), "widen proposal was declined");
+    expect((await coordination04Proposal(owner, first.proposal)).state).toBe("declined");
+
+    // ---- Re-propose: the run's slice is unchanged by the decline. ----
+    const second: Coordination04Spawn = await spawnWide("coordination-04/widen/second");
+    if (second.state !== "proposed_widen") throw new Error(`Re-proposal answered ${second.state}, not proposed_widen`);
+    expect(second.proposal).not.toBe(first.proposal);
+    const reasked = await coordination04Proposal(owner, second.proposal);
+    expect(reasked.state).toBe("pending");
+    expect(reasked.parent_attempt).toBe(run);
+    expect(reasked.parent_context).toEqual(asked.parent_context);
+    expect(coordination04Layers(reasked.requested_context)).toEqual([extra]);
+
+    // ---- Failure step: restart. The decline and the pending re-proposal are durable. ----
+    await engine.restart();
+    const afterRestart = await owner.call("vault.widen_proposals", {});
+    const firstAfter = afterRestart.proposals.find(row => row.proposal_id === first.proposal);
+    const secondAfter = afterRestart.proposals.find(row => row.proposal_id === second.proposal);
+    expect(afterRestart.proposals).toHaveLength(2);
+    expect(firstAfter?.state).toBe("declined");
+    expect(firstAfter?.declined_by).toBe(ownerRef);
+    expect(firstAfter?.declined_at).toBe(declined.declined_at);
+    expect(secondAfter?.state).toBe("pending");
+    expect(secondAfter?.landed_attempt ?? null).toBeNull();
+    // The parked leader run kept its lease across the restart.
+    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+
+    // ---- The board approves: exactly the asked slice lands, with one child. ----
+    expect(c.expected.boardApprovalAddsOnlyRequestedSlice).toBe(true);
+    // The landed child's own run asks the model once; its reply finishes it.
+    coordination04Step(providers, "coordination04-child", "the approved child runs once",
+      `finish("Private route constraints summarised.");`, "coordination04-child");
+    const approved = await owner.call("vault.widen_proposals.approve", { proposal_id: second.proposal });
+    expect(approved.state).toBe("approved");
+    expect(approved.landed_attempt).toMatch(/^[a-f0-9]{32}$/);
+    expect(approved.parent_context).toEqual(asked.parent_context);
+    expect(coordination04Layers(approved.widened_parent_context)).toEqual([extra]);
+    expect(approved.declined_by ?? null).toBeNull();
+    await providers.awaitBarrier("coordination04-child");
+    providers.releaseBarrier("coordination04-child");
+    // The approval revived nothing else: the declined proposal stays declined.
+    const final = await owner.call("vault.widen_proposals", {});
+    expect(final.proposals.find(row => row.proposal_id === first.proposal)?.state).toBe("declined");
+    expect(final.proposals.filter(row => row.state === "approved").map(row => row.proposal_id)).toEqual([second.proposal]);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+});
 
 /** COORDINATION-05 authored inputs (fixture discriminant, not a wire DTO). */
 interface Coordination05Scenario {
@@ -1340,6 +1559,62 @@ async function coordination08Run(
     row => row.phase.phase === "terminal", { label: `COORDINATION-08 ${label} run settles its TASK` });
   return { task, status };
 }
+/** A public refusal: its HTTP status and the engine's typed code and message. */
+async function coordination08Refused(call: Promise<unknown>): Promise<{ status: number; code: string; message: string }> {
+  try {
+    await call;
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    const wire = error.error;
+    if (!wire) throw new Error(`Refusal without a typed error envelope: HTTP ${error.reply.status}`);
+    return { status: error.reply.status, code: wire.code, message: wire.message };
+  }
+  throw new Error("Expected a public refusal, got a success");
+}
+/**
+ * Queue the agent run's one scripted step, a program that asks the owner a typed question and waits
+ * on it, then post its TASK. The wait parks the run on a durable wait, which keeps its lease and its
+ * live entry (resident_pump.rs:491-523, live_runs.rs:320-341). Barrier: the run's asking step is
+ * committed, so its provider exchange is over and no entry holds the run's guard for long.
+ */
+async function coordination08ParkedRun(
+  engine: EngineFixture, providers: ScriptedProviders, agent: string, label: string, request: string, question: string,
+): Promise<{ task: string; run: string }> {
+  const ownerRef = engine.pairedActor.principalRef;
+  providers.enqueue({
+    id: `coordination08-${label}`, origin: "chat", role: "generative_reasoner",
+    purpose: `${label}'s own code-mode run asks its owner and parks on the ask`,
+    // The engine-native executor streams on a local-openai-compat provider (wire.rs:146-149).
+    request: { method: "POST", path: "/v1/chat/completions", model: coordination08Model,
+      fields: { stream: true, stream_options: { include_usage: true } } },
+    // `ask` and `wait` are the catalog rows (wire.rs:389-402): the ask binds to this run's TASK, and
+    // a wait on a pending ask parks instead of answering Pending (read.rs:209-230).
+    response: openaiStream(`coordination08-${label}`, coordination08Model, [[
+      `const asked = await ask({ intent_key: "coordination-08/${label}/hold", who: { people: ["${ownerRef}"] },`,
+      `  what: { reference: { turn: "${question}" }, revision: 1, options: {}, context_refs: [] }, need: { count: 1 }, decide: "first" });`,
+      `await wait({ handle: asked.handle, step_key: "coordination-08/${label}/hold" });`,
+    ].join("\n")], { inputTokens: 256, outputTokens: 96 }),
+  });
+  const posted = await engine.client.call("tasks.create", {
+    spec: { title: request }, label: `coordination-08-${label}`, assignee: { agent_def: { agent_def_ref: agent } },
+    intent_key: `coordination-08/${label}/post`, brief: coordination08Brief(ownerRef, request),
+  });
+  expect(posted.effected).toBe(true);
+  const route = posted.route;
+  if (!route || !("AgentDispatch" in route)) throw new Error(`Agent TASK routed ${JSON.stringify(route)}`);
+  expect(route.AgentDispatch.agent_def_ref).toBe(agent);
+  const task = posted.task_ref;
+  if (!task) throw new Error("Agent TASK has no task_ref");
+  const branches = (await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches;
+  expect(branches).toHaveLength(1);
+  const run = branches[0]!.branch; // The run id is its attempt's own id (execution.rs:47-49).
+  await awaitPublic(() => engine.client.call("vault.runs.checkpoint", { run_ref: run }),
+    view => (view?.completed_steps ?? 0) >= 1, { label: `COORDINATION-08 ${label} run commits its asking step` });
+  // Parked, not settled: the try keeps its lease (store.rs:1173-1174) and the TASK stays open.
+  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+  expect((await coordination08Status(engine.client, task)).phase.phase).not.toBe("terminal");
+  return { task, run };
+}
 
 /* COORDINATION-08 (partial, Engine E2E-PARTIAL option A).
  * Promise: an agent's declared refusal dial decides what its own refusal of the TASK it runs
@@ -1350,10 +1625,12 @@ async function coordination08Run(
  *   vault.get, tasks.create, describe, tasks.refuse (owner, unknown-live-run status check); the
  *   agents' own engine-native code-mode runs call run-only tasks.refuse (host-bound lease),
  *   driven by ScriptedProviders.
- * Unproved: the owner refusing on the agent's behalf against the agent's REAL live run. It needs
- *   that run's issued handle (self.run.attach, the agent's own credential) while the run is still
- *   live; attach answers Busy while the model entry is held at a provider barrier, so no
- *   deterministic public hold is established. The final call checks only an unknown run.
+ * The owner refusing on the agent's behalf, against the agent's REAL live run: the agent's run parks
+ *   on its own ask (a durable wait keeps its lease and live entry), her own paired credential attaches
+ *   (self.run.attach) and holds the handle; the owner can neither attach to that run nor refuse her
+ *   TASK through her handle (403 live_run_unavailable), nothing is recorded, and the same handle then
+ *   lands her own objection under her dial. Doors added: vault.runs.branches.get, vault.runs.checkpoint,
+ *   self.run.attach, tasks.refuse (host door, LiveRunRequest); pairActor for the agent.
  * Unproved: the leadership-chat half (two same-vault project leaders talking, public fact crossing,
  *   private fact withheld): needs two publicly confirmed projects with person-anchored leaders and
  *   a scripted receiver run; not attempted here.
@@ -1362,7 +1639,7 @@ async function coordination08Run(
  * Unproved: the in-run return values are not public; the scripts throw unless they match, so a
  *   mismatch surfaces as an unsettled TASK or an unscripted extra model call.
  */
-suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, and none and full apply live", async () => {
+suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, none and full apply live, and the owner cannot refuse in her place on her live run", async () => {
   const c = await coordination08Scenario();
   const providers = await ScriptedProviders.start({ id: "coordination08-runs", origins: ["chat"], steps: [] });
   const engine = await EngineFixture.start({ id: "COORDINATION-08", profile, serverConfig: `
@@ -1460,6 +1737,37 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect((await coordination08TaskBody(owner, endsRun.task)).refusal).toEqual({ by: ends, domain: "logistics",
       level: highest, reason_ref: { kind: "turn", entity_ref: workReason }, at: refusedAt });
 
+    // ---- The owner on the agent's behalf, against her REAL live run: refused; only she refuses. ----
+    // Every live-run act comes before the restart: the host's live runs are in memory, and a parked
+    // run registers again only when it re-enters (live_runs.rs:275-314).
+    const holdQuestion = await coordination08Reason(owner, conversation.id, "Hold the relationship terms until I confirm.", occurred);
+    const held = await coordination08ParkedRun(engine, providers, personal, "personal-held", c.inputs.personalAgent.request, holdQuestion);
+    const personalAgent = await engine.pairActor({ principalRef: personal, actorClass: "agent", scope: ["core:read", "core:write"] });
+    expect((await personalAgent.client.call("self.actor", {})).actor_ref).toBe(personal);
+    // Her own credential attaches to her parked run (live_runs.rs:377-435) and gets its handle.
+    const attached = await personalAgent.client.call("self.run.attach", { run: held.run });
+    expect(attached.live_run.startsWith(`lr1.${held.run}.`)).toBe(true);
+    const unavailable = { status: 403, code: "live_run_unavailable", message: "no live run this credential may act for" };
+    // The owner cannot attach to the agent's run: only the run's own agent may (live_runs.rs:382-385).
+    expect(await coordination08Refused(owner.call("self.run.attach", { run: held.run }))).toEqual(unavailable);
+    // Nor refuse the agent's TASK through her real, live handle (live_runs.rs:514-524).
+    expect(await coordination08Refused(owner.call("tasks.refuse", { live_run: attached.live_run,
+      spec: { domain: "bond", reasonRef: `tn_${personalReason}`, at: refusedAt } }))).toEqual(unavailable);
+    // Nothing was recorded on her TASK, and it is still open.
+    expect((await coordination08TaskBody(owner, held.task)).refusal ?? null).toBeNull();
+    expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
+    // The same handle still acts for her: her own logistics objection lands under her voice dial.
+    const own = await personalAgent.client.call("tasks.refuse", { live_run: attached.live_run,
+      spec: { domain: "logistics", reasonRef: `tn_${personalReason}`, at: refusedAt } });
+    expect(c.inputs.personalAgent.dial.logistics).toBe("voice");
+    expect(own).toEqual({ task: held.task, level: "voice", outcome: c.expected.workOutcome, replay: false });
+    const heldBody = await coordination08TaskBody(owner, held.task);
+    expect(heldBody.refusal).toEqual({ by: personal, domain: "logistics", level: "voice",
+      reason_ref: { kind: "turn", entity_ref: personalReason }, at: refusedAt });
+    // A voice objection proceeds: her TASK stays open, and her run stays parked on its ask.
+    expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
+    expect((await owner.call("vault.runs.branches.get", { task_ref: held.task })).branches[0]?.state).toBe("Leased");
+
     // ---- Failure step: restart. Dials and refusal records are durable. ----
     await engine.restart();
     expect((await owner.call("vault.agents.get", { agent_def_ref: work })).definition.refusal).toEqual(c.inputs.workAgent.dial);
@@ -1467,10 +1775,13 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect((await coordination08TaskBody(owner, voice.task)).refusal).toEqual(voiceBody.refusal);
     expect((await coordination08TaskBody(owner, veto.task)).refusal).toEqual(vetoBody.refusal);
     expect((await coordination08Status(owner, veto.task)).phase).toEqual({ phase: "terminal", disposition: "rejected" });
+    // Her own objection on the held TASK is durable too; the owner's refused attempt left no record.
+    expect((await coordination08TaskBody(owner, held.task)).refusal).toEqual(heldBody.refusal);
+    expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
 
     // ---- Failure step: unknown-live-run status check. A well-formed handle naming no issued run
     // is refused with the guard's own 403, not 500 (guards 8f218ef07cc; live_runs.rs:118-134,
-    // errors.rs:196-207). It does not test the owner against the agent's real live run.
+    // errors.rs:196-207). It checks an unknown run; the owner against the agent's real live run is checked above.
     let ownerRefusal: PublicHttpError | undefined;
     try {
       // An authored run id that no run was issued under; never an AGENT_DEF id standing in for one.
