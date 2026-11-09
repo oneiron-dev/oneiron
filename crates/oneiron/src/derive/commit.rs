@@ -12,36 +12,44 @@ use crate::{EntityId, Vault};
 
 /// What one item came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ItemOutcome {
-    /// It landed `rows`; a claim item at `approval`. An item the derive
-    /// verdict judged keeps the receipt naming the grant it was judged by.
+pub enum ItemOutcome {
+    /// It landed.
     Landed {
+        /// The rows it wrote or changed.
         rows: Vec<EntityId>,
+        /// The approval a claim item landed at.
         approval: Option<ClaimApprovalStatus>,
+        /// For an item the derive verdict judged, the receipt naming the
+        /// grant it was judged by.
         receipt: Option<GateDecisionId>,
     },
-    /// It was refused for `reasons`, receipted by `receipt`.
+    /// It was refused.
     Refused {
+        /// The refusal's reason tokens.
         reasons: Vec<String>,
+        /// The refusal's receipt in the gate decision ledger.
         receipt: GateDecisionId,
     },
 }
 
 /// One item's outcome, by its name inside the batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ItemReceipt {
-    pub(crate) local: String,
-    pub(crate) kind: &'static str,
-    pub(crate) outcome: ItemOutcome,
+pub struct ItemReceipt {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The item's kind.
+    pub kind: &'static str,
+    /// What it came to.
+    pub outcome: ItemOutcome,
 }
 
 /// What a derivation commit did.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DerivationReceipt {
-    /// The batch's id, under which [`super::batch_record_in_txn`] reads it.
-    pub(crate) batch: EntityId,
+pub struct DerivationReceipt {
+    /// The batch's id, under which [`Vault::derive_batch`] reads it.
+    pub batch: EntityId,
     /// Each item's outcome, in batch order.
-    pub(crate) items: Vec<ItemReceipt>,
+    pub items: Vec<ItemReceipt>,
 }
 
 /// Where an item stages: its batch, the commit's stamp and its clock.
@@ -111,6 +119,9 @@ impl Vault {
                     DerivationItem::Supersede(supersede) => {
                         super::supersede::stage_in_txn(self, txn, &context, supersede)?
                     }
+                    DerivationItem::Settle(settle) => {
+                        super::settle::stage_in_txn(self, txn, &context, settle)?
+                    }
                 }
             };
             match &outcome {
@@ -141,7 +152,7 @@ impl Vault {
     /// # Errors
     ///
     /// As [`Self::derive_commit_in_txn`].
-    pub(crate) fn derive_commit(
+    pub fn derive_commit(
         &self,
         stamp: &DerivationStamp,
         batch: &DerivationBatch,

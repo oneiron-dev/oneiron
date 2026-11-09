@@ -106,33 +106,15 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: crate::WriteActor,
 ) -> Result<Option<DreamerLandingVerdict>> {
-    let policy = super::resolve_policy_manifest(store, txn)?;
-    if !policy.lands_generated_auto(
-        actor.actor_class().gate_actor_class(),
-        &actor.entity_ref().to_hex(),
-    ) {
-        return Ok(None);
-    }
-    let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
-        None => DREAMER_LANDING_ROWS_REF.to_owned(),
-        Some(None) => return Ok(None),
-        Some(Some(grant)) => {
-            let verbs = crate::federation::standing_steward_verbs_in(
-                store,
-                txn,
-                grant,
-                actor.entity_ref(),
-            )?;
-            if !verbs.contains(crate::federation::grant_scope::STEWARD_ARCHIVE_VERB) {
-                return Ok(None);
-            }
-            grant.to_hex()
-        }
-    };
-    Ok(Some(DreamerLandingVerdict {
-        frontier: policy.read_frontier_hash()?,
-        grant_ref,
-    }))
+    // One judge (untangle 6.7a): the archive case of the derive verdict.
+    Ok(
+        super::derive_verdict_in_txn(store, txn, actor, super::DeriveCapability::Archive, None)?
+            .ok()
+            .map(|allowance| DreamerLandingVerdict {
+                frontier: allowance.frontier,
+                grant_ref: allowance.grant_ref,
+            }),
+    )
 }
 
 /// The trusted pack the grant edits, and its body: the one owner-authored
