@@ -23,22 +23,29 @@ pub fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     crate::identity::load_or_mint_client_id(vault)
 }
 
-/// The vault's embedded owner and `park`'s notice source for that owner, at
-/// the try's current lease generation.
-fn embedded_owner_source(
+/// The vault's embedded owner. Resolved before a read txn opens: the resolve
+/// opens its own txn, and LMDB allows one reader slot per thread.
+fn embedded_owner(vault: &Vault) -> EntityId {
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's embedded owner")
+}
+
+/// `park`'s notice source for `owner`, at the try's current lease generation.
+fn park_notice_source(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     park: &DreamerParkedAttemptRecord,
-) -> Result<(EntityId, crate::inbox::NotificationSource)> {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("the vault's embedded owner");
+    owner: &EntityId,
+) -> Result<crate::inbox::NotificationSource> {
     let attempt = crate::attempt_queue::AttemptQueue::new(vault)
         .get_in_write_txn(txn, park.attempt_id)?
         .expect("the parked try");
-    let source =
-        crate::dreamer_runner::park_release_notice_source(park, attempt.attempt_count, &owner);
-    Ok((owner, source))
+    Ok(crate::dreamer_runner::park_release_notice_source(
+        park,
+        attempt.attempt_count,
+        owner,
+    ))
 }
 
 /// Whether the vault's embedded owner saw `park`'s release notice; `None`
@@ -48,8 +55,9 @@ fn embedded_owner_source(
 /// The store's.
 #[doc(hidden)]
 pub fn park_notice_seen(vault: &Vault, park: &DreamerParkedAttemptRecord) -> Result<Option<bool>> {
+    let owner = embedded_owner(vault);
     let txn = vault.store.env.read_txn()?;
-    let (owner, source) = embedded_owner_source(vault, &txn, park)?;
+    let source = park_notice_source(vault, &txn, park, &owner)?;
     vault.notification_seen_in_txn(&txn, &source, &owner)
 }
 
@@ -63,8 +71,9 @@ pub fn park_notice_recipient(
     vault: &Vault,
     park: &DreamerParkedAttemptRecord,
 ) -> Result<Option<Option<String>>> {
+    let owner = embedded_owner(vault);
     let txn = vault.store.env.read_txn()?;
-    let (_, source) = embedded_owner_source(vault, &txn, park)?;
+    let source = park_notice_source(vault, &txn, park, &owner)?;
     let id = crate::inbox::notification_id(&source)?;
     let crate::vault::LiveEntityRow::Live { body, .. } =
         crate::vault::live_entity_row_in_txn(&vault.store, &txn, &id)?
