@@ -94,7 +94,8 @@ impl AttemptRecord {
 
 impl AttemptQueue<'_> {
     /// The hold on this row's TASK, read in the caller's transaction. `None`
-    /// for a row with no TASK and for a store-only handle.
+    /// for a row with no TASK, for a store-only handle, and for a row whose
+    /// hold a generic Resume released at the thread's current drift.
     pub(crate) fn annotation_hold_for_row_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -109,7 +110,25 @@ impl AttemptQueue<'_> {
         ) else {
             return Ok(None);
         };
-        vault.annotation_task_hold_in_txn(txn, &task)
+        let Some(hold) = vault.annotation_task_hold_in_txn(txn, &task)? else {
+            return Ok(None);
+        };
+        // RUN-HOLD: a generic Resume that released this hold on this row, at
+        // this drift of the thread, stands; a later drift holds it again.
+        let drifted_at_version = vault
+            .annotation_thread_drift_in_txn(txn, &hold.artifact_id, &hold.thread_id)?
+            .map(|drift| drift.drifted_at_version);
+        if super::hold_override::annotation_hold_released_in_txn(
+            self.store,
+            txn,
+            record.id,
+            hold.artifact_id,
+            hold.thread_id,
+            drifted_at_version,
+        )? {
+            return Ok(None);
+        }
+        Ok(Some(hold))
     }
 
     /// Pauses a queued or scheduled row for `hold` in the caller's

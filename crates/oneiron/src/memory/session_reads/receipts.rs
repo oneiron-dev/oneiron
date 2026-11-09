@@ -21,7 +21,8 @@ use crate::memory::reads::{ReceiptReader, receipts_page_for};
 use crate::memory::{MemoryResult, VaultReceiptsPage};
 use crate::receipt::ReceiptContent;
 use crate::settings::ReadDestination;
-use crate::task_verb::sdk::{VAULT_RECEIPTS_LIMIT_DEFAULT, VaultReceiptsRequest};
+use crate::task_verb::sdk::VaultReceiptsRequest;
+use crate::verb_names::VAULT_RECEIPTS_LIMIT_DEFAULT;
 
 impl ReceiptReader for SessionReadContext<'_> {
     fn receipt_vault(&self) -> &Vault {
