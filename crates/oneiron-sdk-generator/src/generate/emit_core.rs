@@ -5,13 +5,14 @@
 //! None of these reads the `Inventory`: each is text over the module-level row sets, in Python's order.
 
 use super::row_access::{
-    ByName, concat, item, json_item, repr_list, shown, text, variant_of, variants,
+    ByName, concat, context_is, flag, get_is, item, json, json_item, repr_list, shown, text,
+    variant_of, variants,
 };
 use super::{CORE_COUNT_DEFAULTS, CORE_VERB_NAMES, Generator, HEADER, RowId};
 use crate::error::GenerateError;
 use crate::py::json::dumps_str;
 use crate::py::text::upper;
-use crate::py::value::{Dict, Value};
+use crate::py::value::{Dict, Value, set_add};
 
 /// Port of generate.py:1587-1607 (run_catalog): `RunVerb`, the rows code mode serves that the run answers itself.
 pub(crate) fn run_catalog(generator: &Generator) -> Result<String, GenerateError> {
@@ -296,3 +297,166 @@ pub(crate) fn core_verb_names_check(
     text += "};\n";
     Ok(text)
 }
+
+/// The `catalog` segment's result: `verb_catalog.rs`'s text and the custody rows, which `core_verb_names` reads later
+/// (generate.py:2518).
+pub(crate) struct Catalog {
+    pub(crate) text: String,
+    pub(crate) custody: Vec<RowId>,
+}
+
+/// Port of generate.py:2462-2508 (outputs: the `catalog` segment): `verb_catalog.rs`, the `AgentVerb` enum over
+/// `ROWS` with each role a row states, and its compile-time check of core's table.
+pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
+    let rows = generator.rows.select(&generator.callable_rows);
+    let variants = variants(&rows)?;
+    let mut catalog = HEADER.to_owned()
+        + "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum AgentVerb { ";
+    catalog += &variants.values().cloned().collect::<Vec<_>>().join(",");
+    catalog += " }\nimpl AgentVerb {\n";
+    catalog += "pub const ALL: &[Self] = &[";
+    catalog += &variants
+        .values()
+        .map(|variant| format!("Self::{variant}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    catalog += "];\n";
+    catalog += "pub fn from_name(name: &str) -> Option<Self> { Self::ALL.iter().copied().find(|verb| verb.as_str() == name) }\n";
+    catalog += "pub const fn as_str(self) -> &'static str { match self {\n";
+    for row in &rows {
+        catalog += &format!(
+            "Self::{} => {},\n",
+            variant_of(&variants, row)?,
+            json_item(row, "name")?
+        );
+    }
+    catalog += "} }\n";
+    for (method, select) in CATALOG_ROLES {
+        let mut selected = Vec::new();
+        for row in &rows {
+            if select(generator, row)? {
+                selected.push(format!("Self::{}", variant_of(&variants, row)?));
+            }
+        }
+        catalog += &format!(
+            "pub const fn {method}(self) -> bool {{ matches!(self, {}) }}\n",
+            if selected.is_empty() {
+                "_ if false".to_owned()
+            } else {
+                selected.join(" | ")
+            }
+        );
+    }
+    for (method, field) in [
+        ("argument_fields", "mcp_fields"),
+        ("required_fields", "mcp_required_fields"),
+    ] {
+        catalog += &format!(
+            "pub const fn {method}(self) -> &'static [&'static str] {{ match self {{\n"
+        );
+        for row in &rows {
+            // `r.get(field, r['mcp_fields'])`: the default is read first, as Python evaluates it.
+            let fields = item(row, "mcp_fields")?;
+            let fields = row.get(field).unwrap_or(fields).iterate()?;
+            catalog += &format!(
+                "Self::{} => &{},\n",
+                variant_of(&variants, row)?,
+                json(&Value::List(fields))
+            );
+        }
+        catalog += "} }\n";
+    }
+    catalog += "/// The row's one-line description, as the verb table states it.\n";
+    catalog += "pub const fn description(self) -> &'static str { match self {\n";
+    for row in &rows {
+        let description = row
+            .get("description")
+            .map_or_else(|| json(&Value::Str(String::new())), json);
+        catalog += &format!(
+            "Self::{} => {description},\n",
+            variant_of(&variants, row)?
+        );
+    }
+    catalog += "} }\n";
+    let custody = custody_rows(generator);
+    catalog += "/// The member of a custody row's input that holds the secret's value or its sealed input (`custody` on the row).\n";
+    catalog += "pub const fn custody_member(self) -> Option<&'static str> { match self {\n";
+    for row in generator.rows.select(&custody) {
+        catalog += &format!(
+            "Self::{} => Some({}),\n",
+            variant_of(&variants, row)?,
+            json_item(row, "custody")?
+        );
+    }
+    catalog += "_ => None,\n} }\n";
+    catalog += "/// The read a run bound to a session serves through its room's view (`session_read` on the row).\n";
+    catalog += "pub(crate) const fn session_read(self) -> Option<crate::memory::SessionRead> { match self {\n";
+    for row in &rows {
+        if row.contains_key("session_read") {
+            catalog += &format!(
+                "Self::{} => Some(crate::memory::SessionRead::{}),\n",
+                variant_of(&variants, row)?,
+                concat(item(row, "session_read")?)?
+            );
+        }
+    }
+    catalog += "_ => None,\n} }\n";
+    catalog += "}\n";
+    catalog += "pub use crate::verb_names::CUSTODY_VALUE_ROWS;\n";
+    catalog += &core_verb_names_check(generator, &variants, &custody)?;
+    Ok(Catalog {
+        text: catalog,
+        custody,
+    })
+}
+
+/// A role predicate of generate.py:2469-2483, over one row of `ROWS`.
+type CatalogRole = fn(&Generator, &Dict) -> Result<bool, GenerateError>;
+
+/// generate.py:2469-2483: each `AgentVerb` role method and the rows it selects, in the list's order.
+const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
+    ("is_facade", |generator, row| {
+        // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`
+        Ok(context_is(row, "memory") || {
+            let name = item(row, "name")?;
+            generator
+                .board_host_names
+                .iter()
+                .any(|board| board.py_eq(name))
+        })
+    }),
+    ("is_browser", |generator, row| {
+        // `r['name'] in {row['name'] for row in BROWSER_ROWS}`
+        let name = item(row, "name")?;
+        let mut browser = Vec::new();
+        for &id in &generator.browser_rows {
+            set_add(&mut browser, item(&generator.rows[id], "name")?.clone())?;
+        }
+        name.check_hashable("a set element")?;
+        Ok(browser.iter().any(|browser| browser.py_eq(name)))
+    }),
+    ("is_mcp", |_, row| Ok(!get_is(row, "mcp", "none"))),
+    ("is_section", |_, row| Ok(item(row, "section")?.truthy())),
+    ("continuable", |_, row| {
+        // `r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))`: the default is evaluated first.
+        let default = row.contains_key("page")
+            || text(row, "output", "startswith")?.starts_with("Vec<");
+        Ok(row.get("mcp_page").map_or(default, Value::truthy))
+    }),
+    ("filtered_read", |_, row| {
+        Ok(item(row, "mcp_scope")?.is_str("filtered"))
+    }),
+    ("requires_unscoped", |_, row| {
+        Ok(item(row, "mcp_scope")?.is_str("unrestricted"))
+    }),
+    ("born_in_scope", |_, row| {
+        Ok(item(row, "mcp_scope")?.is_str("born"))
+    }),
+    ("writes", |_, row| Ok(item(row, "scope")?.is_str("Write"))),
+    ("proposes", |_, row| Ok(flag(row, "proposes"))),
+    ("is_task_work", |_, row| Ok(flag(row, "task_work"))),
+    ("takes_task_decisions", |_, row| {
+        Ok(super::emit_mcp::takes_task_decisions(row))
+    }),
+    ("overlay_write", |_, row| Ok(flag(row, "overlay_write"))),
+];
