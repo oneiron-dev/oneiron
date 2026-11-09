@@ -119,6 +119,9 @@ impl TestOrigin {
     fn start(source: &Path, seam: DoorSeam) -> Self {
         let dir = tempfile::tempdir().expect("vault tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+        // An in-process serve admits a push from the vault's owner and no one
+        // else (FIX 6867, G1-PUSH), so the shim pushes as that owner.
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let root = smart_http::origin_serving_root(&vault).expect("serving root");
         git(
             &root,
@@ -142,7 +145,7 @@ impl TestOrigin {
                     let Ok(stream) = stream else { break };
                     let vault = Arc::clone(&vault);
                     let reports = Arc::clone(&reports);
-                    thread::spawn(move || serve_connection(&vault, seam, stream, &reports));
+                    thread::spawn(move || serve_connection(&vault, seam, owner, stream, &reports));
                 }
             }
         });
@@ -214,12 +217,13 @@ impl Drop for TestOrigin {
 fn serve_connection(
     vault: &Arc<Vault>,
     seam: DoorSeam,
+    principal: EntityId,
     stream: TcpStream,
     reports: &Arc<Mutex<Vec<ServeReport>>>,
 ) {
     let Ok(peer) = stream.try_clone() else { return };
     let mut reader = BufReader::new(peer);
-    let Some(head) = read_request_head(&mut reader) else {
+    let Some(head) = read_request_head(&mut reader, principal) else {
         return;
     };
     let mut sink = HttpSink {
@@ -280,7 +284,10 @@ impl RequestHead {
     }
 }
 
-fn read_request_head(reader: &mut BufReader<TcpStream>) -> Option<RequestHead> {
+fn read_request_head(
+    reader: &mut BufReader<TcpStream>,
+    principal: EntityId,
+) -> Option<RequestHead> {
     let mut line = String::new();
     if reader.read_line(&mut line).ok()? == 0 {
         return None;
@@ -327,7 +334,7 @@ fn read_request_head(reader: &mut BufReader<TcpStream>) -> Option<RequestHead> {
             git_protocol: header("git-protocol"),
             // A registered principal, exactly as the server layer would pass
             // it: it becomes the reflog identity of anything the push lands.
-            remote_user: Some(EntityId::now().to_hex()),
+            remote_user: Some(principal.to_hex()),
             remote_addr: Some("127.0.0.1".to_owned()),
         },
         content_length,

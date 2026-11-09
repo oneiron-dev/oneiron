@@ -42,6 +42,11 @@ const NOTE_SUBJECT: u8 = 0x12;
 fn vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    // The host installs this device's keystore after each open; the deletion
+    // and signing doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     (dir, vault)
 }
 
@@ -864,10 +869,11 @@ fn deleting_a_symbol_clears_every_code_memory_row() {
 /// Deleting a PAYLOAD takes every reference to it with it, under any symbol.
 ///
 /// The always-on bound is eight LIVE contracts per symbol, but registration
-/// counts KEYS: without this sweep eight deleted NOTEs would hold a live
-/// symbol at capacity forever while the readers went on publishing refs to
-/// material that no longer exists. The surviving note is the control — the
-/// sweep removes references, not slots.
+/// counts KEYS: without this sweep eight deleted NOTEs would count against a
+/// live symbol forever while the readers went on publishing refs to
+/// material that no longer exists. The bound is observed, never refused
+/// (rule 5, FIX 8562): a ninth live registration is kept. The surviving
+/// note is the control — the sweep removes references, not slots.
 #[test]
 fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
     let (_dir, vault) = vault();
@@ -908,7 +914,9 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
     }
 
     let ninth = note(&vault);
-    let refused = vault
+    // Rule 5 (f8b2b9107a0, FIX 8562): eight live registrations reach the
+    // bound, which is observed and never refuses; the ninth is kept.
+    vault
         .register_always_on_contract(contract(
             anchor_symbol,
             slot(),
@@ -916,14 +924,15 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             CodeMemoryContractKind::Interface,
             actor,
         ))
-        .expect_err("eight live registrations fill the symbol");
-    assert!(matches!(
-        refused,
-        Error::Code(CodeError::CodeMemoryLimitExceeded {
-            kind: "always-on contracts per symbol",
-            limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
-        })
-    ));
+        .expect("a ninth live registration is kept past the bound");
+    assert_eq!(
+        vault
+            .code_memory_always_on_contracts(anchor_symbol)
+            .expect("read")
+            .len(),
+        CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS + 1,
+        "the bound keeps every contract"
+    );
 
     for payload in &payloads {
         vault
@@ -933,11 +942,15 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             .expect("hard-delete the NOTE payload");
     }
 
-    let contracts = vault
+    let contracts: Vec<CodeMemoryPayloadRef> = vault
         .code_memory_always_on_contracts(anchor_symbol)
-        .expect("read");
-    assert!(
-        contracts.is_empty(),
+        .expect("read")
+        .into_iter()
+        .map(|contract| contract.payload)
+        .collect();
+    assert_eq!(
+        contracts,
+        vec![ninth],
         "no reader publishes a contract whose NOTE was deleted"
     );
     let payload_refs: Vec<CodeMemoryPayloadRef> = vault
@@ -971,7 +984,7 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             CodeMemoryContractKind::Interface,
             actor,
         ))
-        .expect("the bound counts live registrations, so a ninth NOTE fits now");
+        .expect("re-registering the live ninth is an idempotent upsert");
     let after = vault
         .code_memory_always_on_contracts(anchor_symbol)
         .expect("read");
