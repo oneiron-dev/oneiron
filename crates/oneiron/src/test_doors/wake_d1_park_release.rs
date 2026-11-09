@@ -1,12 +1,12 @@
 //! Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake
 //! pass's local node id, the owner notice a park waiting on the owner's
-//! release raises, and the owner's release. Compiled only under
+//! release raises, and the owner's release and stop. Compiled only under
 //! `--cfg oneiron_test_support`; never API.
 
 use crate::Result;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
-    DreamerParkedAttemptRecord, ParkReleaseView, ReleaseParkedAttemptRequest,
+    DreamerParkedAttemptRecord, ParkReleaseAction, ParkReleaseView, ReleaseParkedAttemptRequest,
     release_parked_attempt_as_owner,
 };
 use crate::entity_id::EntityId;
@@ -104,10 +104,41 @@ pub fn release_as_owner(
         owner,
         &ReleaseParkedAttemptRequest {
             attempt: attempt.to_owned(),
+            action: ParkReleaseAction::Resume,
             cause,
             parked_at,
             attempt_count,
             note: None,
         },
     )
+}
+
+/// The owner's stop of the park a read showed: the try, its park's cause and
+/// time, and the try's lease generation. Returns the try's queue state after
+/// the stop.
+///
+/// # Errors
+/// The stop's.
+#[doc(hidden)]
+pub fn stop_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    attempt: &str,
+    cause: DreamerParkCauseView,
+    parked_at: u64,
+    attempt_count: u32,
+) -> Result<String> {
+    let view = release_parked_attempt_as_owner(
+        vault,
+        owner,
+        &ReleaseParkedAttemptRequest {
+            attempt: attempt.to_owned(),
+            action: ParkReleaseAction::Stop,
+            cause,
+            parked_at,
+            attempt_count,
+            note: Some("the owner stops this run".to_owned()),
+        },
+    )?;
+    Ok(view.state)
 }
