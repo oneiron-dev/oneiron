@@ -25,6 +25,7 @@ fn response() -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: "answer".into(),
+                signature: None,
             }],
         },
         usage: LlmUsage {
@@ -38,8 +39,11 @@ fn response() -> LlmResponse {
                 reasoning: 0,
             },
             raw_provider: serde_json::json!({}),
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 // One request per call: the raw routes' gate wraps it. A stream this
@@ -77,11 +81,13 @@ impl LlmBackend for Backend {
             }),
             Ok(LlmStreamEvent::TextEnd {
                 part_id: "t".into(),
+                signature: None,
             }),
             Ok(LlmStreamEvent::Done {
                 message: response.message,
                 usage: response.usage,
                 finish_reason: response.finish_reason,
+                reply_assertions: Default::default(),
             }),
         ])))
     }
@@ -462,6 +468,7 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
                     message: answer.message,
                     usage: LlmUsage::zero(),
                     finish_reason: answer.finish_reason,
+                    reply_assertions: Default::default(),
                 },
             )])))
         }
@@ -779,6 +786,7 @@ enabled = false
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: "about the world".into(),
+            signature: None,
         }],
     }];
     let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-raw-world");
@@ -786,6 +794,7 @@ enabled = false
     let kept: LlmError = RetryableLlmError::KeptOnDevice {
         retry_after: None,
         resets_at: Vec::new(),
+        reason: None,
     }
     .into();
     for verb in ["generate", "stream"] {
@@ -829,7 +838,7 @@ enabled = false
             matches!(
                 row.event,
                 RunEvent::Denied {
-                    reason: RunDenied::KeptOnDevice,
+                    reason: RunDenied::KeptOnDevice { .. },
                     ..
                 }
             )

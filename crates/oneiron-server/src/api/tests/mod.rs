@@ -642,8 +642,12 @@ pub(super) fn witness_vad_message_fixture(
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("witness fixture turn");
 }

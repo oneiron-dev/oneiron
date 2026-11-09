@@ -301,7 +301,7 @@ pub(crate) fn bind_actor(
     let Some(op) = binding_op(&fold, &host_key, actor, actor_class) else {
         return;
     };
-    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0u64;
     let rows = vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
@@ -368,4 +368,19 @@ pub(crate) fn bind_actor(
         ),
         "fixture actor binding must fold active"
     );
+}
+
+/// The vault's embedded owner, authenticated as the owner's own act: what an
+/// owner-only engine door takes, such as a booking rule amendment since
+/// 439971c2702 (#4292).
+pub(crate) fn embedded_owner(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("authenticate the embedded owner")
 }

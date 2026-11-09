@@ -93,6 +93,7 @@ fn answered() -> LabelReadResponse {
                 reasoning: 0,
             },
             raw_provider: JsonValue::Null,
+            call_metadata: None,
         },
     }
 }

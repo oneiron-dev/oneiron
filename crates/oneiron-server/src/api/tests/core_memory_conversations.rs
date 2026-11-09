@@ -1139,8 +1139,12 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: at,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     let bearer = owner_reader_bearer(&server);

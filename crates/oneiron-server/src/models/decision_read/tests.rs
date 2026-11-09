@@ -14,6 +14,7 @@ use oneiron::{BudgetExhaustionPolicy, BudgetGuard};
 use serde_json::{Value as JsonValue, json};
 
 use super::{DecisionReadDoor, bind};
+use crate::models::llama_identity::LlamaIdentityResolver;
 use crate::config::models::ModelsConfig;
 
 const LETTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr";
@@ -271,9 +272,13 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
     ]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
-    let door = bind(&config, tokio::runtime::Handle::current())
-        .unwrap()
-        .unwrap();
+    let door = bind(
+        &config,
+        tokio::runtime::Handle::current(),
+        &Arc::new(LlamaIdentityResolver::default()),
+    )
+    .unwrap()
+    .unwrap();
     for failure in [
         LabelReadFailure::EmittedText,
         LabelReadFailure::NotEosStop,
@@ -309,9 +314,13 @@ async fn a_recipe_the_served_tokenizer_cannot_read_refuses_every_read() {
     });
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
-    let door = bind(&config, tokio::runtime::Handle::current())
-        .unwrap()
-        .unwrap();
+    let door = bind(
+        &config,
+        tokio::runtime::Handle::current(),
+        &Arc::new(LlamaIdentityResolver::default()),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(
         read(&door, None, false).await,
         Err(LlmError::Fatal(FatalLlmError::InvalidRequest))

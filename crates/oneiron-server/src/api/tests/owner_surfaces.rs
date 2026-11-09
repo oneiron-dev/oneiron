@@ -1176,6 +1176,7 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
             note: None,
             proposal: None,
         },
+        &crate::feedback_redaction::feedback_redactor(&server),
     )
     .unwrap();
     let (digest, approval, previewed_at) = (preview.digest, preview.approval, preview.previewed_at);
@@ -1185,6 +1186,7 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
         digest: digest.clone(),
         approval: approval.clone(),
         previewed_at,
+        proposal: None,
     };
 
     // The revocation commits after the send passed the door and every check
@@ -1375,6 +1377,7 @@ async fn pack_drift_repairs_reach_the_owner() {
     let query = oneiron::saved_query::create_saved_query(
         vault,
         vault.ensure_embedded_owner_actor().unwrap(),
+        oneiron::EdgeActorClass::Human,
         &CreateSavedQueryRequest {
             schema_version: SAVED_QUERY_SCHEMA_VERSION,
             scope: QueryScope::default(),

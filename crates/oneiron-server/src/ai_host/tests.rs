@@ -100,12 +100,13 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
         )
         .unwrap();
     fake.push(extraction_reply(subject, "Owen"));
-    handle.session_hint(SessionHint::AppOpen);
+    let sitting = local_sitting(&vault);
+    handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
     // No call is made while the sitting is open: the end is the trigger.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(fake.seen().is_empty());
-    handle.session_hint(SessionHint::ExplicitEnd);
+    handle.session_hint(sitting, SessionHint::ExplicitEnd, None);
 
     assert!(
         eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
@@ -166,9 +167,10 @@ async fn a_vault_model_manifest_names_the_model_the_dreamer_extracts_with() {
         )
         .unwrap();
     fake.push(extraction_reply(subject, "Owen"));
-    handle.session_hint(SessionHint::AppOpen);
+    let sitting = local_sitting(&vault);
+    handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
-    handle.session_hint(SessionHint::ExplicitEnd);
+    handle.session_hint(sitting, SessionHint::ExplicitEnd, None);
     assert!(
         eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
             .is_empty())
@@ -236,9 +238,10 @@ rungs = [{{ model = "local:teacher", prompt = "teacher rung rules" }}]
         )
         .unwrap();
     local.push(extraction_reply(subject, "Owen"));
-    handle.session_hint(SessionHint::AppOpen);
+    let sitting = local_sitting(&vault);
+    handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
-    handle.session_hint(SessionHint::ExplicitEnd);
+    handle.session_hint(sitting, SessionHint::ExplicitEnd, None);
     assert!(
         eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
             .is_empty())
@@ -535,9 +538,10 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
         "[dreamer]\nidle_floor_secs = 600\npass_budget_units = 8500\n[workflows]\nenabled = false",
     );
     let host = AiHost::start(vault.clone(), Some(&tight), true).await;
-    host.handle().session_hint(SessionHint::AppOpen);
+    let sitting = local_sitting(&vault);
+    host.handle().session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
-    host.handle().session_hint(SessionHint::ExplicitEnd);
+    host.handle().session_hint(sitting, SessionHint::ExplicitEnd, None);
     let runner = oneiron::DreamerRunnerStore::new(&vault);
     let on_trap = |row: &AttemptRecord| {
         runner
@@ -623,7 +627,7 @@ async fn one_step(config: &ModelsConfig) -> Vec<oneiron::llm::run_admission::Run
         )
         .unwrap();
     let receipts = Arc::new(MemoryReceipts::default());
-    let host = AiHost::start_receipted(vault.clone(), Some(config), true, receipts.clone()).await;
+    let host = AiHost::start_receipted(vault.clone(), Some(config), true, receipts.clone(), None).await;
     let dispatcher = AgentDispatcher::new(&vault);
     dispatcher
         .dispatch(DispatchAgent {
@@ -655,6 +659,8 @@ fn run_events(rows: &[oneiron::llm::run_admission::RunReceipt]) -> Vec<&'static 
             RunEvent::Dispatched { .. } => "dispatched",
             RunEvent::Settled { .. } => "settled",
             RunEvent::Revised { .. } => "revised",
+            RunEvent::ResidentOverdraft { .. } => "resident_overdraft",
+            RunEvent::PlanModelSubstituted { .. } => "plan_model_substituted",
         })
         .collect()
 }
@@ -674,6 +680,15 @@ async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
         ["admitted", "dispatched", "settled", "denied"]
     );
 }
+
+/// The local owner's sitting on this machine: the key an on-device app's
+/// session hints carry (`bound_session_key`, locality OnDevice). Open and end
+/// name the same sitting.
+fn local_sitting(vault: &Vault) -> oneiron::session_lifecycle::SessionKey {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault.local_session_key(owner).expect("local session key")
+}
+
 
 /// Runs the saved one-step workflow `workflow` once more, until it stops.
 async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str, host: &AiHost) {
@@ -736,7 +751,7 @@ retry_backoff_secs = 0
         )
         .unwrap();
     let receipts = Arc::new(MemoryReceipts::default());
-    let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone()).await;
+    let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone(), None).await;
 
     step_once(&vault, workflow, "no-world-kept", &host).await;
     assert_eq!(cloud.seen().len(), 1, "the step fell back to the cloud");
@@ -770,7 +785,7 @@ retry_backoff_secs = 0
             matches!(
                 row.event,
                 RunEvent::Denied {
-                    reason: RunDenied::KeptOnDevice,
+                    reason: RunDenied::KeptOnDevice { .. },
                     ..
                 }
             )

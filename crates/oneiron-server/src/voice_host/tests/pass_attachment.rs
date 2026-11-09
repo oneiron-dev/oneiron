@@ -261,6 +261,7 @@ fn seven_units() -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: r#"{"entity_labels":[],"salient_terms":[]}"#.to_owned(),
+                signature: None,
             }],
         },
         usage,

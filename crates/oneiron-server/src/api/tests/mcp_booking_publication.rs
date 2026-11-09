@@ -95,6 +95,7 @@ fn claim(predicate: &str, subject: oneiron::EntityId, value: serde_json::Value) 
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 

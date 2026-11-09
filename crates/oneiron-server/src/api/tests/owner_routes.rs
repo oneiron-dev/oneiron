@@ -634,7 +634,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
                                  "is_visible": true, "order": 0 }] },
     }))
     .unwrap();
-    let receipt = off_record::witness(vault, &unbound, &turn).unwrap();
+    let receipt = off_record::witness(vault, &unbound, &turn, None).unwrap();
     let turn =
         oneiron::EntityId::from_hex(receipt.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
     let session = vault
@@ -695,7 +695,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         .unwrap();
     let error = vault
         .memory(owner_id, oneiron::edge::EdgeActorClass::Human)
-        .witness_into_session_as(&admitted, &session, &said.turn, None)
+        .witness_into_session_as(&admitted, &session, &said.turn, None, None)
         .unwrap_err();
     assert_eq!(
         error.code,
@@ -703,7 +703,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         "{error:?}"
     );
     assert!(vault.get(&message).unwrap().is_none(), "nothing landed");
-    off_record::witness(vault, &unbound, &said).unwrap();
+    off_record::witness(vault, &unbound, &said, None).unwrap();
     assert!(
         vault.get(&message).unwrap().is_some(),
         "the live proof lands it"

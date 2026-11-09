@@ -260,6 +260,7 @@ impl oneiron::LlmBackend for McpFixtureCodeBackend {
                     role: oneiron::LlmMessageRole::Assistant,
                     content: vec![oneiron::ContentPart::Text {
                         text: "const found = await self.memory.search(\"launch plan\");".to_owned(),
+                        signature: None,
                     }],
                 },
                 usage: oneiron::LlmUsage::zero(),

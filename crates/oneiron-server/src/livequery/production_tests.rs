@@ -147,8 +147,12 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
                 metadata: Some(json!({"rel": SPACE})),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: AT,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap()
 }
@@ -172,6 +176,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap()
 }
@@ -544,6 +549,7 @@ async fn receipt_limit_is_applied_after_actor_scoping() {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     let source = BoundSource::new(
@@ -609,6 +615,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                     occurred_at: Some(AT),
                     learned_at: Some(AT),
                     salience: Some(0.9),
+                    confidence_details: None,
                 })
                 .unwrap();
             assert_eq!(receipt.approval, "auto");
@@ -651,6 +658,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                 occurred_at: Some(AT),
                 learned_at: Some(AT),
                 salience: None,
+                confidence_details: None,
             })
             .unwrap();
         assert_eq!(receipt.approval, "auto");
@@ -763,6 +771,7 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
                 learned_at: Some(AT),
                 salience: None,
                 relationship_ref: None,
+                confidence_details: None,
             })
             .unwrap();
         server
@@ -1689,6 +1698,8 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
             metadata: Some(json!({"rel": SPACE})),
             is_visible: true,
             order,
+            parts: None,
+            quote: None,
         };
         let receipt = memory
             .witness(&WitnessTurn {
@@ -1699,6 +1710,8 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                     said(1, "We met for lunch at noon."),
                 ],
                 occurred_at: AT,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {
