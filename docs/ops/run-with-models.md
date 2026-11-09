@@ -2864,7 +2864,8 @@ Answer with `POST /v1/ai/quota/{id}`
 A rung whose provider is down hands the call to the next rung, and its offer
 rests for its health in memory. A server error, a timeout, a cut stream and an
 empty answer all count as down. The rest is 5 s, doubling with each failure
-in a row up to 60 s, with jitter. A restart starts every offer healthy. While
+in a row up to 60 s, with jitter. `[models] health_rest_secs` sets the first
+rest, from 1 to 60 s. A restart starts every offer healthy. While
 every rung the call may use rests, the call waits for the first one back
 within the same wait budget as for limits, then tries the chain again. A call
 that runs out of wait ends with the provider's own failure, not
