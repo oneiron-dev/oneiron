@@ -133,5 +133,8 @@ fn a_run_reports_the_state_its_row_holds() {
 
     let cancelled = intervene(&queue, &next, AttemptInterventionKind::Cancel, now + 9);
     assert_eq!(RunState::of(&cancelled), RunState::Cancelled);
-    assert_eq!(RunState::of(&cancelled).tree_status(), RunTreeStatus::Cancelled);
+    assert_eq!(
+        RunState::of(&cancelled).tree_status(),
+        RunTreeStatus::Cancelled
+    );
 }
