@@ -26,9 +26,13 @@ pub(super) fn start_run_guest(
         phase,
         error: BrowserError::Unavailable(e),
     };
-    let backend =
-        select_backend_for_session(SandboxGuestTier::Untrusted, runtime.to_path_buf(), image)
-            .map_err(|e| unavailable(Phase::SandboxUnavailable, e.to_string()))?;
+    let backend = select_backend_for_session(
+        &oneiron::code_sandbox::SANDBOX_BACKENDS,
+        SandboxGuestTier::Untrusted,
+        runtime.to_path_buf(),
+        image,
+    )
+    .map_err(|e| unavailable(Phase::SandboxUnavailable, e.to_string()))?;
     let spec = GuestSpec {
         image: ImageRef::pinned(image)
             .map_err(|e| unavailable(Phase::GuestStartFailed, e.to_string()))?,
@@ -503,6 +507,7 @@ impl RunGuests {
         let (pre, mut decided) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::browser_row_pre(
                 memory,
+                &oneiron::verbs::VERB_TABLE,
                 call.verb.as_str(),
                 call.input.clone(),
             )

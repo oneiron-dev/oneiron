@@ -2,7 +2,6 @@
 //! Entry: `Memory::cancel`.
 //! Read/proposal methods live in children; cancellation stays here.
 
-use crate::task_verb::sdk::AgentVerb;
 use std::sync::atomic::Ordering;
 
 use rmpv::Value;
@@ -46,7 +45,7 @@ use super::presence_scan::{
     superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at,
     task_presence_for_dismissal, task_presence_for_id, terminal_attempt_status,
 };
-use super::rate_limit::{task_create_owner_in, task_verb_contract};
+use super::rate_limit::task_create_owner_in;
 use super::route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
     TaskUpdateReceipt,
@@ -115,7 +114,7 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
-        let verb = task_verb_contract(AgentVerb::Cancel);
+        let verb = crate::verb_names::CANCEL;
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
 
@@ -241,7 +240,7 @@ impl Memory<'_> {
         mode: TaskCancelMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
-        let verb = task_verb_contract(AgentVerb::Cancel);
+        let verb = crate::verb_names::CANCEL;
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
         if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {

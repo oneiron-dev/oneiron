@@ -53,7 +53,12 @@ impl Vault {
                     }
                     continue;
                 }
-                if row.deadline > now || self.verb_hook_state.drain_holds(InvocationId(key)) {
+                if row.deadline > now
+                    || self
+                        .runtime()
+                        .verb_hook_state()
+                        .drain_holds(InvocationId(key))
+                {
                     continue;
                 }
                 row.outcome = Some(if row.landed {
@@ -107,7 +112,10 @@ pub(in crate::runtime_hooks) fn scrub_erased_paced_in_txn(
     for (key, row) in named {
         let ran = row.landed
             || (row.state == PacedState::Running
-                && vault.verb_hook_state.drain_holds(InvocationId(key)));
+                && vault
+                    .runtime()
+                    .verb_hook_state()
+                    .drain_holds(InvocationId(key)));
         end_erased_in_txn(vault, txn, key, row, erased, at, ran)?;
     }
     for key in gone {

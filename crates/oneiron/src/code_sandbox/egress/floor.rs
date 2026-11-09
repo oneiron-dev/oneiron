@@ -102,7 +102,8 @@ impl Vault {
     /// again takes the policy back. Permits held keep their owners.
     pub fn attach_host_net_floor(&self, attach: impl FnOnce() -> Arc<dyn HostNetFloor>) {
         let mut attached = self
-            .host_net_floor
+            .runtime()
+            .host_net_floor()
             .attached
             .write()
             .unwrap_or_else(PoisonError::into_inner);
@@ -113,7 +114,7 @@ impl Vault {
     /// This vault's host floor ([`VaultHostFloor`]), for a relay that owns
     /// its handle: a short session's own relay among them (FIX 6300).
     pub fn host_net_floor(&self) -> Arc<dyn HostNetFloor> {
-        Arc::clone(&self.host_net_floor) as Arc<dyn HostNetFloor>
+        Arc::clone(self.runtime().host_net_floor()) as Arc<dyn HostNetFloor>
     }
 
     /// Takes `fds` descriptors and `workers` threads of this vault's host
@@ -123,7 +124,7 @@ impl Vault {
     /// # Errors
     /// Returns the floor's `WouldBlock` back-pressure when it is full.
     pub fn acquire_host_net_floor(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
-        self.host_net_floor.acquire(fds, workers)
+        self.runtime().host_net_floor().acquire(fds, workers)
     }
 
     /// Takes `bytes` of this vault's host floor, looked up now, as a run's
@@ -133,6 +134,6 @@ impl Vault {
     /// # Errors
     /// Returns the floor's `WouldBlock` back-pressure when it is full.
     pub fn acquire_host_net_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
-        self.host_net_floor.acquire_bytes(bytes)
+        self.runtime().host_net_floor().acquire_bytes(bytes)
     }
 }

@@ -26,7 +26,7 @@ impl Memory<'_> {
                 "composed task creation is brief-less",
             ));
         }
-        let verb = task_verb_contract(AgentVerb::TasksCreate);
+        let verb = crate::verb_names::TASKS_CREATE;
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let rate_now = self.vault().store.clock.now_recorded_at();
