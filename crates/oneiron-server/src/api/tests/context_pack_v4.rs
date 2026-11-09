@@ -95,6 +95,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
                 created_at: 1,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("grant the summary scope");
