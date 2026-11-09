@@ -303,15 +303,137 @@ impl PartialEq for Value {
     }
 }
 
-/// The digits and decimal exponent of a finite, non-zero float's shortest round-trip form: `1.5` is `("15", 0)`,
-/// `1e-7` is `("1", -7)` (the value is `d1.d2d3... * 10^exponent`).
+/// `limbs * factor`, `limbs` a non-negative integer in base 10^9, least significant limb first.
+fn big_mul_small(limbs: &mut Vec<u32>, factor: u32) {
+    let mut carry = 0_u64;
+    for limb in limbs.iter_mut() {
+        let product = u64::from(*limb) * u64::from(factor) + carry;
+        *limb = u32::try_from(product % 1_000_000_000).unwrap_or(0);
+        carry = product / 1_000_000_000;
+    }
+    while carry > 0 {
+        limbs.push(u32::try_from(carry % 1_000_000_000).unwrap_or(0));
+        carry /= 1_000_000_000;
+    }
+}
+
+/// The exact value of a finite, positive float as decimal digits `D` (no trailing zero) and a power of ten:
+/// `f = D * 10^scale`. A float is `mantissa * 2^exponent`, and `2^-k = 5^k * 10^-k`.
+fn exact_decimal(f: f64) -> (String, i32) {
+    let bits = f.to_bits();
+    let exponent_bits = i32::try_from((bits >> 52) & 0x7FF).unwrap_or(0);
+    let fraction = bits & ((1 << 52) - 1);
+    let (mantissa, exponent) = if exponent_bits == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1 << 52), exponent_bits - 1075)
+    };
+    let mut limbs = Vec::new();
+    let mut rest = mantissa;
+    while rest > 0 {
+        limbs.push(u32::try_from(rest % 1_000_000_000).unwrap_or(0));
+        rest /= 1_000_000_000;
+    }
+    let (factor, chunk, count) = if exponent >= 0 {
+        (1_u32 << 30, 30, exponent)
+    } else {
+        (1_220_703_125_u32, 13, -exponent) // 5^13
+    };
+    for _ in 0..count / chunk {
+        big_mul_small(&mut limbs, factor);
+    }
+    let last = if exponent >= 0 { 2_u32 } else { 5_u32 };
+    for _ in 0..count % chunk {
+        big_mul_small(&mut limbs, last);
+    }
+    let mut digits = limbs.last().map_or_else(String::new, u32::to_string);
+    for limb in limbs.iter().rev().skip(1) {
+        digits.push_str(&format!("{limb:09}"));
+    }
+    let scale = exponent.min(0);
+    let trimmed = digits.trim_end_matches('0');
+    let zeros = i32::try_from(digits.len() - trimmed.len()).unwrap_or(0);
+    (trimmed.to_owned(), scale + zeros)
+}
+
+/// `digits + 1` of a decimal digit string (`"129"` is `"130"`, `"999"` is `"1000"`).
+fn decimal_increment(digits: &str) -> String {
+    let mut out: Vec<u8> = digits.bytes().collect();
+    for at in (0..out.len()).rev() {
+        if out[at] == b'9' {
+            out[at] = b'0';
+        } else {
+            out[at] += 1;
+            return String::from_utf8(out).unwrap_or_default();
+        }
+    }
+    let mut carried = vec![b'1'];
+    carried.extend(out);
+    String::from_utf8(carried).unwrap_or_default()
+}
+
+/// The digits and decimal exponent of a finite, non-zero float's shortest round-trip form, as CPython's repr
+/// (David Gay's dtoa, mode 0) chooses it: `1.5` is `("15", 0)`, `1e-7` is `("1", -7)` (the value is
+/// `d1.d2d3... * 10^exponent`). Of the shortest digit strings that read back as the float, the one nearest its exact
+/// value, a tie going to the even last digit.
 fn shortest_digits(f: f64) -> (String, i32) {
-    // Rust's `{:e}` writes the shortest digits that round-trip and are nearest the value, as Python's repr
-    // (David Gay's dtoa, mode 0) does.
-    let text = format!("{:e}", f.abs());
+    let f = f.abs();
+    // Rust's `{:e}` writes a shortest round-trip string, so its length is the shortest length; but where two strings
+    // of that length read back as the float it may take the other one (2**-25: Rust ...695313e-8, Python
+    // ...695312e-8; Sol's G1a review, P1-1).
+    let text = format!("{f:e}");
     let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    (digits, exponent.parse().unwrap_or(0))
+    let rust_digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let rust_exponent: i32 = exponent.parse().unwrap_or(0);
+    let shortest = rust_digits.len();
+    let (exact, scale) = exact_decimal(f);
+    let exact_exponent = i32::try_from(exact.len()).unwrap_or(0) - 1 + scale;
+    if exact.len() <= shortest {
+        return (exact, exact_exponent);
+    }
+    let reads_back = |digits: &str, exponent: i32| {
+        let last = exponent - (i32::try_from(digits.len()).unwrap_or(0) - 1);
+        format!("{digits}e{last}")
+            .parse::<f64>()
+            .is_ok_and(|back| back == f)
+    };
+    let (low, rest) = exact.split_at(shortest);
+    let mut high = decimal_increment(low);
+    let mut high_exponent = exact_exponent;
+    if high.len() > shortest {
+        high.truncate(shortest);
+        high_exponent += 1;
+    }
+    let take_high = match (
+        reads_back(low, exact_exponent),
+        reads_back(&high, high_exponent),
+    ) {
+        (true, true) => match rest.as_bytes()[0].cmp(&b'5') {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Less => false,
+            // `exact` has no trailing zero, so a `5` alone is the exact half-way point.
+            std::cmp::Ordering::Equal => {
+                rest.len() > 1 || (low.as_bytes()[shortest - 1] - b'0') % 2 == 1
+            }
+        },
+        (false, true) => true,
+        (true, false) => false,
+        (false, false) => return (rust_digits, rust_exponent),
+    };
+    let (digits, exponent) = if take_high {
+        (high, high_exponent)
+    } else {
+        (low.to_owned(), exact_exponent)
+    };
+    let trimmed = digits.trim_end_matches('0');
+    (
+        if trimmed.is_empty() {
+            digits.clone()
+        } else {
+            trimmed.to_owned()
+        },
+        exponent,
+    )
 }
 
 /// `repr(f)` of a finite float: `1.0`, `1e+16`, `1e-05`, `0.0001`, `-0.0` (an exponent below -4 or from 16 up
@@ -667,6 +789,18 @@ mod tests {
         for (bits, expected) in cases {
             assert_eq!(float_repr(f64::from_bits(*bits)), *expected, "{bits:#x}");
         }
+        // Ties between two shortest strings (Sol's G1a review, P1-1): python3 -c "print(repr(2**-25), repr(2.0**-1074), repr(2.0**-1022), repr(2.0**60), repr(2.0**-100))"
+        assert_eq!(float_repr(2.0_f64.powi(-25)), "2.9802322387695312e-08");
+        assert_eq!(float_repr(f64::from_bits(1)), "5e-324");
+        assert_eq!(float_repr(f64::MIN_POSITIVE), "2.2250738585072014e-308");
+        assert_eq!(
+            float_repr(1_152_921_504_606_846_976.0),
+            "1.152921504606847e+18"
+        );
+        assert_eq!(
+            float_repr(7.888_609_052_210_118e-31),
+            "7.888609052210118e-31"
+        );
         assert_eq!(float_json(f64::NAN), "NaN");
         assert_eq!(float_json(f64::NEG_INFINITY), "-Infinity");
         assert_eq!(float_json(1e-7), "1e-07");
