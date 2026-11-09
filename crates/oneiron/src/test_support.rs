@@ -223,6 +223,23 @@ pub fn settle_outcome_ask(
     Ok((handle, answered))
 }
 
+/// Stands `agent`'s Steward grant with `verbs` and marks it, as a host's
+/// first mint leaves it, without the owner's signed act (untangle 6.3): the
+/// grant a test narrows or widens by standing another.
+pub fn stand_steward_grant(
+    vault: &Vault,
+    agent: EntityId,
+    verbs: &[&str],
+) -> crate::Result<EntityId> {
+    vault.stand_steward_grant_for_test(agent, verbs)
+}
+
+/// Marks `agent` opted out of its Steward grant, as a first mint over a
+/// policy with none of its rows leaves it (untangle 6.3).
+pub fn mark_steward_opt_out(vault: &Vault, agent: EntityId) -> crate::Result<()> {
+    vault.mark_steward_opt_out_for_test(agent)
+}
+
 /// A temporary directory a restore accepts, for tests that restore, rehearse
 /// or activate a vault: made under the system temp directory when no other
 /// user could move a directory on the way to it (`store::refuse_shared_path`),
