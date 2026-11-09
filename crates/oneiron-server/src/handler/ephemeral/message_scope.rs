@@ -41,7 +41,7 @@ pub(super) fn joining(
     locality: CallerLocality,
     machine: PeerMachine,
 ) -> ReadDestination {
-    ReadDestination::at(locality, server.vault().peer_machine_stands(machine))
+    oneiron::settings::read_destination_at(locality, server.vault().peer_machine_stands(machine))
 }
 
 /// Whether `frame` may leave on the socket `conn_state` is: an ephemeral
@@ -65,7 +65,10 @@ pub(in crate::handler) fn releases_frame(
             return true;
         };
         let destination = destination.get_or_insert_with(|| {
-            ReadDestination::at(conn_state.locality, conn_state.peer_machine(vault))
+            oneiron::settings::read_destination_at(
+                conn_state.locality,
+                conn_state.peer_machine(vault),
+            )
         });
         may_release(vault, conversation, destination)
     })

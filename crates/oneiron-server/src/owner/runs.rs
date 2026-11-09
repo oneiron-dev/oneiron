@@ -339,7 +339,7 @@ pub(crate) fn resolve_with_wordings(
     let destination = destination.into();
     let expected = parse_bundle_id(bundle_id)?;
     let run_id = run_named(vault, run)?;
-    if destination.locality() == CallerLocality::OffDevice {
+    if oneiron::settings::read_destination_locality(&destination) == CallerLocality::OffDevice {
         visible_bundle(vault, owner, &run_id, &destination)?;
     }
     let receipt = vault

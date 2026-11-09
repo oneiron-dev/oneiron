@@ -1,0 +1,30 @@
+[package]
+name = "oneiron-wake-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Dreamer wake contract below the oneiron engine: wake triggers, requests and pass reports, deadlines and cancellation, the sieve recipe records, and the attempt progress and park vocabulary"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+blake3 = { workspace = true }
+loro = { workspace = true }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# The attempt progress producer is compiled with the engine's sync feature, as it was in core.
+sync = ["oneiron-contracts/sync", "oneiron-base/sync", "oneiron-store/sync"]
+
+[lints]
+workspace = true

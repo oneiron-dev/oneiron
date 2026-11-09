@@ -175,7 +175,7 @@ pub fn outbound_step_approve_once_digest(
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
     let binding =
-        crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
+        crate::model_step_effect::step_effect_binding_for_request(attempt_id, step_request)?;
     Ok(pinned_approval_digest(&prepared_gate_effect(
         vault,
         request,

@@ -145,7 +145,7 @@ async fn idempotent(
             // repeated.
             if crate::device_local::replay_withheld(
                 state.server.vault(),
-                oneiron::settings::ReadDestination::at(locality, peer),
+                oneiron::settings::read_destination_at(locality, peer),
                 &response.body,
                 &response.rows,
             ) {
