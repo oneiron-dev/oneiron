@@ -1076,6 +1076,17 @@ function runs08ExpectHeldBatch(view: Facade.FanoutBatchView, parentTask: string,
   return cap;
 }
 
+/** Diagnostic for the parked live run: a branch that is not Leased fails with its last_error first, since the
+ * fleet log keeps only the first 400 characters of a failure reason. */
+function expectParkedBranchLeased(
+  label: string,
+  branch: { state: string; last_error?: string | null; attempt_count: number; asks: readonly unknown[] } | undefined,
+): void {
+  if (branch?.state === "Leased") return;
+  throw new Error(`${label}: last_error=${(branch?.last_error ?? "none").slice(0, 280)} | state=${branch?.state ?? "missing"}`
+    + ` attempts=${branch?.attempt_count ?? 0} asks=${branch?.asks.length ?? 0}`);
+}
+
 /* RUNS-08 (partial, Engine E2E-PARTIAL option A).
  * Promise: a live agent's batched fan-out states its count, expected spend and one shared
  *   cap before anything launches, waits for the owner's approval of that exact plan digest
@@ -1154,7 +1165,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(stepped?.completed_steps).toBe(1);
     // The parked run keeps its lease. The whole branch first, so a failure prints its last_error.
     const parkedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-    expect(parkedBranch).toMatchObject({ state: "Leased" });
+    expectParkedBranchLeased("RUNS-08 after its asking step", parkedBranch);
     expect(parkedBranch?.state).toBe("Leased");
     const agent = await engine.pairActor({ principalRef: parentAgent, actorClass: "agent", scope: ["core:read", "core:write"] });
     const attached = await agent.client.call("self.run.attach", { run });
