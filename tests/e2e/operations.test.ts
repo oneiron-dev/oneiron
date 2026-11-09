@@ -255,7 +255,7 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
 
   // An unrelated private note: Coach's working set and model requests never carry it.
   const control = "The control drawer holds a violet compass.";
-  await engine.client.call("self.memory.diary", { content: control });
+  const controlEntry = await engine.client.call("self.memory.diary", { content: control });
 
   // The agent is a real definition with its own paired credential.
   const created = await engine.client.call("vault.agents.create", {
@@ -309,7 +309,8 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   expect(branches).toHaveLength(1);
   const run = branches[0]!.branch; // The run id is its attempt's own id.
   await awaitPublic(() => engine.client.call("vault.runs.checkpoint", { run_ref: run }),
-    view => view.completed_steps >= 1, { label: "OPERATIONS-01 run commits its asking step" });
+    // No replay record exists until the run's first step commits: null, then a count.
+    view => (view?.completed_steps ?? 0) >= 1, { label: "OPERATIONS-01 run commits its asking step" });
   expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
   expect(await ops01TaskPhase(engine.client, task)).not.toBe("terminal");
 
@@ -352,7 +353,11 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
     expect((await engine.client.call("vault.diagnostics.get", { diagnostic_ref: diagnostic.diagnostic_ref })).value)
       .toEqual(diagnostic);
     expect(diagnostic).toMatchObject({ detector_id: "self_report.blocked.tool", event_class: "agent_blocked",
-      actor_class: "agent", actor_ref: agentDef, source: "self_report", evidence_refs: [receipt], replay_run_ref: run });
+      actor_class: "agent", actor_ref: agentDef, source: "self_report", criticality: "normal",
+      expected: false, actual: true, delta: 1,
+      evidence_refs: [receipt], replay_run_ref: run });
+    expect(diagnostic.replay_checkpoint_ref ?? null).toBeNull();
+    expect(diagnostic.replay_content_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(diagnostic.untrusted_detail ?? null).toBeNull();
     expect(JSON.stringify(diagnostic)).not.toContain(hostile);
 
@@ -361,11 +366,13 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
       read => read.value.state === "settled" && !!read.value.proposal,
       { label: `Coach files its proposal for ${receipt}`, timeoutMs: 15_000 })).value;
     expect(view.report).toMatchObject({ category: "tool", attempt: run, semi_trusted: true });
-    // The foreign text stays a fenced data leaf: present, escaped, never a line break.
-    expect(view.report!.untrusted_detail).toContain(hostile);
-    expect(view.report!.untrusted_detail).not.toContain("\n");
-    expect(view.working_set.diagnostic_refs).toContain(diagnostic.diagnostic_ref);
-    expect(JSON.stringify(view.working_set)).not.toContain(control);
+    // The foreign text stays a fenced data leaf: whole, with its backslashes
+    // doubled and its line break escaped (this fixture's ASCII and newline input).
+    expect(view.report!.untrusted_detail).toBe(detail.replaceAll("\\", "\\\\").replaceAll("\n", "\\u{000A}"));
+    // The working set names exactly this report and its diagnostic, never the private note.
+    expect(view.working_set.evidence_refs).toEqual([receipt, diagnostic.diagnostic_ref]);
+    expect(view.working_set.diagnostic_refs).toEqual([diagnostic.diagnostic_ref]);
+    expect(JSON.stringify(view.working_set)).not.toContain(controlEntry.entry_id);
     const proposal = view.proposal!;
     expect(proposal.route).toBe("environment");
     expect(proposal.claim).toMatchObject({ predicate: "coach.issue.proposal", source: "generated", approval: "proposed" });
@@ -376,7 +383,11 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   // Coach's model requests carry no unrelated private text: two reports, two routes.
   const coachCalls = providers.seenFixtureCalls.filter(call => call.origin === "coach");
   expect(coachCalls).toHaveLength(2);
-  for (const call of coachCalls) expect(JSON.stringify(call.body)).not.toContain(control);
+  for (const call of coachCalls) {
+    const body = JSON.stringify(call.body);
+    expect(body).not.toContain(control);
+    expect(body).not.toContain(controlEntry.entry_id);
+  }
   expect(providers.seenFixtureCalls.filter(call => call.origin === "agent")).toHaveLength(1);
 
   // Neither report nor Coach added authority, and the TASK is still open with its run parked.
@@ -385,6 +396,7 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   expect(afterPolicy.manifests).toEqual(beforePolicy.manifests);
   expect(await engine.client.call("vault.agents.get", { agent_def_ref: agentDef })).toEqual(beforeAgent);
   const afterAudit = await engine.client.call("vault.authority.audit", { limit: 100, kinds: [] });
+  expect(afterAudit.next_after ?? null).toBeNull();
   expect(afterAudit.rows.map(row => row.entry_hash)).toEqual(beforeAudit.rows.map(row => row.entry_hash));
   expect(await ops01TaskPhase(engine.client, task)).not.toBe("terminal");
   expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
