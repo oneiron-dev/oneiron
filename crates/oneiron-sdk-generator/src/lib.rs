@@ -27,6 +27,7 @@ mod verb_table;
 
 pub use error::GenerateError;
 pub use facade_types::CRATES;
+pub use generate::outputs::Outputs;
 
 /// The `port-harness` subcommand (DESIGN 6): dumps the port's state for comparison with
 /// `scripts/sdk/port_harness.py`. Temporary: G6 deletes it with the Python.

@@ -14,7 +14,7 @@ mod emit_py;
 mod emit_remote;
 mod emit_server;
 mod emit_ts;
-mod outputs;
+pub(crate) mod outputs;
 mod row_access;
 mod rows;
 mod uniffi;
