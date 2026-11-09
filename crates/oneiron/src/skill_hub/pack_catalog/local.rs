@@ -186,6 +186,12 @@ impl Vault {
         let holder = match binder {
             HookBinder::Owner(owner) => owner.revalidate_in_txn(self, txn)?,
             HookBinder::Agent(agent) => {
+                // An agent's local pack carries its hooks. An agent pack would
+                // mint an agent definition, which an agent writes only under
+                // its owner's Grant (NOTE AGENTDEF-WRITE-GRANT, U5).
+                if source.manifest.kind == PackKind::Agent {
+                    return Err(invalid("an agent's local pack is no agent pack"));
+                }
                 self.verify_write_actor_in_txn(txn, &agent)?;
                 agent.entity_ref()
             }
