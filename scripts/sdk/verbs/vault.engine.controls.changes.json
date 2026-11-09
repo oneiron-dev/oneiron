@@ -1,0 +1,15 @@
+{
+  "name": "vault.engine.controls.changes",
+  "description": "The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::EngineControlChangeEntry>",
+  "call": "crate::task_verb::sdk::engine_control_changes_as(memory.vault(), &memory.embedded_owner(\"vault.engine.controls.changes\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}
