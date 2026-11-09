@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
 use crate::sync_harness::open_vault_with_memory_keystore;
 use crate::sync_harness::{clear_policy_manifests, make_entity_blob};
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
