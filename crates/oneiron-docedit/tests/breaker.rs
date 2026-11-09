@@ -83,27 +83,25 @@ fn bom_and_valid_namespace_edits_keep_every_other_byte() {
     }
 }
 
-fn deep_subprocess(name: &str, input: &[u8], edit: bool) {
+/// A 20,001-deep part, read in a child process so a stack overflow fails
+/// the test instead of aborting the run. Rule 5 (#3932, #4288; Engine call
+/// T0H-RULE5-COUNT-ASSERTS = A): depth is an observation, never a refusal,
+/// so the package opens Unsigned and the leaf edit lands.
+fn deep_subprocess(name: &str, input: &[u8]) {
     if std::env::var("ONEIRON_DOCEDIT_DEPTH_CHILD").as_deref() == Ok(name) {
-        let mut policy = limits();
-        policy.xml = XmlLimits {
-            max_depth: 8,
-            max_nodes: 10_000,
-        };
         let mut package =
-            Package::open(input, policy, &Resources::measuring()).expect("bounded ZIP open");
+            Package::open(input, limits(), &Resources::measuring()).expect("ZIP opens");
         assert_eq!(package.export().expect("no-op"), input);
-        if edit {
-            assert_eq!(package.editability(), Editability::Unsigned);
-            assert!(matches!(
-                package.replace_text(PART, PATH, "old", "changed"),
-                Err(Error::Edit("XML depth limit"))
-            ));
-        } else {
-            assert_eq!(package.editability(), Editability::MetadataUnsupported);
-            assert!(package.replace_text(PART, PATH, "old", "changed").is_err());
-        }
-        assert_eq!(package.export().expect("no-op"), input);
+        assert_eq!(package.editability(), Editability::Unsigned);
+        package
+            .replace_text(PART, PATH, "old", "changed")
+            .expect("the leaf edit lands");
+        let edited = package.part(PART).expect("part").expect("document");
+        assert!(
+            edited
+                .windows(b"<item>changed</item>".len())
+                .any(|w| w == b"<item>changed</item>")
+        );
         return;
     }
     let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -123,7 +121,6 @@ fn deep_metadata_is_read_only_not_abort() {
     deep_subprocess(
         "deep_metadata_is_read_only_not_abort",
         include_bytes!("fixtures/breaker/deep_metadata.zip"),
-        false,
     );
 }
 #[test]
@@ -131,47 +128,27 @@ fn deep_touched_part_refuses_not_abort() {
     deep_subprocess(
         "deep_touched_part_refuses_not_abort",
         include_bytes!("fixtures/breaker/deep_touched.zip"),
-        true,
     );
 }
 
 #[test]
 fn configured_node_and_depth_limits_apply_at_both_xml_doors() {
+    // Rule 5 (#3932, #4288; Engine call T0H-RULE5-COUNT-ASSERTS = A): node
+    // and depth counts are observations at both XML doors, never a refusal.
+    // The metadata door leaves the package editable, and the touched part's
+    // edit lands.
     let metadata = include_bytes!("fixtures/breaker/metadata_nodes.zip");
     let touched = include_bytes!("fixtures/breaker/part_nodes.zip");
-    let mut small = limits();
-    small.xml = XmlLimits {
-        max_depth: 2,
-        max_nodes: 2,
-    };
-    let mut meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
-    assert_eq!(meta.editability(), Editability::MetadataUnsupported);
-    assert!(meta.replace_text(PART, PATH, "old", "new").is_err());
+    let mut meta = Package::open(metadata, limits(), &Resources::measuring()).expect("ZIP opens");
+    assert_eq!(meta.editability(), Editability::Unsigned);
     assert_eq!(meta.export().expect("no-op"), metadata);
-    let mut doc = Package::open(touched, small, &Resources::measuring()).expect("ZIP opens");
+    meta.replace_text(PART, PATH, "old", "new")
+        .expect("the metadata door admits its counts");
+    let mut doc = Package::open(touched, limits(), &Resources::measuring()).expect("ZIP opens");
     assert_eq!(doc.editability(), Editability::Unsigned);
-    assert!(matches!(
-        doc.replace_text(PART, PATH, "old", "new"),
-        Err(Error::Edit("XML node limit"))
-    ));
     assert_eq!(doc.export().expect("no-op"), touched);
-    small.xml.max_nodes = 4;
-    let mut doc = Package::open(touched, small, &Resources::measuring()).expect("ZIP opens");
     doc.replace_text(PART, PATH, "old", "new")
-        .expect("boundary admitted");
-    let mut meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
-    assert_eq!(
-        meta.editability(),
-        Editability::MetadataUnsupported,
-        "depth still bounds metadata"
-    );
-    small.xml.max_depth = 3;
-    meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
-    assert_eq!(
-        meta.editability(),
-        Editability::Unsigned,
-        "boundary admitted"
-    );
+        .expect("the part door admits its counts");
 }
 
 #[test]
