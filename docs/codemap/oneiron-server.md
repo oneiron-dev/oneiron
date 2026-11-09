@@ -406,9 +406,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/foreign_code_doors.rs` | src | s | 2 crate-vis | — | The foreign `execute_code` projection |
 | `src/api/facade/free_time_doors.rs` | src | s | 6 crate-vis | — | The free-time host doors (FIX 4453): the owner's `vault.free_time.policy.get`, `.policy.set`, `.cycles` and… |
 | `src/api/facade/gate_policy_doors.rs` | src | s | 5 crate-vis | — | Owner policy and checker host doors |
-| `src/api/facade/generated/agent_verbs.rs` | src | generated | 2 crate-vis | — | — |
-| `src/api/facade/generated/dispatch.rs` | src | generated | 2 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
-| `src/api/facade/generated/host_door_rows.rs` | src | generated | 3 crate-vis | — | The host-door rows whose door checks its caller before the row's verb hooks run (FIX 1763), one variant… |
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 15 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
@@ -425,7 +422,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 12 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
 | `src/api/facade/host_doors.rs` | src | m | 186 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
-| `src/api/facade/host_doors/admission.rs` | src | L | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
+| `src/api/facade/host_doors/admission.rs` | src | s | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
 | `src/api/facade/host_doors/diary.rs` | src | s | 3 crate-vis | — | The caller's own diary query door (`self.memory.diary.query`), and the sealed-pad doors on a person's own… |
@@ -473,7 +470,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/outbound_call_erase_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's per-call outbound request erase (FIX 11801): `vault.outbound_calls.request.erase` |
 | `src/api/facade/outbox_diverged_doors.rs` | src | m | 8 crate-vis | — | `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` (FIX 11739): a vault VM's outbox carrier… |
 | `src/api/facade/output.rs` | src | m | 11 crate-vis | — | A facade row's input and output: its decoded JSON and the rows its answer reads |
-| `src/api/facade/owner_binding.rs` | src | s | 8 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
+| `src/api/facade/owner_binding.rs` | src | s | 7 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
 | `src/api/facade/pack_preview_doors.rs` | src | s | 1 crate-vis | — | `vault.packs.preview` (FIX 5493): the owner's look at a pack folder before he puts it, under the proof… |
 | `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
 | `src/api/facade/plugin_section_doors.rs` | src | s | 7 crate-vis | — | The host doors of the plugin Context Board sections (DOOR-112)… |
@@ -629,7 +626,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 12 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/exec_board_verbs/execute_code.rs` | src | m | 4 crate-vis | — | The execute-code executor: one durable REPL run entered under its connector actor, and the answer that entry… |
 | `src/api/mcp_gateway/facade_refusals.rs` | src | s | 1 crate-vis | — | A typed engine facade error on the gateway's JSON-RPC vocabulary: its code and its stable kind |
-| `src/api/mcp_gateway/generated/agent_verb_dispatch.rs` | src | generated | 4 crate-vis | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | m | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 19 crate-vis | — | The MCP gateway: its module registrations and the names its children share |
 | `src/api/mcp_gateway/oauth_call.rs` | src | s | 5 crate-vis | — | A stock cloud client's `/mcp` call on its OAuth access token (FIX 4902 slice C; owner CLOUD AGENTS CONNECT =… |
