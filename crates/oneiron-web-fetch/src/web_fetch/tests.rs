@@ -689,17 +689,18 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
         4,
         budget(1),
     ))
-    .expect_err("a crawl cannot use a sourceURL request echo as final evidence");
+    .expect_err("a same-site crawl cannot use Firecrawl (FIX 4734, a30bcd2f29a)");
     let WebFetchError::AllRenderersFailed { attempts, .. } = crawl_error else {
         panic!("unexpected crawl error: {crawl_error}");
     };
     assert!(
         attempts.iter().any(|attempt| matches!(
             attempt,
-            RendererAttemptFailure::Error { error, .. }
-                if error.message.contains("no independently witnessed navigation-final URL")
+            RendererAttemptFailure::ScopeUnsupported {
+                renderer: RendererKind::Firecrawl
+            }
         )),
-        "the Firecrawl rung fails explicitly: {attempts:?}"
+        "the Firecrawl rung is unsupported for a same-site crawl (FIX 4734): {attempts:?}"
     );
 }
 
@@ -1413,9 +1414,8 @@ fn redirect_seed_html() -> String {
 #[test]
 fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     // The destination server exists only to be redirected *to*. It records what
-    // it received — which is how this test knows the redirect was really
-    // followed rather than never taken — and answers 500, so the `reqwest`
-    // error is produced after redirect processing rather than before it.
+    // it received, which is how this test knows the credentialed hop is refused
+    // unsent (FIX 4734, a30bcd2f29a): no leg below may ever reach it.
     let reached: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&reached);
     let destination = spawn_fixture_server(move |request| {
@@ -1435,8 +1435,8 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
         "http://{REDIRECT_USERINFO_USERNAME}:{REDIRECT_USERINFO_PASSWORD}@{authority}/blocked"
     );
     let redacted_location = format!("http://{REDACTED_USERINFO}@{authority}/blocked");
-    // A second `Location`, at a loopback port nothing is listening on, so the
-    // *send* boundary fails after the redirect instead of the status boundary.
+    // A second `Location`, at a loopback port nothing is listening on: the hop
+    // is refused before any connection is tried.
     let refused_location = format!(
         "http://{REDIRECT_USERINFO_USERNAME}:{REDIRECT_USERINFO_PASSWORD}@127.0.0.1:1/blocked"
     );
@@ -1450,14 +1450,14 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     });
     let redirect_url = format!("{origin}/hostile-redirect");
 
-    // 1. The direct native rung. The post-redirect status failure is still a
-    //    transport failure, the smuggled credential is absent, and the
-    //    destination is still reported — redacted rather than dropped.
+    // 1. The direct native rung. The credentialed hop is refused unsent as an
+    //    unsafe redirect, the smuggled credential is absent, and the
+    //    destination is still reported, redacted rather than dropped.
     let renderer = NativeReadabilityRenderer::new(single_hop());
     let status_error = renderer
         .render(&redirect_url, &RenderContext::single_page())
-        .expect_err("the redirected request fails at the destination");
-    assert_eq!(status_error.kind, RendererErrorKind::Transport);
+        .expect_err("the credentialed redirect hop is refused unsent (FIX 4734)");
+    assert_eq!(status_error.kind, RendererErrorKind::UnsafeRedirect);
     assert_no_redirect_credential(&status_error.message, "the native GET status error");
     assert!(
         status_error.message.contains(&redacted_location),
@@ -1466,87 +1466,57 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     );
     assert_eq!(
         reached_count(),
-        1,
-        "the redirect really was followed to the credentialed destination"
+        0,
+        "the refused redirect hop is never sent (FIX 4734)"
     );
 
-    // 2. The send boundary, reached by redirecting onto a refused loopback port
-    //    so the error is produced while connecting rather than after a status.
+    // 2. A credentialed hop onto a refused loopback port: refused before any
+    //    connection, with the same credential-safe diagnostic.
     let send_error = renderer
         .render(
             &format!("{origin}/refused-redirect"),
             &RenderContext::single_page(),
         )
-        .expect_err("the redirected request cannot connect");
-    assert_eq!(send_error.kind, RendererErrorKind::Transport);
+        .expect_err("the credentialed hop is refused before connection (FIX 4734)");
+    assert_eq!(send_error.kind, RendererErrorKind::UnsafeRedirect);
     assert_no_redirect_credential(&send_error.message, "the native GET send error");
     assert!(
-        send_error.message.starts_with("web fetch GET failed: "),
-        "the send failure is reported, not swallowed: {}",
+        send_error
+            .message
+            .starts_with("refusing to follow a redirect"),
+        "the unsafe-hop refusal is reported, not swallowed: {}",
         send_error.message
     );
 
-    // 3. The same failure through the real ladder, with renderer identity and
-    //    ladder order unchanged and the rendered attempt trace credential-safe.
+    // 3. The same hop through the real ladder: the refusal ends the page's
+    //    ladder (FIX 4734) and the public error is credential-safe.
     let native = NativeReadabilityRenderer::new(single_hop());
     let rung: Arc<dyn Renderer> = Arc::new(native);
     let ladder_error = WebFetcher::new(Arc::clone(&rung))
         .expect("readability slot")
         .with_minimum_content(ladder_minimum())
         .fetch(&redirect_url, 17)
-        .expect_err("no rung produced content");
-    let WebFetchError::AllRenderersFailed { url, attempts } = ladder_error else {
-        panic!("expected the ordered ladder trace");
+        .expect_err("the page ladder ends on the unsafe hop (FIX 4734)");
+    let rendered = ladder_error.to_string();
+    let WebFetchError::UnsafeRedirect { url } = ladder_error else {
+        panic!("expected the terminal unsafe-redirect refusal (FIX 4734): {rendered}");
     };
-    // The aggregate failure names the checked request URL, never the peer's.
+    // The terminal failure names the checked request URL, never the peer's.
     assert_eq!(url, redirect_url);
-    assert_no_redirect_credential(&url, "the aggregate failure URL");
-    assert_eq!(
-        attempts.len(),
-        3,
-        "the ladder still records every rung in its fixed order"
+    assert_no_redirect_credential(&url, "the terminal failure URL");
+    assert_no_redirect_credential(&rendered, "the terminal ladder refusal");
+    assert!(
+        rendered.starts_with("web fetch refused (unsafe_redirect): "),
+        "the public error keeps the typed refusal: {rendered}"
     );
     assert!(
-        matches!(
-            &attempts[0],
-            RendererAttemptFailure::Error {
-                renderer: RendererKind::Readability,
-                error,
-            } if error.kind == RendererErrorKind::Transport
-        ),
-        "rung 1 stays a typed readability transport failure: {:?}",
-        attempts[0]
-    );
-    assert_eq!(
-        attempts[1],
-        RendererAttemptFailure::Unavailable {
-            renderer: RendererKind::Headless
-        }
-    );
-    assert_eq!(
-        attempts[2],
-        RendererAttemptFailure::Unavailable {
-            renderer: RendererKind::Firecrawl
-        }
-    );
-    let rendered = attempts
-        .iter()
-        .map(RendererAttemptFailure::render_reason)
-        .collect::<Vec<String>>()
-        .join("; ");
-    assert_no_redirect_credential(&rendered, "the rendered ladder trace");
-    assert!(
-        rendered.starts_with("readability: Transport: "),
-        "the trace keeps the typed rung failure: {rendered}"
-    );
-    assert!(
-        rendered.contains(&redacted_location),
-        "the trace keeps a redacted destination: {rendered}"
+        rendered.contains(&redirect_url),
+        "the terminal refusal names the requested page: {rendered}"
     );
     assert_eq!(
         reached_count(),
-        2,
-        "the ladder leg followed the same redirect route"
+        0,
+        "the ladder sent nothing past the refusal (FIX 4734)"
     );
 
     // 4. A non-seed crawl page driven through the same redirect. Its reason is
@@ -1571,36 +1541,31 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     assert_eq!(crawled.failed[0].url, redirect_url);
     let reason = &crawled.failed[0].reason;
     assert_no_redirect_credential(reason, "the stored crawl reason");
-    let stored_prefix = "all web fetch renderers failed: readability: Transport: ";
+    let stored_prefix = "web fetch refused (unsafe_redirect): ";
     assert!(
         reason.starts_with(stored_prefix),
-        "the stored reason keeps the ordered ladder trace: {reason}"
+        "the stored reason keeps the typed refusal: {reason}"
     );
     assert!(
-        reason.contains(&redacted_location),
-        "the stored reason keeps a redacted destination: {reason}"
+        reason.contains(&redirect_url),
+        "the stored reason names the requested page: {reason}"
     );
     assert_eq!(
         reached_count(),
-        3,
-        "the crawl leg followed the same redirect route"
+        0,
+        "the crawl sent nothing past the refusal (FIX 4734)"
     );
 
-    // Every leg traversed the redirect route itself: the destination server saw
-    // the redirected request each time, so nothing passed by stopping short of
-    // transport.
+    // No leg reached the redirect destination: every credentialed hop was
+    // refused before contact (FIX 4734).
     let received = reached
         .lock()
         .expect("the redirect destination log")
         .clone();
-    assert_eq!(received.len(), 3);
-    for request in &received {
-        assert_eq!(
-            request_path(request),
-            "/blocked",
-            "the recorded request is the redirect destination"
-        );
-    }
+    assert!(
+        received.is_empty(),
+        "the refused hop was never sent (FIX 4734): {received:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
