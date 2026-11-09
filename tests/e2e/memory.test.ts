@@ -6,7 +6,7 @@ import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/cli
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { credentialParts, PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { BlockedDoor, defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -156,6 +156,8 @@ async function agent(w: World, role: string) {
 function scenarioName(w: World): string { return w.engine.options.id! }
 const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
 const ENTITY_TYPE_MESSAGE = 3; // record-kind byte of a MESSAGE (oneiron-contracts registry/type_bytes.rs)
+/** The wire fields of a streamed executor request; decision (Big rung) calls stay buffered. */
+const EXECUTOR_STREAM = { stream: true, stream_options: { include_usage: true } } as const;
 const memoryModels = (providers: ScriptedProviders) => `
 [models.providers.drafter]
 kind = "local-openai-compat"
@@ -246,10 +248,11 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
     goal: { goal: `Build ${row.name}`, why: `${row.name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
     picks: { leader_agent_def_ref: PROJECT_LEADER, board_human_refs: [engine.pairedActor.principalRef],
       budget_share_bps: 1000, starting_skill_refs: [] } };
+  // A code-mode executor call on a local-openai-compat provider is streamed: it is answered as a stream.
   providers.enqueue({ id: `project-draft-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
-    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" },
-    response: openaiText(`project-draft-${index}`, "project-drafter",
-      `await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`,
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter", fields: EXECUTOR_STREAM },
+    response: openaiStream(`project-draft-${index}`, "project-drafter",
+      [`await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`],
       { inputTokens: 512, outputTokens: 128 }) });
   providers.releaseBarrier(decide);
   await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
@@ -257,8 +260,8 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
     { label: `house-drafted project card ${card_id}` });
   const intake = `project-intake-${index}`;
   providers.enqueue({ id: `project-intake-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
-    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" }, barrier: intake,
-    response: openaiText(`project-intake-${index}`, "project-drafter", `finish("goal intake waits for the owner");`,
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter", fields: EXECUTOR_STREAM }, barrier: intake,
+    response: openaiStream(`project-intake-${index}`, "project-drafter", [`finish("goal intake waits for the owner");`],
       { inputTokens: 512, outputTokens: 16 }) });
   const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
   expect(minted.card_id).toBe(card_id);
