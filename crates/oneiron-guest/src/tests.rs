@@ -149,7 +149,10 @@ fn typed_component_claim_proposal_refuses_the_whole_step() {
             "(i32.store (i32.const 1040) (i32.const 1)) (i32.store (i32.const 2048) (i32.const 0))",
         )
         .replace(STREAM_RESULT_TXT, "");
-    assert!(!fixture.contains("(call $open"), "the stream calls are gone");
+    assert!(
+        !fixture.contains("(call $open"),
+        "the stream calls are gone"
+    );
     let (_temp, root) = scratch();
     let mut bytes = Vec::new();
     input(
