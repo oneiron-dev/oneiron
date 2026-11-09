@@ -4,4 +4,5 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod run_hold;
 pub mod wake_d1_park_release;

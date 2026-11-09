@@ -937,6 +937,7 @@
      "path": "src/agent_dispatch/budget_hold.rs",
      "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 4
@@ -1184,7 +1185,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
       "re-export": 30
      }
@@ -2381,7 +2382,7 @@
      "path": "src/anchored_annotation/recovery.rs",
      "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 4,
       "struct": 2
      }
@@ -2955,7 +2956,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append mutation doors",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -3001,7 +3002,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/engine/reclaim.rs",
@@ -3095,6 +3096,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/hold_override.rs",
+     "purpose": "RUN-HOLD (lead 18:5x, shape agreed 20:44): the hold follows the override",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/hook_hold.rs",
      "purpose": "Lease-fenced verb-hook pauses: a workflow's, whose transcript its checkpoint writer retains in the same…",
      "surface": {
@@ -3122,6 +3133,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PauseKind",
+      "RunState"
+     ],
+     "path": "src/attempt_queue/lifecycle.rs",
+     "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3139,9 +3165,9 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "mod": 9,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -20917,6 +20943,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CompiledSandboxBackends"
+     ],
+     "path": "src/code_sandbox/compiled_backends.rs",
+     "purpose": "The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature…",
+     "surface": {
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SandboxLinkedImportEffects"
      ],
      "path": "src/code_sandbox/contract.rs",
@@ -21249,7 +21288,8 @@
      "kind": "src",
      "notable": [
       "DevProcessBackend",
-      "MicroVmBackend"
+      "MicroVmBackend",
+      "SandboxBackends"
      ],
      "path": "src/code_sandbox/microvm/backend.rs",
      "purpose": "The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations",
@@ -21258,7 +21298,7 @@
       "crate-vis": 2,
       "fn": 6,
       "struct": 1,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -21378,7 +21418,7 @@
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
       "mod": 8,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -47872,7 +47912,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 208,
+      "mod": 211,
       "re-export": 105
      }
     },
@@ -55045,7 +55085,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomTurnHandle"
@@ -77790,13 +77830,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/source_audience/walk.rs",
      "purpose": "The source-audience conjunct every audience read meets: a row reads to its viewers only while each of them…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -88754,7 +88794,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 22,
       "enum": 1,
       "struct": 1
      }
@@ -88786,7 +88826,7 @@
      "path": "src/task_verb/fanout_launch/hold.rs",
      "purpose": "Held fan-out ask admission and release records",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -89127,7 +89167,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 67,
+      "crate-vis": 69,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -89295,7 +89335,7 @@
      "path": "src/task_verb/rate_limit.rs",
      "purpose": "TASK creation rate limits against the actor's policy ceiling",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -90297,6 +90337,26 @@
      "surface": {
       "enum": 1,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/mod.rs",
+     "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/run_hold.rs",
+     "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -92358,6 +92418,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/verb_names.rs",
+     "purpose": "The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbTable"
+     ],
+     "path": "src/verb_table.rs",
+     "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ActAnswer",
       "DetailsOnDevice",
@@ -93558,7 +93638,7 @@
       "crate-vis": 1,
       "fn": 8,
       "mod": 1,
-      "re-export": 114,
+      "re-export": 115,
       "struct": 33
      }
     },
@@ -94589,6 +94669,19 @@
      "surface": {
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedVerbTable"
+     ],
+     "path": "src/verbs/verb_table.rs",
+     "purpose": "The runtime's one [`VerbTable`] (untangle slice 5.0a): core's hook boundary and room turns reach the…",
+     "surface": {
+      "static": 1,
+      "struct": 1
      }
     },
     {
@@ -98988,6 +99081,56 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_hold/fixture.rs",
+     "purpose": "The RUN-HOLD tests' shared fixture (`run_hold_override.rs`, `run_hold_doors.rs`): a vault, the queue calls…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_doors.rs",
+     "purpose": "RUN-HOLD through the test doors (`oneiron::test_doors::run_hold`): - a hook hold's override releases the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_override.rs",
+     "purpose": "RUN-HOLD (lead 18:5x, shape agreed 20:44): a generic Resume of a row an engine hold paused moves the hold's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle.rs",
+     "purpose": "The run lifecycle (untangle slice 5.0c): the interventions, the budget hold and lease reclaim move an…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_state.rs",
+     "purpose": "The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sandbox_backend_selection.rs",
+     "purpose": "Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs",
      "purpose": "(a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and…",
      "surface": {}
@@ -98998,6 +99141,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/step_claim_audience.rs",
+     "purpose": "A `dreamer.step` claim holds its call's raw response, so it carries the call's exposure (S63E-RULED, live…",
      "surface": {}
     },
     {
@@ -99046,6 +99197,14 @@
      "notable": [],
      "path": "tests/voice_voxcpm2.rs",
      "purpose": "Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/window_open_lineage.rs",
+     "purpose": "A window opens over the rows learned in its month (WINDOW-LINEAGE-RSLOT)",
      "surface": {}
     },
     {
@@ -99122,7 +99281,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99325,7 +99484,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100500,6 +100659,13 @@
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
+    "test_doors": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)"
+    },
     "test_support": {
      "files": 1,
      "impl_vault": false,
@@ -100584,8 +100750,22 @@
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
+    "verb_names": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core…"
+    },
+    "verb_table": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
+    },
     "verbs": {
-     "files": 126,
+     "files": 127,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100648,10 +100828,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7240,
-   "test_files": 896
+   "source_files": 7248,
+   "test_files": 904
   },
   "oneiron-android": {
    "files": [

@@ -74,7 +74,10 @@ fn read_page(
     {
         Some(room) => {
             let value = serde_json::to_value(&input).map_err(|_| undecoded())?;
-            let output = memory.for_room_turn(room)?.invoke(VERB, value)?;
+            let output =
+                memory
+                    .for_room_turn(room)?
+                    .invoke(&oneiron::verbs::VERB_TABLE, VERB, value)?;
             serde_json::from_value(output).map_err(|_| undecoded())
         }
         None => oneiron::task_verb::sdk::vault_search_bm25(&memory, input),

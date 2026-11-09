@@ -158,6 +158,7 @@ pub use self::spend_record::{
     SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
+pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
 };

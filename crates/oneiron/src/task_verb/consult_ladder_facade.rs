@@ -1,7 +1,6 @@
 //! Cross-actor consult ladder projection over stored ladder state.
 //! Entry [`project_consult_ladder_state`]; read by ladder dashboards and the `verbs` dispatch.
 //! Owned by `task_verb`; transitions themselves run in `consult_ladder`, never here.
-use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::claim::ClaimApprovalStatus;
@@ -29,7 +28,7 @@ use super::create_validation::{
 };
 use super::entity_delta_facade::counter_lineage_artifact_value;
 use super::follow_up::PEER_HANDLES;
-use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::route_receipts::TaskCreateReceipt;
 use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
@@ -247,7 +246,7 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<TaskCreateReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let provenance = facade_provenance(task_verb_contract(AgentVerb::TasksCreate));
+        let provenance = facade_provenance(crate::verb_names::TASKS_CREATE);
         // A counter is a fresh cross-actor consult, so it answers to exactly
         // the same attribution and ownership laws as the original ask.
         let owning_actor_ref = self.resolve_cross_actor_owner(&counter_delta)?;
