@@ -5,7 +5,8 @@ The mirror has two parts (untangle slice 4.3, D4 = a):
 - committed: quickstart.md, errors.md and the root llms.txt, made from authored text. `--check` checks them.
 - generated: types.md, facade-types.md and verbs.md, made from the verb table and the generated SDK outputs.
   They are not in git. CI publishes them at PUBLISHED (`--site`), and every build keeps a local copy
-  (`generate.py --out-dir` runs this with `--from` and `--out`; see README.md, "Building from source").
+  (the SDK generator's `--out-dir` writes them: the Rust generator the build runs writes them itself, and
+  `generate.py --out-dir` runs this with `--from` and `--out`; see README.md, "Building from source").
 """
 from pathlib import Path
 import argparse
