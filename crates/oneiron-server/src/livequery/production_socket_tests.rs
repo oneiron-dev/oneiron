@@ -383,6 +383,10 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
                 world_ref: None,
                 facet: Some("zz999:ff".to_owned()),
                 kinds: None,
+                worlds: None,
+                project_refs: Vec::new(),
+                conversation_refs: Vec::new(),
+                person_ref: None,
             },
             100,
             None,
@@ -469,9 +473,11 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
             b"socket test sender",
         )
         .unwrap();
+    // The owner mints it, as the owner's own act; the vault stamps its time.
     vault
         .mint_standing_outbound_grant(
-            &oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
+            &crate::test_credentials::embedded_owner(&vault),
+            oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
             &GrantMintIntent {
                 principal_ref: actor_id.to_hex(),
                 origin_component_id: "socket-slim-test".into(),
@@ -481,7 +487,6 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
                     verb_class: "send".into(),
                 },
             },
-            2,
         )
         .unwrap();
     let runtime = tokio::runtime::Handle::current();
