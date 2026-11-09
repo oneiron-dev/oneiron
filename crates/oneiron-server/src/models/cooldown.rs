@@ -46,11 +46,12 @@ const PREFIX: &str = "models:offer-cooldown:v1:";
 /// in the same table: this deployment's routing state too.
 const QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
 
-/// A down provider's first health rest, in seconds; each failure in a row
-/// doubles it.
-const HEALTH_REST_SECS: u64 = 5;
+/// A down provider's first health rest, in seconds, unless the host's
+/// `[models] health_rest_secs` names another; each failure in a row doubles
+/// it.
+pub(crate) const HEALTH_REST_SECS: u64 = 5;
 /// The longest health rest, in seconds.
-const HEALTH_REST_MAX_SECS: u64 = 60;
+pub(crate) const HEALTH_REST_MAX_SECS: u64 = 60;
 /// Answers in a row a recovering offer gives before its recovery is stable.
 const STABLE_SUCCESSES: u32 = 3;
 /// How long, in seconds, those answers span at least, from the first.
@@ -294,6 +295,9 @@ pub struct OfferCooldowns {
     /// The vault's model byte budgets its ladders' chat replies are read on
     /// (FIX 10626), the rows' defaults without a server.
     budgets: super::ModelHostBudgets,
+    /// A down provider's first health rest, in seconds: the host's
+    /// `[models] health_rest_secs`, else [`HEALTH_REST_SECS`].
+    health_rest_secs: u64,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -312,6 +316,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
+            health_rest_secs: HEALTH_REST_SECS,
             #[cfg(test)]
             waits_move: None,
         })
@@ -321,7 +326,7 @@ impl OfferCooldowns {
     /// world settings.
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
-        Self::in_vault_with(vault, super::ModelHostBudgets::unhosted())
+        Self::in_vault_with(vault, super::ModelHostBudgets::unhosted(), HEALTH_REST_SECS)
     }
 
     /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
@@ -340,6 +345,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
+            health_rest_secs: HEALTH_REST_SECS,
             waits_move: Some(clock),
         })
     }
