@@ -141,6 +141,11 @@ async function rescanFolder(engine: EngineFixture, folder: string, expected: Cou
 // occurrence binding and exclusion against authored facts, then download blobs.
 // Main's include_secrets default is true; the requested never-export-credentials
 // assertion must NOT be weakened to match it (recorded on the fix list).
+// Written by OPUS-E2E-2 on main e79eb76df3e. Families covered: diary NOTE,
+// message, claim, attachment, masked credentials (message and claim field)
+// and a LIVE off-record overlay. Not proved here: pack source, SKILL.md and
+// scripts, AGENT_PACK and derivation envelopes, and a >1 MiB on-record run
+// result with its off-record counterpart (no deterministic public producer).
 // Doors: vault.export({format, include_secrets, delivery}) -> inline
 // {format, archive, digest} or transfer {transfer_ref, bytes, digest}, and
 // vault.export.transfer.read({transfer_ref, offset, length}) for the pieces.
@@ -310,9 +315,10 @@ suite.test(test, "PORTABILITY-01", "Whole-vault five-format ownership export sho
 // into an absent destination, serve with the same owner, recall known text and
 // download the exact fixture bytes; observe rebuilt retrieval and a matching
 // RESTORE epoch. The budget must demonstrably reset, not merely be omitted
-// from export. Neither owner/status nor run-tree exposes that local counter.
-// PORTABILITY-06 exercises the available backup/restore/content portion; that
-// does not make this ID's missing budget assertion passing coverage.
+// from export. vault.budgets.local now reads that local counter.
+// Written by OPUS-E2E-2 on main e79eb76df3e: the counter is filled with
+// vault.sieve.lease.refill. Not proved here: spending it first, since no
+// public door reserves or spends a wake budget outside the host runtime.
 // Doors: vault.sieve.lease.refill fills a device-local wake budget,
 // vault.budgets.local and vault.runners.seats.quotas read it back.
 suite.test(test, "PORTABILITY-02", "Owner same-build restore should work", async () => {
@@ -619,9 +625,10 @@ suite.test(test, "PORTABILITY-07", "Folder source rescan lifecycle should work",
 // an off-origin page and duplicate source URLs; a scripted parser supplies
 // independently authored markdown. Assert fetch touches one page, crawl's
 // bound and origin fence, retained canonical identity/hash across retry, and
-// Imported/Proposed claims with no new authority. Main's web_fetch.rs types
-// have no server use, generated facade verb or MCP tool. Do not route them
+// Imported/Proposed claims with no new authority. Do not route them
 // through execute_code, connector.call or an engine import as an escape hatch.
+// Written by OPUS-E2E-2 on main e79eb76df3e. Not proved here: reading the
+// Imported/Proposed web.page claims back, and the MCP tools.
 // Doors: fetch({url}) -> FetchResult and crawl({seed_url, page_budget, scope?})
 // -> {pages, failed, completion}. A self-hosted node fetches loopback origins
 // like any other; each page carries well over the 256-byte extraction floor.
