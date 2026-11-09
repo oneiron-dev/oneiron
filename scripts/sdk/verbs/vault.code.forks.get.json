@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.forks.get",
+  "description": "Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork.",
+  "input": "crate::memory::origin_doors::CodeForkGetRequest",
+  "output": "Option<crate::memory::origin_doors::CodeForkView>",
+  "call": "memory.code_fork_get_as(&memory.embedded_owner(\"vault.code.forks.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

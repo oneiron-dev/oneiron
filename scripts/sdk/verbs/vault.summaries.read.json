@@ -1,0 +1,24 @@
+{
+  "name": "vault.summaries.read",
+  "description": "Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot.",
+  "input": "crate::scope_summary::SummaryReadRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::scope_summary::SummaryReadView>>",
+  "call": "memory.read_summary(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryReadRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "mcp_scope": "filtered"
+}

@@ -4,7 +4,7 @@
 > `oneiron_remote::OneironClient`, the same Rust client the `oneiron` npm and
 > PyPI packages hold. `open` binds an embedded, in-process vault (no server,
 > no Docker, no API key: the on-device Swift path); `connect` binds a remote
-> `oneiron-server`. Every facade row of `scripts/sdk/agent-verbs.json` is one
+> `oneiron-server`. Every facade row of `scripts/sdk/verbs/` is one
 > exported method that calls the client's typed method for that row on
 > either backend. `EmbeddedEngine` (the `engine` feature) runs the full
 > server inside the app's process over the same kind of handle. No Swift or Kotlin package is

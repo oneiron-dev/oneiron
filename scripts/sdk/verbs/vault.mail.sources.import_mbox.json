@@ -1,0 +1,12 @@
+{
+  "name": "vault.mail.sources.import_mbox",
+  "description": "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place.",
+  "input": "crate::mail_pack::MailMboxImportRequest",
+  "output": "crate::mail_pack::MailMboxImportReport",
+  "call": "memory.mail_sources_import_mbox(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

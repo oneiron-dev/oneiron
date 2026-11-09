@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.rsi.hold",
+  "description": "The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay.",
+  "input": "crate::llm::rsi_doors::RsiLineRequest",
+  "output": "crate::llm::rsi_doors::RsiLineView",
+  "call": "crate::llm::rsi_doors::hold_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

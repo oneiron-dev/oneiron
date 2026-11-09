@@ -1,0 +1,17 @@
+{
+  "name": "self.off_record.execute",
+  "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.",
+  "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
+  "output": "crate::task_verb::sdk::OffRecordExecuted",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

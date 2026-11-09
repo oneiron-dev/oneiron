@@ -1,0 +1,16 @@
+{
+  "name": "vault.companions.sharing.get",
+  "description": "One contact's clearance in a companion's source vault, for the principal who controls that vault.",
+  "input": "CompanionSharingRequest",
+  "output": "crate::workspace_roster::CompanionSharingView",
+  "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

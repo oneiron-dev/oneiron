@@ -1,0 +1,16 @@
+{
+  "name": "vault.connectors.web.usage",
+  "description": "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text.",
+  "input": "crate::web_connector::WebConnectorUsageRead",
+  "output": "crate::web_connector::WebConnectorUsagePage",
+  "call": "crate::task_verb::sdk::read_web_connector_usage(memory, input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

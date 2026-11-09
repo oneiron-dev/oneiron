@@ -1,0 +1,17 @@
+{
+  "name": "self.folds",
+  "input": "crate::compaction::FoldsInput",
+  "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
+  "scope": "Read",
+  "context": "run",
+  "effect": "Fold",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::code_run::fold_api::FoldRunRequest",
+    "description": "Lists the attached run's landed folds, pending marks and outstanding compact ask.",
+    "host_door_caller": true,
+    "host_door_session": false,
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

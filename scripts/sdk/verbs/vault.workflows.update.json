@@ -1,0 +1,16 @@
+{
+  "name": "vault.workflows.update",
+  "description": "The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps.",
+  "input": "crate::task_verb::sdk::WorkflowUpdateRequest",
+  "output": "crate::task_verb::sdk::WorkflowView",
+  "call": "crate::task_verb::sdk::update_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.update\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

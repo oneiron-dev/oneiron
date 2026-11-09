@@ -24,7 +24,7 @@ def artifacts():
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
     facade_ts = (ROOT / "packages/oneiron/src/facade-types.ts").read_text()
-    manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
+    manifest = {"verbs": [json.loads(path.read_text()) for path in sorted((ROOT / "scripts/sdk/verbs").glob("*.json"))]}
     verbs = [row["name"] for row in manifest["verbs"] if row.get("context", "memory") == "memory"]
     errors = (ROOT / "crates/oneiron-contracts/src/memory/error.rs").read_text()
     codes = re.findall(r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";', errors)
@@ -80,7 +80,7 @@ def artifacts():
     error_doc += "\n## Server refusal codes\n\nA server door refuses with these too; they pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {server_remedies[code]} |\n" for code in server_codes)
     error_doc += "\nRemote server-specific codes and HTTP schemas are also indexed by\n[the engine API reference](../../oneiron.skills.md).\n"
-    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
+    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/verbs/` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
     census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"
     return {
         "docs/agent-sdk/quickstart.md": mirrored(readme, "packages/oneiron/README.md", "docs/agent-sdk/quickstart.md"),

@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.convert",
+  "description": "Converts selected messages through the configured refiner; user initiation approves conversion, never admission.",
+  "input": "SkillConvertRequest",
+  "output": "crate::task_verb::sdk::SkillConvertReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.convert\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

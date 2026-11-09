@@ -1,0 +1,16 @@
+{
+  "name": "self.report_blocked",
+  "input": "crate::code_run::ReportBlockedInput",
+  "output": "crate::code_run::ReportBlockedOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "ReportBlocked",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>",
+    "description": "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task.",
+    "openapi": true,
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

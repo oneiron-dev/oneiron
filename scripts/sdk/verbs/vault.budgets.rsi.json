@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.rsi",
+  "description": "The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure.",
+  "input": "crate::llm::rsi_doors::RsiLineRequest",
+  "output": "crate::llm::rsi_doors::RsiLineView",
+  "call": "crate::llm::rsi_doors::rsi_line_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "self.spawn",
+  "input": "crate::code_run::ReaderSpawnInput",
+  "output": "crate::code_run::ReaderSpawnReceipt",
+  "scope": "Write",
+  "context": "run",
+  "effect": "ReaderSpawn"
+}

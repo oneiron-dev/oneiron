@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.body.commits",
+  "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyCommitsRequest",
+  "output": "Vec<crate::office_body::OfficeBodyCommitView>",
+  "call": "memory.artifacts_body_commits(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Every commit receipt of a live body, in commit order, or one actor's.\n",
+      "ts": "/** Every commit receipt of a live body, in commit order, or one actor's. */",
+      "py": "Every commit receipt of a live body, in commit order, or one actor's."
+    }
+  }
+}

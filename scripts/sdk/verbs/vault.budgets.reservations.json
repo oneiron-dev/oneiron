@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.reservations",
+  "description": "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it.",
+  "input": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest",
+  "output": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView",
+  "call": "crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.reservations\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

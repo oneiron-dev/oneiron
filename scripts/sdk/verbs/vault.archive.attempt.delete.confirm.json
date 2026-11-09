@@ -1,0 +1,17 @@
+{
+  "name": "vault.archive.attempt.delete.confirm",
+  "description": "Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt.",
+  "input": "crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest",
+  "output": "crate::vault_cleanup::AttemptArchiveDeleteReceiptView",
+  "call": "crate::vault_cleanup::confirm_attempt_archive_delete_wire(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "section": false,
+  "openapi": true
+}

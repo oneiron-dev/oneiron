@@ -20,7 +20,7 @@ afterAll(suite.flush);
  * for TODO-only files. No fixture is a stored vault or a privileged log entry.
  *
  * Binding read: main 5ecd5af5bea2c70e25760f0583f276790f49fba4.
- * Inspected scripts/sdk/agent-verbs.json, packages/oneiron-client/src/{facade,
+ * Inspected scripts/sdk/verbs/, packages/oneiron-client/src/{facade,
  * facade-types,index}.ts, server api/openapi_registry.rs, api/openapi/owner_paths.rs,
  * api/scoped_auth.rs, api/facade.rs, cli.rs and cli/owner_args.rs.
  *

@@ -1,0 +1,14 @@
+{
+  "name": "self.skills.call",
+  "input": "crate::code_run::SkillCallInput",
+  "output": "serde_json::Value",
+  "scope": "Write",
+  "context": "run",
+  "effect": "SkillsCall",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>",
+    "description": "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately.",
+    "host_door_lists": true
+  }
+}

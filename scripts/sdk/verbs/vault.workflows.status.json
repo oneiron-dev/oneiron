@@ -1,0 +1,16 @@
+{
+  "name": "vault.workflows.status",
+  "description": "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result.",
+  "input": "crate::task_verb::sdk::WorkflowRunRequest",
+  "output": "crate::task_verb::sdk::WorkflowRunView",
+  "call": "crate::task_verb::sdk::read_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.status\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
