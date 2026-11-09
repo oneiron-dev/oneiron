@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmissionOutcome,
-    DreamerParkCause, DreamerRunnerStore,
+    DreamerRunnerStore,
 };
 use crate::error::Result;
 
@@ -53,12 +53,12 @@ impl DreamerRunnerStore<'_> {
         let held = PARKED.scan(&self.vault.store, &*txn)?;
         let mut parked: HashSet<_> = held.iter().map(|(attempt, _)| *attempt).collect();
         for (attempt, park) in held {
-            if park.park_owner != PROGRAM_PARK_OWNER {
+            if !park.resumable_by(crate::dreamer_runner::ParkResumer::ProgramRestart) {
                 continue;
             }
             if park.reason == PR1_PARK_REASON {
                 self.resume_parked_in_txn(txn, attempt, PROGRAM_PARK_OWNER, now)?;
-            } else if park.cause == DreamerParkCause::Other {
+            } else if park.resumable_by(crate::dreamer_runner::ParkResumer::ProgramReadyHold) {
                 self.resume_ready_program_hold_in_txn(txn, attempt, &park.reason, now);
             } else {
                 continue;

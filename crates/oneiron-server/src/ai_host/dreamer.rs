@@ -63,7 +63,7 @@ use request_sources::SourcedRunBackend;
 use task_lend::TaskLend;
 
 /// Stamped on every admission and park this server makes.
-pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
+pub(super) const LEASE_OWNER: &str = oneiron::dreamer_runner::DREAMER_SERVER_PARK_OWNER;
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
 /// The most parked conflicts one home-timer pass asks the ladder to settle.

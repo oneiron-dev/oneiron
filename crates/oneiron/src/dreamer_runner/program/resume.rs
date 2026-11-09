@@ -241,8 +241,7 @@ impl DreamerRunnerStore<'_> {
             if PARKED
                 .get(&self.vault.store, &rtxn, &attempt)?
                 .is_some_and(|park| {
-                    park.park_owner == PROGRAM_PARK_OWNER
-                        && park.cause == DreamerParkCause::Other
+                    park.resumable_by(crate::dreamer_runner::ParkResumer::ProgramReturnedHold)
                         && ProgramHold::of_reason(&park.reason) == Some(ProgramHold::Unbound)
                 })
             {
@@ -399,7 +398,7 @@ fn returned_hold(
     park: &DreamerParkedAttemptRecord,
     host: Option<&dyn Fn(WriteActor) -> bool>,
 ) -> bool {
-    if park.park_owner != PROGRAM_PARK_OWNER || park.cause != DreamerParkCause::Other {
+    if !park.resumable_by(crate::dreamer_runner::ParkResumer::ProgramReturnedHold) {
         return false;
     }
     let judged = match ProgramHold::of_reason(&park.reason) {

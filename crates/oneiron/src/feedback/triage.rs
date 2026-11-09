@@ -103,7 +103,8 @@ pub const COACH_FEEDBACK_TRIAGE_PART_FACET: &str = "coach.feedback_triage_part";
 pub const COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET: &str = "coach.feedback_triage_synthesis";
 /// The owner of the park a long revision's job holds while its part and
 /// synthesis children run (a `Signal` park, kept across a restart).
-pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str = "coach.feedback_triage";
+pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str =
+    crate::dreamer_runner::FEEDBACK_TRIAGE_PARK_OWNER;
 /// The open inbox, as a triage source names it.
 pub const FEEDBACK_TRIAGE_INBOX_SOURCE: &str = "inbox";
 /// Predicate of one Proposed triage finding; its subject is the evidence
