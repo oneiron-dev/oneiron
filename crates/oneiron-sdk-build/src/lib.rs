@@ -9,9 +9,9 @@
 //!
 //! The digest covers every file the generator reads and the generator's identity: its source
 //! ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests that decide its build, and the compiler. A change to
-//! any of them makes a new run. One change is not seen: a local override of one of the generator's dependencies (a
-//! `[patch]` to a path, `paths` in a cargo configuration, `--config`) whose files change while the lock file and the
-//! manifests stay the same. After changing such an override, delete `<target dir>/<profile>/sdk-generated`.
+//! any of them makes a new run. The run key covers the generator's source, `Cargo.lock`, the manifests and the
+//! compiler. It does not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in
+//! `.cargo/config`, or `--config`). After changing one, delete `<target dir>/<profile>/sdk-generated`.
 //!
 //! Each run also leaves the agent-SDK reference (`types.md`, `facade-types.md`, `verbs.md`) in
 //! `<target dir>/<profile>/sdk-generated/agent-sdk/`, the local copy of what CI publishes.
