@@ -1,6 +1,6 @@
 {
   "name": "vault.curator.cadence.set",
-  "description": "The owner, or a holder of engine.controls, sets the curator's minimum age and the period between its passes; the change writes an engine-control receipt.",
+  "description": "The owner, or a holder of engine.controls.maintenance_cadence, sets the curator's minimum age and the period between its passes; the change writes an engine-control receipt.",
   "input": "crate::task_verb::sdk::CuratorCadenceSetRequest",
   "output": "crate::task_verb::sdk::EngineControlChangeEntry",
   "call": "crate::task_verb::sdk::set_curator_cadence_embedded(memory, input)?",

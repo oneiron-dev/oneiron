@@ -500,9 +500,17 @@ impl Vault {
                 "schedule": &schedule,
             }))?,
             |txn| {
-                let grant = self.engine_controls_grant_in(txn, holder)?.ok_or_else(|| {
-                    Error::InvalidConfig("this holder holds no live engine.controls".into())
-                })?;
+                let grant = self
+                    .engine_controls_grant_in(
+                        txn,
+                        holder,
+                        crate::federation::EngineControlClass::WakeCadence,
+                    )?
+                    .ok_or_else(|| {
+                        Error::InvalidConfig(
+                            "this holder holds no live engine.controls.wake_cadence".into(),
+                        )
+                    })?;
                 let owner = crate::policy_model::owners_in_txn(self, txn)?
                     .first()
                     .copied()

@@ -1,6 +1,6 @@
 {
   "name": "vault.settings.wake_policy.set",
-  "description": "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. A holder of engine.controls sets it through the engine's holder door, with a receipt naming it.",
+  "description": "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. A holder of engine.controls.wake_cadence sets it through the engine's holder door, with a receipt naming it.",
   "input": "crate::policy_setting_doors::WakePolicySetRequest",
   "output": "crate::policy_setting_doors::PolicyActionOutcome",
   "call": "crate::policy_setting_doors::wake_policy_set_embedded(memory, input)?",

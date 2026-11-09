@@ -1,6 +1,6 @@
 {
   "name": "vault.free_time.schedule.set",
-  "description": "A holder of engine.controls moves the schedule of an agent's standing free-time policy at the revision it read; the owner's units and split stay, and setting or clearing a policy stays the owner's act at vault.free_time.policy.set.",
+  "description": "A holder of engine.controls.wake_cadence moves the schedule of an agent's standing free-time policy at the revision it read; the owner's units and split stay, and setting or clearing a policy stays his act at vault.free_time.policy.set.",
   "input": "crate::task_verb::sdk::FreeTimeScheduleSetRequest",
   "output": "crate::task_verb::sdk::EngineControlChangeEntry",
   "call": "crate::task_verb::sdk::set_free_time_schedule_embedded(memory, input)?",

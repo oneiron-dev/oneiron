@@ -4,7 +4,7 @@
 //! The agent health, learning, failure-evidence and retrieval-run reads
 //! answer the vault's human owner, or a holder of a live Steward grant that
 //! names `read`; the learning dials read answers the owner, or a holder of
-//! `engine.controls`. Each is checked at each read, so a narrowed or revoked
+//! any `engine.controls` class. Each is checked at each read, so a narrowed or revoked
 //! grant reads nothing from its next call on. The Coach holds both by
 //! default (6.6a); the owner can give them to any agent.
 
@@ -20,15 +20,17 @@ pub(crate) enum SubstrateRead {
     /// Rows the engine keeps about agents and their work: the Steward
     /// `read` verb.
     Evidence,
-    /// The learning dials, the read side of `engine.controls`.
+    /// The learning dials, the read side of `engine.controls`: any of its
+    /// four classes reads them, since a read changes nothing.
     Dials,
 }
 
 impl SubstrateRead {
-    const fn grant(self) -> &'static str {
+    /// The Steward verbs that admit the read: any one of them does.
+    const fn grants(self) -> &'static [&'static str] {
         match self {
-            Self::Evidence => grant_scope::STEWARD_READ_VERB,
-            Self::Dials => grant_scope::ENGINE_CONTROLS_VERB,
+            Self::Evidence => &[grant_scope::STEWARD_READ_VERB],
+            Self::Dials => &grant_scope::ENGINE_CONTROLS_VERBS,
         }
     }
 }
@@ -48,9 +50,15 @@ impl Vault {
         {
             return Ok(true);
         }
-        Ok(self
-            .steward_grant_with_verb_in(txn, reader.entity_ref(), read.grant())?
-            .is_some())
+        for verb in read.grants() {
+            if self
+                .steward_grant_with_verb_in(txn, reader.entity_ref(), verb)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether the Coach's own review and trend jobs read now (untangle

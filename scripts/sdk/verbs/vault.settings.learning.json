@@ -1,6 +1,6 @@
 {
   "name": "vault.settings.learning",
-  "description": "The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type.",
+  "description": "The owner, or a holder of any engine.controls class, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type.",
   "input": "crate::learning_setting_doors::LearningSettingsRequest",
   "output": "crate::learning_setting_doors::LearningSettingsView",
   "call": "crate::learning_setting_doors::learning_settings_embedded(memory, &input)?",

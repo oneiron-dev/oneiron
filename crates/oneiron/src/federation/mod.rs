@@ -207,8 +207,8 @@ mod system_agent_grant;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub use system_agent_grant::{
-    SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
-    SystemFunction,
+    EngineDefaultGrant, EngineDefaultOrigin, SYSTEM_AGENT_GRANT_NARROWING_WARNING,
+    SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
 };
 pub(crate) use system_agent_grant::{
     StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_verbs_in,
@@ -216,11 +216,11 @@ pub(crate) use system_agent_grant::{
 };
 mod engine_controls;
 mod substrate_reads;
-pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 pub(crate) use engine_controls::rendered_change;
 pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
+pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]
