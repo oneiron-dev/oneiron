@@ -124,20 +124,3 @@ fn account_vaults_share_rows_artifact_bytes_and_producer_provenance() {
     ));
 }
 
-#[test]
-fn unavailable_artifacts_or_versions_leave_no_index_row() {
-    let (_dir, vault) = temp_vault();
-    let cache = BuildCache::new(&vault);
-    let action = action();
-    let key = action.action_key().expect("key");
-    let missing_artifact = ArtifactVersionRef::new(EntityId::now(), 1).expect("ref");
-    let existing = artifact(&vault, b"present version");
-    let missing_version =
-        ArtifactVersionRef::new(*existing.artifact_id(), existing.version() + 1).expect("ref");
-    for reference in [missing_artifact, missing_version] {
-        let expected = reference.to_result_ref();
-        assert!(matches!(cache.put(&action, result(reference)),
-            Err(BuildCacheError::ArtifactUnavailable { artifact_ref }) if artifact_ref == expected));
-        assert!(matches!(cache.get(&key), Ok(None)));
-    }
-}

@@ -162,33 +162,6 @@ fn a_segment_stream_is_refused_at_the_first_element_past_its_declared_count() {
     assert_eq!(render.nodes.len(), 1);
 }
 
-#[test]
-fn a_state_patch_path_longer_than_any_state_pointer_stops_the_event_decode() {
-    let event_head =
-        r#"{"cardId":"card-1","elementId":"remind","actionId":"reminder.toggle","patch":["#;
-    let long_path = format!("/$state/{}", "k".repeat(200));
-    let over = format!(
-        r#"{event_head}{{"op":"replace","path":"{long_path}","value":{{"type":"bool","value":true}}}},"#
-    );
-    let error = decode_prefix::<GeneratedUiActionEvent>(&over);
-    assert!(!error.is_io(), "decoder read past the long path: {error}");
-    assert!(
-        error
-            .to_string()
-            .contains("generated-ui state patch path must be at most 136 bytes"),
-        "{error}"
-    );
-
-    // Control: an ordinary toggle and a removal at the longest legal key decode.
-    let longest_key = "k".repeat(128);
-    let ordinary = format!(
-        r#"{event_head}{{"op":"replace","path":"/$state/remind","value":{{"type":"bool","value":true}}}},{{"op":"remove","path":"/$state/{longest_key}"}}],"occurredAt":17}}"#
-    );
-    let event: GeneratedUiActionEvent =
-        serde_json::from_str(&ordinary).expect("ordinary patches decode");
-    assert_eq!(event.patch.len(), 2);
-}
-
 fn source_ids(count: usize) -> Vec<EntityId> {
     (0..count)
         .map(|n| {

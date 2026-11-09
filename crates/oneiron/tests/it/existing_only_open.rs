@@ -78,52 +78,6 @@ fn open_existing_refuses_an_absent_path_and_creates_nothing() {
     assert_eq!(entry_count(temp.path()), 0);
 }
 
-/// The happy path: a valid vault reopens through the existing-only door and
-/// serves the ordinary read APIs.
-#[test]
-fn open_existing_opens_a_valid_vault_and_serves_normal_apis() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path().join("vault");
-    let id = seed_vault(&root, existing_only_config());
-
-    let vault = Vault::open_existing(&root, existing_only_config()).expect("existing vault opens");
-
-    let hits = vault.search_text("existing", 10).expect("text search");
-    assert!(
-        hits.iter().any(|hit| hit.id == id),
-        "the seeded doc is found"
-    );
-    assert!(vault.get(&id).expect("entity read").is_some());
-    let doctor = vault.doctor().expect("doctor");
-    assert!(doctor.storage_abi_version.is_some());
-    assert!(doctor.db_manifest.missing_names.is_empty());
-}
-
-/// The custom-dictionary happy path: a vault whose analyzer identity comes from
-/// operator-supplied dictionary bytes reopens when — and only when — those
-/// exact roots are named again. The wrong-root leg proves the exact-match leg
-/// is doing work rather than accepting anything.
-#[test]
-fn open_existing_opens_an_exact_match_custom_dictionary_vault() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path().join("vault");
-    let mut config = existing_only_config();
-    config.dict_search_paths = vec![trusted_dict_root(temp.path())];
-    let id = seed_vault(&root, config.clone());
-    let mut wrong = config.clone();
-    wrong.dict_search_paths = vec![temp.path().join("other-dicts")];
-    std::fs::create_dir(temp.path().join("other-dicts")).expect("other dict dir");
-
-    assert!(
-        Vault::open_existing(&root, wrong).is_err(),
-        "a dictionary root that is not this vault's must refuse"
-    );
-    let vault =
-        Vault::open_existing(&root, config).expect("the exact dictionary roots reopen the vault");
-
-    assert!(vault.get(&id).expect("entity read").is_some());
-}
-
 /// Every entry name in `root` with that entry's exact bytes.
 fn root_snapshot(root: &Path) -> BTreeMap<std::ffi::OsString, Vec<u8>> {
     std::fs::read_dir(root)

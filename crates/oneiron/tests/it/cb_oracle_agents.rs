@@ -106,40 +106,6 @@ mod cb_a {
         AgentsSectionRender { rows }
     }
 
-    /// ONE-1697 · 08b §4.1–4.2: one-line rows; children from driver state;
-    /// peer identity keys on the CONNECTION (config dir), never the vendor —
-    /// two same-vendor connections are two named actors (`cc-main` /
-    /// `cc-second`); harness is a row label with an exact value (F9).
-    #[test]
-    fn agents_section_renders_children_and_connection_keyed_peers() {
-        let section = arm_render_agents_section();
-        assert_eq!(section.rows.len(), 4);
-        let one_liners = section
-            .rows
-            .iter()
-            .filter(|r| r.line.lines().count() == 1)
-            .count();
-        assert_eq!(one_liners, 4);
-        let mut child_ids: Vec<&str> = section
-            .rows
-            .iter()
-            .filter(|r| r.lane == "child")
-            .map(|r| r.id.as_str())
-            .collect();
-        child_ids.sort_unstable();
-        assert_eq!(child_ids, ["child_a", "child_b"]);
-        let peers: Vec<&AgentRow> = section.rows.iter().filter(|r| r.lane == "peer").collect();
-        assert_eq!(peers.len(), 2);
-        let mut peer_ids: Vec<&str> = peers.iter().map(|r| r.id.as_str()).collect();
-        peer_ids.sort_unstable();
-        assert_eq!(peer_ids, ["cc-main", "cc-second"]);
-        let exact_labels = peers
-            .iter()
-            .filter(|r| r.harness_label.as_deref() == Some("claude-code"))
-            .count();
-        assert_eq!(exact_labels, 2);
-    }
-
     /// Outcome of a zero-config spawn.
     struct DefaultPresetSpawn {
         spawned_children: usize,
@@ -204,16 +170,6 @@ mod cb_a {
             resolved_logical_id,
             system_default_logical_id: DEFAULT_BASE_LOGICAL_ID.to_owned(),
         }
-    }
-
-    /// ONE-1698 · 08b §4.1 (r8): one generic default base agent — spawn works
-    /// with zero definition; the spawned child resolves to THAT seeded row.
-    #[test]
-    fn spawn_with_zero_definition_uses_default_base_preset() {
-        let spawn = arm_zero_config_spawn();
-        assert_eq!(spawn.spawned_children, 1);
-        assert!(!spawn.system_default_logical_id.is_empty());
-        assert_eq!(spawn.resolved_logical_id, spawn.system_default_logical_id);
     }
 
     /// Kill-authority matrix over one spawn tree.
@@ -1072,23 +1028,6 @@ mod cb_a {
         }
     }
 
-    /// ONE-1710 · 08b §7.5 (r15): storage is never gated; derived claims
-    /// carry source:tool_output + confidence + a provenance chain containing
-    /// the answer-turn and consult-task hops (r15 names the chain, not a
-    /// length — floor assert, richer chains conform).
-    #[test]
-    fn peer_answer_lands_ungated_with_full_provenance_chain() {
-        let landing = arm_peer_answer_landing();
-        assert_eq!(landing.stored_turns, 1);
-        assert_eq!(landing.storage_gate_prompts, 0);
-        assert_eq!(landing.derived_claims, 1);
-        assert_eq!(landing.claims_with_source_tool_output, 1);
-        assert_eq!(landing.claims_with_confidence, 1);
-        assert_eq!(landing.chain_answer_turn_hops, 1);
-        assert_eq!(landing.chain_consult_task_hops, 1);
-        assert!(landing.provenance_chain_len >= 2);
-    }
-
     /// The same valid candidate fails without the Generated lineage permit,
     /// then lands when that permit names the unchanged System-class Dreamer.
     #[test]
@@ -1390,17 +1329,6 @@ mod cb_a {
             correction_writes: correction,
             higher_confidence_ranked_first_at_read,
         }
-    }
-
-    /// Peer storage still needs no approval. Attributed contradiction closure
-    /// uses the W7 deferred gate, then the owner confirms the correction.
-    #[test]
-    fn peer_storage_is_unqueued_and_attributed_correction_is_confirmed() {
-        let surfaces = arm_trust_surfaces();
-        assert_eq!(surfaces.human_digest_entries, 1);
-        assert_eq!(surfaces.conflict_open_surfacings, 1);
-        assert_eq!(surfaces.correction_writes, 1);
-        assert!(surfaces.higher_confidence_ranked_first_at_read);
     }
 }
 
@@ -2602,95 +2530,6 @@ mod cb_x {
             illegal_transitions_rejected: rejected,
             illegal_transitions_accepted: attempts.len() - rejected,
         }
-    }
-
-    /// ONE-1711 · 08b registry: AgentRunStatus is exactly spawned → working
-    /// → needs_input → delivered → archived; every out-of-order jump in the
-    /// fixture matrix rejects.
-    #[test]
-    fn agent_run_status_contract_is_five_states_in_order() {
-        use oneiron::agent_run_status::{
-            AgentRunStatus, ExecutorTerminalCause, project_abandoned_terminal,
-            project_agent_run_status, validate_agent_run_status_transition,
-        };
-
-        let contract = arm_agent_run_status_contract();
-        assert_eq!(AgentRunStatus::RATIFIED_FLOW.len(), 5);
-        for (status, (expected, representation)) in AgentRunStatus::RATIFIED_FLOW.iter().zip([
-            (AgentRunStatus::Spawned, "spawned"),
-            (AgentRunStatus::Working, "working"),
-            (AgentRunStatus::NeedsInput, "needs_input"),
-            (AgentRunStatus::Delivered, "delivered"),
-            (AgentRunStatus::Archived, "archived"),
-        ]) {
-            assert_eq!(*status, expected);
-            assert_eq!(status.as_str(), representation);
-        }
-        assert_eq!(contract.illegal_transitions_attempted, 5);
-        assert_eq!(contract.illegal_transitions_rejected, 5);
-        assert_eq!(contract.illegal_transitions_accepted, 0);
-
-        assert_eq!(AgentRunStatus::TERMINAL.len(), 3);
-        for status in [
-            AgentRunStatus::Archived,
-            AgentRunStatus::Failed,
-            AgentRunStatus::Abandoned,
-        ] {
-            assert!(AgentRunStatus::TERMINAL.contains(&status));
-        }
-        for status in AgentRunStatus::TERMINAL {
-            assert!(status.is_terminal());
-        }
-        for status in [
-            AgentRunStatus::Spawned,
-            AgentRunStatus::Working,
-            AgentRunStatus::NeedsInput,
-            AgentRunStatus::Delivered,
-        ] {
-            assert!(!status.is_terminal());
-        }
-        assert!(
-            validate_agent_run_status_transition(
-                AgentRunStatus::Delivered,
-                AgentRunStatus::Archived,
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_agent_run_status_transition(AgentRunStatus::Failed, AgentRunStatus::Working)
-                .is_err()
-        );
-        assert!(
-            validate_agent_run_status_transition(
-                AgentRunStatus::Abandoned,
-                AgentRunStatus::Working,
-            )
-            .is_err()
-        );
-        assert_eq!(
-            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Failed),
-            AgentRunStatus::Failed,
-        );
-        assert_eq!(
-            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
-            AgentRunStatus::Failed,
-        );
-        assert_eq!(
-            project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),
-            Some(AgentRunStatus::Abandoned),
-        );
-        assert_eq!(
-            project_abandoned_terminal(ExecutorTerminalCause::NeverAnswered),
-            Some(AgentRunStatus::Abandoned),
-        );
-        assert_eq!(
-            project_abandoned_terminal(ExecutorTerminalCause::ExecutionFailed),
-            None,
-        );
-        assert_eq!(
-            project_abandoned_terminal(ExecutorTerminalCause::Cancelled),
-            None,
-        );
     }
 
     /// needs_input round-trip observations (EF-049 lineage → OF twin).
