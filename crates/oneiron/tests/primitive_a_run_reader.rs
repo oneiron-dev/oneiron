@@ -36,11 +36,7 @@ fn an_agent_reads_its_own_attempts_steps_and_no_one_elses() -> TestResult {
     else {
         return Err("expected one fresh spawn".into());
     };
-    let agent = status
-        .input
-        .target
-        .agent_definition_ref()
-        .ok_or("the dispatch targets an agent")?;
+    let agent = status.input.target.agent_definition_ref()?;
     let request = SettledStepRequest {
         job_ref: hex(status.attempt.id.as_bytes()),
         step_hash: "00".repeat(32),
