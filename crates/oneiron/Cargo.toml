@@ -294,8 +294,9 @@ oneiron-guest = { path = "../oneiron-guest" }
 # (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
 # nextest / CI / verify.sh flag-free — no --features needed.
 oneiron = { path = ".", features = ["test-support"] }
-# The sandbox backends, for the integration tests that run them (core split 5b.1).
-oneiron-agent-runtime = { path = "../oneiron-agent-runtime" }
+# The sandbox backends, for the integration tests that run them (core split 5b.1),
+# with the JS runtime the code-mode tests drive.
+oneiron-agent-runtime = { path = "../oneiron-agent-runtime", features = ["code-sandbox-wasmtime"] }
 tempfile = "3"
 proptest = "1"
 # The process-memory keystore the engine's tests share; never a host's adapter.
