@@ -73,6 +73,7 @@ fn server_with_config(
                 created_at: AT,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .unwrap();
