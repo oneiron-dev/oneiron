@@ -5,6 +5,147 @@ use oneiron::{commitment_schedule, commitment_wake};
 use super::super::*;
 use super::*;
 
+#[test]
+fn attempt_queue_deadlines_on_foreign_home_skip_macro_but_keep_other_lanes() {
+    let (_dir, vault) = open_vault();
+    let local = vault_client_node_id(&vault);
+    let foreign = local.wrapping_add(1).max(1);
+    enqueue(
+        &vault,
+        DreamerConsolidationScope::Macro,
+        "macro-attempt",
+        10,
+    );
+    enqueue(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        "micro-attempt",
+        20,
+    );
+    elect_home(&vault, foreign, 25);
+
+    // Local node is not the elected home: the earlier macro deadline is
+    // filtered (admission would refuse NotHomeNode without progress)
+    // while the micro lane keeps flowing — no spin, no starvation.
+    let mut source = AttemptQueueDeadlines::new(&vault, local);
+    assert_eq!(
+        source.next_deadline().expect("read"),
+        Some(CommitmentDeadline {
+            due_at_ms: 20_000,
+            scope: DreamerConsolidationScope::Micro,
+        })
+    );
+}
+
+#[test]
+fn attempt_queue_deadlines_skip_macro_when_designation_matches_but_vault_identity_differs() {
+    // P2 (codex r4): a host can pass local_node_id equal to a (stale/
+    // copied) home designation that is NOT this vault's stable client
+    // id. Admission errors with identity-mismatch without mutating the
+    // row; the deadline filter must suppress that macro too.
+    let (_dir, vault) = open_vault();
+    let vault_id = vault_client_node_id(&vault);
+    let spoofed = vault_id.wrapping_add(99).max(1);
+    assert_ne!(spoofed, vault_id);
+    enqueue(&vault, DreamerConsolidationScope::Macro, "macro-spoof", 10);
+    enqueue(&vault, DreamerConsolidationScope::Micro, "micro-ok", 30);
+    // Designation equals the spoofed local_node_id, not vault identity.
+    elect_home(&vault, spoofed, 20);
+
+    let mut source = AttemptQueueDeadlines::new(&vault, spoofed);
+    assert_eq!(
+        source.next_deadline().expect("read"),
+        Some(CommitmentDeadline {
+            due_at_ms: 30_000,
+            scope: DreamerConsolidationScope::Micro,
+        }),
+        "macro must stay suppressed when vault identity ≠ local_node_id"
+    );
+
+    // Both match (honest local = vault id = designation): macro surfaces.
+    elect_home(&vault, vault_id, 40);
+    let mut honest = AttemptQueueDeadlines::new(&vault, vault_id);
+    assert_eq!(
+        honest.next_deadline().expect("read"),
+        Some(CommitmentDeadline {
+            due_at_ms: 10_000,
+            scope: DreamerConsolidationScope::Macro,
+        }),
+        "macro surfaces when designation AND vault identity both match"
+    );
+}
+
+/// A Dreamer attempt that retries later waits as a Scheduled successor. The
+/// timer arms for its scheduled instant; without that an idle server never
+/// runs it again (review repro: a summary whose scope moved while composing).
+/// One an operator placed on another worker never arms it: the claim refuses
+/// it, so the supervisor would spin on that deadline (review repro).
+#[test]
+fn attempt_queue_deadlines_arm_a_scheduled_retry() {
+    use oneiron::attempt_queue::{
+        AttemptInterventionKind, AttemptPlacement, ClaimAttempt, ClaimOutcome, InterveneAttempt,
+        RetryAttempt, RetryOutcome,
+    };
+
+    let (_dir, vault) = open_vault();
+    let local = vault_client_node_id(&vault);
+    enqueue(&vault, DreamerConsolidationScope::Micro, "micro-retry", 10);
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker-a".to_owned(),
+                now: 10,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the queued attempt was not claimed");
+    };
+    let RetryOutcome::Retried(successor) = queue
+        .retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: 70,
+            last_error: None,
+            now: 10,
+        })
+        .expect("retry")
+    else {
+        panic!("the retry scheduled no successor");
+    };
+    let due = Some(CommitmentDeadline {
+        due_at_ms: 70_000,
+        scope: DreamerConsolidationScope::Micro,
+    });
+    let deadline = |worker: &str| {
+        AttemptQueueDeadlines::new(&vault, local)
+            .for_worker(worker)
+            .next_deadline()
+            .expect("read")
+    };
+    assert_eq!(deadline("worker-a"), due);
+    queue
+        .redirect(
+            InterveneAttempt {
+                id: successor.id,
+                kind: AttemptInterventionKind::Redirect,
+                actor: "operator".to_owned(),
+                note: None,
+                now: 10,
+            },
+            AttemptPlacement {
+                worker: Some("worker-b".to_owned()),
+                parent: None,
+            },
+        )
+        .expect("redirect");
+    assert_eq!(deadline("worker-a"), None);
+    assert_eq!(deadline("worker-b"), due);
+}
+
 /// CMT-2 (ONE-1539). Two independent durable sources, one merge rule:
 /// the earlier instant arms the timer and a TIE keeps the attempt, so
 /// wiring the commitment lane in can never displace a deadline the attempt
