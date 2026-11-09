@@ -133,13 +133,18 @@ async function recalls(engine: EngineFixture, query: string, content: string): P
  * reason; it surfaces the agent and does not stop it. A model's draft alone
  * is not evidence that these records landed.
  *
- * Main has owner healer oversight/failure-group/drill reads and concern-card
- * calls. self.report_blocked is code-run-only, absent from the typed facade;
- * its Issues/failure-ladder bridge, typed diagnostic read and Coach working-set
- * /repair inspection do not form this complete public journey.
+ * Main e79eb76df3e (OPUS-E2E-2, 9 Nov): self.report_blocked is now a typed
+ * host facade row taking LiveRunRequest {live_run, spec:{category, detail}},
+ * and vault.diagnostics.list/get and vault.coach.inspect exist. Two pieces
+ * are still missing. (1) The live run: its only public setup is agents.spawn,
+ * pairing the agent holder and self.run.attach while the run keeps its lease;
+ * attaching while the model entry holds its barrier is not deterministic
+ * (MEMORY-07's note). (2) The Coach repair proposal comes only from the
+ * background Coach Issues job, with no typed trigger or completion read, so
+ * the repair, healed_by trace and gate result cannot be awaited publicly.
  */
 suite.todo(test, "OPERATIONS-01",
-  "waits on typed self.report_blocked HTTP/SDK/MCP, diagnostic read and scoped Coach repair inspection — Typed diagnostics and scoped Coach repair should work");
+  "waits on a deterministic leased live-run attach fixture for self.report_blocked and a typed trigger or completion read for the Coach Issues repair job — Typed diagnostics and scoped Coach repair should work");
 
 /* OPERATIONS-02 — Custom versus publisher failure routing should work.
  * OF-401, OF-381, OF-299. Canon: ARCH-0053 #r4-lifecycle,
@@ -201,12 +206,11 @@ suite.todo(test, "OPERATIONS-02",
  * and verify consent/provenance receipts. An unrelated publisher or changed
  * text cannot spend this approval. Automatic telemetry remains text-free.
  *
- * report and lasting receipt reads exist. Owner /reports/{issue}/disclosure
- * accepts {choice:approve_once|stop_asking_for_publisher|deny}; its /outbound
- * read is a payload projection, not delivery. Neither has a generated SDK row.
- * feedback.send has no typed facade/SDK call. Owner feedback preview/send
- * accepts no subject_ref, refuses written notes pending in-vault redaction,
- * and is not the agent publisher-send flow. A proposal is no quoted-note bypass.
+ * Written by OPUS-E2E-2 on main e79eb76df3e through report, vault.reports.*,
+ * feedback.preview/.send and vault.receipts.get, against a loopback [feedback]
+ * collector. Not proved here: the tool-first MCP leg (the CLI is the second
+ * surface), consent/provenance receipt reads for the approval, and an
+ * unrelated publisher trying to spend it (a changed digest is tested).
  */
 /* Doors: report, vault.reports.route/.disclosure/.outbound, feedback.preview,
  * feedback.send, vault.receipts.get. The publisher sink is a loopback
@@ -340,10 +344,11 @@ suite.test(test, "OPERATIONS-03", "Feedback with and without vault text should w
  * checkpoint and memory, then restart this vault and read them again. No lost
  * message, repeated effect or replacement session is allowed.
  *
- * Main's health response has no public SLIM/lifecycle state. No typed idle
- * policy/read or resume-state inspection door supplies this hosted scenario.
- * Waiting for an arbitrary timer, sending a private control Shed frame or
- * calling a Rust slim helper cannot substitute for observing the transition.
+ * Written by OPUS-E2E-2 on main e79eb76df3e through vault.slim.* and
+ * ai.steps.submit/.receipt. The paused work is the owner's durable model
+ * step, the one outbound step SLIM keeps; no public door gives an agent task
+ * a deterministic SLIM-held step. Not proved here: an agent session and its
+ * call refs across SLIM. RETRIEVAL-08 holds the graph-parity side.
  */
 /* Doors: vault.slim.policy, .state, .drop_heavy, .resume_step, .resume, with
  * ai.steps.submit and ai.steps.receipt for the held durable model step.
@@ -548,11 +553,11 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
  * the original memory/effects rather than counting provider responses as
  * commits. No arbitrary sleeps, private drain or in-memory queue inspection.
  *
- * Main has [limits] queued permits, GET /v1/owner/wire-health and outcome
- * recording, plus typed decision-ask answers. These do not expose a typed
- * durable per-intent admission/status ledger. Call receipts arrive at wire
- * settlement; they cannot stand in for observing accepted held work. No
- * high-rate burst is used to reach production-scale default thresholds.
+ * Written by OPUS-E2E-2 on main e79eb76df3e: self.admission.status and
+ * self.admission.receipts are the durable per-intent ledger, keyed by the
+ * caller's own x-oneiron-invocation. Not proved here: the health question
+ * itself (bot|valid_burst, no typed read) and fair-queue ordering under
+ * contention (queued is timing-dependent). No high-rate burst is used.
  */
 /* Doors: vault.wire_health.thresholds.get/.set, self.admission.status and
  * self.admission.receipts. Each intent is a caller-owned x-oneiron-invocation;
