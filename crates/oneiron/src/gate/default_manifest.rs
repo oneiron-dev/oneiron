@@ -1055,9 +1055,12 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
     // The Coach is born with one scoped row: asking the vault owner about its
     // own training offers (see `coach_offer_reach`), revocable the same way.
-    super::coach_offer_reach::with_shipped_coach_offer_reach(
-        super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)?,
-    )
+    // The seeded house mind reads a person's unscoped MESSAGE for its project
+    // question (OF-501; see `house_grant`), revocable the same way.
+    let manifest =
+        super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)?;
+    let manifest = super::coach_offer_reach::with_shipped_coach_offer_reach(manifest)?;
+    super::house_grant::with_shipped_house_read(manifest)
 }
 
 /// The shipped manifest with `rows` joined to its one scoped-grant table,

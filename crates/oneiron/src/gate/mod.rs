@@ -70,6 +70,7 @@ pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
+mod house_grant;
 mod input;
 pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
