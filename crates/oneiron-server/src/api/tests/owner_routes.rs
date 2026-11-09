@@ -339,15 +339,15 @@ fn owner_host_server_with(
     let dir = oneiron::test_support::restore_tempdir();
     let backups = oneiron::test_support::restore_tempdir();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let host = OwnerHost {
-        vault_path: dir.path().to_path_buf(),
-        vault_config: oneiron::VaultConfig::device(),
-        backups: crate::owner::backup::BackupPlan::new(dir.path(), backups.path().to_path_buf(), 2),
-        every: None,
-        backup_lock: std::sync::Mutex::new(()),
+    // The owner host is built from its config since #3229 (fields private);
+    // `[backup]` off by default, as `every: None` was.
+    let mut config = crate::config::ServeConfig::default();
+    config.vault_path = dir.path().to_path_buf();
+    config.backup.dir = Some(backups.path().to_path_buf());
+    config.backup.keep = 2;
+    let host = OwnerHost::from_config(&config, oneiron::VaultConfig::device())
         // Rehearsals go under the temp directory `restore_tempdir` chose.
-        rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
-    };
+        .with_rehearsal_dir(dir.path().parent().expect("temp parent").to_path_buf());
     let config = SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -602,6 +602,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         stamp: card.stamp,
         strike: Vec::new(),
         unstrike: Vec::new(),
+        travel: None,
     };
     refused_owner(
         persona::export(

@@ -1211,6 +1211,7 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
         &feedback::FeedbackRequest {
             category,
             note: None,
+            proposal: None,
         },
     )
     .unwrap();

@@ -376,6 +376,9 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
                 text: vec![],
                 session: Some(session_id),
                 actor: writer,
+                quote: None,
+                containing_turn: None,
+                thread_audience: None,
             })
             .unwrap();
         parent = record.id;
