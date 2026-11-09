@@ -418,15 +418,24 @@ fn set_text_refuses_what_it_cannot_map() {
     let (unchanged, report) = apply(&text(SLIDE, 3, TEXT));
     assert!(report.changed_parts.is_empty() && report.fit.is_ok());
     assert_eq!(unchanged.export().unwrap(), deck().export().unwrap());
-    for value in [
-        "Revenue grew\nCosts fell\nSee report\u{b}Page 2",
+    // New text over a field's computed text refuses.
+    assert!(matches!(
+        refuse(&text(
+            SLIDE,
+            3,
+            "Revenue grew\nCosts fell\nSee report\u{b}Page 2"
+        )),
+        EditRefusal::TextMapping(_)
+    ));
+    // A line break in new text is written as an `a:br` (#3158, the lead's
+    // 10-19 ruling; Engine call T0H-STALE-RULED-REFUSALS): the edit lands.
+    let (broken, report) = apply(&text(
+        SLIDE,
+        3,
         "Revenue\u{b}grew\nCosts fell\nSee report\u{b}Page 1",
-    ] {
-        assert!(
-            matches!(refuse(&text(SLIDE, 3, value)), EditRefusal::TextMapping(_)),
-            "{value:?}"
-        );
-    }
+    ));
+    assert_eq!(changed(&report), [SLIDE]);
+    assert_eq!(shape_xml(&broken, SLIDE, 3).matches("<a:br").count(), 2);
     assert!(matches!(
         refuse(&text(SLIDE, 3, "bad \u{1} char")),
         EditRefusal::Invalid(_)
