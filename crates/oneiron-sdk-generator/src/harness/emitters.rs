@@ -208,6 +208,29 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         },
         files: |_| Vec::new(),
     },
+    // G3: generate.py:2902-2926. outputs()'s `facade_rows` (generate.py:2242) is FACADE_ROWS's expression
+    // (generate.py:339) over the same rows, so it is `Generator::facade_rows`.
+    Emitter {
+        name: "uniffi_facade",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            let (arms, types) = crate::generate::uniffi::uniffi_facade(generator, &facade_rows)?;
+            Ok(Value::List(vec![Value::Str(arms), Value::Str(types)]))
+        },
+        files: |value| match value.as_list() {
+            Some([Value::Str(arms), Value::Str(types)]) => vec![
+                (
+                    "crates/oneiron-uniffi/src/generated/facade_generated.rs",
+                    arms.clone(),
+                ),
+                (
+                    "crates/oneiron-uniffi/src/generated/facade_types_generated.rs",
+                    types.clone(),
+                ),
+            ],
+            _ => Vec::new(),
+        },
+    },
 ];
 
 /// The facade row at `at` (`facade_rows[at]` in outputs()), for a port called once per row.

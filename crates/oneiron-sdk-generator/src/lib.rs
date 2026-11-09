@@ -6,7 +6,7 @@
 //! `e79eb76df3e`.
 //!
 //! The public API (`outputs`, `write_out_dir`, `CRATES`, `INPUTS`, `Outputs`) arrives with the PRs that port it;
-//! G1a brings `GenerateError` and the temporary `port-harness` entry point.
+//! G1a brings `GenerateError` and the temporary `port-harness` entry point, G2 a partial `write_out_dir`.
 
 mod catalog_fragment;
 mod error;
@@ -25,8 +25,17 @@ mod py;
 mod uniffi_types;
 mod verb_table;
 
+use std::path::Path;
+
 pub use error::GenerateError;
 pub use facade_types::CRATES;
+
+/// The `--out-dir` mode (brief 2.1): writes the outputs under `<dir>/<repo path>`, as `generate.py --out-dir` does,
+/// reading the verb table and the Rust sources under `root` (the repository root). Until G4b it writes only the
+/// outputs the stack has ported so far (G2: the code-mode catalog fragment's three files).
+pub fn write_out_dir(root: &Path, dir: &Path) -> Result<(), GenerateError> {
+    generate::write_out_dir(root, dir)
+}
 
 /// The `port-harness` subcommand (DESIGN 6): dumps the port's state for comparison with
 /// `scripts/sdk/port_harness.py`. Temporary: G6 deletes it with the Python.
