@@ -78,7 +78,8 @@ fn reach_in(
 
 /// The rows a Dreamer write that takes back what it landed is judged by (X02): its Auto actor ceiling and its
 /// `Generated` permit. A receipt of such a write names them in its grant field.
-pub(crate) const DREAMER_LANDING_ROWS_REF: &str = "policy:dreamer:actor_ceiling_auto+generated_permit";
+pub(crate) const DREAMER_LANDING_ROWS_REF: &str =
+    "policy:dreamer:actor_ceiling_auto+generated_permit";
 
 /// The live policy's verdict, in the caller's transaction, on a Dreamer write that takes back what it landed (the
 /// strength archive, X02): the policy frontier hash it was judged under while `actor` still holds its Auto actor
