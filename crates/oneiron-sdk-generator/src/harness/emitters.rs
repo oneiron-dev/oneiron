@@ -99,6 +99,22 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         },
     },
     Emitter {
+        name: "mcp_dispatch",
+        run: |generator, _| crate::generate::emit_mcp::mcp_dispatch(generator).map(Value::Str),
+        // generate.py:2525: the file is HEADER, `use super::*;` and the dispatch.
+        files: |value| {
+            value
+                .as_str()
+                .map(|text| {
+                    vec![(
+                        "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
+                        format!("{}use super::*;\n{text}", crate::generate::HEADER),
+                    )]
+                })
+                .unwrap_or_default()
+        },
+    },
+    Emitter {
         name: "remote",
         run: |generator, _| {
             let facade_rows = generator.facade_rows.clone();
