@@ -4,13 +4,55 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use oneiron_seal::{
-    BackendSignature, FetchError, FetchRequest, FetchResponse, SealBackend, SealClock, SealFetcher,
-    SignDigestRequest, SignatureAlgorithm, SigningIdentity,
+    AdmittedBytes, AdmittedStr, BackendSignature, FetchError, FetchRequest, FetchResponse,
+    SealBackend, SealClock, SealFetcher, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+    SealResourceLimits, SharedBytes, SharedStr, SignDigestRequest, SignatureAlgorithm,
+    SigningIdentity,
 };
+
+// ---------------------------------------------------------------------------
+// Memory: a service that grants every reservation (FIX 7654, FIX 7655)
+// ---------------------------------------------------------------------------
+
+/// Grants every reservation and holds nothing: the service the engine, the
+/// guarded fetcher and the fixture fetchers reserve from.
+pub(crate) struct GrantAllMemory;
+
+impl SealMemory for GrantAllMemory {
+    fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+        Ok(Box::new(()))
+    }
+}
+
+/// The provider over [`GrantAllMemory`].
+pub(crate) fn grant_all_memory() -> SealMemoryProvider {
+    SealMemoryProvider::new(Arc::new(GrantAllMemory))
+}
+
+/// The default limits, their memory service [`GrantAllMemory`]: a native
+/// engine refuses to start without a service.
+pub(crate) fn grant_all_limits() -> SealResourceLimits {
+    SealResourceLimits {
+        memory: grant_all_memory(),
+        ..SealResourceLimits::default()
+    }
+}
+
+/// A copy of `bytes` admitted under [`GrantAllMemory`], shared as a fetch
+/// response holds its body.
+pub(crate) fn shared_bytes(bytes: &[u8]) -> SharedBytes {
+    Arc::new(AdmittedBytes::copy_from(&grant_all_memory(), bytes).expect("grant-all memory admits"))
+}
+
+/// A copy of `text` admitted under [`GrantAllMemory`], shared as a fetch
+/// response holds its content type.
+pub(crate) fn shared_str(text: &str) -> SharedStr {
+    Arc::new(AdmittedStr::copy_from(&grant_all_memory(), text).expect("grant-all memory admits"))
+}
 
 // ---------------------------------------------------------------------------
 // Minimal DER writer (mirrors the production encoding for fixture assembly)
@@ -307,8 +349,8 @@ impl SealFetcher for FixtureFetcher {
         {
             return tsa_response(tsa, &request.request_body)
                 .map(|body| FetchResponse {
-                    body,
-                    content_type: Some("application/timestamp-reply".to_string()),
+                    body: shared_bytes(&body),
+                    content_type: Some(shared_str("application/timestamp-reply")),
                 })
                 .ok_or(FetchError::InvalidResponse);
         }
