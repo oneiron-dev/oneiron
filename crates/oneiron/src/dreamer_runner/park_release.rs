@@ -9,11 +9,21 @@
 //! moves. A try parks only under a lease, so a later park of the same try is a later generation, even within the same
 //! second (review 6910 P1). The release resumes the park as the same try and resolves its notices. In slice 6.5 typed waits replace this door for budget, consent, seat and peer:
 //! the matching signal resumes the park.
+//!
+//! The same door stops a parked try (Engine 08:3x, 10 Nov). A parked try keeps its lease, and the run tree's cancel
+//! refuses a leased row, so before this the owner had no stop for it: a pass the host's drain cancelled parks
+//! Cancelled, and the next pass resumes it. Stop ends the try on the owner's grounds through the queue's owner
+//! force-cancel, clears its park and resolves its notices, in one write, for any park of the Dreamer server's own
+//! pass. A program hold has its own Stop (`vault.runs.program_hold.release`), and the other owners' parks keep their
+//! own doors.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptInterventionKind, AttemptQueue, InterveneAttempt};
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionKind, AttemptQueue, ForceAttemptCancel, ForceCancelAuthority,
+    ForceCancelOutcome, InterveneAttempt,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -24,7 +34,8 @@ use crate::memory::DreamerParkCauseView;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-use super::{DreamerParkedAttemptRecord, DreamerRunnerStore, ParkResumer};
+use super::store::PARKED;
+use super::{DreamerParkedAttemptRecord, DreamerRunnerStore, ParkOwnerClass, ParkResumer};
 
 /// The producer of the owner notice a park waiting on the owner's release raises.
 pub const PARK_RELEASE_OWED_PRODUCER: &str = "dreamer.park.release_owed";
@@ -33,12 +44,13 @@ const PARK_RELEASE_OWED_DETAIL: &str = "dreamer.park.owner_release";
 /// The note the release's intervention carries when the owner gave none.
 const RELEASE_NOTE: &str = "the owner released the parked try";
 
-/// The owner's release of one parked Dreamer try.
+/// The owner's release of one parked Dreamer try: a resume or a stop.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseParkedAttemptRequest {
     /// 32-hex id of the parked try (`job:` prefix allowed).
     pub attempt: String,
+    pub action: ParkReleaseAction,
     /// The park's cause and the time it was parked, as a read showed them (`vault.consolidation.status`, the
     /// owner's lineage): a park that changed since refuses.
     pub cause: DreamerParkCauseView,
@@ -46,9 +58,31 @@ pub struct ReleaseParkedAttemptRequest {
     /// The try's lease generation (`attempt_count`) as the same read showed it: a release of an earlier park of
     /// the same try refuses, even when both parks fall in the same second.
     pub attempt_count: u32,
-    /// The owner's note on the try's queue row.
+    /// The owner's note: a resume's intervention note on the try's queue row, or a stop's cancellation reason.
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// What the owner does with a parked try.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ParkReleaseAction {
+    /// Queue the same try again: only a park that waits on an owner act and that no other resumer frees (an
+    /// ExecutorError or a private Other park).
+    Resume,
+    /// End the try on the owner's grounds and clear its park: any park of the Dreamer server's own pass, whatever
+    /// its cause.
+    Stop,
+}
+
+impl ParkReleaseAction {
+    /// Whether this action serves `park`.
+    fn serves(self, park: &DreamerParkedAttemptRecord) -> bool {
+        match self {
+            Self::Resume => park.resumable_by(ParkResumer::OwnerRelease),
+            Self::Stop => ParkOwnerClass::of(&park.park_owner) == ParkOwnerClass::DreamerServer,
+        }
+    }
 }
 
 /// What releasing one park did.
@@ -56,12 +90,22 @@ pub struct ReleaseParkedAttemptRequest {
 pub struct ParkReleaseView {
     /// 32-hex try.
     pub attempt: String,
+    pub action: ParkReleaseAction,
     /// The released park's exact reason.
     pub released: String,
     /// The released park's cause.
     pub cause: String,
     /// The try's queue state after the release.
     pub state: String,
+    /// Whether this release queued or ended the try: a stop of a try already settled only clears its park.
+    pub effected: bool,
+}
+
+/// What one release committed, and what its commit signals after.
+struct Released {
+    view: ParkReleaseView,
+    /// The try a stop ended, at its lease generation: its running step stops.
+    stopped: Option<(AttemptId, u32)>,
 }
 
 /// The source of `owner`'s notice for `record`, parked under lease generation `attempt_count`: one per park and
@@ -131,16 +175,24 @@ pub(crate) fn raise_park_release_notice_in_txn(
     }
 }
 
-/// Releases one parked try as the vault's authenticated owner: the owner is revalidated in the writer; the park
-/// must be one only the owner's release resumes (the park resume table's OwnerRelease row), with exactly the cause
-/// and park time the request names, as the owner's reads show them; a settled try is never reopened. The owner's intervention is recorded on the
-/// queue row, the park resumes as the same try under its own owner token, and its notice is resolved for the owner.
+/// Releases one parked try as the vault's authenticated owner, against the exact park the owner's reads show (its
+/// cause, park time and the try's lease generation); the owner is revalidated in the writer.
+///
+/// - Resume: the park must be one only the owner's release resumes (the park resume table's OwnerRelease row), and
+///   a settled try is never reopened. The owner's intervention is recorded on the queue row, and the park resumes
+///   as the same try under its own owner token.
+/// - Stop: the park must be one of the Dreamer server's own pass, of any cause. The queue's owner force-cancel ends
+///   the try, its receipt naming the owner, and the park is cleared; a try already settled only loses its park.
+///
+/// Either way the park's notices are resolved for every owner, in the same write. After the commit a stopped try's
+/// running step stops, and admission is woken.
 ///
 /// # Errors
 ///
 /// A malformed attempt id ([`Error::InvalidConfig`]); a proof that no longer holds; a try with no park, or a park
-/// some other resumer frees ([`Error::EntityNotFound`]); a park that changed since it was read
-/// ([`Error::ConcurrentWrite`]); a settled try ([`Error::InvalidConfig`]); a note the queue refuses; storage errors.
+/// the action does not serve ([`Error::EntityNotFound`]); a park that changed since it was read
+/// ([`Error::ConcurrentWrite`]); a resume of a settled try ([`Error::InvalidConfig`]); a note the queue refuses;
+/// storage errors.
 pub fn release_parked_attempt_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -148,11 +200,14 @@ pub fn release_parked_attempt_as_owner(
 ) -> Result<ParkReleaseView> {
     let attempt = attempt_id(&input.attempt)?;
     let now = vault.now_recorded_at();
-    let view = vault
+    let released = vault
         .with_write_txn_grouped(|wtxn| release_in_txn(vault, wtxn, owner, attempt, input, now))?;
-    // Committed: the resumed try is visible to admission.
+    // Committed: a stopped try's running step stops (FIX 600), and admission sees the queue as it now stands.
+    if let Some((id, generation)) = released.stopped {
+        crate::engine_executor::stop_attempt_step(Some(vault), id, generation);
+    }
     vault.store.notify_proactivity_changes();
-    Ok(view)
+    Ok(released.view)
 }
 
 fn release_in_txn(
@@ -162,13 +217,13 @@ fn release_in_txn(
     attempt: AttemptId,
     input: &ReleaseParkedAttemptRequest,
     now: u64,
-) -> Result<ParkReleaseView> {
+) -> Result<Released> {
     let actor = owner.revalidate_in_txn(vault, &*wtxn)?;
     let store = DreamerRunnerStore::new(vault);
     let Some((status, Some(park))) = store.status_with_park_in_txn(&*wtxn, attempt)? else {
         return Err(Error::EntityNotFound);
     };
-    if !park.resumable_by(ParkResumer::OwnerRelease) {
+    if !input.action.serves(&park) {
         return Err(Error::EntityNotFound);
     }
     if DreamerParkCauseView::from(park.cause) != input.cause
@@ -179,11 +234,49 @@ fn release_in_txn(
             "the parked try changed since it was read",
         ));
     }
-    if status.attempt.state.is_terminal() {
-        return Err(Error::InvalidConfig(
-            "a settled try is never reopened".to_owned(),
-        ));
-    }
+    let (effected, stopped) = match input.action {
+        ParkReleaseAction::Resume => {
+            if status.attempt.state.is_terminal() {
+                return Err(Error::InvalidConfig(
+                    "a settled try is never reopened".to_owned(),
+                ));
+            }
+            resume_in_txn(vault, wtxn, actor, attempt, &park, input, now)?;
+            (true, None)
+        }
+        ParkReleaseAction::Stop => {
+            let (count, stopped) = stop_in_txn(vault, wtxn, actor, attempt, input, now)?;
+            (stopped, stopped.then_some((attempt, count)))
+        }
+    };
+    resolve_notices_in_txn(vault, wtxn, &park, input.attempt_count)?;
+    let state = store
+        .status_with_park_in_txn(&*wtxn, attempt)?
+        .map(|(status, _)| status.attempt.state.as_str().to_owned())
+        .ok_or(Error::EntityNotFound)?;
+    Ok(Released {
+        view: ParkReleaseView {
+            attempt: bytes_to_hex_lower(attempt.as_bytes()),
+            action: input.action,
+            released: park.reason,
+            cause: park.cause.as_str().to_owned(),
+            state,
+            effected,
+        },
+        stopped,
+    })
+}
+
+/// Records the owner's intervention on the queue row and resumes `park` as the same try under its own owner token.
+fn resume_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    attempt: AttemptId,
+    park: &DreamerParkedAttemptRecord,
+    input: &ReleaseParkedAttemptRequest,
+    now: u64,
+) -> Result<()> {
     AttemptQueue::new(vault).intervene_in_txn(
         wtxn,
         InterveneAttempt {
@@ -199,20 +292,43 @@ fn release_in_txn(
             now,
         },
     )?;
-    store
+    DreamerRunnerStore::new(vault)
         .resume_parked_in_txn(wtxn, attempt, &park.park_owner, now)?
         .ok_or(Error::EntityNotFound)?;
-    resolve_notices_in_txn(vault, wtxn, &park, input.attempt_count)?;
-    let state = store
-        .status_with_park_in_txn(&*wtxn, attempt)?
-        .map(|(status, _)| status.attempt.state.as_str().to_owned())
-        .ok_or(Error::EntityNotFound)?;
-    Ok(ParkReleaseView {
-        attempt: bytes_to_hex_lower(attempt.as_bytes()),
-        released: park.reason,
-        cause: park.cause.as_str().to_owned(),
-        state,
-    })
+    Ok(())
+}
+
+/// Ends `attempt` on the owner's grounds through the queue's owner force-cancel, unless it already settled, and
+/// clears its park and the park's indexes. Returns the try's lease generation and whether this stop ended it.
+fn stop_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    attempt: AttemptId,
+    input: &ReleaseParkedAttemptRequest,
+    now: u64,
+) -> Result<(u32, bool)> {
+    let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
+    let outcome = AttemptQueue::new(vault).force_cancel_in_txn(
+        wtxn,
+        ForceAttemptCancel {
+            id: attempt,
+            authority,
+            reason: input.note.clone(),
+            now,
+        },
+    )?;
+    let (record, stopped) = match outcome {
+        ForceCancelOutcome::Cancelled(record) => (record, true),
+        ForceCancelOutcome::AlreadyCancelled(record)
+        | ForceCancelOutcome::AlreadySettled(record) => (record, false),
+    };
+    if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
+        super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
+        super::program::unindex_program_hold_in_txn(vault, wtxn, &park)?;
+    }
+    PARKED.delete(&vault.store, wtxn, &attempt)?;
+    Ok((record.attempt_count, stopped))
 }
 
 /// Marks each live owner's notice of `park` (lease generation `attempt_count`) seen and acknowledged for that
