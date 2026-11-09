@@ -47887,7 +47887,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 208,
+      "mod": 210,
       "re-export": 105
      }
     },
@@ -55060,7 +55060,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomTurnHandle"
@@ -89310,7 +89310,7 @@
      "path": "src/task_verb/rate_limit.rs",
      "purpose": "TASK creation rate limits against the actor's policy ceiling",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -92373,6 +92373,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/verb_names.rs",
+     "purpose": "The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbTable"
+     ],
+     "path": "src/verb_table.rs",
+     "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ActAnswer",
       "DetailsOnDevice",
@@ -93573,7 +93593,7 @@
       "crate-vis": 1,
       "fn": 8,
       "mod": 1,
-      "re-export": 114,
+      "re-export": 115,
       "struct": 33
      }
     },
@@ -94604,6 +94624,19 @@
      "surface": {
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedVerbTable"
+     ],
+     "path": "src/verbs/verb_table.rs",
+     "purpose": "The runtime's one [`VerbTable`] (untangle slice 5.0a): core's hook boundary and room turns reach the…",
+     "surface": {
+      "static": 1,
+      "struct": 1
      }
     },
     {
@@ -100615,8 +100648,22 @@
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
+    "verb_names": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core…"
+    },
+    "verb_table": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
+    },
     "verbs": {
-     "files": 126,
+     "files": 127,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100681,7 +100728,7 @@
    },
    "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7241,
+   "source_files": 7244,
    "test_files": 898
   },
   "oneiron-android": {
