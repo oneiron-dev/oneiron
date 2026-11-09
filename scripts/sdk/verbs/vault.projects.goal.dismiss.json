@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.goal.dismiss",
+  "description": "The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry.",
+  "input": "ProjectGoalDismissRequest",
+  "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
+  "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.runs.program",
+  "description": "Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it.",
+  "input": "crate::dreamer_runner::ProgramRunRequest",
+  "output": "Option<crate::dreamer_runner::ProgramRunView>",
+  "call": "crate::dreamer_runner::program_run(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

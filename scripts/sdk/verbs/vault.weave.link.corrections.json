@@ -1,0 +1,13 @@
+{
+  "name": "vault.weave.link.corrections",
+  "description": "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.",
+  "input": "crate::claim::WeaveWrongLinkRequest",
+  "output": "Vec<crate::claim::WeaveLinkCorrectionView>",
+  "call": "memory.weave_link_corrections(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

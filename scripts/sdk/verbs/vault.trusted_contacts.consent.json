@@ -1,0 +1,16 @@
+{
+  "name": "vault.trusted_contacts.consent",
+  "description": "The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this.",
+  "input": "crate::task_verb::sdk::TrustedContactConsentRequest",
+  "output": "crate::counterparty_contact::TrustedContact",
+  "call": "crate::task_verb::sdk::consent_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.consent\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

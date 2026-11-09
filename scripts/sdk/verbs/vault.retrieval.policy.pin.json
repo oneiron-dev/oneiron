@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.policy.pin",
+  "description": "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder.",
+  "input": "crate::task_verb::sdk::RetrievalPolicyPinRequest",
+  "output": "crate::task_verb::sdk::RetrievalPolicyView",
+  "call": "crate::task_verb::sdk::retrieval_policy_pin_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.pin\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.personas.export",
+  "description": "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent.",
+  "input": "crate::persona_snapshot::PersonaSnapshotCopyRequest",
+  "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.export\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.merge_queue.settle_slow",
+  "description": "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result.",
+  "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+  "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+  "call": "memory.merge_queue_settle_slow_as(&memory.embedded_owner(\"vault.code.merge_queue.settle_slow\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

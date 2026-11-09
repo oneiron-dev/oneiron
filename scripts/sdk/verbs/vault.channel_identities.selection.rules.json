@@ -1,0 +1,13 @@
+{
+  "name": "vault.channel_identities.selection.rules",
+  "description": "Read the compiled relationship selection law and authenticated writer provenance.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+  "call": "memory.channel_selection_rules()?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.members.delegate",
+  "description": "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward.",
+  "input": "crate::task_verb::sdk::FederationDelegateRequest",
+  "output": "crate::task_verb::sdk::FederationMemberGrant",
+  "call": "crate::task_verb::sdk::create_federation_delegate_as(memory.vault(), &memory.embedded_owner(\"vault.members.delegate\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

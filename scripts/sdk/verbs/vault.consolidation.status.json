@@ -1,0 +1,23 @@
+{
+  "name": "vault.consolidation.status",
+  "description": "Reads the status of one consolidation attempt by its durable job reference.",
+  "uniffi": {
+    "args": {
+      "job_ref": "String"
+    },
+    "output": "Option<DreamerJobView>"
+  },
+  "input": "ConsolidationStatusRequest",
+  "output": "Option<crate::memory::DreamerAttemptView>",
+  "call": "memory_requests::dreamer_attempt_status(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "openapi": true
+}

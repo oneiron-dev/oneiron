@@ -1,0 +1,13 @@
+{
+  "name": "vault.refs.links",
+  "description": "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read.",
+  "input": "crate::lens::RecordLinksRequest",
+  "output": "crate::lens::RecordLinks",
+  "call": "memory.record_links(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

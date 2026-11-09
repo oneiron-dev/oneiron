@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.usage",
+  "description": "Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment.",
+  "input": "crate::task_verb::sdk::LiveVoiceUsageRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceUsage",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.usage\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

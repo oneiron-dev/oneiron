@@ -17,7 +17,7 @@
 //! Its `request` reaches the server's HTTP surface, and its
 //! `open_connection` holds a connection of the app's own (`/ws`).
 //!
-//! The verb methods are generated from `scripts/sdk/agent-verbs.json` into
+//! The verb methods are generated from `scripts/sdk/verbs/` into
 //! `generated/facade_generated.rs`: one exported method per facade row, which calls that
 //! row's typed client method through the lift/lower codecs in `codec`. A row
 //! with hand-written records (`dto`) crosses through them. Every other row

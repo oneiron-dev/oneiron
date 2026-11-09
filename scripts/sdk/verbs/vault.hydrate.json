@@ -1,0 +1,24 @@
+{
+  "name": "vault.hydrate",
+  "description": "Hydrates short refs or hex ids to full entity views, with the read's receipt.",
+  "uniffi": {
+    "args": {
+      "refs": "Vec<String>"
+    },
+    "output": "EntityViews"
+  },
+  "input": "HydrateRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
+  "call": "memory.with_read_filter(input.filter.as_ref()).hydrate(&input.refs)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "session_read": "Hydrate"
+}

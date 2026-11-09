@@ -1,0 +1,20 @@
+{
+  "name": "vault.rooms.reply_strips",
+  "description": "One page of a thread's quote replies, grouped by the message they quote, in reply order.",
+  "input": "crate::conversation_dag::ReplyStripsRequest",
+  "output": "crate::conversation_dag::ReplyStripsPage",
+  "call": "memory.rooms_reply_strips(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "page": {
+    "rows": "groups",
+    "cursor": "next_after"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,15 @@
+{
+  "name": "vault.diagnostics.list",
+  "description": "Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt.",
+  "input": "crate::memory::DiagnosticsListRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>",
+  "call": "memory.diagnostics_list(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

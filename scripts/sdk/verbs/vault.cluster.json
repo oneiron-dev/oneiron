@@ -1,0 +1,14 @@
+{
+  "name": "vault.cluster",
+  "description": "Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth.",
+  "input": "crate::memory::clustering::ClusterRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>",
+  "call": "memory.cluster(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

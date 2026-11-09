@@ -1,0 +1,36 @@
+{
+  "name": "vault.artifacts.body.proposal.settle",
+  "description": "Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits.",
+  "refs": [
+    "/artifact_ref",
+    "/proposal_ref",
+    "/reviewed/*/artifact_ref",
+    "/reviewed/*/fork_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyProposalSettleRequest",
+  "output": "crate::office_body::OfficeBodyProposal",
+  "call": "memory.artifacts_body_proposal_settle(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref",
+      "reviewed[*].artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Accepts or rejects an office proposal's reviewed forks.\n",
+      "ts": "/** Accepts or rejects an office proposal's reviewed forks. */",
+      "py": "Accepts or rejects an office proposal's reviewed forks."
+    }
+  }
+}

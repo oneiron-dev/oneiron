@@ -1,0 +1,8 @@
+{
+  "name": "self.code.symbols.definitions",
+  "input": "crate::memory::repo_doors::RepoSymbolsDefinitionsInput",
+  "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "RepoSymbolsDefinitions"
+}

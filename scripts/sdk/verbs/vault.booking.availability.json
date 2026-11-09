@@ -1,0 +1,16 @@
+{
+  "name": "vault.booking.availability",
+  "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources.",
+  "input": "crate::task_verb::sdk::BookingAvailabilityRequest",
+  "output": "crate::booking::agent_api::BookingOperationResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "booking_owner_act"
+}

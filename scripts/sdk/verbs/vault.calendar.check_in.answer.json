@@ -1,0 +1,16 @@
+{
+  "name": "vault.calendar.check_in.answer",
+  "description": "The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it.",
+  "input": "crate::calendar::meeting::CalendarCheckInRequest",
+  "output": "crate::calendar::meeting::CalendarCheckInReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.check_in.answer\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

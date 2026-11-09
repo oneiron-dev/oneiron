@@ -1,0 +1,14 @@
+{
+  "name": "vault.rooms.offer",
+  "description": "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.",
+  "input": "crate::workspace_roster::OfferDraft",
+  "output": "crate::workspace_roster::OfferCard",
+  "call": "memory.rooms_offer(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$",
+    "room_ref": "=room"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

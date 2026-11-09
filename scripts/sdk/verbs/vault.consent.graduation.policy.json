@@ -1,0 +1,16 @@
+{
+  "name": "vault.consent.graduation.policy",
+  "description": "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope.",
+  "input": "crate::consent_graduation::api::GraduationPolicyRequest",
+  "output": "crate::consent_graduation::api::GraduationPolicies",
+  "call": "crate::consent_graduation::api::policies(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.off_record.rooms.export",
+  "description": "A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+  "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
+  "output": "crate::task_verb::sdk::OffRecordRoomExport",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "attachment": "off-record-talk.json",
+  "host_door_proof": "off_record_room"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.sync.documents.copy_edit.settle",
+  "description": "The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery.",
+  "input": "crate::task_verb::sdk::RepoCopyEditSettleRequest",
+  "output": "crate::task_verb::sdk::RepoCopyEditSettleView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.settle\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_precheck": false,
+  "rust_feature": "sync",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}
