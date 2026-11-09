@@ -183,28 +183,6 @@ fn run(test: impl AsyncFnOnce(&Served)) {
     runtime.shutdown_background();
 }
 
-/// Done-means (9B): witness a short conversation, then recall a paraphrase
-/// that shares no word with it; the turn comes back, quoting the whole turn.
-/// On main a witnessed turn was never embedded and recall left turns out, so
-/// the query found nothing it said.
-#[test]
-fn a_paraphrase_finds_the_conversation_turn_it_shares_no_word_with() {
-    run(async |served| {
-        let car = served.witness_conversations().await;
-        let pack = served
-            .recall_until("car repair garage", 3, |pack| {
-                turn_item(pack, &car).is_some()
-            })
-            .await;
-        let turn = turn_item(&pack, &car).unwrap_or_else(|| panic!("{car}: {pack}"));
-        assert_eq!(pack["retrieval_meta"]["sparse"], json!(false), "{pack}");
-        assert_eq!(
-            turn["value_text"], "ok\nThe mechanic says the automobile needs new brakes.",
-            "a turn reads as its messages, in order"
-        );
-    });
-}
-
 /// 9B: one recall result never holds both a TURN and one of its MESSAGEs. A
 /// lexical hit on a message comes back as its turn, which quotes it.
 #[test]

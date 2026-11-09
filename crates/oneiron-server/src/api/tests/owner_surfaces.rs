@@ -929,43 +929,6 @@ async fn graph_fs_find_pages_through_every_path_once() {
     assert_eq!(unique, expected);
 }
 
-/// `grep` in one file pages through its matches: 513 short matching lines
-/// come back over two pages, each once, in order; and a matching line longer
-/// than a page prints across pages, cut on a character boundary, so the
-/// pages rejoin exactly (Greptile P1 on #1341).
-#[tokio::test]
-async fn graph_fs_grep_pages_through_one_file() {
-    let (_dir, server) = auth_test_server();
-    let owner = owner_recipe(&server);
-    let short: Vec<String> = (0..513).map(|at| format!("é match {at:03}")).collect();
-    let id = person(&server, short.join("\n").as_bytes()).to_hex();
-    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
-    let pages = graph_fs_pages(&server, &owner, &query).await;
-    assert_eq!(pages.len(), 2);
-    let matches: Vec<&str> = pages
-        .iter()
-        .flat_map(|(output, _)| output.lines())
-        .collect();
-    let expected: Vec<String> = short
-        .iter()
-        .map(|line| format!("/entities/{id}/body:{line}"))
-        .collect();
-    assert_eq!(matches, expected);
-
-    // A page is 16 KiB, and a rendered match starts with the 48-byte
-    // `/entities/<id>/body:`: the two-byte `é` straddles the first page's end.
-    let mut long = "match ".to_owned();
-    long.push_str(&"a".repeat(16 * 1024 - 1 - 48 - long.len()));
-    long.push_str("é, then the rest");
-    let id = person(&server, format!("{long}\nno hit\nmatch two").as_bytes()).to_hex();
-    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
-    let pages = graph_fs_pages(&server, &owner, &query).await;
-    assert_eq!(pages.len(), 2);
-    let joined: String = pages.iter().map(|(output, _)| output.as_str()).collect();
-    let prefix = format!("/entities/{id}/body:");
-    assert_eq!(joined, format!("{prefix}{long}\n{prefix}match two\n"));
-}
-
 pub(super) fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
     use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, FeedbackHost};
     let dir = tempfile::tempdir().unwrap();

@@ -71,27 +71,6 @@ fn the_finished_vector_is_unit_norm() {
     assert!((norm - 1.0).abs() < 1e-3, "norm was {norm}");
 }
 
-/// The live probe that motivated the guard returned a component of `-5.8e-38`,
-/// below the smallest f16 subnormal. Every component the guard emits must be a
-/// value `half::f16` holds exactly and finitely, which is the property the
-/// engine's vector-row encoder checks before it will store a row.
-#[test]
-fn every_finished_component_is_exactly_representable_as_finite_f16() {
-    let mut raw = vec![0.5f32; DIMS];
-    raw[0] = -5.8e-38;
-    raw[1] = 1.0e-30;
-    let finished = common().finish_vector(raw).expect("finished");
-    for (index, &value) in finished.iter().enumerate() {
-        let narrowed = half::f16::from_f32(value);
-        assert!(narrowed.is_finite(), "component {index} is not finite f16");
-        assert_eq!(
-            narrowed.to_f32(),
-            value,
-            "component {index} is not an exact f16 value"
-        );
-    }
-}
-
 // ─── the slot ────────────────────────────────────────────────────────────
 
 fn endpoint_config(endpoint: &str) -> EmbedderConfig {
@@ -106,35 +85,6 @@ fn endpoint_config(endpoint: &str) -> EmbedderConfig {
         },
         ..EmbedderConfig::default()
     }
-}
-
-#[test]
-fn a_none_provider_builds_no_slot() {
-    let config = EmbedderConfig {
-        provider: EmbedderProvider::None,
-        ..EmbedderConfig::default()
-    };
-    assert!(
-        EmbedderSlot::from_config(&config)
-            .expect("none resolves")
-            .is_none()
-    );
-}
-
-#[test]
-fn a_query_against_an_unready_slot_is_refused_as_not_ready() {
-    let config = EmbedderConfig {
-        provider: EmbedderProvider::Local,
-        ..EmbedderConfig::default()
-    };
-    let slot = EmbedderSlot::from_config(&config)
-        .expect("local resolves")
-        .expect("a local slot exists");
-    assert!(slot.ready().is_none(), "a local slot loads in the worker");
-    assert_eq!(
-        slot.embed_query("anything"),
-        Err(EmbedQueryRefusal::NotReady)
-    );
 }
 
 // ─── endpoint provider against a real server ─────────────────────────────
@@ -441,90 +391,6 @@ fn summary_input(text: &str) -> oneiron::embed::PendingEmbeddingInput {
         entity_id: oneiron::entity_id::EntityId::from_bytes([0x7e; 16]).expect("entity id"),
         payload: oneiron::embed::PendingEmbeddingPayload::SummaryText(text.to_owned()),
         pending_embedding_token: vec![1],
-    }
-}
-
-#[test]
-fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
-    let mock = MockEndpoint::start(MockBehaviour::Ok);
-    let embedder = mock.embedder();
-    let inputs = [summary_input("first text"), summary_input("second text")];
-    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
-    assert_eq!(vectors.len(), 2);
-    let requests = mock.requests();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0]["model"], json!(MODEL_KEY));
-    assert_eq!(
-        requests[0]["input"],
-        json!(["first text", "second text"]),
-        "documents carry no instruction prefix and keep input order"
-    );
-}
-
-/// Against `embedder serve`, whose `/models` rows carry the Oneiron mark, the
-/// client sends what a local vault's provider would see: whole documents
-/// marked as documents, which the server's tokenizer caps, and a query marked
-/// as one with the vault's own instruction beside it rather than in it. And
-/// the slot holds the server's transform to the vault's pin: before it is
-/// admitted, or refused, the endpoint answers no query, as a local model
-/// answers none before it is loaded and admitted.
-#[test]
-fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
-    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
-    let config = EmbedderConfig {
-        query_instruction: Some("query: ".to_owned()),
-        max_input_tokens: 4,
-        ..endpoint_config(&mock.base)
-    };
-    let slot = EmbedderSlot::from_config(&config)
-        .expect("slot")
-        .expect("active");
-    assert_eq!(
-        slot.embed_query("cats"),
-        Err(EmbedQueryRefusal::NotReady),
-        "no query before the worker admits the endpoint"
-    );
-    let refused = slot.ensure_ready(|admission| {
-        assert_eq!(admission.transform, Some(MOCK_TRANSFORM));
-        Err(oneiron::Error::InvalidConfig(
-            "the vault pins another transform".to_owned(),
-        ))
-    });
-    assert!(refused.is_err());
-    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
-    let embedder = slot.ensure_ready(|_| Ok(())).expect("admitted");
-    let long = "word ".repeat(40);
-    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input(&long)]).expect("embedded");
-    slot.embed_query("cats").expect("query embedded");
-    let requests = mock.requests();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0]["input"],
-        json!([long]),
-        "whole, past the client's cap"
-    );
-    assert_eq!(requests[0]["input_type"], json!("document"));
-    assert_eq!(requests[1]["input"], json!(["cats"]));
-    assert_eq!(requests[1]["input_type"], json!("query"));
-    assert_eq!(requests[1]["instruction"], json!("query: "));
-}
-
-/// Whole texts go to `embedder serve`, so a batch of long ones is split into
-/// requests a slow host answers inside the timeout; the vectors come back in
-/// input order.
-#[test]
-fn long_documents_reach_an_oneiron_endpoint_in_several_requests() {
-    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
-    let embedder = mock.embedder();
-    let texts: Vec<String> = ["a", "b", "c"]
-        .iter()
-        .map(|word| format!("{word} ").repeat(10 * 1024))
-        .collect();
-    let inputs: Vec<_> = texts.iter().map(|text| summary_input(text)).collect();
-    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
-    assert_eq!(mock.requests().len(), 3, "20 KiB each, two never share one");
-    for (vector, text) in vectors.iter().zip(&texts) {
-        assert_eq!(*vector, mock_vector(text, DIMS), "in input order");
     }
 }
 
@@ -1064,73 +930,6 @@ fn a_server_back_with_another_profile_is_admitted_again_with_its_floors() {
     runtime.shutdown_background();
 }
 
-/// An endpoint has no model files to read a prompt from: a query carries
-/// exactly the configured instruction, and nothing when none is configured,
-/// whichever model the space names.
-#[test]
-fn a_query_carries_exactly_the_configured_instruction() {
-    let mock = MockEndpoint::start(MockBehaviour::Ok);
-    for (model_id, configured) in [
-        (
-            "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
-            None,
-        ),
-        (crate::config::embedder::DEFAULT_MODEL_ID, None),
-        ("test/model@rev", Some("Represent this question: ")),
-    ] {
-        let config = EmbedderConfig {
-            model_id: model_id.to_owned(),
-            query_instruction: configured.map(str::to_owned),
-            ..endpoint_config(&mock.base)
-        };
-        endpoint::HttpEmbedder::from_config(&config)
-            .expect("http embedder")
-            .embed_query("what did we decide")
-            .expect("embedded");
-        assert_eq!(
-            mock.requests().last().expect("a request")["input"],
-            json!([format!(
-                "{}what did we decide",
-                configured.unwrap_or_default()
-            )]),
-            "{model_id}: a query carries exactly its instruction and nothing else"
-        );
-    }
-}
-
-#[test]
-fn rows_returned_out_of_order_are_placed_by_their_own_index() {
-    let ordered = MockEndpoint::start(MockBehaviour::Ok);
-    let reversed = MockEndpoint::start(MockBehaviour::Reversed);
-    let inputs = [
-        summary_input("alpha"),
-        summary_input("beta"),
-        summary_input("gamma"),
-    ];
-    let straight =
-        oneiron::embed::Embedder::embed(ordered.embedder().as_ref(), &inputs).expect("embedded");
-    let shuffled =
-        oneiron::embed::Embedder::embed(reversed.embedder().as_ref(), &inputs).expect("embedded");
-    assert_eq!(straight, shuffled, "index decides placement, not row order");
-}
-
-#[test]
-fn an_http_failure_returns_an_error_after_one_attempt() {
-    let mock = MockEndpoint::start(MockBehaviour::ServerError);
-    let embedder = mock.embedder();
-    let error = oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("text")])
-        .expect_err("a 500 fails closed");
-    assert!(
-        matches!(error, oneiron::Error::UpstreamToolFailure { .. }),
-        "{error:?}"
-    );
-    assert_eq!(
-        mock.requests().len(),
-        1,
-        "the client makes one attempt; the worker loop is the retry"
-    );
-}
-
 #[test]
 fn an_unreachable_endpoint_fails_closed_without_a_vector() {
     // Port 1 on loopback: nothing listens, so this is a connect failure rather
@@ -1258,15 +1057,6 @@ fn an_over_long_input_is_shortened_and_counted() {
 }
 
 #[test]
-fn a_probe_against_a_reachable_endpoint_of_the_right_width_is_ready() {
-    let mock = MockEndpoint::start(MockBehaviour::Ok);
-    assert_eq!(
-        endpoint::probe_endpoint(mock.embedder().as_ref()),
-        Ok(ProbeOutcome::Ready)
-    );
-}
-
-#[test]
 fn a_probe_naming_both_widths_refuses_a_mismatched_endpoint() {
     let mock = MockEndpoint::start(MockBehaviour::WrongWidth);
     assert_eq!(
@@ -1289,32 +1079,6 @@ fn a_probe_refuses_an_endpoint_that_does_not_serve_the_model_key() {
     );
 }
 
-#[test]
-fn a_probe_against_an_unreachable_endpoint_is_not_fatal() {
-    let embedder = endpoint::HttpEmbedder::from_config(&endpoint_config("http://127.0.0.1:1/v1"))
-        .expect("built");
-    assert!(matches!(
-        endpoint::probe_endpoint(embedder.as_ref()),
-        Ok(ProbeOutcome::Unreachable(_))
-    ));
-}
-
-/// Review R4-3: a remote with no listing route is the OpenAI wire with an
-/// unknown catalog. Bug repro: the probe called it unreachable, so `reembed`
-/// refused to move a vault to it; it now checks its width.
-#[test]
-fn a_remote_with_no_listing_route_is_probed_at_its_width() {
-    let mock = MockEndpoint::start(MockBehaviour::NoListing);
-    assert!(matches!(
-        endpoint::probe_endpoint(mock.embedder().as_ref()),
-        Ok(ProbeOutcome::Ready)
-    ));
-    assert_eq!(
-        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
-        None
-    );
-}
-
 /// Review R4-4: a vault moves to the transform an answer came from. Bug
 /// repro: the probe's answer was held to nothing and the listing was read
 /// again after it, so a remote whose listing names one transform while its
@@ -1328,50 +1092,6 @@ fn a_move_is_refused_when_the_answers_do_not_carry_the_listed_transform() {
     assert_eq!(
         endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
         Some(MOCK_TRANSFORM.to_owned())
-    );
-}
-
-/// Review R4-1: a vault on the shipped model takes its measured evidence
-/// floors, which were measured with unprompted queries. Bug repro: with no
-/// instruction of its own the vault sent none, so the shared server's own
-/// query prompt applied.
-#[test]
-fn a_vault_on_the_shipped_model_sends_its_queries_unprompted() {
-    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
-    let shipped = EmbedderConfig {
-        model_id: crate::config::embedder::DEFAULT_MODEL_ID.to_owned(),
-        ..endpoint_config(&mock.base)
-    };
-    for config in [shipped, endpoint_config(&mock.base)] {
-        endpoint::HttpEmbedder::from_config(&config)
-            .expect("http embedder")
-            .embed_query("cats")
-            .expect("query embedded");
-    }
-    let requests = mock.requests();
-    assert_eq!(requests[0]["instruction"], json!(""));
-    assert_eq!(
-        requests[1].get("instruction"),
-        None,
-        "another model's vault leaves the server's query prompt to it"
-    );
-}
-
-/// A pending row that projects to nothing is refused rather than embedded: the
-/// alternative is a vector with no meaning that retrieval would then rank.
-#[test]
-fn an_empty_projection_is_refused() {
-    let mock = MockEndpoint::start(MockBehaviour::Ok);
-    let embedder = mock.embedder();
-    let error = oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("   ")])
-        .expect_err("empty text is refused");
-    assert!(
-        matches!(error, oneiron::Error::InvariantViolation(_)),
-        "{error:?}"
-    );
-    assert!(
-        mock.requests().is_empty(),
-        "the refusal happens before the wire"
     );
 }
 

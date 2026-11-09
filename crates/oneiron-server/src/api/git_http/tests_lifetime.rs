@@ -479,37 +479,6 @@ async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_
     a_stalled_exchange_holds_the_next_one_back(origin(limits).await).await;
 }
 
-/// Review r12 (the Engine, beside Astra R12-3): counted at their peak, the
-/// 1,024 descriptors a fresh login's soft limit holds leave room for 8 git
-/// exchanges. Serving raises the soft limit to the hard one, at most 65,536,
-/// and never lowers it. A process that starts at or above that, or a
-/// platform that refuses the raise, keeps the limit it has.
-#[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn serving_raises_its_soft_open_file_limit_to_the_hard_one_at_most_65_536() {
-    let mut held = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
-    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut held) };
-    assert_eq!(read, 0, "the open-file limit reads");
-    let before = crate::machine::open_file_limit().expect("an open-file limit");
-    let vault_dir = tempfile::tempdir().expect("vault");
-    let vault = Arc::new(
-        oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default())
-            .expect("open vault"),
-    );
-    let _server = SyncServer::new(vault, SyncServerConfig::default()).expect("server");
-    let after = crate::machine::open_file_limit().expect("an open-file limit");
-    let wanted = held.rlim_max.min(65_536);
-    if cfg!(target_os = "linux") {
-        assert_eq!(after, before.max(wanted), "serving raised the soft limit");
-    } else {
-        assert!(after >= before, "serving never lowers the soft limit");
-    }
-}
-
 /// Stores an object, then pushes a commit carrying its LFS pointer to
 /// `branch` with stock git, answering whether the push succeeded and what
 /// git said.

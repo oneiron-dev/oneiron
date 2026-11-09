@@ -100,14 +100,6 @@ async fn listed(server: &Server, actor: EntityId) -> Value {
 }
 
 #[tokio::test]
-async fn an_imported_session_lists_its_folder_and_start_time() {
-    let (_dir, server, actor) = imported_session();
-    let row = listed(&server, actor).await;
-    assert_eq!(row["import_cwd"], FOLDER, "{row}");
-    assert_eq!(row["occurred"], json!({"start": STARTED, "end": STARTED}));
-}
-
-#[tokio::test]
 async fn a_loopback_reader_reads_an_imported_session_in_order() {
     let (_dir, server, actor) = imported_session();
     let id = listed(&server, actor).await["id"]

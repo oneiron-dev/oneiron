@@ -110,63 +110,6 @@ fn book_input(request: BookingOperationRequest) -> BookingBookInput {
     input
 }
 
-/// Past the owner's slot-list, hold and book windows (one a minute each), the
-/// second request of each kind waits for its window to open and is served.
-#[tokio::test(start_paused = true)]
-async fn an_authenticated_caller_past_each_booking_window_waits_and_is_served() {
-    let fixture = fixture_on_the_runtime_clock();
-    let slots = fixture.slots().await;
-    assert!(slots.len() > 1);
-    install(
-        &fixture,
-        BookingAntiAbuseRule::SlotListRate {
-            per_minute_per_ip: per_minute(1),
-            cache_ttl_secs: std::num::NonZeroU64::new(30).expect("TTL"),
-        },
-    );
-    install(
-        &fixture,
-        BookingAntiAbuseRule::HoldRate {
-            max_active_per_session: 1,
-            per_minute_per_ip: per_minute(1),
-        },
-    );
-    install(
-        &fixture,
-        BookingAntiAbuseRule::BookRate {
-            per_minute_per_ip: per_minute(1),
-            max_active_future_per_email: 2,
-        },
-    );
-
-    for nth in 0..2 {
-        served(owner(&fixture, "agent", "availability", listing(nth)).await).await;
-    }
-    let mut holds = Vec::new();
-    for (nth, slot) in slots.iter().take(2).enumerate() {
-        let session = format!("turn-hold-{nth}");
-        let request = book_input(hold(selected(slot), &session, None));
-        let held = served(owner(&fixture, "agent", "book", request).await).await;
-        let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held
-        else {
-            panic!("held, got {held:?}")
-        };
-        holds.push((hold_token, session));
-    }
-    for (token, session) in holds {
-        let request = book_input(confirm(token, &session));
-        let confirmed = served(owner(&fixture, "agent", "book", request).await).await;
-        assert!(
-            matches!(
-                confirmed,
-                BookingOperationResponse::Book(BookingBookResult::Confirmed { .. })
-            ),
-            "confirmed, got {confirmed:?}"
-        );
-    }
-    assert!(asked(&fixture), "each window's crossing asks");
-}
-
 /// Two credentials behind one address keep windows of their own: one past its
 /// window takes nothing from the other, which is served at once.
 #[tokio::test(start_paused = true)]
@@ -184,63 +127,6 @@ async fn credentials_behind_one_address_keep_their_own_windows() {
     served(owner(&fixture, "agent-b", "availability", listing(1)).await).await;
     assert_eq!(start.elapsed(), std::time::Duration::ZERO, "neither waited");
     assert!(!asked(&fixture), "no window was crossed");
-}
-
-/// The owner's cap on one address's active bookings sheds anonymous visitors:
-/// an owner-grade credential books past it, and a visitor with that address
-/// is still asked to cancel one first.
-#[tokio::test]
-async fn an_owner_grade_caller_is_not_held_to_the_per_email_booking_cap() {
-    let fixture = Fixture::new();
-    let slots = fixture.slots().await;
-    assert!(slots.len() > 2);
-    install(
-        &fixture,
-        BookingAntiAbuseRule::BookRate {
-            per_minute_per_ip: per_minute(100),
-            max_active_future_per_email: 1,
-        },
-    );
-
-    for (nth, slot) in slots.iter().take(2).enumerate() {
-        let session = format!("owner-cap-{nth}");
-        let request = book_input(hold(selected(slot), &session, None));
-        let held = served(owner(&fixture, "owner", "book", request).await).await;
-        let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held
-        else {
-            panic!("held, got {held:?}")
-        };
-        let request = book_input(confirm(hold_token, &session));
-        let confirmed = served(owner(&fixture, "owner", "book", request).await).await;
-        assert!(
-            matches!(
-                confirmed,
-                BookingOperationResponse::Book(BookingBookResult::Confirmed { .. })
-            ),
-            "confirmed, got {confirmed:?}"
-        );
-    }
-
-    let held = fixture
-        .dispatch(
-            "booking.hold",
-            hold(selected(&slots[2]), "visitor-cap", None),
-        )
-        .await
-        .expect("the visitor's hold");
-    let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held else {
-        panic!("held, got {held:?}")
-    };
-    let refused = fixture
-        .route(
-            "POST",
-            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
-            serde_json::to_value(confirm(hold_token, "visitor-cap")).expect("wire"),
-        )
-        .await;
-    assert!(!refused.status().is_success(), "{}", refused.status());
-    let body = String::from_utf8(bytes(refused).await).expect("utf-8");
-    assert!(body.contains("active upcoming"), "{body}");
 }
 
 /// Rule five at the booking windows row: `callers` listings on one

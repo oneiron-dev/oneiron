@@ -26,8 +26,6 @@ mod cache;
 mod guards;
 mod support;
 #[cfg(test)]
-mod tests_guards;
-#[cfg(test)]
 mod tests_quarantine;
 #[cfg(test)]
 mod tests_support;

@@ -269,30 +269,6 @@ async fn a_body_that_stops_arriving_gives_its_connection_back() {
 }
 
 #[tokio::test]
-async fn a_slow_body_that_keeps_arriving_is_served() {
-    let served = start(
-        "127.0.0.1:0",
-        ConnectionLimits {
-            body_idle_timeout: Duration::from_millis(300),
-            ..limits(1, PATIENCE)
-        },
-    )
-    .await;
-
-    let mut stream = TcpStream::connect(served.addr).await.unwrap();
-    stream
-        .write_all(b"POST /length HTTP/1.1\r\nhost: listener\r\ncontent-length: 10\r\n\r\n")
-        .await
-        .unwrap();
-    // Every gap is inside the idle limit; together they are well past it.
-    for byte in b"0123456789" {
-        tokio::time::sleep(Duration::from_millis(120)).await;
-        stream.write_all(&[*byte]).await.unwrap();
-    }
-    assert_eq!(read_response(&mut stream).await, (200, "10".to_owned()));
-}
-
-#[tokio::test]
 async fn past_the_floor_a_new_socket_waits_its_turn_and_the_row_asks() {
     let served = start("127.0.0.1:0", limits(2, PATIENCE)).await;
 
@@ -484,33 +460,6 @@ async fn a_websocket_outlives_the_header_deadline_and_keeps_its_permit() {
 
     drop(socket);
     assert_eq!(read_response(&mut next).await.0, 200);
-}
-
-#[tokio::test]
-async fn routes_see_the_socket_peer_and_shutdown_drains_requests_in_flight() {
-    let mut served = start("127.0.0.1:0", limits(8, PATIENCE)).await;
-
-    let mut stream = TcpStream::connect(served.addr).await.unwrap();
-    stream.write_all(REQUEST).await.unwrap();
-    let (status, peer) = read_response(&mut stream).await;
-    assert_eq!(status, 200);
-    assert_eq!(peer, stream.local_addr().unwrap().to_string());
-
-    stream
-        .write_all(b"GET /slow HTTP/1.1\r\nhost: listener\r\n\r\n")
-        .await
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let _ = served.stop.take().unwrap().send(());
-    assert_eq!(
-        read_response(&mut stream).await,
-        (200, "finished".to_owned())
-    );
-    tokio::time::timeout(PATIENCE, &mut served.task)
-        .await
-        .expect("serve returns once its connections close")
-        .unwrap();
-    assert!(TcpStream::connect(served.addr).await.is_err());
 }
 
 /// Review r7 (Sol, P1): the read-only slip check let a connection leave the

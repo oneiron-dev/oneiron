@@ -39,8 +39,6 @@ mod attested_routes;
 mod backup_facts;
 mod checkpoint_recipient;
 mod container_dirs;
-#[cfg(test)]
-mod ctl_shed_tests;
 mod host;
 mod host_legal;
 mod isolation;

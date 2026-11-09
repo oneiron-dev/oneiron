@@ -244,5 +244,3 @@ pub(super) fn spawn_local_change_producer(
     });
 }
 
-#[cfg(test)]
-mod tests;

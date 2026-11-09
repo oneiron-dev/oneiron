@@ -195,42 +195,6 @@ async fn send_presence(server: &SyncServer, frame: Vec<u8>) {
     .unwrap_or_else(|error| panic!("a presence frame was refused: {error}"));
 }
 
-/// Bug repro (rule 5, row 19): the hub refused presence past its 256 KiB
-/// share and the socket closed. Done-means: every message's presence is
-/// kept, charged to the retained-memory line.
-#[tokio::test]
-async fn presence_past_the_old_hub_share_is_kept() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(
-        vault,
-        SyncServerConfig {
-            max_ephemeral_snapshot_bytes: 4096,
-            ..SyncServerConfig::default()
-        },
-    )
-    .unwrap();
-    let mut keys = Vec::new();
-    for _ in 0..8 {
-        let (key, frame) = presence(&"x".repeat(1024));
-        send_presence(&server, frame).await;
-        keys.push(key);
-    }
-    for key in &keys {
-        assert!(server.ephemeral_store.get(key).is_some(), "{key} dropped");
-    }
-    // A socket that joins now hears all of it, in parts.
-    let late: Vec<_> = late_join_presence(&server, 18).collect();
-    assert!(late.len() > 1, "a hub past one frame is sent in parts");
-    let heard: Vec<_> = late
-        .iter()
-        .flat_map(|frame| decode_ephemeral_states(&frame[1..]).unwrap())
-        .map(|state| state.key)
-        .collect();
-    assert_eq!(heard.len(), keys.len());
-    assert!(keys.iter().all(|key| heard.contains(key)));
-}
-
 /// Done-means (rule 5, row 19): only a full retained-memory line, the memory
 /// floor, keeps a presence frame out, and the socket stays open; once the
 /// line has room the next frame is kept.

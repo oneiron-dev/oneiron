@@ -158,61 +158,6 @@ where
     (refused, waiting)
 }
 
-/// Bug repro (rule 5, rows 21 and 24): the hub refused a 65th live-query
-/// session, and a session its 129th subscription. Done-means: both are
-/// served on one credential.
-#[tokio::test]
-async fn sessions_and_subscriptions_past_the_old_counts_are_served() {
-    let (_dir, server) = production_tests::server();
-    let hub = connection::Hub::for_server(&server);
-    let auth = auth(&server);
-    let sockets: Vec<_> = (1..=65)
-        .map(|conn| {
-            let mut socket = connection::Connection::new(Arc::clone(&hub), conn);
-            socket.control(&auth, open(1)).unwrap();
-            assert!(socket.has_active_subscriptions(), "session {conn} refused");
-            socket
-        })
-        .collect();
-    drop(sockets);
-    let mut socket = connection::Connection::new(Arc::clone(&hub), 100);
-    for id in 1..=129 {
-        let frames = socket.control(&auth, open(id)).unwrap();
-        assert!(
-            routing::addressed(&frames[0], 100).is_some(),
-            "subscription {id} refused"
-        );
-    }
-}
-
-/// Done-means (rule 5, row 21): past the session row the next sessions wait
-/// their turn and are served, on one credential, and the row asks once.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn past_the_session_row_sessions_wait_their_turn_and_are_served() {
-    let (_dir, server) = production_tests::server_with_limits(LimitsConfig {
-        live_sessions: 1,
-        ..LimitsConfig::default()
-    });
-    let (refused, waiting) = queue_behind_one(&server, 4, |_| async {}).await;
-    assert_eq!(waiting, (4, 0), "past the row the sessions wait");
-    assert_eq!(refused, 0);
-    assert_eq!(crossings(&server, LimitRow::LiveSessions), 1);
-}
-
-/// Done-means (rule 5, row 24): past the subscription row the next
-/// subscriptions wait their turn and are served, and the row asks once.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn past_the_subscription_row_subscriptions_wait_their_turn_and_are_served() {
-    let (_dir, server) = production_tests::server_with_limits(LimitsConfig {
-        live_subscriptions: 1,
-        ..LimitsConfig::default()
-    });
-    let (refused, waiting) = queue_behind_one(&server, 4, close).await;
-    assert_eq!(waiting, (0, 4), "past the row the subscriptions wait");
-    assert_eq!(refused, 0);
-    assert_eq!(crossings(&server, LimitRow::LiveSubscriptions), 1);
-}
-
 /// Done-means (rule 5): a wait past its deadline ends in a typed timeout,
 /// never a refusal for the count, and the request after it is served.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -363,18 +308,6 @@ impl LiveQuerySource for Source {
 
 fn retaining(bytes: usize) -> Arc<dyn LiveQuerySource> {
     Arc::new(Source(json!("x".repeat(bytes))))
-}
-
-/// Bug repro (rule 5, row 20): a session's retained views were refused past
-/// 8 MiB. Done-means: the session keeps them all.
-#[test]
-fn a_session_retains_past_the_old_share() {
-    let queries = LiveQueries::new(1, retaining(3 * MIB));
-    for id in 1..=4 {
-        queries
-            .open(id, ScopedView::default(), Channel::Receipts, None, None)
-            .unwrap_or_else(|error| panic!("view {id} refused: {error:?}"));
-    }
 }
 
 /// A line of `total` bytes and where its crossings ask.

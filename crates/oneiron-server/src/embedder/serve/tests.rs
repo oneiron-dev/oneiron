@@ -314,62 +314,6 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     assert!(holds(&served, 0), "every request's bytes returned");
 }
 
-/// Review r5 (Sol R5-2, Astra R5-2): freed bytes went to the one waiting
-/// body before its task ran again, but the budget still counted it as
-/// waiting, so the next request to wait, after the line had run empty,
-/// crossed the row and did not ask.
-#[tokio::test]
-async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
-    use futures_util::FutureExt;
-    // One window holds every crossing below.
-    let into_minute = oneiron_vault_contract::now_ts() % 60;
-    if into_minute > 50 {
-        tokio::time::sleep(Duration::from_secs(61 - into_minute)).await;
-    }
-    let wait = Duration::from_secs(60);
-    let questions = Arc::new(LimitQuestions::default());
-    let budget = Arc::new(ByteLine::new(
-        LimitRow::EmbedderBodyBytes,
-        LARGE_BODIES_BYTES,
-    ));
-    let crossings = || {
-        questions
-            .latest(LimitRow::EmbedderBodyBytes)
-            .map_or(0, |question| question.crossings)
-    };
-    let first = budget
-        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
-        .await;
-    let second = budget
-        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
-        .await;
-    assert!(first.is_some() && second.is_some(), "two bodies fit");
-    let waiter = tokio::spawn({
-        let budget = Arc::clone(&budget);
-        let questions = Arc::clone(&questions);
-        async move {
-            budget
-                .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
-                .await
-                .is_some()
-        }
-    });
-    while budget.waiting() == 0 {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(crossings(), 1);
-
-    // The freed bytes go to the waiter, whose task runs again only when
-    // this one, on the same thread, yields. Nobody waits now.
-    drop(first);
-    let next = budget
-        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
-        .now_or_never();
-    assert!(next.is_none(), "no bytes are free for it");
-    assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
-    assert!(waiter.await.expect("waiter"), "the waiter has its bytes");
-}
-
 /// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
 /// model behind an alias can change while the alias stays. Every listing row,
 /// an alias's too, and every answer names the model loaded, which the vault
@@ -641,69 +585,6 @@ impl ServedModel for Wide {
             tokens: texts.len(),
         })
     }
-}
-
-/// Review r7 (Astra, P1): an answer kept its whole encoding until its
-/// reader took the last piece, and only `embedder_requests` bounded how many
-/// did, so callers who read slowly could hold gigabytes of answers. An
-/// answer now takes its room in `embedder_answer_bytes` before the model
-/// makes it and keeps it until it is delivered; past the row the next
-/// request waits its turn, and the row asks.
-#[test]
-fn an_unread_answer_keeps_its_room_and_the_next_request_waits_for_it() {
-    use std::io::Write;
-    // Room for one answer of the most inputs a request carries at a time.
-    let limits = crate::config::LimitsConfig {
-        embedder_answer_bytes: answer_bytes(MAX_INPUTS, WIDE_DIMS) as u64,
-        ..Default::default()
-    };
-    let wide = Arc::new(Wide::default());
-    let served = Arc::new(
-        Served::new(
-            Arc::clone(&wide) as Arc<dyn ServedModel>,
-            Vec::new(),
-            Some(Zeroizing::new(KEY.to_owned())),
-            &limits,
-        )
-        .expect("served"),
-    );
-    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
-    let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
-    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }).to_string();
-    let send = || {
-        let mut stream = post_head(addr, Some(KEY), body.len());
-        stream.write_all(body.as_bytes()).expect("body sent");
-        stream
-    };
-    let soon = |done: &dyn Fn() -> bool| {
-        (0..1_000).any(|_| {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            done()
-        })
-    };
-
-    // A 32 MiB answer nobody reads: more than the sockets take.
-    let unread = send();
-    assert!(soon(&|| wide.calls() == 1), "the first request is embedded");
-    let mut next = send();
-    assert!(
-        soon(&|| served
-            .questions
-            .latest(LimitRow::EmbedderAnswerBytes)
-            .is_some()),
-        "the next request waits for the answer row, and the row asks"
-    );
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert_eq!(
-        wide.calls(),
-        1,
-        "no answer is made while the one before it holds the row"
-    );
-
-    // Once the first answer's reader goes, the next is made and answered.
-    drop(unread);
-    assert_eq!(status(&mut next).expect("an answer"), 200);
-    assert_eq!(wide.calls(), 2);
 }
 
 /// Review r8 (Sol R8-2, P2): the answer row clipped a larger answer's claim

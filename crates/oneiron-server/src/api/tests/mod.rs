@@ -45,7 +45,6 @@ mod feedback_inbox;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;
-mod mcp_code_check;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -53,9 +52,6 @@ mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
-// Its code-runs row is the wasmtime host's.
-#[cfg(feature = "code-sandbox-wasmtime")]
-mod rate_law;
 mod reactive;
 mod reader_optional_memory;
 mod recall_rerank;

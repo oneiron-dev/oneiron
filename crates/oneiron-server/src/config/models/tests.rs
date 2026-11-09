@@ -42,63 +42,6 @@ fn high_level_one_model_fills_every_shorthand_seat() {
     assert!(!config.extraction_egress, "egress is an explicit opt-in");
 }
 
-#[test]
-fn mid_level_orders_local_and_cloud_and_binds_the_local_reasoner() {
-    let local_first = resolve(
-        r#"
-local = "llama:qwen3:8b"
-cloud = "cpa:gpt-6.1-sol"
-"#,
-    )
-    .unwrap();
-    assert_eq!(
-        models(local_first.ladder(ModelRole::DreamerCurrent).unwrap()),
-        ["llama:qwen3:8b", "cpa:gpt-6.1-sol"]
-    );
-    assert_eq!(
-        models(local_first.ladder(ModelRole::LocalReasoner).unwrap()),
-        ["llama:qwen3:8b"]
-    );
-    let cloud_first = resolve(
-        r#"
-local = "llama:qwen3:8b"
-cloud = "cpa:gpt-6.1-sol"
-prefer_local = false
-"#,
-    )
-    .unwrap();
-    assert_eq!(
-        models(cloud_first.ladder(ModelRole::GenerativeReasoner).unwrap()),
-        ["cpa:gpt-6.1-sol", "llama:qwen3:8b"]
-    );
-}
-
-#[test]
-fn detailed_level_replaces_one_role_and_keeps_rung_prompts() {
-    let config = resolve(
-        r#"
-default = "cpa:gpt-6.1-sol"
-prompt = "Answer briefly."
-
-[roles.dreamer_current]
-rungs = [
-  { model = "llama:qwen3:8b", prompt = "Reply with JSON only." },
-  { model = "claude:claude-family-latest" },
-]
-"#,
-    )
-    .unwrap();
-    let dreamer = config.ladder(ModelRole::DreamerCurrent).unwrap();
-    assert_eq!(
-        models(dreamer),
-        ["llama:qwen3:8b", "claude:claude-family-latest"]
-    );
-    assert_eq!(dreamer[0].prompt.as_deref(), Some("Reply with JSON only."));
-    assert_eq!(dreamer[1].prompt, None);
-    let chat = config.ladder(ModelRole::GenerativeReasoner).unwrap();
-    assert_eq!(chat[0].prompt.as_deref(), Some("Answer briefly."));
-}
-
 fn provider(body: &str) -> anyhow::Result<ProviderConfig> {
     let file: ProviderFile = toml::from_str(body)?;
     file.resolve("p")

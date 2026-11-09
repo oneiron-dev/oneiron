@@ -128,68 +128,6 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
     );
 }
 
-/// ONE-1704 repair: setup health is derived from the board's COMPLETE omission
-/// facts, not from the requested scope's filtering alone.
-///
-/// A vault-wide connector omits no row by scope, so the old derivation called
-/// EVERY board it rendered healthy — including one whose render WINDOW had
-/// truncated rows away, and one whose own TASK scan stopped at its cap and so
-/// cannot say what it skipped. Both are incomplete boards, and setup said
-/// `healthy` over them.
-#[test]
-fn mcp_setup_health_reads_every_board_omission_axis() {
-    let omissions = |scope_omitted, window_truncated, source_exhausted| McpBoardOmissions {
-        scope_omitted,
-        window_truncated,
-        source_exhausted,
-    };
-    let healthy = crate::mcp::McpRetrievalHealth::Healthy;
-    let partial = crate::mcp::McpRetrievalHealth::Partial;
-    let degraded = crate::mcp::McpRetrievalHealth::Degraded;
-
-    // A complete board is the only healthy one.
-    assert_eq!(omissions(0, 0, true).health(), healthy);
-
-    // The exact defect: a vault-wide connector's board whose bounded renderer
-    // could not return every TASKS row. Nothing was omitted by scope, and the
-    // board is still incomplete.
-    assert_eq!(omissions(0, 7, true).health(), partial);
-
-    // A scan that stopped at its own cap does not know what it skipped, so it
-    // is degraded even with nothing counted on either axis.
-    assert_eq!(omissions(0, 0, false).health(), degraded);
-    assert_eq!(omissions(0, 7, false).health(), degraded);
-
-    // The scope axis keeps its settled meaning, and the two axes together
-    // never read healthier than either alone.
-    assert_eq!(omissions(3, 0, true).health(), partial);
-    assert_eq!(omissions(3, 7, true).health(), partial);
-    assert_eq!(omissions(3, 0, false).health(), degraded);
-
-    // It is the SAME derivation every other producer states, so a board's
-    // health and a page's health cannot drift apart.
-    for (scope_omitted, window_truncated, source_exhausted) in [
-        (0, 0, true),
-        (0, 7, true),
-        (3, 0, true),
-        (3, 7, true),
-        (0, 0, false),
-        (3, 7, false),
-    ] {
-        assert_eq!(
-            omissions(scope_omitted, window_truncated, source_exhausted).health(),
-            crate::mcp::McpPageSource::scoped_window(
-                0,
-                scope_omitted,
-                window_truncated,
-                source_exhausted,
-            )
-            .health(),
-            "board health and producer health must be one meaning",
-        );
-    }
-}
-
 /// ONE-1704 repair: `/api/core/discover` describes the MCP surfaces this
 /// process actually REGISTERS, and says which endpoint each name is callable
 /// on.

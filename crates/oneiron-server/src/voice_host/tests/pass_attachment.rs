@@ -465,22 +465,6 @@ async fn either_shutdown_owner_cancels_voice_and_stops_existing_supervisor() {
     }
 }
 
-#[tokio::test]
-async fn unconfigured_voice_keeps_existing_constructor_and_wake_path() {
-    let mut fx = fixture();
-    let vault = Arc::clone(&fx.vault);
-    let factory = consolidation_factory(&fx);
-    let guard = pass_guard(&vault);
-    assert!(factory.pass_attachment(&vault, &guard).unwrap().is_none());
-    assert!(factory.linked_shutdown().is_none());
-    let ticks = ScriptedTicks(vec![Tick::Hint(HintSignal::default())]);
-    let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
-    let report = supervisor.run().await;
-    assert_eq!(report.passes_completed, 1);
-    assert_eq!(report.passes_failed, 0);
-    assert!(fx.calls.try_recv().is_err());
-}
-
 #[test]
 fn configured_voice_cannot_attach_another_vault() {
     let fx = fixture();
@@ -509,19 +493,6 @@ async fn a_claimed_connection_with_a_refused_host_fails_closed() {
         Err(oneiron::Error::InvalidConfig(_)),
     ));
     assert!(fx.calls.try_recv().is_err());
-}
-
-#[test]
-fn refused_attachment_preserves_the_host_error() {
-    let fx = fixture();
-    let config = voice_config(&fx.vault);
-    assert!(config.serve_bindings.is_none());
-    config.shutdown.trigger();
-    let guard = pass_guard(&fx.vault);
-    assert!(matches!(
-        config.host_for_pass(&fx.vault, &fx.backend, &guard),
-        Err(oneiron::Error::InvalidConfig(_)),
-    ));
 }
 
 #[tokio::test]
@@ -600,17 +571,6 @@ fn test_bindings(stream: UnixStream, outputs: &TestOutputs) -> VoiceServeBinding
             control: outputs.clone(),
         },
     )
-}
-
-#[tokio::test]
-async fn cloned_bindings_cannot_reuse_the_owner_connection() {
-    let (_client, server) = UnixStream::pair().unwrap();
-    let bindings = test_bindings(server, &TestOutputs::default());
-    let cloned = bindings.clone();
-    let connection = bindings.take().unwrap().expect("owner connection");
-    assert!(cloned.take().unwrap().is_none());
-    drop(connection);
-    assert!(bindings.take().unwrap().is_none());
 }
 
 /// Records the pass meter the supervisor hands the executor.

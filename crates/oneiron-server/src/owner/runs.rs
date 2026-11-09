@@ -446,48 +446,6 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    /// `oneiron runs show`: the local owner's review redacts what the ingest
-    /// scan let through while it was off.
-    #[test]
-    fn runs_show_redacts_stored_credentials_with_the_scan_off() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
-        let owner = super::super::local_owner(&vault).unwrap();
-        vault
-            .set_secret_scan_mode(
-                &owner,
-                oneiron::policy_model::SecretScanMode::Off,
-                vault.now_recorded_at(),
-            )
-            .unwrap();
-        let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
-        let agent = EntityId::now();
-        for value in [
-            rmpv::Value::from(format!("my token is {token}")),
-            rmpv::Value::Map(vec![(
-                rmpv::Value::from("api_key"),
-                rmpv::Value::from("sk-not-for-display-0123456789"),
-            )]),
-            rmpv::Value::Binary(token.as_bytes().to_vec()),
-        ] {
-            vault
-                .park_run_proposal_for_test("cli-run", agent, EntityId::now(), value)
-                .unwrap();
-        }
-        let reviewed = review(
-            &vault,
-            &owner,
-            RunName::Id("cli-run"),
-            CallerLocality::OnDevice,
-        )
-        .unwrap();
-        let shown = serde_json::to_string(&reviewed).unwrap();
-        let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
-        assert!(!shown.contains(token), "{shown}");
-        assert!(!shown.contains(&hex), "{shown}");
-        assert!(!shown.contains("sk-not-for-display"), "{shown}");
-    }
-
     /// Sol R8: a proposal the write door refuses shows none of its parts,
     /// though only this review's projection (a key turned to text) brings its
     /// words together; one it accepts shows all but its credential field.

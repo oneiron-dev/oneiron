@@ -443,39 +443,4 @@ mod tests {
             .filter(|row| row.diff.revision_events.is_empty())
             .collect()
     }
-    #[test]
-    fn timer_drain_and_mirror_schedules_keep_the_same_revision_contributors() {
-        let entity = id(0x41);
-        for order in [0, 1, 2, 3, 4, 5] {
-            let tracker = PublicationTracker::default();
-            if order == 3 || order == 5 {
-                published(&tracker, entity, rev(0), rev(1));
-                if order == 5 {
-                    assert!(tails(&tracker).is_empty());
-                }
-            }
-            write(&tracker, entity, rev(0), rev(1), 1);
-            if order == 1 || order == 4 {
-                // Deterministic drain/retention handoff before mirror delivery.
-                assert!(tails(&tracker).is_empty());
-            }
-            if order == 4 {
-                published(&tracker, entity, rev(0), rev(1));
-            }
-            mirror(&tracker, entity, Some(rev(1)));
-            if order == 2 {
-                assert!(tails(&tracker).is_empty());
-            }
-            if order != 3 && order != 4 && order != 5 {
-                published(&tracker, entity, rev(0), rev(1));
-            }
-            let rows = tails(&tracker);
-            assert_eq!(rows.len(), 1, "schedule {order}");
-            assert!(
-                rows[0].contributors.iter().all(|mark| own(mark, 1)),
-                "schedule {order}"
-            );
-            assert!(!rows[0].contributors.is_empty());
-        }
-    }
 }

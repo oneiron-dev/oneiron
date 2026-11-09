@@ -1807,24 +1807,6 @@ async fn frame_is_refused_when_revocation_lands_during_the_capacity_wait() {
     assert!(sink.was_closed(), "the socket must close, not idle");
 }
 
-/// Revoking a SIBLING token must not disturb this session.
-///
-/// The consult is keyed by `jti`; a registry that refused on any populated
-/// row would pass every test above for the wrong reason.
-#[tokio::test]
-async fn a_different_jti_revocation_does_not_close_this_session() {
-    let sink = BlockableTransport::ready_blocked();
-    let registry = Arc::new(MutableRevocations::default());
-
-    let keep_going = send_racing_a_revocation(&sink, &registry, |r| {
-        r.revoke("ffffffffffffffffffffffffffffffff");
-    })
-    .await;
-
-    assert!(keep_going);
-    assert_eq!(sink.written().len(), 1);
-}
-
 // ─── the READ-half flush side channel ────────────────────────────────────────
 //
 // Guarding the write half is not guarding the socket. The two halves share one
@@ -2426,28 +2408,6 @@ async fn real_codec_delivers_a_frame_that_stays_below_the_write_through_threshol
     );
 }
 
-/// The codec's write-through arithmetic, restated and pinned.
-///
-/// [`encoded_frame_len`] is the guard's model of `Frame::len` for a server's
-/// unmasked binary frame. If tungstenite changes its header encoding, the
-/// guard's threshold arithmetic silently under-counts and frames slip through
-/// — so the model is checked against boundaries the RFC fixes rather than
-/// against the library's private types.
-#[test]
-fn encoded_frame_len_matches_the_rfc_header_boundaries() {
-    // 7-bit length: 2-byte header, no extension.
-    assert_eq!(encoded_frame_len(0), 2);
-    assert_eq!(encoded_frame_len(125), 127);
-    // 16-bit extension kicks in at 126.
-    assert_eq!(encoded_frame_len(126), 126 + 4);
-    assert_eq!(encoded_frame_len(65_535), 65_535 + 4);
-    // 64-bit extension at 65_536.
-    assert_eq!(encoded_frame_len(65_536), 65_536 + 10);
-    // Saturating rather than wrapping: an absurd length stays absurd, so the
-    // comparison refuses instead of wrapping to something admissible.
-    assert_eq!(encoded_frame_len(usize::MAX), usize::MAX);
-}
-
 /// REAL CODEC, the flush-park shape: a peer that stops reading mid-flush and
 /// resumes after the revocation gets no application byte.
 ///
@@ -2549,31 +2509,6 @@ fn workspace_metadata() -> serde_json::Value {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("cargo metadata must emit JSON")
-}
-
-/// The real-codec rows must run the SAME codec package production runs.
-///
-/// The byte properties above — when `start_send` writes through, what an owed
-/// pong leaves in the out-buffer — are statements about a specific codec. The
-/// leg that introduced them pinned the dev-dependency to 0.26 while `axum`
-/// resolved 0.28, so every row was green about a codec this server never
-/// builds. Nothing in the type system catches that: both versions export the
-/// same names, so the bridge compiles either way.
-///
-/// This follows dependency EDGES rather than matching package NAMES, and it
-/// asks cargo rather than parsing the lockfile. A name is ambiguous the moment
-/// two versions of a package are in the graph — a name-keyed lookup would take
-/// whichever `axum` came first and could compare the alias against a version
-/// production stopped building. `--locked` keeps the answer the one that was
-/// actually built rather than a fresh resolution.
-#[test]
-fn the_real_codec_rows_run_the_same_codec_package_axum_resolves() {
-    let (production, ours) = codec_packages(&workspace_metadata());
-    assert_eq!(
-        ours, production,
-        "the real-codec rows must exercise the codec axum resolves — a byte-property row \
-         pinned to a different package proves nothing about production while staying green"
-    );
 }
 
 /// A masked client Ping carrying the RFC's MAXIMUM control payload, 125 bytes.

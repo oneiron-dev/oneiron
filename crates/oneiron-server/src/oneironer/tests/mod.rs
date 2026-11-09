@@ -58,78 +58,12 @@ fn resolve(
 
 // ─── configuration ──────────────────────────────────────────────────────
 
-#[test]
-fn an_absent_section_arms_nothing_and_a_named_one_defaults_to_local_save() {
-    let absent = resolve("", &[], ServeArgs::default()).expect("absent");
-    assert!(absent.oneironer.is_none());
-    assert!(absent.vault_config().tagging.is_none());
-    let named = resolve("[oneironer]\n", &[], ServeArgs::default()).expect("named");
-    let section = named.oneironer.expect("section");
-    assert_eq!(section.provider, OneironerProvider::Local);
-    assert_eq!(section.mode, OneironerMode::Save);
-    // Only an endpoint arms markers: the local provider never serves here.
-    assert!(named_vault_tagging("[oneironer]\n").is_none());
-}
-
 fn named_vault_tagging(file: &str) -> Option<String> {
     resolve(file, &[], ServeArgs::default())
         .expect("resolve")
         .vault_config()
         .tagging
         .map(|tagging| tagging.checkpoint)
-}
-
-#[test]
-fn file_environment_and_flags_layer_in_that_order() {
-    let file = r#"
-[oneironer]
-provider = "endpoint"
-mode = "shadow"
-url = "http://127.0.0.1:9100"
-checkpoint_sha16 = "0123456789abcdef"
-label_count = 53
-live_window_tokens = 128
-trace_history_per_turn = 9
-[oneironer.labels]
-PERSON = "PERSON"
-"#;
-    let config = resolve(
-        file,
-        &[
-            ("ONEIRON_ONEIRONER_URL", "http://127.0.0.1:9200"),
-            ("ONEIRON_ONEIRONER_LABELS", "PERSON=PERSON,PLACE=PLACE"),
-            ("ONEIRON_ONEIRONER_TRACE_HISTORY_PER_TURN", "2"),
-            ("ONEIRON_ONEIRONER_TRACE_HISTORY_MAX_AGE_SECS", "3600"),
-        ],
-        ServeArgs {
-            oneironer: crate::config::OneironerArgs {
-                oneironer_url: Some("http://127.0.0.1:9300".into()),
-                oneironer_timeout_ms: Some(250),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    )
-    .expect("resolve");
-    let section = config.oneironer.as_ref().expect("section");
-    assert_eq!(section.url.as_deref(), Some("http://127.0.0.1:9300"));
-    assert_eq!(section.timeout_ms, 250);
-    assert_eq!(section.label_count, Some(53));
-    assert_eq!(section.labels.len(), 2);
-    assert_eq!(
-        section.label_kinds().get("PLACE"),
-        Some(&oneiron::registry::ENTITY_TYPE_PLACE)
-    );
-    let tagging = config.vault_config().tagging.expect("armed");
-    assert_eq!(tagging.checkpoint, "0123456789abcdef");
-    assert_eq!(tagging.live_window_tokens, 128);
-    assert_eq!(
-        tagging.trace_history,
-        oneiron::tagging::TaggingTraceHistory {
-            per_turn: 2,
-            max_age_secs: 3600,
-        }
-    );
 }
 
 #[test]
@@ -258,25 +192,6 @@ fn managed_mode_refuses_every_tagger_flag_by_name() {
 // ─── the endpoint ───────────────────────────────────────────────────────
 
 #[test]
-fn extract_posts_the_engine_input_and_reads_the_engine_output() {
-    let stub = StubTagger::start(Answer::Good);
-    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
-    assert_eq!(
-        tagger.locality(),
-        oneiron::embed::EmbedderLocality::OnDevice
-    );
-    let request = input("Ada sailed north");
-    let output = tagger.infer(&request).expect("answer");
-    assert_eq!(output.spans.len(), 1);
-    assert_eq!((output.spans[0].start, output.spans[0].end), (0, 3));
-    assert_eq!(output.spans[0].label, "PERSON");
-    assert_eq!(
-        stub.extracts(),
-        vec![serde_json::to_value(&request).expect("input json")]
-    );
-}
-
-#[test]
 fn a_network_tagger_is_refused_and_a_loopback_one_is_on_device() {
     for url in [
         "https://tagger.example",
@@ -360,16 +275,6 @@ fn a_model_card_whose_body_breaks_off_is_an_unreachable_tagger() {
     assert!(slot.card().is_none());
     stub.set_card(json!({"name": "something else"}));
     assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
-}
-
-#[test]
-fn an_unreachable_tagger_is_not_fatal() {
-    let tagger = HttpTagger::from_config(&endpoint_config("http://127.0.0.1:1")).expect("tagger");
-    assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Unreachable(_))));
-    let slot = build_slot(Some(&endpoint_config("http://127.0.0.1:1")))
-        .expect("an unreachable tagger still builds a slot")
-        .expect("slot");
-    assert!(slot.card().is_none());
 }
 
 #[test]

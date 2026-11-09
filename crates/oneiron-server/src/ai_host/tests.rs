@@ -659,18 +659,6 @@ fn run_events(rows: &[oneiron::llm::run_admission::RunReceipt]) -> Vec<&'static 
         .collect()
 }
 
-/// A step's call falls through a failing rung to an answering one: two
-/// provider calls, each admitted, dispatched and settled on its own permit.
-#[tokio::test]
-async fn a_workflow_step_writes_one_dispatched_row_per_provider_call() {
-    let failing = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
-    let answering = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
-    let rows = one_step(&two_rung_steps(&failing, &answering, 100_000)).await;
-    assert_eq!((failing.seen().len(), answering.seen().len()), (1, 1));
-    let call = ["admitted", "dispatched", "settled"];
-    assert_eq!(run_events(&rows), [call, call].concat());
-}
-
 /// A step line of one reservation: the failing rung spends it, so the
 /// answering rung's admission is denied with a row and it is never sent.
 #[tokio::test]

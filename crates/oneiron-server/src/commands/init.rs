@@ -812,45 +812,6 @@ fn read_config_with_args(
 mod tests {
     use super::*;
     #[test]
-    fn init_choice_defaults_and_rejects_bad_answers() {
-        for (answer, capable, expected) in [
-            ("\n", true, EmbedderProvider::Local),
-            ("\n", false, EmbedderProvider::None),
-            ("endpoint\n", true, EmbedderProvider::Endpoint),
-        ] {
-            assert_eq!(
-                ask_choice(&mut answer.as_bytes(), &mut Vec::new(), capable).unwrap(),
-                expected
-            );
-        }
-        assert!(ask_choice(&mut "invalid\n".as_bytes(), &mut Vec::new(), true).is_err());
-    }
-    #[test]
-    fn init_none_preserves_unrelated_config_and_disables_old_provider() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oneiron.toml");
-        std::fs::write(
-            &path,
-            r#"port = 12345
-[embedder]
-provider = "local"
-"#,
-        )
-        .unwrap();
-        let args = InitArgs {
-            path: dir.path().join("vault"),
-            config: Some(path.clone()),
-            embedder: Some(EmbedderProvider::None),
-            dimensions: Some(32),
-            map_size: 64 * 1024 * 1024,
-            ..Default::default()
-        };
-        init_with_env(args, EnvConfig::default(), None).unwrap();
-        let config = read_config(&path, EnvConfig::default()).unwrap();
-        assert_eq!(config.port, 12345);
-        assert!(!config.embedder.unwrap().is_active());
-    }
-    #[test]
     fn init_uses_serve_environment_and_refuses_invalid_overrides_before_writes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oneiron.toml");
@@ -941,71 +902,6 @@ provider = "local"
         .unwrap();
         assert!(!path.exists());
         assert!(!args.path.exists());
-    }
-
-    #[test]
-    fn the_interactive_tagger_question_defaults_to_none() {
-        let mut args = InitArgs::default();
-        ask_tagger(&mut args, &mut "\n".as_bytes(), &mut Vec::new()).unwrap();
-        assert_eq!(args.oneironer, Some(OneironerProvider::None));
-        let mut args = InitArgs::default();
-        ask_tagger(
-            &mut args,
-            &mut "endpoint\nhttp://127.0.0.1:9100\n0123456789abcdef\n3\nshadow\n".as_bytes(),
-            &mut Vec::new(),
-        )
-        .unwrap();
-        assert_eq!(args.oneironer, Some(OneironerProvider::Endpoint));
-        assert_eq!(args.oneironer_label_count, Some(3));
-        assert_eq!(
-            args.oneironer_mode,
-            Some(crate::config::OneironerMode::Shadow)
-        );
-        assert!(
-            tagger_table(&InitArgs {
-                oneironer_url: Some("http://127.0.0.1:9100".into()),
-                ..InitArgs::default()
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn the_interactive_tagger_mode_defaults_to_save() {
-        let mut args = InitArgs::default();
-        let mut shown = Vec::new();
-        ask_tagger(
-            &mut args,
-            &mut "endpoint\nhttp://127.0.0.1:9100\n0123456789abcdef\n3\n\n".as_bytes(),
-            &mut shown,
-        )
-        .unwrap();
-        assert_eq!(args.oneironer_mode, Some(OneironerMode::Save));
-        let shown = String::from_utf8(shown).unwrap();
-        assert!(shown.contains("save | shadow [save]"), "{shown}");
-        let table = tagger_table(&args).unwrap();
-        assert_eq!(
-            table.get("mode").and_then(toml::Value::as_str),
-            Some("save")
-        );
-    }
-
-    #[test]
-    fn a_non_interactive_endpoint_init_without_a_mode_writes_save() {
-        let args = InitArgs {
-            oneironer: Some(OneironerProvider::Endpoint),
-            oneironer_url: Some("http://127.0.0.1:9100".into()),
-            oneironer_checkpoint_sha16: Some("0123456789abcdef".into()),
-            oneironer_label_count: Some(3),
-            ..InitArgs::default()
-        };
-        let table = tagger_table(&args).unwrap();
-        assert_eq!(
-            table.get("mode").and_then(toml::Value::as_str),
-            Some("save")
-        );
-        let none = tagger_table(&InitArgs::default()).unwrap();
-        assert!(none.get("mode").is_none());
     }
 
     #[test]

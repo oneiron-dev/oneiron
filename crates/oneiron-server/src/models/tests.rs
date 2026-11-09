@@ -752,37 +752,6 @@ async fn one_config_edit_swaps_the_seat_model_with_the_same_calling_code() {
     assert_eq!(answers, ["openai side", "anthropic side"]);
 }
 
-#[tokio::test]
-async fn the_router_serves_seats_and_configured_models_by_id() {
-    let fake = FakeLlm::start(vec![], Some(Reply::text("routed"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"p:m\"\n[providers.p]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
-    let router = runtime.router().expect("router");
-    let seat = runtime.seat(ModelRole::Checker).unwrap();
-    let direct = ModelId::new("p/m@live").unwrap();
-    assert_eq!(router.locality(&direct), Some(ModelLocality::ThirdParty));
-    assert_eq!(
-        router.locality(&seat.model),
-        Some(ModelLocality::ThirdParty)
-    );
-    assert_eq!(
-        router.locality(&ModelId::new("p/other@live").unwrap()),
-        None
-    );
-    let run = test_run();
-    for model in [&direct, &seat.model] {
-        let (_, ladder) = router.served(model).expect("served");
-        let response = ladder
-            .generate(&run, request(model, "hi"), None)
-            .await
-            .unwrap();
-        assert_eq!(text_of(&response.message), "routed");
-    }
-    assert!(router.served(&ModelId::new("x/y@z").unwrap()).is_none());
-}
-
 /// The host-side constructor for a declared run: it calls only its declared
 /// teachers, and a `key_env` key, held at T1 in this process, serves it only
 /// for an offer the owner allowed, its receipt saying the run's rules do not

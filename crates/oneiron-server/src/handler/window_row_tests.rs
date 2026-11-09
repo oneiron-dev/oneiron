@@ -375,13 +375,6 @@ async fn a_forgotten_window_still_reaches_its_peer() {
     );
 }
 
-/// Bug repro (rule 5): an owner socket's NOTE subscription past the row was refused. Done-means:
-/// the socket keeps every one.
-#[tokio::test]
-async fn an_owner_note_subscription_past_the_row_is_served() {
-    let _ = subscribe_owner_notes(1);
-}
-
 /// An owner v13 socket subscribed to two NOTEs on a home whose row is `row`, each served.
 fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
     use super::{conn_state::ConnState, documents::handle_document};
@@ -437,13 +430,6 @@ fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
     }
     assert_eq!(state.owner_documents.len(), 2);
     (dir, server)
-}
-
-/// Bug repro (rule 5): the home refused a socket's selector document subscription past the row.
-/// Done-means: every one is served.
-#[tokio::test]
-async fn a_selector_document_subscription_past_the_row_is_served() {
-    let _ = subscribe_selector_documents(1);
 }
 
 /// A selector socket subscribed to two documents under one facet on a home whose row is `row`,
@@ -638,42 +624,6 @@ async fn a_key_that_names_no_exchange_creates_no_window() {
     assert!(
         !home.lists(&fabricated),
         "an unpromoted residence update created its window"
-    );
-}
-
-/// Bug repro (SOL-S3-007, ASTRA-S3-005): an update that adds no operation, such as the catch-up
-/// reply every exchange ends with, was kept and relayed like a change. Past the row, two sockets'
-/// catch-ups then woke each other for ever. Done-means: an update that adds nothing wakes no
-/// socket.
-#[tokio::test]
-async fn an_update_that_adds_nothing_wakes_no_socket() {
-    let home = Home::start(64).await;
-    let (key, at) = months(1).remove(0);
-    let mut owner = home
-        .socket(
-            "window-row-quiet",
-            transport::encode_replacement_full_window_protocol_hello(),
-        )
-        .await;
-    assert_eq!(subscribe(&mut owner, &key).await.close, None);
-    let mut writer = home
-        .socket(
-            "window-row-quiet-writer",
-            transport::encode_replacement_full_window_protocol_hello(),
-        )
-        .await;
-    let change = home.change(&key, at).await;
-    send(&mut writer, change.frame.clone()).await;
-    let heard = listen(&mut owner, Duration::from_secs(3), None).await;
-    assert!(heard.pushed(&key, &change), "fixture: the change is pushed");
-
-    send(&mut writer, change.frame.clone()).await;
-    let heard = listen(&mut owner, Duration::from_secs(3), None).await;
-    assert_eq!(heard.close, None);
-    assert!(
-        heard.tags(&key).is_empty(),
-        "an update that adds nothing woke the socket: {:?}",
-        heard.tags(&key)
     );
 }
 

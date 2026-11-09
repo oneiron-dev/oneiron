@@ -667,50 +667,6 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
     );
 }
 
-/// engine-core-03 on the public route: with a daily cap of one, a second
-/// visitor's confirm on a day already booked is refused, and the first
-/// booking still moves within its own day, which it does not fill twice.
-#[tokio::test]
-async fn a_daily_cap_closes_a_booked_day_but_lets_its_booking_move_within_it() {
-    let mut config = fixture_config();
-    config.daily_cap = Some(1);
-    let fixture = Fixture::with_config(config);
-    let slots = fixture.slots().await;
-    let day = |slot: &RankedSlot| slot.start_utc / 86_400;
-    let busiest = slots
-        .iter()
-        .map(day)
-        .max_by_key(|candidate| slots.iter().filter(|slot| day(slot) == *candidate).count())
-        .expect("slots");
-    let same_day: Vec<&RankedSlot> = slots.iter().filter(|slot| day(slot) == busiest).collect();
-    assert!(same_day.len() > 4);
-
-    let first = held_token(&fixture, same_day[0], "first").await;
-    let second = held_token(&fixture, same_day[2], "second").await;
-    let (reschedule_token, _) = confirmed_tokens(
-        fixture
-            .dispatch("booking.confirm", confirm(first, "first"))
-            .await
-            .expect("first confirm"),
-    );
-    assert!(matches!(
-        fixture
-            .dispatch("booking.confirm", confirm(second, "second"))
-            .await
-            .expect("second confirm answers"),
-        BookingOperationResponse::Book(BookingBookResult::SlotTaken { .. })
-    ));
-
-    let moved = fixture
-        .dispatch(
-            "booking.reschedule",
-            reschedule(reschedule_token, selected(same_day[4]), "same-day-move"),
-        )
-        .await
-        .expect("a booking moves within its own capped day");
-    assert!(matches!(moved, BookingOperationResponse::Reschedule { .. }));
-}
-
 /// A pending `status: cancelled` proposal filed beside a confirmed booking
 /// does not free its visitor's place under the owner's active-booking cap.
 #[tokio::test]

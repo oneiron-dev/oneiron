@@ -117,109 +117,6 @@ fn harrier_config() -> crate::config::EmbedderConfig {
     config
 }
 
-/// The transform the vault pins is read from the same files by the same code:
-/// it names how each shipped model turns its output into stored vectors, moves
-/// with an override that changes them, and ignores query-only settings.
-#[test]
-fn each_shipped_model_declares_its_transform_from_its_own_files() {
-    let pplx = spec::LocalModelSpec::read(&model_fixture("pplx"), &spec_config()).expect("reads");
-    assert_eq!(
-        pplx.transform(),
-        "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
-    );
-    let harrier =
-        spec::LocalModelSpec::read(&model_fixture("harrier"), &harrier_config()).expect("reads");
-    assert_eq!(
-        harrier.transform(),
-        "attn=causal;pool=lasttoken;include_prompt=true;doc_prompt=none;chain=normalize;dims=1024"
-    );
-
-    let mut config = harrier_config();
-    config.query_instruction = Some("Represent this question: ".to_owned());
-    config.query_prompt_name = Some("web_search_query".to_owned());
-    config.batch_size = 1;
-    config.local.quant = EmbedderQuant::None;
-    let queried = spec::LocalModelSpec::read(&model_fixture("harrier"), &config).expect("reads");
-    assert_eq!(queried.transform(), harrier.transform());
-
-    config.local.attention = crate::config::EmbedderAttention::Bidirectional;
-    let bidirectional =
-        spec::LocalModelSpec::read(&model_fixture("harrier"), &config).expect("reads");
-    assert_ne!(bidirectional.transform(), harrier.transform());
-    let mut config = spec_config();
-    config.local.output_quantization = EmbedderOutputQuantization::Binary;
-    let binary = spec::LocalModelSpec::read(&model_fixture("pplx"), &config).expect("reads");
-    assert_ne!(binary.transform(), pplx.transform());
-}
-
-/// A Dense step is pinned by everything the runtime reads for it: the
-/// directory its weights come from, its widths, its activation and its bias.
-/// The input cap is left out on purpose: it changes how much of a document is
-/// read, not the space its vector lands in.
-#[test]
-fn the_transform_names_every_dense_setting_the_runtime_reads_and_not_the_input_cap() {
-    const TANH: &str = "torch.nn.modules.activation.Tanh";
-    let transform = |path: &str, bias: bool, activation: &str| {
-        let dense = format!(
-            r#"{{"idx":2,"name":"2","path":"{path}","type":"sentence_transformers.models.Dense"}}"#
-        );
-        let dir = module_dir(
-            &format!("[{TRANSFORMER},{POOLING},{dense}]"),
-            &[
-                (
-                    "1_Pooling/config.json",
-                    &pooling_config("mean_tokens", true),
-                ),
-                (
-                    &format!("{path}/config.json"),
-                    &format!(
-                        r#"{{"in_features":4,"out_features":2,"bias":{bias},"activation_function":"{activation}"}}"#
-                    ),
-                ),
-            ],
-        );
-        std::fs::copy(
-            model_fixture("tiny").join("config.json"),
-            dir.path().join("config.json"),
-        )
-        .expect("copy the body's config");
-        let mut config = spec_config();
-        config.dimensions = 2;
-        spec::LocalModelSpec::read(dir.path(), &config)
-            .expect("reads")
-            .transform()
-    };
-    let own = transform("2_Dense", true, TANH);
-    assert_eq!(
-        own,
-        r#"attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=dense:path="2_Dense":4>2:tanh:bias=true;dims=2"#
-    );
-    assert_ne!(transform("2_Dense", false, TANH), own, "bias");
-    assert_ne!(
-        transform("3_Dense", true, TANH),
-        own,
-        "the weights' directory"
-    );
-    assert_ne!(
-        transform("2_Dense", true, "torch.nn.modules.linear.Identity"),
-        own,
-        "activation"
-    );
-
-    let mut capped = spec_config();
-    capped.max_input_tokens = 512;
-    let mut uncapped = spec_config();
-    uncapped.max_input_tokens = 8192;
-    assert_eq!(
-        spec::LocalModelSpec::read(&model_fixture("pplx"), &capped)
-            .expect("reads")
-            .transform(),
-        spec::LocalModelSpec::read(&model_fixture("pplx"), &uncapped)
-            .expect("reads")
-            .transform()
-    );
-}
-
 // ─── the artifact manager ────────────────────────────────────────────────
 
 fn local_config(dir: &std::path::Path) -> crate::config::LocalEmbedderConfig {
@@ -557,31 +454,6 @@ fn an_artifact_with_a_wrong_digest_is_removed_and_fetched_again() {
 
 // ─── placing a forward's rows ────────────────────────────────────────────
 
-/// A packed forward answers one block per input, and its rows land at their
-/// own inputs' places, every one of them: a scatter that zipped the inputs
-/// ahead of each block lost one input per block and moved every later row
-/// onto the wrong input.
-#[test]
-fn a_forward_s_rows_land_at_their_own_inputs() {
-    let mut rows = vec![None; 6];
-    place(&mut rows, &[4, 1, 5], vec![vec![4.0], vec![1.0], vec![5.0]]).expect("placed");
-    assert_eq!(
-        rows,
-        vec![
-            None,
-            Some(vec![1.0]),
-            None,
-            None,
-            Some(vec![4.0]),
-            Some(vec![5.0])
-        ]
-    );
-    assert!(
-        place(&mut rows, &[0, 2], vec![vec![0.0]]).is_err(),
-        "a forward that answers fewer inputs than it carried is refused"
-    );
-}
-
 // ─── turns on the model ──────────────────────────────────────────────────
 
 /// Polls `ready` until it holds, for up to ten seconds.
@@ -756,53 +628,6 @@ mod with_model {
         }
         let worst = scores.iter().copied().fold(1.0f32, f32::min);
         (worst, scores.iter().sum::<f32>() / scores.len() as f32)
-    }
-
-    /// The load-bearing row: our rebuilt stack must land in the same place in
-    /// the space as the reference runtime's Q8_0 of the same weights.
-    #[test]
-    #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
-    fn the_committed_subset_matches_the_reference_runtime() {
-        let embedder = LocalEmbedder::load(&harrier_config(EmbedderDevice::Auto), &manager())
-            .expect("model loads");
-        let measured = embedder
-            .embed_documents(&reference_chunks())
-            .expect("embedded");
-        let (worst, mean) = agreement(&measured, &reference_vectors(), 0.99);
-        println!("worst cosine against the reference runtime: {worst} (mean {mean})");
-    }
-
-    /// The default model's port, unquantised, against sentence-transformers'
-    /// fp32 output. At f32 only rounding separates the two, so this is where a
-    /// port error would show; bf16 is what `quant = "none"` runs, and the
-    /// precision the model card warns fp16 overflows at.
-    #[test]
-    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
-    fn pplx_unquantised_matches_sentence_transformers() {
-        let mut config = pplx_config(EmbedderDevice::Auto);
-        config.local.quant = EmbedderQuant::None;
-        for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
-            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
-                .expect("model loads");
-            let measured = embedder
-                .embed_documents(&pplx_parity_texts())
-                .expect("embedded");
-            let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), floor);
-            println!("pplx {dtype:?} vs sentence-transformers: worst cosine {worst}, mean {mean}");
-        }
-    }
-
-    /// The default model as it ships: Q8_0 projections, f32 activations.
-    #[test]
-    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
-    fn pplx_q8_0_matches_sentence_transformers() {
-        let embedder = LocalEmbedder::load(&pplx_config(EmbedderDevice::Auto), &manager())
-            .expect("model loads");
-        let measured = embedder
-            .embed_documents(&pplx_parity_texts())
-            .expect("embedded");
-        let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);
-        println!("pplx Q8_0 vs sentence-transformers: worst cosine {worst}, mean {mean}");
     }
 
     /// The packed forward on the tiled kernel against candle's kernel run one

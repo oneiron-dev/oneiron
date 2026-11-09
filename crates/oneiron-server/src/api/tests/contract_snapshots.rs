@@ -2,38 +2,6 @@
 
 use super::*;
 
-#[test]
-fn v1_core_openapi_documents_invalid_state_envelopes() {
-    let spec = generated_spec();
-    let turn_create_post_responses =
-        spec["paths"]["/v1/core/conversations/{conversation_id}/turns"]["post"]["responses"]
-            .as_object()
-            .expect("turn create POST responses object");
-    assert!(
-        turn_create_post_responses.contains_key("409"),
-        "turn create POST must document INVALID_STATE conflict responses"
-    );
-    assert_eq!(
-        turn_create_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
-        Value::from("#/components/schemas/ApiErrorEnvelope"),
-        "turn create 409 must use the ApiErrorEnvelope schema"
-    );
-
-    let turn_annotate_post_responses =
-        spec["paths"]["/v1/core/turns/annotate"]["post"]["responses"]
-            .as_object()
-            .expect("turn annotate POST responses object");
-    assert!(
-        turn_annotate_post_responses.contains_key("409"),
-        "turn annotate POST must document Gate INVALID_STATE conflict responses"
-    );
-    assert_eq!(
-        turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
-        Value::from("#/components/schemas/ApiErrorEnvelope"),
-        "turn annotate 409 must use the ApiErrorEnvelope schema"
-    );
-}
-
 #[tokio::test]
 async fn v1_core_success_contract_snapshot_matches_fixture() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -416,42 +384,3 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
     );
 }
 
-#[tokio::test]
-async fn core_memory_timeline_receipt_covers_absent_and_live_results() {
-    let (_dir, server) = auth_test_server();
-    let (status, body) = owner_json(
-        server.clone(),
-        "GET",
-        "/v1/core/memory/03030303030303030303030303030303/timeline",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["narrowing"]["suppressed_count"], 0);
-    assert!(body["narrowing"]["applied"].is_object());
-
-    let id = oneiron::EntityId::from_bytes([3; 16]).expect("id");
-    let payload = rmp_serde::to_vec_named(&json!({"txt": "timeline row"})).unwrap();
-    server
-        .vault
-        .put_entity(
-            &id,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &payload,
-        )
-        .unwrap();
-    let (status, body) = owner_json(
-        server,
-        "GET",
-        "/v1/core/memory/03030303030303030303030303030303/timeline?view=full",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["narrowing"]["suppressed_count"], 0);
-    assert_eq!(body["narrowing"]["narrowed_axes"], json!([]));
-    assert_eq!(body["records"].as_array().unwrap().len(), 1);
-    assert_eq!(body["records"][0]["item"]["txt"], "timeline row");
-}

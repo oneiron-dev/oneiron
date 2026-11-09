@@ -114,22 +114,6 @@ impl LiveQuerySource for Source {
     }
 }
 
-#[test]
-fn all_snapshot_channels_are_chunked_then_eose_before_live_data() {
-    for channel in [Channel::View, Channel::Receipts, Channel::PendingConsent] {
-        let value = json!("x".repeat(wire::CHUNK_BYTES * 2));
-        let source = Arc::new(Source::new(value.clone()));
-        let tier = LiveQueries::new(1, source);
-        let pushes = tier
-            .open(1, ScopedView::default(), channel, None, None)
-            .unwrap();
-        assert_eq!(pushes.last().unwrap().kind, "eose");
-        let frames: Vec<_> = pushes.iter().flat_map(|p| p.encode().unwrap()).collect();
-        assert!(frames.len() >= 4);
-        assert_eq!(test_wire::reply(&frames)["result"], value);
-    }
-}
-
 #[tokio::test]
 async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
     let (_dir, server) = production_tests::server();

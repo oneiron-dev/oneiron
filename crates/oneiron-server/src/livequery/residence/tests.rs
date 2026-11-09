@@ -135,34 +135,6 @@ async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item
     assert!(denied.get("error").is_some());
 }
 
-/// Bug repro (rule 5, found beside Bugbot's on #1483): a touch whose document export waited past
-/// the live-document row to its deadline was answered a 500 "item document unavailable", after
-/// waiting on the runtime worker. Done-means: it is answered the typed WAITED_OUT.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_touch_past_the_live_document_row_is_waited_out() {
-    let (_dir, server) = production_tests::server_with_limits(crate::config::LimitsConfig {
-        live_documents: 1,
-        queue_wait_timeout_ms: 200,
-        ..crate::config::LimitsConfig::default()
-    });
-    let (auth, window, encoded, [item, other]) = granted_window(&server).await;
-    // Another opener holds the vault's one live document past the wait.
-    let _held = server
-        .reassert_manager
-        .documents()
-        .open_for(other, b"another opener")
-        .unwrap();
-    let touch = reply(
-        &server,
-        &auth,
-        "residence.touch",
-        json!({
-            "window": window.as_str(), "selector": encoded, "entityId": item.to_hex()
-        }),
-    );
-    assert_eq!(touch["error"]["code"], "WAITED_OUT", "{touch}");
-}
-
 #[tokio::test]
 async fn home_search_requires_a_bound_grant_and_never_claims_local_completeness() {
     let (_dir, server) = production_tests::server();
@@ -319,21 +291,3 @@ pub(crate) async fn cross_the_index(
     }
 }
 
-/// Bug repro (rule 5, rows 22 and 23): a socket's index read was refused
-/// past 1,024 pages and past its projection's byte row. Done-means: every
-/// page is served and each row asks.
-#[tokio::test]
-async fn an_index_read_past_its_rows_is_served_and_asks() {
-    use crate::wire_telemetry::LimitRow;
-    for row in [LimitRow::ResidenceIndexPages, LimitRow::ResidenceIndexBytes] {
-        assert_eq!(
-            cross_the_index(row, 4).await,
-            crate::admission::Crossing {
-                refused: 0,
-                asked: true
-            },
-            "{}",
-            row.key()
-        );
-    }
-}

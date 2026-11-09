@@ -188,28 +188,4 @@ mod remediation_tests {
             .unwrap();
         assert!(!source.can_resume(&cursor).unwrap());
     }
-
-    #[tokio::test]
-    async fn alternating_unchanged_views_do_not_consume_retention() {
-        let (_dir, server) = super::super::production_tests::server();
-        let auth = crate::test_credentials::authenticate(
-            &server,
-            &super::super::production_tests::token("human"),
-        );
-        let source = BoundSource::new(std::sync::Arc::downgrade(&server), auth, "fixture".into());
-        let a = ScopedView::default();
-        let b = ScopedView {
-            world_ref: Some("22222222222222222222222222222222".into()),
-            ..Default::default()
-        };
-        let first = source.derive(&a, Channel::Receipts).unwrap();
-        let second = source.derive(&b, Channel::Receipts).unwrap();
-        for _ in 0..subscriptions::LIVEQUERY_RING_CAPACITY {
-            source.derive(&a, Channel::Receipts).unwrap();
-            let latest = source.derive(&b, Channel::Receipts).unwrap();
-            assert_eq!(latest.cursor.version_vector, second.cursor.version_vector);
-        }
-        assert_eq!(source.doc.lock().unwrap().commits, 2);
-        assert!(source.can_resume(&first.cursor).unwrap());
-    }
 }

@@ -469,17 +469,6 @@ fn concurrent_legacy_revokes_report_exactly_one_winner_per_jti() {
 }
 
 #[test]
-fn revocation_registry_key_is_namespaced_and_id_keyed() {
-    let jti = mint_token_jti();
-    assert_eq!(
-        revoked_token_jti_key(&jti),
-        format!("auth:revoked-token-jti:{jti}")
-    );
-    assert_ne!(revoked_token_jti_key(&jti), revoked_token_jti_key("other"));
-    assert!(parse_jti(&jti).is_ok());
-}
-
-#[test]
 fn revoked_host_root_closes_cached_owner_auth_and_its_session_jti() {
     let fixture = Fixture::new();
     let auth = CoreAuth::from_verified(

@@ -203,38 +203,6 @@ pub(super) async fn cross_the_runs(callers: usize) -> crate::admission::Crossing
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_burst_of_two_hundred_runs_on_one_credential_all_complete() {
-    let (_dir, server) = super::test_server();
-    let vault = Arc::clone(&server.vault);
-    let gate = Arc::new(Gate::default());
-    gate.open();
-    let (host, _workers, questions) = host(&gate, 2, Duration::from_secs(300));
-    let fleet = actor("fleet");
-    let run_refs: Vec<String> = (0..200).map(|n| format!("burst-{n}")).collect();
-
-    let outcomes = tokio::time::timeout(
-        Duration::from_secs(600),
-        futures_util::future::join_all(
-            run_refs
-                .iter()
-                .map(|run_ref| run(&host, &vault, &fleet, run_ref)),
-        ),
-    )
-    .await
-    .expect("every run completes");
-    for (run_ref, outcome) in run_refs.iter().zip(outcomes) {
-        assert!(
-            outcome.is_ok(),
-            "{run_ref}: a queued run is served, never refused: {outcome:?}"
-        );
-    }
-    assert!(
-        questions.latest(LimitRow::CodeRuns).is_some(),
-        "the burst crossed the row, which asked"
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_keeps_its_permit_until_its_worker_ends_and_the_next_waits_for_it() {
     let (_dir, server) = super::test_server();

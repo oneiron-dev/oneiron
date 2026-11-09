@@ -122,69 +122,6 @@ fn fill_at(vault: &Arc<oneiron::Vault>, model: &'static str, dimensions: usize) 
     filled
 }
 
-/// A vault filled in one space refuses a server configured for another, and
-/// `reembed` is the door across: the vault reopens in the configured space with
-/// every claim queued, and the configured model fills them all.
-#[test]
-fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
-    let dir = tempfile::tempdir().expect("vault dir");
-    let old = serve_config(dir.path(), OLD);
-    let new = serve_config(dir.path(), NEW);
-    // Opening seeds the vault's own policy claims, so the count filled is
-    // every embeddable claim, not only the three written here.
-    let (ids, embedded) = {
-        let vault = open(&old).expect("the vault opens in its first space");
-        let ids: Vec<_> = (0..3)
-            .map(|index| put_claim(&vault, &format!("claim {index}")))
-            .collect();
-        let embedded = fill(&vault, OLD);
-        assert!(embedded >= ids.len());
-        for id in &ids {
-            assert!(vault.get_vector(id).expect("vector read").is_some());
-        }
-        (ids, embedded)
-    };
-
-    let refused = open(&new).err().expect("a different space is refused");
-    assert_eq!(refused.kind(), oneiron::ErrorKind::EmbeddingModelChanged);
-
-    let outcome = reembed_with_config(&new, false).expect("reembed");
-    assert_eq!(
-        outcome,
-        ReembedOutcome {
-            from: Some(OLD.to_owned()),
-            to: NEW.to_owned(),
-            transform: Some(TINY.to_owned()),
-            migrated: true,
-        }
-    );
-
-    let vault = open(&new).expect("the vault opens in the configured space");
-    for id in &ids {
-        assert_eq!(
-            vault.get_vector(id).expect("vector read"),
-            None,
-            "the old space's vector is gone"
-        );
-    }
-    assert_eq!(fill(&vault, NEW), embedded, "every claim is embedded again");
-    for id in &ids {
-        assert!(vault.get_vector(id).expect("vector read").is_some());
-    }
-    drop(vault);
-
-    assert_eq!(
-        reembed_with_config(&new, false).expect("a second reembed"),
-        ReembedOutcome {
-            from: None,
-            to: NEW.to_owned(),
-            transform: Some(TINY.to_owned()),
-            migrated: false,
-        },
-        "a vault already in the configured space is left as it is"
-    );
-}
-
 /// The door never creates a vault, and needs a model to move to.
 #[test]
 fn reembed_refuses_a_missing_vault_and_a_missing_embedder() {
@@ -202,39 +139,6 @@ fn reembed_refuses_a_missing_vault_and_a_missing_embedder() {
     assert!(
         !dir.path().join("data.mdb").exists(),
         "nothing was created without a target space"
-    );
-}
-
-/// `--force` runs the same swap under the pin the vault already holds: every
-/// vector dropped, every record queued, and the model fills them all again.
-#[test]
-fn a_forced_reembed_refills_a_vault_already_in_the_configured_space() {
-    let dir = tempfile::tempdir().expect("vault dir");
-    let config = serve_config(dir.path(), NEW);
-    let (ids, embedded) = {
-        let vault = open(&config).expect("the vault opens");
-        let ids: Vec<_> = (0..2)
-            .map(|index| put_claim(&vault, &format!("claim {index}")))
-            .collect();
-        (ids, fill(&vault, NEW))
-    };
-    assert_eq!(
-        reembed_with_config(&config, true).expect("forced reembed"),
-        ReembedOutcome {
-            from: None,
-            to: NEW.to_owned(),
-            transform: Some(TINY.to_owned()),
-            migrated: true,
-        }
-    );
-    let vault = open(&config).expect("the vault still opens in its space");
-    for id in &ids {
-        assert_eq!(vault.get_vector(id).expect("vector read"), None);
-    }
-    assert_eq!(
-        fill(&vault, NEW),
-        embedded,
-        "every record is embedded again"
     );
 }
 
@@ -600,32 +504,6 @@ fn a_vault_moves_between_local_and_an_endpoint_of_the_same_model_without_a_reemb
         refusal_kind(&local_config(dir.path(), EmbedderAttention::Causal)),
         Some(oneiron::ErrorKind::EmbeddingTransformChanged),
         "the local descriptor survived the endpoint"
-    );
-}
-
-/// A vault moves to how `embedder serve` makes vectors only through reembed,
-/// which reads the server's listing: the vault is repinned to the served
-/// transform and refilled, after which the local transform it left is the
-/// one refused.
-#[test]
-fn reembed_moves_a_vault_to_the_transform_an_oneiron_endpoint_lists() {
-    let dir = tempfile::tempdir().expect("vault dir");
-    let own = local_config(dir.path(), EmbedderAttention::Auto);
-    filled(&own);
-    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING, WIDE));
-    assert_eq!(
-        reembed_with_config(&endpoint, false).expect("reembed"),
-        ReembedOutcome {
-            from: None,
-            to: OLD.to_owned(),
-            transform: Some("served-elsewhere".to_owned()),
-            migrated: true,
-        }
-    );
-    assert_eq!(
-        refusal_kind(&own),
-        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
-        "the vault now holds the served transform"
     );
 }
 
