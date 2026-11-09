@@ -114,6 +114,15 @@ published package or release binary. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 
+## Building from source
+
+Python 3 must be on `PATH` (as `python3`; `python` on Windows; or name it in `ONEIRON_PYTHON`). The SDK's
+generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
+`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`) run `scripts/sdk/generate.py` from
+their build scripts, once per change of the verb table (`scripts/sdk/verbs/`) or the Rust types it names, into
+the target directory. It uses the Python standard library only. A Rust port of the generator, which ends this
+requirement, comes before the first crates.io release.
+
 ## Web frontend
 
 The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported

@@ -47,8 +47,15 @@ mod dto;
 #[cfg(feature = "engine")]
 mod embedded_engine;
 mod error;
-#[path = "generated/facade_types_generated.rs"]
-mod facade_types_generated;
+#[allow(
+    clippy::large_enum_variant,
+    clippy::enum_variant_names,
+    clippy::upper_case_acronyms,
+    reason = "each type mirrors one engine type, its names and its variants"
+)]
+mod facade_types_generated {
+    include!(concat!(env!("OUT_DIR"), "/facade_types_generated.rs"));
+}
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
 mod native_limit_questions;
@@ -352,4 +359,4 @@ pub fn pair(link: String) -> Result<Paired, OneironError> {
     })
 }
 
-include!("generated/facade_generated.rs");
+include!(concat!(env!("OUT_DIR"), "/facade_generated.rs"));

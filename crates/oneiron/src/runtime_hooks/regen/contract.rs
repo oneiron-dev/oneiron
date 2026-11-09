@@ -12,7 +12,7 @@ use super::super::filter::glob_match;
 
 /// The code-mode declarations a hook body's verb shapes come from: the verb
 /// table half of [`super::HookContractStamp`].
-pub(super) const VERB_TABLE: &str = include_str!("../../verbs/generated/code-mode.d.ts");
+pub(super) const VERB_TABLE: &str = include_str!(concat!(env!("OUT_DIR"), "/code-mode.d.ts"));
 /// The hook world: the sandbox half of [`super::HookContractStamp`].
 pub(super) const HOOK_WORLD: &str = include_str!("../../../wit/hook/hook.wit");
 
