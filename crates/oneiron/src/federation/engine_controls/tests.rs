@@ -43,6 +43,7 @@ fn goal() -> GoalRecord {
         exploration_budget: GoalExplorationBudget {
             max_spend: 1000,
             exploration_slice: 100,
+            unit: crate::run_budget::LeaseUnit::tokens(),
             human_minutes: 20,
         },
     }
