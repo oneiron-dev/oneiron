@@ -45,7 +45,7 @@ struct Streak<T> {
 /// and every diagnostic, inline in its feedback row or from the run's body
 /// that keeps them whole. `None` for a check that has not landed complete,
 /// or whose diagnostics do not read.
-fn check_report(
+pub(super) fn check_report(
     vault: &Vault,
     key: StepKey,
     row: &StoredStepFeedback,

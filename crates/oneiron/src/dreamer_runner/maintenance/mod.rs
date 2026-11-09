@@ -299,12 +299,22 @@ pub(crate) fn execute(
         coach::COACH_CONTRIBUTION_CHECK_FACET => {
             return contribution::execute(attempt, ctx, contribution_host);
         }
+        // The Coach reads agent health through its grant (untangle 6.6c): a
+        // Coach narrowed off `read` reviews nothing.
         agent_health::COACH_AGENT_HEALTH_FACET => {
-            agent_health::review(ctx.vault, &attempt.status.payload.input, ctx.now_ms / 1000)?;
+            if ctx.vault.coach_reads_through_grant()? {
+                agent_health::review(ctx.vault, &attempt.status.payload.input, ctx.now_ms / 1000)?;
+            } else {
+                tracing::info!("the Coach's grant names no read: its health review reads nothing");
+            }
         }
         // Its own job: it never fails, so it never gates the review.
         agent_health::COACH_HEALTH_TRENDS_FACET => {
-            agent_health::run_health_trends(ctx.vault, ctx.now_ms / 1000);
+            if ctx.vault.coach_reads_through_grant()? {
+                agent_health::run_health_trends(ctx.vault, ctx.now_ms / 1000);
+            } else {
+                tracing::info!("the Coach's grant names no read: its trend pass reads nothing");
+            }
         }
         calibration_asks::COACH_CALIBRATION_ASKS_FACET => {
             calibration_asks::run(ctx.vault)?;

@@ -125,23 +125,34 @@ impl Vault {
             .map(|_| (holder, false)))
     }
 
-    /// The grant through which `holder` holds `engine.controls` now, if any:
-    /// for a base agent the grant its marker names, while that grant stands
-    /// with `engine.controls` and its MACHINE binding is live; for any other
-    /// actor a live Steward grant on this vault's root that names
-    /// `engine.controls` itself.
+    /// The grant through which `holder` holds `engine.controls` now, if any
+    /// ([`Self::steward_grant_with_verb_in`] for that verb).
     pub(crate) fn engine_controls_grant_in(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
     ) -> Result<Option<EntityId>> {
+        self.steward_grant_with_verb_in(txn, holder, grant_scope::ENGINE_CONTROLS_VERB)
+    }
+
+    /// The grant through which `holder` may use the Steward verb `verb` now,
+    /// if any, checked live at each use (untangle 6.6c): for a base agent the
+    /// grant its marker names, while that grant stands with `verb` and its
+    /// MACHINE binding is live; for any other actor a live Steward grant on
+    /// this vault's root that names `verb` itself. A grant whose verbs are
+    /// left open (an Owner's or an Admin's) does not count.
+    pub(crate) fn steward_grant_with_verb_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+    ) -> Result<Option<EntityId>> {
         if SystemAgent::of(holder).is_none() {
-            return self.root_engine_controls_grant_in(txn, holder);
+            return self.root_steward_grant_with_verb_in(txn, holder, verb);
         }
         Ok(match steward_grant_of_in(&self.store, txn, holder)? {
             Some(Some(grant))
-                if standing_steward_verbs_in(&self.store, txn, grant, holder)?
-                    .contains(grant_scope::ENGINE_CONTROLS_VERB)
+                if standing_steward_verbs_in(&self.store, txn, grant, holder)?.contains(verb)
                     && self.system_agent_binding_live_in(txn, holder)? =>
             {
                 Some(grant)
@@ -151,11 +162,12 @@ impl Vault {
     }
 
     /// The live Steward grant on this vault's root that names `holder` and
-    /// `engine.controls` itself, if any.
-    fn root_engine_controls_grant_in(
+    /// the verb `verb` itself, if any.
+    fn root_steward_grant_with_verb_in(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
+        verb: &str,
     ) -> Result<Option<EntityId>> {
         let root = self.steward_root_scope_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
@@ -182,7 +194,7 @@ impl Vault {
                 && grant.kind == FederationGrantKind::Access
                 && grant.confers_at(now)
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
-                    if verbs.contains(grant_scope::ENGINE_CONTROLS_VERB))
+                    if verbs.contains(verb))
             {
                 return Ok(Some(id));
             }
