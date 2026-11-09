@@ -11,36 +11,12 @@ use crate::EntityId;
 pub(crate) const KEY: &str = "code_consent_settlement";
 const SHIPPED_VERSION: u16 = 1;
 
-/// A policy filter, not a grant. A named person must still hold the exact power.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(
-    tag = "mode",
-    content = "holders",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum CodeConsentSettlementEligibility {
-    AllPowerHolders,
-    Named(BTreeSet<String>),
-}
-
-impl CodeConsentSettlementEligibility {
-    pub(crate) fn admits(&self, person: EntityId) -> bool {
-        match self {
-            Self::AllPowerHolders => true,
-            Self::Named(holders) => holders.contains(&person.to_hex()),
-        }
-    }
-
-    fn meet(&self, other: &Self) -> Self {
-        match (self, other) {
-            (Self::AllPowerHolders, other) | (other, Self::AllPowerHolders) => other.clone(),
-            (Self::Named(left), Self::Named(right)) => {
-                Self::Named(left.intersection(right).cloned().collect())
-            }
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_consent_state::gate::code_consent_settlement::CodeConsentSettlementEligibility;
+#[doc(hidden)]
+pub(crate) use oneiron_consent_state::gate::code_consent_settlement::{
+    CodeConsentSettlementOrigin, CodeConsentSettlementSource, ResolvedCodeConsentSettlement,
+};
 
 /// The row is cited as `code_consent_settlement@version` beside its exact source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -99,41 +75,6 @@ fn field<'a>(fields: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     let mut matching = fields.iter().filter(|(name, _)| name.as_str() == Some(key));
     let (_, value) = matching.next()?;
     matching.next().is_none().then_some(value)
-}
-
-/// Frozen data only. The answering writer must resolve and compare it again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CodeConsentSettlementSource {
-    pub(crate) manifest_ref: String,
-    pub(crate) body_hash: [u8; 32],
-    pub(crate) version: u16,
-    pub(crate) origin: CodeConsentSettlementOrigin,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CodeConsentSettlementOrigin {
-    Seeded,
-    Authored,
-    Narrowing,
-}
-
-impl CodeConsentSettlementOrigin {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Seeded => "seeded",
-            Self::Authored => "authored",
-            Self::Narrowing => "narrowing",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ResolvedCodeConsentSettlement {
-    pub(crate) eligible: CodeConsentSettlementEligibility,
-    pub(crate) sources: Vec<CodeConsentSettlementSource>,
-    /// Distinct authored baselines remain a conflict even under a common meet.
-    pub(crate) conflicting_authored_rows: bool,
 }
 
 #[derive(Default)]

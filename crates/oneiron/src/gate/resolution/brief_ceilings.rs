@@ -343,7 +343,7 @@ impl PolicyManifestResolution {
             verdicts.push(worded_line(
                 bound.class().as_str().to_owned(),
                 BriefClassSource::ConsentGrant {
-                    grant: row.grant_ref(),
+                    grant: crate::consent::consent_grant_row_grant_ref(&row),
                     envelope: BriefActionEnvelope {
                         selectors: envelope.selectors().to_vec(),
                         target: envelope.target().map(str::to_owned),

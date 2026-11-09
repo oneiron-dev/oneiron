@@ -171,7 +171,7 @@ pub struct ConsentRegistry {
 impl ConsentRegistryRow {
     pub(super) fn from_row(row: &ConsentGrantRow) -> Self {
         let bound = row.grant.bound();
-        let grant_ref = row.grant_ref();
+        let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
         Self {
             domain: bound.domain(),
             subject: render_subject(bound.subject()),

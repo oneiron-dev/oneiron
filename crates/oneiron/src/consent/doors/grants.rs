@@ -257,7 +257,7 @@ impl Vault {
             grant: ConsentGrant::Standing(grant),
         };
 
-        let grant_ref = row.grant_ref();
+        let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
         // A same-bound re-mint is a NEW issuance, even with the same
         // AuthenticatedOwner. Its predecessor's reason and undo must not
         // authorize or revoke this replacement.
@@ -306,8 +306,8 @@ impl Vault {
             content_kind: CONSENT_CONTENT_KIND.to_owned(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
-            grant_ref: receipt.grant_ref(),
-            diff_handle: receipt.diff_handle(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             read_frontier_hash: [0_u8; 32],
             context: Default::default(),
             redacted_at: None,
@@ -429,8 +429,8 @@ impl Vault {
             content_kind: CONSENT_CONTENT_KIND.to_owned(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
-            grant_ref: receipt.grant_ref(),
-            diff_handle: receipt.diff_handle(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             read_frontier_hash: [0_u8; 32],
             context: Default::default(),
             redacted_at: None,
@@ -524,8 +524,8 @@ pub(crate) fn record_standing_grant_use_for_store_in_txn(
         content_kind: CONSENT_CONTENT_KIND.to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: None,
-        grant_ref: receipt.grant_ref(),
-        diff_handle: receipt.diff_handle(),
+        grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+        diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
         read_frontier_hash: [0_u8; 32],
         context: Default::default(),
         redacted_at: None,

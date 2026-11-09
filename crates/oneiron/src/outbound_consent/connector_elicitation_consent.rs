@@ -297,7 +297,7 @@ impl Vault {
                     match consent.scope.bound() {
                         Ok(bound) => {
                             let minted = self.create_standing_grant_in_txn(txn, owner, bound)?;
-                            consent.grant_ref = minted.grant_ref();
+                            consent.grant_ref = crate::consent::consent_receipt_grant_ref(&minted);
                         }
                         Err(error) => tracing::warn!(
                             %error,

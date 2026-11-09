@@ -1,0 +1,97 @@
+//! Moved from `crates/oneiron/src/consent/support.rs` (core split slice 2: consent state below core).
+//! `oneiron` re-exports each item at its old path.
+
+use oneiron_base::error::Error;
+use oneiron_base::error::GateError;
+use oneiron_base::error::Result;
+use oneiron_store::gate_decision::types::GateDecisionId;
+use oneiron_store::side_table::codec::CodecError;
+use oneiron_store::side_table::codec::RawValue;
+use rmpv::Value;
+
+// ---------------------------------------------------------------------------
+// Storage identity — no entity type, no type byte
+// ---------------------------------------------------------------------------
+
+pub const CONSENT_APPROVE_ONCE_MARKER_VERSION: u8 = 1;
+
+pub const CONSENT_APPROVE_ONCE_MARKER_LEN: usize = 18;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+pub struct ApproveOnceMarker {
+    pub state: u8,
+    pub decision_id: GateDecisionId,
+}
+
+impl RawValue for ApproveOnceMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut marker = [0_u8; CONSENT_APPROVE_ONCE_MARKER_LEN];
+        marker[0] = CONSENT_APPROVE_ONCE_MARKER_VERSION;
+        marker[1] = self.state;
+        marker[2..].copy_from_slice(&self.decision_id.as_bytes());
+        Ok(marker.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (state, decision_id) = decode_approve_once_marker(bytes)?;
+        Ok(Self { state, decision_id })
+    }
+}
+
+pub fn decode_approve_once_marker(raw: &[u8]) -> Result<(u8, GateDecisionId)> {
+    if raw.len() != CONSENT_APPROVE_ONCE_MARKER_LEN || raw[0] != CONSENT_APPROVE_ONCE_MARKER_VERSION
+    {
+        return Err(Error::CorruptedIndex("consent approve-once marker"));
+    }
+    let decision_id = GateDecisionId::from_bytes(
+        raw[2..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("consent approve-once marker"))?,
+    );
+    Ok((raw[1], decision_id))
+}
+
+pub fn hex_to_16_bytes(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut out = [0_u8; 16];
+    for (index, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+pub fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+    let mut seen = vec![false; keys.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or_else(invalid_row)?;
+        let Some(index) = keys.iter().position(|known| *known == key) else {
+            return Err(invalid_row());
+        };
+        if seen[index] {
+            return Err(invalid_row());
+        }
+        seen[index] = true;
+    }
+    if seen.into_iter().all(|present| present) {
+        Ok(())
+    } else {
+        Err(invalid_row())
+    }
+}
+
+pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+        .ok_or_else(invalid_row)
+}
+
+pub const fn invalid_row() -> Error {
+    Error::Gate(GateError::InvalidConsentGrantRow("body failed validation"))
+}
