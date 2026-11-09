@@ -2832,6 +2832,10 @@ export class Oneiron {
         /** The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out. */
         release: (input: Facade.ReleaseTurnProgramHoldRequest): Facade.ProgramHoldReleaseView => this.#call(() => this.#client.vaultRunsProgramHoldRelease(input) as Facade.ProgramHoldReleaseView),
       },
+      parks: {
+        /** The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release. */
+        release: (input: Facade.ReleaseParkedAttemptRequest): Facade.ParkReleaseView => this.#call(() => this.#client.vaultRunsParksRelease(input) as Facade.ParkReleaseView),
+      },
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

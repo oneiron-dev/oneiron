@@ -1200,6 +1200,7 @@ pub enum AgentVerb {
     VaultRunsProgramStep,
     VaultRunsProgramCheckpoint,
     VaultRunsProgramHoldRelease,
+    VaultRunsParksRelease,
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
@@ -2578,6 +2579,7 @@ impl AgentVerb {
         Self::VaultRunsProgramStep,
         Self::VaultRunsProgramCheckpoint,
         Self::VaultRunsProgramHoldRelease,
+        Self::VaultRunsParksRelease,
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
@@ -3993,6 +3995,7 @@ impl AgentVerb {
             Self::VaultRunsProgramStep => "vault.runs.program_step",
             Self::VaultRunsProgramCheckpoint => "vault.runs.program_checkpoint",
             Self::VaultRunsProgramHoldRelease => "vault.runs.program_hold.release",
+            Self::VaultRunsParksRelease => "vault.runs.parks.release",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
@@ -5359,6 +5362,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
                 | Self::VaultRunsProgramHoldRelease
+                | Self::VaultRunsParksRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -6766,6 +6770,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
                 | Self::VaultRunsProgramHoldRelease
+                | Self::VaultRunsParksRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -8283,6 +8288,7 @@ impl AgentVerb {
                 | Self::VaultRunsProgramStep
                 | Self::VaultRunsProgramCheckpoint
                 | Self::VaultRunsProgramHoldRelease
+                | Self::VaultRunsParksRelease
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -9155,6 +9161,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultRunsProgramHoldRelease
+                | Self::VaultRunsParksRelease
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -10518,6 +10525,7 @@ impl AgentVerb {
             Self::VaultRunsProgramStep => &["spec"],
             Self::VaultRunsProgramCheckpoint => &["spec"],
             Self::VaultRunsProgramHoldRelease => &["spec"],
+            Self::VaultRunsParksRelease => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -11897,6 +11905,7 @@ impl AgentVerb {
             Self::VaultRunsProgramStep => &["spec"],
             Self::VaultRunsProgramCheckpoint => &["spec"],
             Self::VaultRunsProgramHoldRelease => &["spec"],
+            Self::VaultRunsParksRelease => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -15580,6 +15589,9 @@ impl AgentVerb {
             }
             Self::VaultRunsProgramHoldRelease => {
                 "The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."
+            }
+            Self::VaultRunsParksRelease => {
+                "The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release."
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."

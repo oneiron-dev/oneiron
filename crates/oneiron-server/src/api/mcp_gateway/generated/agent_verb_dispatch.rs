@@ -1449,6 +1449,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.runs.program_step" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.program_checkpoint" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.program_hold.release" => a.spec.clone().ok_or_else(invalid),
+        "vault.runs.parks.release" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.pick" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.lineage" => a.spec.clone().ok_or_else(invalid),
@@ -5257,6 +5258,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.runs.program_hold.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.runs.parks.release" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.consolidation.home.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -8215,6 +8219,7 @@ async fn execute_agent_verb_row_on(
         "vault.runs.program_hold.release" => {
             boxed_mcp_verb_row_vault_runs_program_hold_release(row).await
         }
+        "vault.runs.parks.release" => boxed_mcp_verb_row_vault_runs_parks_release(row).await,
         "vault.consolidation.home.get" => {
             boxed_mcp_verb_row_vault_consolidation_home_get(row).await
         }
@@ -67267,6 +67272,57 @@ async fn mcp_verb_row_vault_runs_program_hold_release(row: McpVerbRow<'_>) -> Mc
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_runs_program_hold_release(server, auth, input),
     )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_runs_parks_release<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_runs_parks_release(row))
+}
+async fn mcp_verb_row_vault_runs_parks_release(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.runs.parks.release", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::dreamer_runner::ReleaseParkedAttemptRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_parks_release(
+        server, auth, input,
+    ))
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

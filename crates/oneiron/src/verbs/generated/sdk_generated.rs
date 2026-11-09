@@ -6595,6 +6595,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.runs.parks.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ReleaseParkedAttemptRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.home.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -8585,6 +8591,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.program_step",
     "vault.runs.program_checkpoint",
     "vault.runs.program_hold.release",
+    "vault.runs.parks.release",
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
@@ -11152,6 +11159,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.runs.program_hold.release" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::ProgramHoldReleaseView,
         >(),
+        "vault.runs.parks.release" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_runner::ParkReleaseView>()
+        }
         "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::ConsolidationHomeView,
         >(),
@@ -19881,6 +19891,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.parks.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.home.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22712,6 +22729,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.program_step" => validate_input_vault_runs_program_step(value)?,
         "vault.runs.program_checkpoint" => validate_input_vault_runs_program_checkpoint(value)?,
         "vault.runs.program_hold.release" => validate_input_vault_runs_program_hold_release(value)?,
+        "vault.runs.parks.release" => validate_input_vault_runs_parks_release(value)?,
         "vault.consolidation.home.get" => validate_input_vault_consolidation_home_get(value)?,
         "vault.consolidation.home.pick" => validate_input_vault_consolidation_home_pick(value)?,
         "vault.consolidation.lineage" => validate_input_vault_consolidation_lineage(value)?,
@@ -29380,6 +29398,11 @@ fn validate_input_vault_runs_program_hold_release(value: &serde_json::Value) -> 
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_runs_parks_release(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::dreamer_runner::ReleaseParkedAttemptRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_consolidation_home_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: EmptyRequest = decode(value.clone())?;
     Ok(())
@@ -32073,6 +32096,7 @@ pub fn invoke_with_notice(
         "vault.runs.program_step" => invoke_vault_runs_program_step(memory, value),
         "vault.runs.program_checkpoint" => invoke_vault_runs_program_checkpoint(memory, value),
         "vault.runs.program_hold.release" => invoke_vault_runs_program_hold_release(memory, value),
+        "vault.runs.parks.release" => invoke_vault_runs_parks_release(memory, value),
         "vault.consolidation.home.get" => invoke_vault_consolidation_home_get(memory, value),
         "vault.consolidation.home.pick" => invoke_vault_consolidation_home_pick(memory, value),
         "vault.consolidation.lineage" => invoke_vault_consolidation_lineage(memory, value),
@@ -40716,6 +40740,13 @@ fn invoke_vault_runs_program_hold_release(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_runs_program_hold_release(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_runs_parks_release(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_runs_parks_release(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_consolidation_home_get(
@@ -52184,6 +52215,17 @@ pub fn vault_runs_program_hold_release(
     crate::dreamer_runner::release_turn_program_hold_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.runs.program_hold.release")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_runs_parks_release(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ReleaseParkedAttemptRequest,
+) -> MemoryResult<crate::dreamer_runner::ParkReleaseView> {
+    crate::dreamer_runner::release_parked_attempt_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.runs.parks.release")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
