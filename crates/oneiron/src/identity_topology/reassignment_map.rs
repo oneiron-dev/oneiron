@@ -455,6 +455,40 @@ pub(super) fn merged_members_in_txn(
     Ok(members)
 }
 
+/// `entity`, then every survivor it is merged into, through merges of
+/// merges: the entities whose claims include `entity`'s while those merges
+/// stand ([`merged_members_in_txn`] read the other way). A change to
+/// `entity`'s merges can move the rows of any of their splits.
+pub(super) fn merge_survivors_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let mut survivors = BTreeSet::from([*entity]);
+    let mut pending = vec![*entity];
+    while let Some(member) = pending.pop() {
+        for (scanned, entry) in store
+            .port_edges(
+                rtxn,
+                &member,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::MergedInto),
+                None,
+            )?
+            .enumerate()
+        {
+            if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("identity topology"));
+            }
+            let survivor = entry?.target;
+            if survivors.insert(survivor) {
+                pending.push(survivor);
+            }
+        }
+    }
+    Ok(survivors)
+}
+
 /// Writes `rows` as `event`'s assignment rows for `origin`, both directions.
 fn write_reassignment_rows_in_txn(
     store: &Store,
