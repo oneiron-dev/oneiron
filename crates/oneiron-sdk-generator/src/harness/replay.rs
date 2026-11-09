@@ -115,17 +115,14 @@ fn text_of<'v>(value: &'v Value, line: &str) -> Result<&'v str, GenerateError> {
     value.as_str().ok_or_else(|| malformed(line))
 }
 
-/// The logged `[[input, output], ...]` as rows.
+/// The logged rows: each row's `input` and `output`, a key absent where the row has none (Python's `row['output']`
+/// on such a row is its `KeyError`, which a `None` would hide).
 fn rows(value: &Value, line: &str) -> Result<Vec<Dict>, GenerateError> {
-    let pairs = value.as_list().ok_or_else(|| malformed(line))?;
-    pairs
-        .iter()
-        .map(|pair| match pair.as_list() {
-            Some([input, output]) => {
-                let mut row = Dict::new();
-                row.insert("input".to_owned(), input.clone());
-                row.insert("output".to_owned(), output.clone());
-                Ok(row)
+    let rows = value.as_list().ok_or_else(|| malformed(line))?;
+    rows.iter()
+        .map(|row| match row {
+            Value::Dict(row) if row.keys().all(|key| key == "input" || key == "output") => {
+                Ok(row.clone())
             }
             _ => Err(malformed(line)),
         })
@@ -222,6 +219,13 @@ fn sorted<S: AsRef<str>>(items: impl IntoIterator<Item = S>) -> Value {
     list(items, Value::Str)
 }
 
+/// `sorted(values, key=lambda v: (type(v).__name__, json.dumps(v)))`.
+fn sorted_values(values: &[Value]) -> Value {
+    let mut values: Vec<&Value> = values.iter().collect();
+    values.sort_by_cached_key(|value| (value.type_name(), crate::facade_types::dumps(value)));
+    list(values, Value::clone)
+}
+
 fn key_value(key: &ItemKey) -> Value {
     key.to_value()
 }
@@ -303,6 +307,7 @@ fn state_dump(inventory: &mut Inventory) -> Result<Value, GenerateError> {
         ("decls", Value::List(decls)),
         ("order", list(&inventory.order, |key| key_value(key))),
         ("names", sorted(&inventory.names)),
+        ("names_not_str", sorted_values(&inventory.names_not_str)),
         (
             "fallbacks",
             list(&inventory.fallbacks, |(at, rust, reason)| {

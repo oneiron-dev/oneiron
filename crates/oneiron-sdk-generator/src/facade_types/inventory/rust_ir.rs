@@ -13,8 +13,8 @@ use super::super::reader::{
     truthy,
 };
 use super::super::{
-    EXTERNAL, Field, INT, Ir, MAPS, NULL, PRELUDE, RECURSION_LIMIT, SEQUENCES, STRING, WRAPPERS,
-    byte_id_codec, holds, index_error, leaf, recursion_error, substring_not_found, width,
+    EXTERNAL, Field, INT, Ir, MAPS, NULL, PRELUDE, SEQUENCES, STRING, WRAPPERS, byte_id_codec,
+    holds, index_error, leaf, substring_not_found, width,
 };
 use super::{Context, EnumMeta, Inventory, VariantMeta, VariantShape};
 use crate::error::GenerateError;
@@ -107,7 +107,22 @@ impl Inventory {
         self.walk(ast, scope, location)
     }
 
+    /// One frame of `Inventory.ir`'s recursion (facade_types.py:699-730), around `walk_frame`: the frames are
+    /// counted, so a walk as deep as Python's recursion limit is its `RecursionError`.
     fn walk(&mut self, ast: &Ast, scope: Scope<'_>, location: &str) -> Result<Ir, GenerateError> {
+        self.enter()?;
+        let value = self.walk_frame(ast, scope, location);
+        self.leave();
+        value
+    }
+
+    /// The body of `Inventory.ir` (facade_types.py:699-730).
+    fn walk_frame(
+        &mut self,
+        ast: &Ast,
+        scope: Scope<'_>,
+        location: &str,
+    ) -> Result<Ir, GenerateError> {
         let (segments, args) = match ast {
             Ast::Ref(inner) => return self.walk(inner, scope, location),
             Ast::Tuple(items) if items.is_empty() => return Ok(NULL),
@@ -520,6 +535,15 @@ impl Inventory {
     /// derive; a type that only reads takes the shape it reads `from`. A wire no caller can name is written under
     /// this type's own name (FIX 11203).
     pub(crate) fn item_ir(&mut self, item: &ItemRef, name: &str) -> Result<Ir, GenerateError> {
+        self.enter()?;
+        let value = self.item_ir_frame(item, name);
+        self.leave();
+        value
+    }
+
+    /// The body of `item_ir`, inside the frame it opens (two private conversions that name each other recurse here
+    /// without end in Python, until its `RecursionError`).
+    fn item_ir_frame(&mut self, item: &ItemRef, name: &str) -> Result<Ir, GenerateError> {
         let context = Context::of(item);
         let scope = Scope {
             context: &context,
@@ -544,14 +568,7 @@ impl Inventory {
             let Some(wire) = self.private_wire(&target, item)? else {
                 return self.walk(&target, scope, location);
             };
-            // Two private conversions that name each other recurse without end in Python.
-            if self.conversion_depth >= RECURSION_LIMIT {
-                return Err(recursion_error());
-            }
-            self.conversion_depth += 1;
-            let value = self.item_ir(&wire, name);
-            self.conversion_depth -= 1;
-            let value = value?;
+            let value = self.item_ir(&wire, name)?;
             if item.kind == Kind::Struct && !derived.contains("Debug") {
                 self.redacted.insert(location.to_owned());
             }

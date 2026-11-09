@@ -14,7 +14,9 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::index::{Index, ItemRef};
 use super::reader::parse_type;
-use super::{CRATES, Ir, Key, RESERVED, ROOT_CONTEXT, holds, type_names};
+use super::{
+    CRATES, Ir, Key, RECURSION_LIMIT, RESERVED, ROOT_CONTEXT, holds, recursion_error, type_names,
+};
 use crate::error::GenerateError;
 use crate::py::value::{Dict, Value};
 
@@ -106,6 +108,11 @@ pub(crate) struct Inventory {
     pub(crate) order: Vec<Key>,
     /// Every name taken: the type_names.json pins, then each allocation (a set).
     pub(crate) names: IndexSet<String>,
+    /// The members of Python's `names` set that are not strings: the hashable type_names.json pins that are no
+    /// `str`, the first of equal values kept as a set keeps it (`7`, `True`, `1.0`, `None`). No name the inventory
+    /// allocates or looks up can equal one; they are kept so the state is Python's (a pin `allocate` returns is
+    /// refused there, a documented divergence).
+    pub(crate) names_not_str: Vec<Value>,
     /// (declaration, rust text, reason)
     pub(crate) fallbacks: Vec<(String, String, String)>,
     /// (declaration, rust text): serde_json values, opaque by design.
@@ -127,8 +134,10 @@ pub(crate) struct Inventory {
     pub(crate) root_context: Context,
     /// `TYPE_NAMES`: Rust path -> pinned name.
     type_names: Dict,
-    /// How deep `item_ir` has recursed through conversions (an endless chain is Python's RecursionError).
-    conversion_depth: usize,
+    /// How many `walk` and `item_ir` calls are open (Python's `ir` and `item_ir` frames): a walk as deep as
+    /// Python's recursion limit (a type nested that deep, a chain of that many types, two conversions that name each
+    /// other) is its `RecursionError`, not an exhausted native stack.
+    depth: usize,
 }
 
 impl Inventory {
@@ -151,11 +160,18 @@ impl Inventory {
             return Err(GenerateError::attribute(pins.type_name(), "values"));
         };
         let mut names = IndexSet::new();
+        let mut names_not_str: Vec<Value> = Vec::new();
         for value in pins.values() {
             value.check_hashable("a set element")?;
-            // A pin that is not a string never equals a name the inventory compares it with.
-            if let Value::Str(name) = value {
-                names.insert(name.clone());
+            match value {
+                Value::Str(name) => {
+                    names.insert(name.clone());
+                }
+                // `True == 1 == 1.0`: a set keeps the first.
+                other if !names_not_str.iter().any(|kept| kept.py_eq(other)) => {
+                    names_not_str.push(other.clone());
+                }
+                _ => {}
             }
         }
         let (crate_name, file) = ROOT_CONTEXT;
@@ -178,6 +194,7 @@ impl Inventory {
             decls: IndexMap::new(),
             order: Vec::new(),
             names,
+            names_not_str,
             fallbacks: Vec::new(),
             opaques: Vec::new(),
             variants: IndexMap::new(),
@@ -193,7 +210,7 @@ impl Inventory {
                 module,
             },
             type_names: pins.clone(),
-            conversion_depth: 0,
+            depth: 0,
         };
         for row in rows {
             // `(row['input'], row['output'])` is built before either is rooted.
@@ -234,6 +251,20 @@ impl Inventory {
     pub(crate) fn py_type(&mut self, text: &str, prefix: &str) -> Result<String, GenerateError> {
         let node = self.root_ir(text)?;
         self.py_outer(&node, prefix)
+    }
+
+    /// Opens one of Python's `ir` or `item_ir` frames (see `depth`).
+    pub(crate) fn enter(&mut self) -> Result<(), GenerateError> {
+        if self.depth >= RECURSION_LIMIT {
+            return Err(recursion_error());
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    /// Closes the frame `enter` opened.
+    pub(crate) fn leave(&mut self) {
+        self.depth -= 1;
     }
 
     /// `self.decls[key]`.

@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use indexmap::IndexSet;
 use regex::Regex;
 
-use super::index_error;
+use super::{RECURSION_LIMIT, index_error, recursion_error};
 use crate::error::GenerateError;
 use crate::py::re::compile;
 use crate::py::text::{is_space, is_word, strip};
@@ -375,6 +375,15 @@ static NESTED: LazyLock<Regex> = LazyLock::new(|| compile(r"\A(\w+)\s*\("));
 /// value: a quoted value read as JSON (a JSON error is Python's `JSONDecodeError`), any other value as its text, a
 /// nested `key(...)` as its own arguments (or `True` when it has none), a bare flag as `True`.
 pub(crate) fn attr_args(attrs: &str, name: &str) -> Result<Dict, GenerateError> {
+    attr_args_at_depth(attrs, name, 0)
+}
+
+/// `attr_args` for a `key(...)` nested `depth` deep. Python recurses once per nesting level, so a nesting as deep
+/// as its recursion limit is its `RecursionError` here, not an exhausted native stack.
+fn attr_args_at_depth(attrs: &str, name: &str, depth: usize) -> Result<Dict, GenerateError> {
+    if depth >= RECURSION_LIMIT {
+        return Err(recursion_error());
+    }
     let mut found = Dict::new();
     for open in call_opens(attrs, name, true) {
         let inner = slice(attrs, open + 1, prev_char(attrs, close_of(attrs, open)));
@@ -391,7 +400,7 @@ pub(crate) fn attr_args(attrs: &str, name: &str) -> Result<Dict, GenerateError> 
                 };
                 found.insert(pair[1].to_owned(), value);
             } else if let Some(nested) = nested {
-                let inner = attr_args(part, &nested[1])?;
+                let inner = attr_args_at_depth(part, &nested[1], depth + 1)?;
                 found.insert(
                     nested[1].to_owned(),
                     if inner.is_empty() {
@@ -572,6 +581,9 @@ struct TypeParser<'t> {
     text: &'t str,
     tokens: Vec<&'t str>,
     position: usize,
+    /// How many `typ()` and `args()` calls are open (Python's frames for the nested functions): a type nested as
+    /// deep as Python's recursion limit is its `RecursionError` here, not an exhausted native stack.
+    depth: usize,
 }
 
 impl<'t> TypeParser<'t> {
@@ -602,7 +614,24 @@ impl<'t> TypeParser<'t> {
         Ok(())
     }
 
+    /// Opens one of Python's frames for `typ()` or `args()`.
+    fn enter(&mut self) -> Result<(), GenerateError> {
+        if self.depth >= RECURSION_LIMIT {
+            return Err(recursion_error());
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
     fn args(&mut self) -> Result<Vec<Ast>, GenerateError> {
+        self.enter()?;
+        let out = self.args_frame();
+        self.depth -= 1;
+        out
+    }
+
+    /// The body of Python's `args()`, inside the frame `args` opens.
+    fn args_frame(&mut self) -> Result<Vec<Ast>, GenerateError> {
         let mut out = Vec::new();
         while let Some(token) = self.peek(0).filter(|token| *token != ">") {
             let before = self.position;
@@ -632,6 +661,14 @@ impl<'t> TypeParser<'t> {
     }
 
     fn typ(&mut self) -> Result<Ast, GenerateError> {
+        self.enter()?;
+        let node = self.typ_frame();
+        self.depth -= 1;
+        node
+    }
+
+    /// The body of Python's `typ()`, inside the frame `typ` opens.
+    fn typ_frame(&mut self) -> Result<Ast, GenerateError> {
         let Some(token) = self.peek(0) else {
             return Ok(self.raw());
         };
@@ -724,6 +761,7 @@ pub(crate) fn parse_type(text: &str) -> Result<Ast, GenerateError> {
         text,
         tokens,
         position: 0,
+        depth: 0,
     };
     let result = parser.typ()?;
     Ok(if parser.position >= parser.tokens.len() {
@@ -919,6 +957,46 @@ mod tests {
                 .map(|error| error.to_string())
                 .as_deref(),
             Some("IndexError: list index out of range")
+        );
+    }
+
+    /// The outcome of `run` on a thread with the binary's 256 MiB stack (a test thread has 2 MiB).
+    fn on_big_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(run)
+            .expect("a test thread")
+            .join()
+            .expect("the test thread returns")
+    }
+
+    #[test]
+    fn nesting_past_the_recursion_limit_is_python_recursion_error() {
+        // python3 -c '...; f.parse_type("&" * n + "u8")': n = 19990 parses, n = 20001 raises
+        // RecursionError: maximum recursion depth exceeded (the exact cut-off depends on the frames below it and is
+        // not part of the contract; the outcome past it is).
+        let outcomes = on_big_stack(|| {
+            let message = |result: Result<Ast, GenerateError>| result.err().map(|e| e.to_string());
+            (
+                message(parse_type(&format!("{}u8", "&".repeat(19_990)))),
+                message(parse_type(&format!("{}u8", "&".repeat(20_001)))),
+                message(parse_type(&format!(
+                    "{}u8{}",
+                    "Vec<".repeat(10_001),
+                    ">".repeat(10_001)
+                ))),
+            )
+        });
+        let refused = Some("RecursionError: maximum recursion depth exceeded".to_owned());
+        assert_eq!(outcomes, (None, refused.clone(), refused.clone()));
+        // attr_args recurses once per nested `key(...)`: at the limit the next level is refused.
+        let nested = "serde(x(default))";
+        assert!(attr_args_at_depth(nested, "serde", RECURSION_LIMIT - 2).is_ok());
+        assert_eq!(
+            attr_args_at_depth(nested, "serde", RECURSION_LIMIT - 1)
+                .err()
+                .map(|e| e.to_string()),
+            refused
         );
     }
 }
