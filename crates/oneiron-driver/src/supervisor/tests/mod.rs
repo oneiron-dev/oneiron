@@ -1,6 +1,4 @@
 //! Shared fixtures for the supervisor test suites.
-use std::time::Duration;
-
 use super::{config::*, factory::*};
 use crate::tick::{Tick, TickSource};
 use oneiron::attempt_queue::AttemptId;
@@ -136,34 +134,6 @@ impl PassExecutorFactory for TestExecFactory {
     }
 }
 
-/// Factory that sleeps past the finalize threshold for a
-/// `pass_ceiling_ms = WRAP + 1` config, so Instant-elapsed hard-cuts
-/// before any admission (defense path for runtime-induced empty cuts).
-/// `delays_left` counts how many factory calls still sleep (then the
-/// redrive path can complete work without a second push).
-pub(super) struct DelayedHardCutFactory {
-    pub(super) completed_units: u64,
-    pub(super) delay: Duration,
-    pub(super) delays_left: u32,
-}
-
-impl PassExecutorFactory for DelayedHardCutFactory {
-    type Exec<'p> = TestExec;
-
-    fn executor<'p>(&'p mut self, _guard: &'p BudgetGuard) -> Result<TestExec> {
-        // Advances the real Instant behind WakePassDeadline::new so the
-        // pass is already in the finalize window when run_wake_pass starts.
-        if self.delays_left > 0 {
-            self.delays_left -= 1;
-            std::thread::sleep(self.delay);
-        }
-        Ok(TestExec {
-            panic_now: false,
-            completed_units: self.completed_units,
-        })
-    }
-}
-
 pub(super) struct UnusedSink;
 
 impl ConsolidationSink for UnusedSink {
@@ -219,4 +189,3 @@ pub(super) fn admit(vault: &Vault, now: u64) -> DreamerAdmittedAttempt {
     };
     *admitted
 }
-

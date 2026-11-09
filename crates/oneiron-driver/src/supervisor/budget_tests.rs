@@ -1,12 +1,8 @@
 //! Durable budget-id, index-scan, and config-validation tests.
-use std::time::Duration;
-
 use super::*;
 use crate::tick::{PushTick, Tick, WakeSignal};
-use oneiron::attempt_queue::{AttemptLandingReserve, AttemptState, LANDING_RESERVE_PERCENT};
-use oneiron::{
-    DREAMER_GRACEFUL_WRAP_WINDOW_MS, DreamerConsolidationScope, DreamerRunnerStore, WakeTrigger,
-};
+use oneiron::attempt_queue::AttemptState;
+use oneiron::{DreamerConsolidationScope, DreamerRunnerStore, WakeTrigger};
 
 #[test]
 fn durable_pass_budget_id_is_deterministic_per_index() {
@@ -189,4 +185,3 @@ async fn zero_local_node_id_refuses_to_run_instead_of_ticking() {
         "invalid local_node_id must fail-fast with no pass"
     );
 }
-
