@@ -60,6 +60,14 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         files: |value| text_file(crate::generate::CORE_VERB_NAMES_PATH, value),
     },
     Emitter {
+        name: "core",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            crate::generate::emit_core::core(generator, &facade_rows).map(Value::Str)
+        },
+        files: |value| text_file("crates/oneiron/src/verbs/generated/sdk_generated.rs", value),
+    },
+    Emitter {
         name: "catalog",
         run: |generator, _| {
             let catalog = crate::generate::emit_core::catalog(generator)?;
