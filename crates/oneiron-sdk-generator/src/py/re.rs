@@ -33,9 +33,15 @@ pub(crate) const SPACE_CLASS: &str = r"\t\n\x0B\x0C\r\x1C-\x20\x{85}\x{A0}\x{168
 /// backspace to Python) becomes `\x08`, and `[` (a nested class to `regex`), a first `]`, `&` and `~` (set operators
 /// to `regex`) are escaped. Everything else is copied.
 ///
-/// Panics on a `\b` or `\B` outside a class: `regex` would read it with Rust's word class, so the pattern goes through
-/// `PyRegex`, which keeps Python's. The generator's patterns are constants, so this fails a test, never an input.
+/// Panics on a pattern outside the syntax `syntax_violation` checks (`subset_violation`'s rules but the first: a
+/// non-ASCII literal is taken, since no stand-in is matched here), and on a `\b` or `\B` outside a class: `regex` would
+/// read it with Rust's word class, so the pattern goes through `PyRegex`, which keeps Python's. The generator's
+/// patterns are constants (`every_generator_pattern_is_in_the_subset` builds each), so this fails a test, never an
+/// input; the one pattern made at run time (`rust_ir.rs`'s inline `mod`) adds only `regex::escape` of a name.
 pub(crate) fn translate(pattern: &str) -> String {
+    if let Some(why) = syntax_violation(pattern) {
+        panic!("{pattern:?}: py::re does not take {why}");
+    }
     let (translated, boundaries) = translate_keeping_boundaries(pattern);
     assert!(
         !boundaries,
@@ -166,6 +172,13 @@ fn subset_violation(pattern: &str) -> Option<String> {
     if !pattern.is_ascii() {
         return Some("a non-ASCII character".to_owned());
     }
+    syntax_violation(pattern)
+}
+
+/// `subset_violation`'s rules but the first, which `translate` (so `compile` and `compile_fullmatch`) checks: the
+/// syntax, the quantifiers and no empty match hold for any pattern `regex` runs for Python, while ASCII text is what
+/// `PyRegex`'s stand-ins need. A non-ASCII literal matches itself to both engines; a non-ASCII escape is refused.
+fn syntax_violation(pattern: &str) -> Option<String> {
     let mut scan = SubsetScan {
         pattern: pattern.as_bytes(),
         at: 0,
@@ -1152,7 +1165,7 @@ mod tests {
             );
         }
         assert_eq!(translate(r"[^\w:]"), format!("[^{WORD_CLASS}:]"));
-        assert_eq!(translate(r"a\.b\d$"), r"a\.b\d$");
+        assert_eq!(translate(r"(?m)a\.b\d$"), r"(?m)a\.b\d$");
         assert_eq!(translate(r"[[&]"), r"[\[\&]");
         assert_eq!(translate(r"\<a\>[\<]"), "<a>[<]");
     }
@@ -1450,6 +1463,155 @@ mod tests {
     #[should_panic(expected = "use py::re::PyRegex")]
     fn translate_refuses_boundaries() {
         let _ = translate(r"\bfn\b");
+    }
+
+    #[test]
+    #[should_panic(expected = "py::re does not take `$` without `(?m)`")]
+    fn compile_refuses_outside_the_syntax() {
+        let _ = compile(r"a$");
+    }
+
+    #[test]
+    #[should_panic(expected = "py::re does not take a pattern that can match empty")]
+    fn compile_fullmatch_refuses_an_empty_match() {
+        let _ = compile_fullmatch(r"\w*");
+    }
+
+    /// The literal at `rest`'s start (white space skipped): a raw string (`r"..."`, `r#"..."#`) or a plain one,
+    /// unescaped; `None` for anything else (a name, an expression).
+    fn literal_at(rest: &str) -> Option<String> {
+        let rest = rest.trim_start();
+        if rest.starts_with("r\"") || rest.starts_with("r#") {
+            let raw = &rest[1..];
+            let hashes = raw.len() - raw.trim_start_matches('#').len();
+            let body = raw[hashes..].strip_prefix('"')?;
+            let end = body.find(&format!("\"{}", "#".repeat(hashes)))?;
+            return Some(body[..end].to_owned());
+        }
+        let mut chars = rest.strip_prefix('"')?.chars();
+        let mut out = String::new();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => return Some(out),
+                '\\' => match chars.next()? {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'u' => {
+                        let hex: String =
+                            chars.by_ref().skip(1).take_while(|&c| c != '}').collect();
+                        out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                    }
+                    other => out.push(other),
+                },
+                _ => out.push(c),
+            }
+        }
+        None
+    }
+
+    /// Every Python pattern the generator builds, read from the crate's source (this file's tests aside, which build
+    /// refused patterns on purpose): each literal passed to `compile`, `compile_fullmatch`, `translate`,
+    /// `PyRegex::new` or `PyRegex::fullmatch` outside a comment, or the `const` such a call names. Each is built as its
+    /// call builds it, so a pattern outside the subset fails here, naming its file. The one pattern made at run time
+    /// is `the_run_time_mod_pattern_is_taken_for_any_name`'s.
+    #[test]
+    fn every_generator_pattern_is_in_the_subset() {
+        const CALLS: [&str; 5] = [
+            "compile(",
+            "compile_fullmatch(",
+            "translate(",
+            "PyRegex::new(",
+            "PyRegex::fullmatch(",
+        ];
+        let mut files = Vec::new();
+        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).expect("a source directory") {
+                let path = entry.expect("a directory entry").path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs")
+                    && !path.ends_with("py/re.rs")
+                {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        let mut built = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("a source file");
+            for call in CALLS {
+                for (at, _) in text.match_indices(call) {
+                    let before = text[..at].chars().next_back();
+                    if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                        continue;
+                    }
+                    let line_start = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
+                    if text[line_start..at].trim_start().starts_with("//") {
+                        continue;
+                    }
+                    let rest = &text[at + call.len()..];
+                    let pattern = literal_at(rest).or_else(|| {
+                        let name: String = rest
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        if name.is_empty() {
+                            return None;
+                        }
+                        let declared = format!("const {name}: &str =");
+                        let value = text.find(&declared)? + declared.len();
+                        literal_at(&text[value..])
+                    });
+                    let Some(pattern) = pattern else { continue };
+                    let fullmatch = call.contains("fullmatch");
+                    let outcome = std::panic::catch_unwind(|| {
+                        if call.starts_with("PyRegex") {
+                            let _ = if fullmatch {
+                                PyRegex::fullmatch(&pattern)
+                            } else {
+                                PyRegex::new(&pattern)
+                            };
+                        } else if fullmatch {
+                            let _ = compile_fullmatch(&pattern);
+                        } else {
+                            let _ = compile(&pattern);
+                        }
+                    });
+                    assert!(
+                        outcome.is_ok(),
+                        "{}: {call}{pattern:?}) is refused",
+                        file.display()
+                    );
+                    built.push(pattern);
+                }
+            }
+        }
+        // Today's count (the reader, the index, the inventory, the rows, common, the emitters, uniffi, the catalog
+        // fragment, the harness): a scan that finds fewer has lost its way.
+        assert!(built.len() >= 45, "{} patterns: {built:#?}", built.len());
+    }
+
+    // rust_ir.rs: `(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+{re.escape(last)}\s*\{`, made at run time from a
+    // module name: no name makes `translate` refuse it (a non-ASCII literal is taken; `regex::escape` writes only
+    // escapes of ASCII punctuation).
+    #[test]
+    fn the_run_time_mod_pattern_is_taken_for_any_name() {
+        for name in [
+            "walk",
+            "r#type",
+            "modul\u{e9}",
+            "a-b~c#d&e.f",
+            "\u{4e00}",
+            "",
+        ] {
+            let pattern = format!(
+                r"(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+{}\s*\{{",
+                regex::escape(name)
+            );
+            assert!(Regex::new(&translate(&pattern)).is_ok(), "{name:?}");
+        }
     }
 
     // python3 -c "import re; re.sub(r'\binput\b', r'\g<' + '0' * 4301 + '>', 'input')": the traceback's last line;
