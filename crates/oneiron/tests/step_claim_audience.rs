@@ -16,7 +16,7 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{DREAMER_STEP_PREDICATE, DurableStepContext, Scope, StepOutcome, call_as_step};
-use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{
@@ -199,6 +199,15 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
 
     // A call bound to one relationship: its words are that relationship's.
     let relationship = EntityId::now();
+    vault
+        .put_entity(
+            &relationship,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"relationship",
+        )
+        .expect("a relationship");
     let bound = Scope {
         relationship: Some(BTreeSet::from([relationship])),
         ..Scope::default()
