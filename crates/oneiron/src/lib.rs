@@ -703,3 +703,9 @@ pub(crate) mod test_util;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support;
+
+/// Doors for integration tests to crate-private items, behind the custom cfg
+/// `oneiron_test_support` that only the fleet's test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
