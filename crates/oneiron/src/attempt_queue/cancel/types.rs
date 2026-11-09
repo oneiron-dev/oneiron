@@ -171,6 +171,10 @@ impl ForceCancelAuthority {
             wtxn,
             &erased,
         )?;
+        // RUN-HOLD: a restored override an erased actor made loses the actor.
+        for actor in &erased {
+            crate::attempt_queue::scrub_hold_override_actor_in_txn(&vault.store, wtxn, actor)?;
+        }
         let mut cancelled = crate::deletion::erase_restored_byoa_exhausts_in_txn(restore, &owned)?;
         let (vault, wtxn, _) = restore.parts();
         cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
