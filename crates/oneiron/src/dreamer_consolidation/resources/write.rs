@@ -342,11 +342,8 @@ impl ConsolidationFence {
     /// to, and the writer's read a record its write names must resolve under
     /// (OF-063, FIX 1218).
     pub(crate) fn reader<'v>(&self, vault: &'v Vault) -> Result<ScopedRead<'v>> {
-        let actor = ScopedReadActorKey::with_actor_class(
-            self.actor.entity_ref().to_hex(),
-            self.actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
+        let actor = ScopedReadActorKey::for_engine_actor(self.actor)
+            .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
         Ok(vault.scoped_read(actor))
     }
 

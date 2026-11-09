@@ -35,6 +35,9 @@ pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     let owner = vault.ensure_embedded_owner_actor()?;
+    // The Dreamer's reach is its Steward grant (untangle 6.3): the first
+    // mint copies the rows; the owner's grant below gives the whole default.
+    vault.provision_system_agent_grants()?;
     let owner = vault.authenticate_owner(
         owner,
         &owner.to_hex(),

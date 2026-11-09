@@ -282,6 +282,7 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
     let issuer = host_issuer(config, vault, true)?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
+    vault.provision_system_agent_grants()?;
     Ok(())
 }
 

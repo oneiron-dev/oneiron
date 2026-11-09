@@ -69,12 +69,9 @@ pub fn maintenance_reader(
 /// When the vault cannot resolve the Dreamer's principal.
 pub(super) fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
     let dreamer = vault.dreamer_authority()?;
-    let key = ScopedReadActorKey::with_actor_class(
-        dreamer.entity_ref().to_hex(),
-        dreamer.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
-    .require_relationship_grants(Some(dreamer.entity_ref()));
+    let key = ScopedReadActorKey::for_engine_actor(dreamer)
+        .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
+        .require_relationship_grants(Some(dreamer.entity_ref()));
     Ok(vault.scoped_read(key))
 }
 

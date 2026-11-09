@@ -13,10 +13,25 @@ pub(crate) fn admits_preset(scope: &Scope, verb: &str) -> bool {
     scope.admits(verb, &record, &Scope::top())
 }
 
+/// A Steward reads across its vault root.
+pub(crate) const STEWARD_READ_VERB: &str = "read";
+/// A Steward lands what it derives (for an agent: the Auto ceiling and the
+/// `Generated` permit its consolidation needs).
+pub(crate) const STEWARD_DERIVE_VERB: &str = "derive";
+/// A Steward archives inside its grant, reversibly.
+pub(crate) const STEWARD_ARCHIVE_VERB: &str = "archive";
+/// A Steward deletes in scope.
+pub(crate) const STEWARD_DELETE_VERB: &str = "delete";
+
 /// The verbs a Steward's grant can carry, and the shipped default gives it:
 /// read and derive across its vault root, archive inside its grant, delete
 /// in scope.
-pub(crate) const STEWARD_VERBS: [&str; 4] = ["read", "derive", "archive", "delete"];
+pub(crate) const STEWARD_VERBS: [&str; 4] = [
+    STEWARD_READ_VERB,
+    STEWARD_DERIVE_VERB,
+    STEWARD_ARCHIVE_VERB,
+    STEWARD_DELETE_VERB,
+];
 
 pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
     match role {
