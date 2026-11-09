@@ -27,6 +27,7 @@ mod consolidation_readers;
 mod constants;
 mod entity_resolution_bands;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
+pub(crate) use constants::{CHECKED_PRODUCER_PROVENANCE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER};
 mod decision;
 mod decode;
 mod default_manifest;
