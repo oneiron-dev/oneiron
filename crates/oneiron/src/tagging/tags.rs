@@ -100,7 +100,7 @@ impl MentionLink {
     }
 
     /// The link with `entity` gone; a link left naming nothing is a tag.
-    fn without(&self, entity: &EntityId) -> Self {
+    pub(super) fn without(&self, entity: &EntityId) -> Self {
         match self {
             Self::Minted { entity: minted, .. } if minted == entity => Self::Tag,
             Self::Candidates { kind, entities } if entities.contains(entity) => {
