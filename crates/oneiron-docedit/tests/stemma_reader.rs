@@ -79,9 +79,12 @@ fn start_tag_refuses_a_duplicate_expanded_name_below_and_past_the_scan_limit() {
                 .to_owned(),
         );
         let bytes = with_paragraph_attributes(&attributes.join(" "));
+        let refusal = Document::parse(&bytes)
+            .err()
+            .unwrap_or_else(|| panic!("a duplicate expanded name beside {filler} attributes read"));
         assert!(
-            Document::parse(&bytes).is_err(),
-            "a duplicate expanded name beside {filler} other attributes was read"
+            refusal.to_string().contains("duplicate attribute"),
+            "{refusal}"
         );
     }
 }
