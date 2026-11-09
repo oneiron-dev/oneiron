@@ -44,6 +44,8 @@ use crate::{
 pub struct UnboundPass {
     /// The TURN its words were witnessed into.
     pub turn: EntityId,
+    /// The consolidation attempt that ran it.
+    pub attempt: crate::attempt_queue::AttemptId,
     /// The relationship exposure each model call was bound to, in call
     /// order: `None` for an unbound call.
     pub call_relationships: Vec<Option<BTreeSet<EntityId>>>,
@@ -196,10 +198,11 @@ pub fn open_dreamer_vault(path: &std::path::Path, reader: &str) -> Result<Vault>
 }
 
 /// Witnesses `words` as one visible user MESSAGE carrying `metadata` into a
-/// fresh TURN, gives the Dreamer a live `MessagesRead` grant on `space`, then
-/// runs one Micro consolidation pass with no caller scope (an unbound
-/// branch), the scripted model answering every call with `reply`, and lands
-/// what it extracts through the promotion writer.
+/// fresh TURN, gives the Dreamer a live `MessagesRead` grant on
+/// `readable_space` when one is named, then runs one Micro consolidation pass
+/// with no caller scope (an unbound branch), the scripted model answering
+/// every call with `reply`, and lands what it extracts through the promotion
+/// writer.
 ///
 /// # Errors
 ///
@@ -208,7 +211,7 @@ pub fn consolidate_unbound_turn(
     vault: &Vault,
     words: &str,
     metadata: Option<serde_json::Value>,
-    space: EntityId,
+    readable_space: Option<EntityId>,
     reply: &str,
 ) -> Result<UnboundPass> {
     let speaker = EntityId::now();
@@ -237,19 +240,21 @@ pub fn consolidate_unbound_turn(
         })
         .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
     let actor = vault.dreamer_authority()?;
-    vault.create_access_grant(
-        &EntityId::now(),
-        &AccessGrant {
-            principal_ref: actor.entity_ref(),
-            scope: AccessGrantScope::Messages { space_ref: space },
-            capability: AccessGrantCapability::MessagesRead,
-            status: AccessGrantStatus::Active,
-            created_at: 1,
-            revoked_at: None,
-            expires_at: None,
-            authority_scope: crate::federation::scope_codec::read_preset(),
-        },
-    )?;
+    if let Some(space) = readable_space {
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                principal_ref: actor.entity_ref(),
+                scope: AccessGrantScope::Messages { space_ref: space },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: None,
+                authority_scope: crate::federation::scope_codec::read_preset(),
+            },
+        )?;
+    }
 
     let scope = DreamerConsolidationScope::Micro;
     let watermark = read_watermark(vault, scope)?;
@@ -342,6 +347,7 @@ pub fn consolidate_unbound_turn(
     let call_relationships = backend.calls.into_inner().expect("call log");
     Ok(UnboundPass {
         turn,
+        attempt: admitted.status.attempt.id,
         call_relationships,
         landed: std::mem::take(&mut sink.outcome.landed),
     })
