@@ -2,8 +2,9 @@
 //! tests (Fable's verdict, sections 3 and 4).
 //!
 //! It reads Rust test code under `crates/` and `apps/`: every file under a
-//! `tests/` directory, every `tests.rs`, `*_tests.rs` and `*_test.rs`, and the
-//! item after each `#[cfg(test)]`-style attribute in any other file. Vendored
+//! `tests/` directory, every `tests.rs`, `*_tests.rs` and `*_test.rs`, every
+//! file gated by an inner `#![cfg(test)]`, and the item after each
+//! `#[cfg(test)]`-style attribute in any other file. Vendored
 //! trees are skipped. Each [`Rule`] looks for plain text patterns, outside
 //! comments; [`Rule::Sleep`] and [`Rule::WallClock`] read code only, the
 //! others also read string literals.
@@ -278,9 +279,13 @@ pub fn whole_file_is_test(path: &str) -> bool {
         || name.ends_with("_test.rs")
 }
 
-/// Whether an attribute's text (`#[...]`) gates on `test`.
+/// Whether an attribute's text (`#[cfg(...)]` or `#![cfg(...)]`) gates on
+/// `test`.
 fn gates_on_test(attribute: &str) -> bool {
-    let Some(inner) = attribute.strip_prefix("#[cfg(") else {
+    let Some(inner) = attribute
+        .strip_prefix("#[cfg(")
+        .or_else(|| attribute.strip_prefix("#![cfg("))
+    else {
         return false;
     };
     let bytes = inner.as_bytes();
@@ -296,9 +301,20 @@ fn gates_on_test(attribute: &str) -> bool {
     })
 }
 
+/// Whether the file carries an inner `#![cfg(test)]`-style attribute (in
+/// code, not in a string or comment): then all of it is test code.
+fn gated_as_test_file(source: &str, classes: &[Class]) -> bool {
+    source.match_indices("#![cfg(").any(|(at, _)| {
+        classes[at] == Class::Code
+            && source[at..]
+                .find(']')
+                .is_some_and(|close| gates_on_test(&source[at..=at + close]))
+    })
+}
+
 /// The byte ranges of test code in a file that is not test code as a
 /// whole: the item after each `#[cfg(test)]`-style attribute, through its
-/// closing brace (an item ending in `;` has no body here).
+/// closing brace, or through its `;` for an item with no body.
 fn test_items(source: &str, classes: &[Class]) -> Vec<Range<usize>> {
     let bytes = source.as_bytes();
     let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -331,7 +347,10 @@ fn test_items(source: &str, classes: &[Class]) -> Vec<Range<usize>> {
                             break;
                         }
                     }
-                    b';' if depth == 0 && open.is_none() => break,
+                    b';' if depth == 0 && open.is_none() => {
+                        open = Some(i);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -477,11 +496,13 @@ fn is_local_or_reserved(host: &str) -> bool {
 #[must_use]
 pub fn scan_source(path: &str, source: &str) -> Vec<Finding> {
     let whole = whole_file_is_test(path);
-    if !whole && !(source.contains("#[cfg(") && source.contains("test")) {
+    if !whole
+        && !((source.contains("#[cfg(") || source.contains("#![cfg(")) && source.contains("test"))
+    {
         return Vec::new();
     }
     let classes = classify(source);
-    let ranges = if whole {
+    let ranges = if whole || gated_as_test_file(source, &classes) {
         vec![0..source.len()]
     } else {
         test_items(source, &classes)

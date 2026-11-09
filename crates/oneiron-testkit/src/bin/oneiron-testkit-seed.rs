@@ -1,10 +1,14 @@
 //! Builds a fixture vault from a JSONL seed, for the E2E runner's snapshot
 //! fixtures (Fable's verdict, section 2): `oneiron-testkit-seed <seed.jsonl>
 //! <out-dir>` writes the closed vault to `<out-dir>/vault` and its record to
-//! `<out-dir>/fixture.json`, and prints `{"vault": ..., "ended_at": ...}`.
-//! The runner copies `<out-dir>/vault` once per case. Every seed line runs
-//! through a public verb as the vault's embedded owner (see
-//! `oneiron_testkit::fixture::jsonl_seed`). Test support only; never shipped.
+//! `<out-dir>/fixture.json`, and prints `{"vault", "ended_at", "copyable",
+//! "beside"}`. Every seed line runs through a public verb as the vault's
+//! embedded owner (see `oneiron_testkit::fixture::jsonl_seed`).
+//!
+//! `copyable: true`: the runner may copy `<out-dir>/vault` once per case.
+//! `copyable: false`: the seed bound key custody (`beside` names it), whose
+//! row holds this vault's absolute path, so the vault must be used where it
+//! was built: seed once per case instead. Test support only; never shipped.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -30,10 +34,15 @@ fn main() -> ExitCode {
         .file_stem()
         .map_or_else(|| "seed".to_owned(), |stem| stem.to_string_lossy().into_owned());
     match seed_into(&out, &name, FakeClock::vault_config, jsonl_seed(&text)) {
-        Ok(ended_at) => {
+        Ok(record) => {
             println!(
                 "{}",
-                serde_json::json!({"vault": out.join("vault"), "ended_at": ended_at})
+                serde_json::json!({
+                    "vault": out.join("vault"),
+                    "ended_at": record.ended_at,
+                    "copyable": record.beside.is_empty(),
+                    "beside": record.beside,
+                })
             );
             ExitCode::SUCCESS
         }

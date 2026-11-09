@@ -2,8 +2,9 @@
 //! tests that hand the engine a backend instead of an HTTP provider.
 //!
 //! The prompt digest is taken over the typed request's prompt fields
-//! (`messages`, `tools`) as JSON, so it differs from the HTTP body's digest
-//! of the same prompt: [`ScriptedBackend::digest_of`] names the key.
+//! (`messages`, `tools`, `envelope.response_format`) as JSON, so it differs
+//! from the HTTP body's digest of the same prompt:
+//! [`ScriptedBackend::digest_of`] names the key.
 //! `generate` is a buffered call and `stream` a streamed one.
 
 use std::collections::VecDeque;
@@ -207,6 +208,11 @@ impl LlmBackend for ScriptedBackend {
         });
         Box::pin(async move {
             let (text, usage) = answer?;
+            // A finished answer with no content is no answer: the real
+            // adapters refuse it, and so does the script.
+            if text.is_empty() {
+                return Err(LlmError::Fatal(FatalLlmError::EmptyResponse));
+            }
             Ok(LlmResponse {
                 message: assistant(text),
                 usage,
@@ -226,6 +232,9 @@ impl LlmBackend for ScriptedBackend {
             Reply::CutStream { deltas, after } => (deltas[..(*after).min(deltas.len())].to_vec(), false),
             _ => return Err(fatal(format!("step {:?} cannot answer a streamed call", step.id))),
         };
+        if complete && deltas.concat().is_empty() {
+            return Err(LlmError::Fatal(FatalLlmError::EmptyResponse));
+        }
         let mut events: VecDeque<LlmResult<LlmStreamEvent>> = VecDeque::new();
         events.push_back(Ok(LlmStreamEvent::TextStart {
             part_id: PART.to_owned(),

@@ -165,7 +165,7 @@ fn an_anthropic_stream_opens_and_closes_as_the_messages_protocol_does() {
 fn a_prompt_with_no_scripted_reply_is_refused_and_fails_the_test() {
     let provider = ScriptedProvider::start(Vec::new()).expect("start");
     let answer = send(&provider, "POST", "/v1/chat/completions", Some(&chat("an unscripted prompt", true)));
-    assert_eq!(answer.status, 500);
+    assert_eq!(answer.status, 400);
     let message = answer.json()["error"]["message"].as_str().unwrap_or_default().to_owned();
     let expected = digest("an unscripted prompt");
     assert!(message.starts_with("oneiron-testkit: no scripted reply for prompt digest"));
@@ -186,7 +186,7 @@ fn a_step_that_expects_a_stream_refuses_a_buffered_request() {
     ])
     .expect("start");
     let answer = send(&provider, "POST", "/v1/chat/completions", Some(&chat("run", false)));
-    assert_eq!(answer.status, 500);
+    assert_eq!(answer.status, 400);
     let mismatch = provider.check().expect_err("a mode mismatch is a violation");
     assert!(mismatch.violations[0].contains("expects a streamed request"));
     assert!(catch_unwind(AssertUnwindSafe(|| provider.finish())).is_err());
@@ -201,7 +201,7 @@ fn a_one_body_reply_refuses_a_streamed_request() {
     )])
     .expect("start");
     let answer = send(&provider, "POST", "/v1/chat/completions", Some(&chat("decide", true)));
-    assert_eq!(answer.status, 500);
+    assert_eq!(answer.status, 400);
     let mismatch = provider.check().expect_err("a shape mismatch is a violation");
     assert!(mismatch.violations[0].contains("expects a buffered request"));
     assert!(catch_unwind(AssertUnwindSafe(|| provider.finish())).is_err());
@@ -243,6 +243,22 @@ fn the_digest_covers_the_prompt_and_not_the_transport() {
     let hex = digest("same").as_hex().to_owned();
     assert_eq!(PromptDigest::from_hex(&hex), Some(digest("same")));
     assert_eq!(PromptDigest::from_hex("abc"), None);
+}
+
+#[test]
+fn the_digest_covers_the_output_schema_wherever_the_protocol_carries_it() {
+    let anthropic = |schema: &str, effort: &str| {
+        json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "x"}],
+            "output_config": {"format": {"type": "json_schema", "schema": {"title": schema}}, "effort": effort}
+        })
+    };
+    let base = PromptDigest::of_request(&anthropic("a", "low"));
+    assert_ne!(base, PromptDigest::of_request(&anthropic("b", "low")), "a schema change is a prompt change");
+    assert_eq!(base, PromptDigest::of_request(&anthropic("a", "high")), "effort is not the prompt");
+    let typed = |format: &str| json!({"messages": [], "envelope": {"response_format": format, "scope": {}}});
+    assert_ne!(PromptDigest::of_request(&typed("Text")), PromptDigest::of_request(&typed("Json")));
 }
 
 #[test]
@@ -306,7 +322,7 @@ fn the_embeddings_route_serves_the_hashing_embedder() {
     assert_eq!(first, embedder.embed_text("alpha beta"));
     assert_eq!(body["data"].as_array().map(Vec::len), Some(2));
     let wrong = send(&provider, "POST", "/v1/embeddings", Some(&json!({"model": "other", "input": "x"})));
-    assert_eq!(wrong.status, 500);
+    assert_eq!(wrong.status, 400);
     assert!(catch_unwind(AssertUnwindSafe(|| provider.finish())).is_err());
 }
 

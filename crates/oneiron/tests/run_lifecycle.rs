@@ -17,13 +17,13 @@ use oneiron::attempt_queue::{
     InterveneOutcome, RetryAttempt, RetryOutcome,
 };
 use oneiron::Vault;
-use oneiron_testkit::{FixtureVault, VaultCopy, fixture_cache};
+use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
 const KIND: &str = "test.run_lifecycle";
 const WORKER: &str = "worker:run-lifecycle";
 const PERSON: &str = "person:operator";
 
-fn open() -> (VaultCopy, Vault) {
+fn open() -> (TestVault, Vault) {
     let copy = FixtureVault::empty(&fixture_cache!())
         .expect("the empty fixture")
         .copy()

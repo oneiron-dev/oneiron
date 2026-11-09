@@ -6,7 +6,7 @@
 //! | Crash at a chosen point | hold the step's model call ([`crate::provider::Step::held`]), wait for it with [`crate::provider::ScriptedProvider::await_reached`], then [`crash_and_restart`] |
 //! | Lost lease | [`expire_leases`]: move the fake clock past the lease and run the queue's own lease cleanup |
 //! | Dead or failing provider | [`crate::provider::Reply::Status`], [`crate::provider::Reply::CutStream`], [`crate::provider::Reply::Body`] |
-//! | Damaged vault on disk | [`truncate`], [`overwrite`], [`remove`] on a closed [`VaultCopy`] |
+//! | Damaged vault on disk | [`truncate`], [`overwrite`], [`remove`] on a closed [`TestVault`] |
 //!
 //! A crash at a chosen fsync inside the store needs a fault door in the
 //! store's commit path (`test_doors`, under `--cfg oneiron_test_support`);
@@ -21,7 +21,7 @@ use std::process::ExitStatus;
 use oneiron::attempt_queue::{AttemptQueue, AttemptQueueCleanupReport, CleanupAttemptLeases};
 
 use crate::clock::FakeClock;
-use crate::fixture::VaultCopy;
+use crate::fixture::TestVault;
 #[cfg(unix)]
 use crate::server::ServerProcess;
 
@@ -63,7 +63,7 @@ pub fn expire_leases(
 
 /// `relative` inside the copy's vault directory, refusing a path that
 /// leaves it.
-fn inside(copy: &VaultCopy, relative: &str) -> io::Result<PathBuf> {
+fn inside(copy: &TestVault, relative: &str) -> io::Result<PathBuf> {
     let relative = Path::new(relative);
     if relative
         .components()
@@ -82,7 +82,7 @@ fn inside(copy: &VaultCopy, relative: &str) -> io::Result<PathBuf> {
 ///
 /// # Errors
 /// The path leaves the vault or the file cannot be written.
-pub fn truncate(copy: &VaultCopy, relative: &str, length: u64) -> io::Result<()> {
+pub fn truncate(copy: &TestVault, relative: &str, length: u64) -> io::Result<()> {
     OpenOptions::new()
         .write(true)
         .open(inside(copy, relative)?)?
@@ -94,7 +94,7 @@ pub fn truncate(copy: &VaultCopy, relative: &str, length: u64) -> io::Result<()>
 ///
 /// # Errors
 /// The path leaves the vault or the file cannot be written.
-pub fn overwrite(copy: &VaultCopy, relative: &str, offset: u64, bytes: &[u8]) -> io::Result<()> {
+pub fn overwrite(copy: &TestVault, relative: &str, offset: u64, bytes: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .open(inside(copy, relative)?)?;
@@ -107,6 +107,6 @@ pub fn overwrite(copy: &VaultCopy, relative: &str, offset: u64, bytes: &[u8]) ->
 ///
 /// # Errors
 /// The path leaves the vault or the file cannot be removed.
-pub fn remove(copy: &VaultCopy, relative: &str) -> io::Result<()> {
+pub fn remove(copy: &TestVault, relative: &str) -> io::Result<()> {
     std::fs::remove_file(inside(copy, relative)?)
 }

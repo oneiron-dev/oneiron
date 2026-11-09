@@ -10,7 +10,7 @@ use serde_json::Value;
 /// The vault's embedded owner, as a caller: the owner PERSON is created on
 /// first use, the way an embedded host's first call creates it. Owner-only
 /// verbs also need the process writer lease: open the vault with
-/// [`crate::fixture::VaultCopy::open_owned`] for those.
+/// [`crate::fixture::TestVault::open_owned`] for those.
 ///
 /// # Errors
 /// The vault refuses to create or read its owner.

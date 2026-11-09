@@ -66,6 +66,14 @@ fn only_test_code_is_read_in_a_source_file() {
 }
 
 #[test]
+fn a_file_gated_as_test_and_a_bodiless_test_item_are_read_too() {
+    let gated = "#![cfg(test)]\nfn t() { std::thread::sleep(d); }\n";
+    assert_eq!(rules("crates/oneiron-seal/src/native/verify/review.rs", gated), [(2, Rule::Sleep)]);
+    let item = concat!("#[cfg(test)]\nconst URL: &str = \"https://", "github.com/\";\nconst SHIPPED: &str = \"https://", "github.com/\";\n");
+    assert_eq!(rules("crates/oneiron/src/lib.rs", item), [(2, Rule::Network)]);
+}
+
+#[test]
 fn an_allow_with_a_reason_covers_its_line_or_the_next_and_one_without_covers_nothing() {
     let source = concat!(
         "let a = Instant::now(); // testkit-lint: allow(wall-clock) a nightly budget test's bound\n",

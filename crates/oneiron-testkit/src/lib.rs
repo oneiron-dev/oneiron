@@ -4,7 +4,7 @@
 //!
 //! | Need | Module |
 //! |---|---|
-//! | One vault per test, seeded once | [`fixture`]: [`FixtureVault`], [`VaultCopy`] |
+//! | One vault per test, seeded once | [`fixture`]: [`FixtureVault`], [`TestVault`] |
 //! | Time that moves only when the test moves it | [`clock`]: [`FakeClock`] |
 //! | A model that answers from a script | [`provider`]: [`ScriptedProvider`] (HTTP), [`ScriptedBackend`] (in process) |
 //! | Embeddings with no model | [`embedder`]: [`HashingEmbedder`] |
@@ -48,7 +48,7 @@ pub mod server;
 
 pub use clock::{FAKE_EPOCH, FakeClock};
 pub use embedder::HashingEmbedder;
-pub use fixture::{FixtureCache, FixtureError, FixtureVault, VaultCopy};
+pub use fixture::{FixtureCache, FixtureError, FixtureVault, TestVault};
 pub use provider::{PromptDigest, Reply, ScriptedBackend, ScriptedProvider, Step};
 #[cfg(unix)]
 pub use server::{ServerProcess, ServerSpec};

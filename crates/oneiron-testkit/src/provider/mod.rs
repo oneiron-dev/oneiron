@@ -23,7 +23,9 @@
 //!   stream, and the run waits for a program that never comes.
 //! - **Fails loudly.** A call no step answers, a mode or model mismatch, an
 //!   unexpected route, or a step never requested is a violation. The call
-//!   is refused with an error whose message starts `oneiron-testkit:`, a
+//!   is refused as the caller's error (HTTP 400, or a fatal invalid request
+//!   in process), which the engine does not retry, with a message starting
+//!   `oneiron-testkit:`; a
 //!   report goes to stderr (with the digest to script, for a miss), and
 //!   `finish` or drop panics, so an engine that degrades quietly past the
 //!   refusal still fails the test.
@@ -46,7 +48,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use serde_json::{Value, json};
 
 pub use self::backend::ScriptedBackend;
-pub use self::digest::{PROMPT_FIELDS, PromptDigest, canonical_json, prompt_of};
+pub use self::digest::{NESTED_PROMPT_FIELDS, PROMPT_FIELDS, PromptDigest, canonical_json, prompt_of};
 pub use self::script::{ProviderMismatch, SeenCall};
 pub use self::wire::{Protocol, Usage};
 use self::script::{BarrierState, Script, barrier_map, lock};
@@ -377,7 +379,7 @@ fn answer(shared: &Shared, request: &http::Request, stream: &mut TcpStream) {
         );
         shared.script.violate(violation.clone());
         shared.script.see(seen);
-        let body = wire::error_body(Protocol::OpenAi, &format!("oneiron-testkit: {violation}"));
+        let body = wire::error_body(Protocol::OpenAi, 415, &format!("oneiron-testkit: {violation}"));
         let _ = http::write_body(stream, 415, "application/json", body.to_string().as_bytes());
         return;
     }
@@ -404,9 +406,12 @@ fn answer(shared: &Shared, request: &http::Request, stream: &mut TcpStream) {
     }
 }
 
+/// Refuses a call that broke the script with a 400: the engine reads it as
+/// its own request's fault and does not retry it, so a script error stays
+/// one loud failure, never a simulated outage.
 fn refuse(stream: &mut TcpStream, protocol: Protocol, message: &str) -> io::Result<()> {
-    let body = wire::error_body(protocol, &format!("oneiron-testkit: {message}"));
-    http::write_body(stream, 500, "application/json", body.to_string().as_bytes())
+    let body = wire::error_body(protocol, 400, &format!("oneiron-testkit: {message}"));
+    http::write_body(stream, 400, "application/json", body.to_string().as_bytes())
 }
 
 fn chat(
@@ -455,6 +460,7 @@ fn reply(step: &Step, protocol: Protocol, seen: &SeenCall, stream: &mut TcpStrea
         Reply::Status(status) => {
             let body = wire::error_body(
                 protocol,
+                *status,
                 &format!("oneiron-testkit: scripted status {status} for step {:?}", step.id),
             );
             return http::write_body(stream, *status, "application/json", body.to_string().as_bytes());

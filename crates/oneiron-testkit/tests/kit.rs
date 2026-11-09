@@ -89,7 +89,12 @@ fn each_test_gets_its_own_copy_of_a_fixture_seeded_once() {
             .put_entity(&other, ENTITY_TYPE_PERSON, TimeRange { start: 1, end: 1 }, 1, b"Bo")
             .expect("write to the first copy");
     }
+    // The existing-only door binds the root by descriptor, which only Linux
+    // offers; elsewhere the engine refuses it by design.
+    #[cfg(target_os = "linux")]
     let vault = second.open_existing().expect("open the second copy, existing only");
+    #[cfg(not(target_os = "linux"))]
+    let vault = second.open().expect("open the second copy");
     assert_eq!(vault.get(&person).expect("read"), Some(b"Ada".to_vec()));
     assert_eq!(vault.get(&other).expect("read"), None, "copies share nothing");
 }

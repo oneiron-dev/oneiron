@@ -11,14 +11,16 @@
 //! and the first rename wins.
 //!
 //! [`FixtureVault::copy`] copies the closed directory into a fresh temp dir:
-//! one vault per test, never shared. The copy's clock starts where the seed's
-//! ended, so the vault's recorded time never runs backwards.
+//! one [`TestVault`] per test, never shared. Its clock starts where the
+//! seed's ended, so the vault's recorded time never runs backwards.
 //!
-//! What a copy guarantees: a fixture is a bare, unsealed vault with no key
-//! custody bound. Key custody lives beside a vault and its row names the
-//! vault's absolute path, so a byte copy of a custody-bound vault would read
-//! the original's keys. The build refuses a seed that leaves anything beside
-//! the vault directory. A test that needs custody binds it on its own copy.
+//! What a copy guarantees: a cached fixture is a bare, unsealed vault with no
+//! key custody bound. The first claim-backed write (a gated receipt) binds
+//! key custody, which lives beside the vault directory and whose row names
+//! the vault's absolute path, so a byte copy of such a vault would read and
+//! retire the original's keys. The cache therefore refuses a seed that leaves
+//! anything beside the vault directory. A seed that writes claims builds a
+//! fresh vault per test instead: [`TestVault::seeded`].
 
 use std::fmt;
 use std::fs::{self, File};
@@ -164,7 +166,7 @@ impl FixtureVault {
 
     /// [`Self::build`] with the vault config `config` makes from the seed's
     /// clock (a server preset, an embedding model). Copies are opened with
-    /// the same config by [`VaultCopy::open_with`].
+    /// the same config by [`TestVault::open_with`].
     ///
     /// # Errors
     /// As [`Self::build`].
@@ -194,9 +196,20 @@ impl FixtureVault {
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
-        if let Err(error) = seed_into(&staging, name, config, seed) {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
+        match seed_into(&staging, name, config, seed) {
+            Ok(record) if record.beside.is_empty() => {}
+            Ok(record) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(FixtureError::Record(format!(
+                    "the seed of {name:?} left {:?} beside the vault (key custody or a page seal); a byte copy \
+                     would share those keys. Seed it per test with TestVault::seeded.",
+                    record.beside
+                )));
+            }
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
         }
         match fs::rename(&staging, &dir) {
             Ok(()) => {}
@@ -254,12 +267,12 @@ impl FixtureVault {
     ///
     /// # Errors
     /// The copy cannot be written.
-    pub fn copy(&self) -> Result<VaultCopy, FixtureError> {
+    pub fn copy(&self) -> Result<TestVault, FixtureError> {
         let temp = tempfile::Builder::new()
             .prefix("oneiron-testkit-vault-")
             .tempdir()?;
         copy_tree(&self.dir.join(VAULT_DIR), &temp.path().join(VAULT_DIR))?;
-        Ok(VaultCopy {
+        Ok(TestVault {
             path: temp.path().join(VAULT_DIR),
             temp,
             clock: FakeClock::at(self.ended_at),
@@ -267,18 +280,25 @@ impl FixtureVault {
     }
 }
 
-/// Seeds a fixture into `dir`, which must be absent or empty: the vault at
+/// What a seeding run left behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeedRecord {
+    /// The fake time the seed ended at.
+    pub ended_at: u64,
+    /// The entries the seed left beside the vault directory: key custody or a
+    /// page seal. Empty for a vault a byte copy may duplicate; otherwise the
+    /// vault must be used where it was built.
+    pub beside: Vec<String>,
+}
+
+/// Seeds a vault into `dir`, which must be absent or empty: the vault at
 /// `dir/vault`, opened process-owned (so owner verbs run) on a fake clock at
 /// [`FAKE_EPOCH`] with the config `config` makes, seeded by `seed`, closed,
-/// and recorded in `dir/fixture.json`. Returns the fake time the seed ended
-/// at.
+/// and recorded in `dir/fixture.json`.
 ///
 /// # Errors
-/// `dir` holds something, the vault cannot be opened, the seed fails, or the
-/// seed left anything beside the vault directory (key custody or a page
-/// seal: their rows name this vault's absolute path, so a byte copy would
-/// share the original's keys instead of owning its own).
-pub fn seed_into<C, F>(dir: &Path, name: &str, config: C, seed: F) -> Result<u64, FixtureError>
+/// `dir` holds something, the vault cannot be opened, or the seed fails.
+pub fn seed_into<C, F>(dir: &Path, name: &str, config: C, seed: F) -> Result<SeedRecord, FixtureError>
 where
     C: FnOnce(&FakeClock) -> VaultConfig,
     F: FnOnce(&Vault, &FakeClock) -> Result<(), SeedError>,
@@ -297,19 +317,13 @@ where
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|entry| entry != VAULT_DIR)
         .collect();
-    if !beside.is_empty() {
-        beside.sort();
-        return Err(FixtureError::Record(format!(
-            "the seed of {name:?} left {beside:?} beside the vault (key custody or a page seal); a copy of it \
-             would share those keys. Seed without protected publication, or build per test."
-        )));
-    }
+    beside.sort();
     let ended_at = clock.now();
     fs::write(
         dir.join(RECORD_FILE),
-        serde_json::json!({"name": name, "ended_at": ended_at}).to_string(),
+        serde_json::json!({"name": name, "ended_at": ended_at, "beside": beside}).to_string(),
     )?;
-    Ok(ended_at)
+    Ok(SeedRecord { ended_at, beside })
 }
 
 /// A seed read from JSONL, as fixture seeds under `tests/fixtures/` are
@@ -389,23 +403,47 @@ fn copy_file_keeping_holes(from: &Path, to: &Path) -> io::Result<()> {
     fs::set_permissions(to, fs::metadata(from)?.permissions())
 }
 
-/// One test's private copy of a fixture vault. The directory is deleted
-/// when the copy drops.
+/// One test's private vault: a copy of a cached fixture
+/// ([`FixtureVault::copy`]) or a vault seeded for this test alone
+/// ([`Self::seeded`]). Its directory is deleted when it drops.
 #[derive(Debug)]
-pub struct VaultCopy {
+pub struct TestVault {
     temp: tempfile::TempDir,
     path: PathBuf,
     clock: FakeClock,
 }
 
-impl VaultCopy {
+impl TestVault {
+    /// A vault seeded by `seed` for this test alone, in a fresh temp dir and
+    /// on a fake clock at [`FAKE_EPOCH`]: the way to seed claims, whose key
+    /// custody a byte copy cannot duplicate. Open it with [`Self::open`] or
+    /// [`Self::open_owned`] (the device preset on its clock).
+    ///
+    /// # Errors
+    /// The vault cannot be opened or the seed fails.
+    pub fn seeded<F>(name: &str, seed: F) -> Result<Self, FixtureError>
+    where
+        F: FnOnce(&Vault, &FakeClock) -> Result<(), SeedError>,
+    {
+        let temp = tempfile::Builder::new()
+            .prefix("oneiron-testkit-vault-")
+            .tempdir()?;
+        let record = seed_into(temp.path(), name, FakeClock::vault_config, seed)?;
+        Ok(Self {
+            path: temp.path().join(VAULT_DIR),
+            temp,
+            clock: FakeClock::at(record.ended_at),
+        })
+    }
+
     /// The vault directory.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The temp dir around the vault, for the test's other files.
+    /// The temp dir around the vault, for the test's other files. Key
+    /// custody, once bound, lives here beside the vault.
     #[must_use]
     pub fn temp_dir(&self) -> &Path {
         self.temp.path()

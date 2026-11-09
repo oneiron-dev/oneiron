@@ -1,8 +1,9 @@
 //! The prompt digest a scripted reply is keyed by.
 //!
-//! The prompt is what the model reads: the request's [`PROMPT_FIELDS`], taken
-//! from the JSON body and written as canonical JSON (object keys sorted, no
-//! whitespace). Transport and sampling fields (`model`, `stream`,
+//! The prompt is what the model reads: the request's [`PROMPT_FIELDS`] and
+//! the output schema wherever its protocol carries it ([`NESTED_PROMPT_FIELDS`]),
+//! taken from the JSON body and written as canonical JSON (object keys sorted,
+//! no whitespace). Transport and sampling fields (`model`, `stream`,
 //! `stream_options`, `max_tokens`, `temperature`, ...) are left out, so the
 //! same prompt has the same digest whether it is streamed or buffered and on
 //! whichever model. A change to a prompt template changes the digest, and the
@@ -22,6 +23,14 @@ pub const PROMPT_FIELDS: [&str; 7] = [
     "tools",
     "tool_choice",
     "response_format",
+];
+
+/// The prompt fields one level down, by `(parent, child)`: Anthropic's output
+/// schema (`output_config.format`) and the typed request's response format
+/// (`envelope.response_format`). Each lands in the prompt as `parent.child`.
+pub const NESTED_PROMPT_FIELDS: [(&str, &str); 2] = [
+    ("output_config", "format"),
+    ("envelope", "response_format"),
 ];
 
 const DIGEST_DOMAIN: &[u8] = b"oneiron-testkit/prompt-digest/v1\0";
@@ -75,8 +84,8 @@ impl fmt::Debug for PromptDigest {
 }
 
 /// The prompt of a request body: an object holding only its
-/// [`PROMPT_FIELDS`] that are present. A body that is not an object is its
-/// own prompt.
+/// [`PROMPT_FIELDS`] and [`NESTED_PROMPT_FIELDS`] that are present. A body
+/// that is not an object is its own prompt.
 #[must_use]
 pub fn prompt_of(body: &Value) -> Value {
     let Value::Object(fields) = body else {
@@ -86,6 +95,11 @@ pub fn prompt_of(body: &Value) -> Value {
     for name in PROMPT_FIELDS {
         if let Some(value) = fields.get(name) {
             prompt.insert(name.to_owned(), value.clone());
+        }
+    }
+    for (parent, child) in NESTED_PROMPT_FIELDS {
+        if let Some(value) = fields.get(parent).and_then(|parent| parent.get(child)) {
+            prompt.insert(format!("{parent}.{child}"), value.clone());
         }
     }
     Value::Object(prompt)

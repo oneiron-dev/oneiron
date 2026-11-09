@@ -191,13 +191,20 @@ pub(crate) fn closing_events(protocol: Protocol, id: &str, model: &str, usage: O
     }
 }
 
-/// A protocol-shaped error body whose message names the testkit, so a log
-/// line read later says where the refusal came from.
-pub(crate) fn error_body(protocol: Protocol, message: &str) -> Value {
+/// A protocol-shaped error body for an answer with `status`, whose message
+/// names the testkit, so a log line read later says where it came from. A
+/// 4xx reads as the caller's error, which the engine does not retry; a 5xx
+/// as the provider's.
+pub(crate) fn error_body(protocol: Protocol, status: u16, message: &str) -> Value {
+    let client = (400..500).contains(&status);
     match protocol {
-        Protocol::OpenAi => json!({"error": {"message": message, "type": "server_error"}}),
+        Protocol::OpenAi => {
+            let kind = if client { "invalid_request_error" } else { "server_error" };
+            json!({"error": {"message": message, "type": kind}})
+        }
         Protocol::Anthropic => {
-            json!({"type": "error", "error": {"type": "api_error", "message": message}})
+            let kind = if client { "invalid_request_error" } else { "api_error" };
+            json!({"type": "error", "error": {"type": kind, "message": message}})
         }
     }
 }

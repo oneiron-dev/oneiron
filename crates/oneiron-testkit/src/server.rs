@@ -92,6 +92,10 @@ pub struct ServerProcess {
     listener: TcpListener,
     addr: SocketAddr,
     notify_dir: tempfile::TempDir,
+    /// The notify socket the running server reports to. Held until the child
+    /// is reaped: serve sends `STOPPING=1` on a graceful stop, and fails its
+    /// shutdown when nothing listens.
+    notify: Option<UnixDatagram>,
     child: Option<Child>,
 }
 
@@ -113,6 +117,7 @@ impl ServerProcess {
             listener,
             addr,
             notify_dir,
+            notify: None,
             child: None,
         };
         server.start()?;
@@ -176,6 +181,7 @@ impl ServerProcess {
             }
         }
         self.child = Some(child);
+        self.notify = Some(notify);
         Ok(())
     }
 
@@ -208,7 +214,9 @@ impl ServerProcess {
             .take()
             .ok_or_else(|| io::Error::other("the server is not running"))?;
         child.kill()?;
-        child.wait()
+        let status = child.wait();
+        self.notify = None;
+        status
     }
 
     /// Stops the server with SIGTERM, as a service manager would, and waits
@@ -227,7 +235,9 @@ impl ServerProcess {
         if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        child.wait()
+        let status = child.wait();
+        self.notify = None;
+        status
     }
 
     /// Starts the server again with the same spec, on the same port, and
