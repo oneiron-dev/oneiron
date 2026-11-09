@@ -76,6 +76,7 @@ fn export_document_xml(steps: Vec<EditStep>) -> String {
             } => EditStep::SetRunFormatting {
                 block_id: NodeId::from(block_id.as_str()),
                 expect,
+                occurrence: None,
                 semantic_hash,
                 marks,
                 style,
@@ -126,6 +127,7 @@ fn caps_smallcaps_spacing_emit_in_annex_a_order() {
     let xml = export_document_xml(vec![EditStep::SetRunFormatting {
         block_id: NodeId::from("placeholder"),
         expect: "Confidential".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks: InlineMarkSet {
             caps: true,
@@ -160,6 +162,7 @@ fn char_spacing_writes_twips_to_w_val() {
     let xml = export_document_xml(vec![EditStep::SetRunFormatting {
         block_id: NodeId::from("placeholder"),
         expect: "Confidential".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks: InlineMarkSet::default(),
         style: RunStyleEdit {
