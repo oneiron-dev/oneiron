@@ -47,8 +47,8 @@ afterAll(suite.flush);
  *
  * Observe wall-clock lease expiry via public state, receipts and bounded
  * observation, never a private clock/tick or fixed sleep. Zero automatic
- * mutation retries; the explicit settlement replay in 02 is the behavior under
- * test. kill() follows the full public publication ACK, never a log message.
+ * mutation retries; case 02 covers expiry and stale-publication refusals only.
+ * Any future kill() must follow a full public publication ACK, never a log message.
  * Credentials go through private env/stdin; a git transport needs a holder proof
  * for EACH request, not one static extraHeader reused across an exchange.
  * No upstream value belongs in checkout files, remotes, git config or argv.
@@ -287,9 +287,29 @@ suite.test(test, "CODE-CUSTODY-02", "An expired checkout refuses publication and
   const engine = await EngineFixture.start({ id: "CODE-CUSTODY-02", profile });
   try {
     const ownerRef = engine.pairedActor.principalRef;
-    const scope = await ownerBaseClaimScope(engine.client, ownerRef);
-    const project = await engine.client.call("vault.get", { entity_ref: scope.scope_project_id });
-    if (!project.value || project.value.kind !== "PROJECT") throw new Error("Fresh vault has no public default PROJECT");
+    // The claim scope's default project id is a reserved value, not a stored PROJECT; find the seeded
+    // root project through public reads (role project, no parents, its own claims scope).
+    const mount: FacadeInput<"graph_fs.readdir">["mount"] = { ref: { kind: "live_head" } };
+    let cursor: string | undefined = undefined;
+    let rootProjectRef: string | undefined = undefined;
+    do {
+      const directory = await engine.client.call("graph_fs.readdir", {
+        mount, path: "/entities", ...(cursor === undefined ? {} : { cursor }),
+      });
+      const refs = directory.entries.filter(entry => entry.kind === "directory").map(entry => entry.name);
+      const rows = await engine.client.call("vault.hydrate", { refs });
+      rootProjectRef = rows.value.find(row => {
+        const body = row.body;
+        return typeof body === "object" && body !== null
+          && "role" in body && body.role === "project"
+          && "parents" in body && Array.isArray(body.parents) && body.parents.length === 0
+          && "claims_scope_ref" in body && body.claims_scope_ref === row.id_hex;
+      })?.id_hex;
+      cursor = directory.next_cursor ?? undefined;
+    } while (rootProjectRef === undefined && cursor !== undefined);
+    if (rootProjectRef === undefined) throw new Error("Fresh vault has no publicly readable root project");
+    const project = await engine.client.call("vault.get", { entity_ref: rootProjectRef });
+    if (!project.value) throw new Error("Discovered root project is not readable through vault.get");
     const sourceRoot = resolve(engine.root, "code-custody-02-source");
     await mkdir(sourceRoot, { mode: 0o700 });
     for (const [asset, path] of [
@@ -366,7 +386,9 @@ suite.test(test, "CODE-CUSTODY-02", "An expired checkout refuses publication and
     const publishInput: FacadeInput<"vault.code.checkout.publish"> = {
       checkout, epoch: initial.epoch, observed_ref: initial.repo_ref, candidate: repo,
     };
-    // This candidate is an actual publicly registered CODE artifact. The refusal occurs before candidate admission.
+    // This candidate is an actual publicly registered CODE artifact.
+    // Expired publication checks candidate readability before rejecting the lease;
+    // after reclaim, the stale-epoch fence rejects before candidate readability.
     await codeCustody02Refused(engine, excluded.client, agentRef, "agent", "vault.code.checkout.reclaim",
       { checkout, expired_epoch: initial.epoch }, 404, "NOT_FOUND");
     const expired = await awaitPublic(() => holder.client.call("vault.code.checkout.get", { checkout }),
