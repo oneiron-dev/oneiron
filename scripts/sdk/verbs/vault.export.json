@@ -1,0 +1,29 @@
+{
+  "name": "vault.export",
+  "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read.",
+  "input": "crate::memory::ExportOptions",
+  "output": "crate::memory::ExportAnswer",
+  "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "owner_grade": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "assemble": true,
+    "defaults": true,
+    "args": [
+      {
+        "name": "format",
+        "kind": "format"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n    /// It carries every world wherever it goes; `notices` names each world\n    /// the owner's recipient choice would keep from there, and why.\n",
+      "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+      "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
+    }
+  }
+}

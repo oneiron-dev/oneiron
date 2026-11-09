@@ -143,6 +143,8 @@ impl Vault {
 }
 
 /// Shared role and resolved record-scope check used by local and sync write doors.
+/// A Steward is not a content writer: it derives, archives and deletes in
+/// scope through their own doors, and its preset names no `write`.
 pub(crate) fn grant_allows_content_write(grant: &FederationGrant, scope: &Scope) -> bool {
     if !matches!(
         grant.role,
@@ -249,11 +251,12 @@ pub enum MembershipStanding {
 
 /// The roles whose live grant over this shared vault makes its holder a
 /// member for first-party admission (FIX 360): ARCH-0043's member
-/// federation names Member, Viewer or Delegate on the roster, with Owner and
-/// Admin above them. Auditor and Guest keep guest grading.
-pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 5] = [
+/// federation names Member, Viewer or Delegate on the roster, with Owner,
+/// Admin and Steward above them. Auditor and Guest keep guest grading.
+pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 6] = [
     FederationGrantRole::Owner,
     FederationGrantRole::Admin,
+    FederationGrantRole::Steward,
     FederationGrantRole::Member,
     FederationGrantRole::Viewer,
     FederationGrantRole::Delegate,
@@ -335,6 +338,7 @@ impl Vault {
             match grant.role {
                 FederationGrantRole::Owner
                 | FederationGrantRole::Admin
+                | FederationGrantRole::Steward
                 | FederationGrantRole::Member
                 | FederationGrantRole::Viewer
                 | FederationGrantRole::Auditor

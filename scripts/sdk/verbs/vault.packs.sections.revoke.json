@@ -1,0 +1,17 @@
+{
+  "name": "vault.packs.sections.revoke",
+  "description": "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.",
+  "input": "crate::memory::PluginSectionRevokeRequest",
+  "output": "crate::memory::PluginSectionRevoked",
+  "call": "memory.plugin_section_revoke_as_owner(&memory.embedded_owner(\"vault.packs.sections.revoke\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

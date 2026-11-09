@@ -1,0 +1,16 @@
+{
+  "name": "vault.notes.history_purge",
+  "description": "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action.",
+  "input": "crate::task_verb::sdk::NoteHistoryPurgeRequest",
+  "output": "crate::task_verb::sdk::NoteHistoryPurgeOutcome",
+  "call": "crate::task_verb::sdk::purge_note_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

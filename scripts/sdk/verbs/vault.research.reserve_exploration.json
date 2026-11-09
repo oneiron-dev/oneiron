@@ -1,0 +1,13 @@
+{
+  "name": "vault.research.reserve_exploration",
+  "description": "Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work.",
+  "input": "crate::task_verb::sdk::ResearchExplorationWire",
+  "output": "crate::entity_id::EntityId",
+  "call": "crate::task_verb::sdk::research_reserve_exploration(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

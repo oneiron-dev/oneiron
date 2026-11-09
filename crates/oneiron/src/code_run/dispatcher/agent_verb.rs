@@ -75,10 +75,10 @@ impl HostSelfDispatcher<'_> {
             return self.dispatch_scoped_port(call, site);
         }
         if matches!(self.storage, ExecutorStorage::Session(_)) {
-            if let Some(read) = super::session_verbs::session_read(call.verb) {
+            if let Some(read) = call.verb.session_read() {
                 return self.dispatch_session_read(read, &call, site);
             }
-            if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
+            if !call.verb.overlay_write() {
                 return Ok(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),

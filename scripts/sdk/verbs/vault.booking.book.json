@@ -1,0 +1,16 @@
+{
+  "name": "vault.booking.book",
+  "description": "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens.",
+  "input": "crate::task_verb::sdk::BookingBookRequest",
+  "output": "crate::booking::agent_api::BookingOperationResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "booking_owner_act"
+}

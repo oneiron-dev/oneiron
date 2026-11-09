@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.oplog",
+  "description": "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.",
+  "input": "crate::memory::code_doors::CodeRepoRequest",
+  "output": "crate::memory::code_doors::CodeMutationLog",
+  "call": "memory.code_mutation_log_as(&memory.embedded_owner(\"vault.code.oplog\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

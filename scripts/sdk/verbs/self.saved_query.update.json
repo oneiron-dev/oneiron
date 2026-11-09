@@ -1,0 +1,13 @@
+{
+  "name": "self.saved_query.update",
+  "description": "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it.",
+  "input": "crate::campaign::surface::SavedQueryUpdateRequest",
+  "output": "crate::campaign::surface::SavedQueryRecordView",
+  "call": "memory.update_saved_query(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

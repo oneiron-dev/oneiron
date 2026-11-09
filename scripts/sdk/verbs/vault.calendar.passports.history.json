@@ -1,0 +1,14 @@
+{
+  "name": "vault.calendar.passports.history",
+  "description": "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate.",
+  "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::passport::CalendarPassportRevision>>",
+  "call": "memory.calendar_passport_history(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

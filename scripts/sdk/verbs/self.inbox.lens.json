@@ -1,0 +1,13 @@
+{
+  "name": "self.inbox.lens",
+  "description": "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.",
+  "input": "crate::agent_inbox_lens::InboxLensRequest",
+  "output": "crate::agent_inbox_lens::InboxLensPage",
+  "call": "memory.inbox_lens(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.manifest.replace",
+  "description": "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted.",
+  "input": "crate::llm::manifest::doors::ModelManifestReplace",
+  "output": "crate::llm::manifest::ModelManifest",
+  "call": "crate::task_verb::sdk::replace_model_manifest(memory, input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

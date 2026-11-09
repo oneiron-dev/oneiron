@@ -1,0 +1,12 @@
+{
+  "name": "self.memory.diary.review",
+  "description": "This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers.",
+  "input": "crate::memory::DiaryReviewAnswer",
+  "output": "crate::memory::DiaryReadRequest",
+  "call": "memory.answer_diary_read(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

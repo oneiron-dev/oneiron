@@ -4,7 +4,7 @@ Memory Wire is the Oneiron developer profile. Start with `vault.witness`,
 `vault.recall`, and `vault.receipts`. The same package also ships
 `vault.claims.upsert` (the same path in JS) and the other facade verbs listed
 under [API](#api). The verb set is generated from
-`scripts/sdk/agent-verbs.json` by `scripts/sdk/generate.py`; the shipped stubs
+`scripts/sdk/verbs/` by `scripts/sdk/generate.py`; the shipped stubs
 (`oneiron/__init__.pyi`) carry the typed signatures.
 There is no separate lite SDK and no alternate mutation path.
 

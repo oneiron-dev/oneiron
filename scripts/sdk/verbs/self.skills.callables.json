@@ -1,0 +1,11 @@
+{
+  "name": "self.skills.callables",
+  "description": "Every loadable callable helper skill and its call contract: what it takes and returns.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::skill::helper::CallableCardView>",
+  "call": "memory.skill_callables()?",
+  "scope": "Read",
+  "mcp_fields": {},
+  "mcp_scope": "unrestricted",
+  "section": false
+}

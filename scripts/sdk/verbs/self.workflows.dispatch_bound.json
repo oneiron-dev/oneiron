@@ -1,0 +1,9 @@
+{
+  "name": "self.workflows.dispatch_bound",
+  "input": "crate::task_verb::sdk::WorkflowBoundDispatchRequest",
+  "output": "crate::task_verb::sdk::WorkflowRunView",
+  "scope": "Write",
+  "context": "run",
+  "effect": "WorkflowDispatch",
+  "run_surface": "live"
+}

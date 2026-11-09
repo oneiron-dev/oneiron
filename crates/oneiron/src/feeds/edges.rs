@@ -151,11 +151,9 @@ pub(super) fn edges_after_in_txn(
     let mut scanned = Scanned {
         entries: Vec::new(),
         through: None,
-        more: false,
     };
     for row in EDGES.iter_range(&vault.store, txn, start, Bound::Unbounded)? {
         if scanned.entries.len() >= limit {
-            scanned.more = true;
             break;
         }
         let (sequence, row) = row?;
@@ -214,11 +212,9 @@ pub(super) fn redirty_after_in_txn(
     let mut scanned = Scanned {
         entries: Vec::new(),
         through: None,
-        more: false,
     };
     for row in REDIRTY.iter_range(&vault.store, txn, start, Bound::Unbounded)? {
         if scanned.entries.len() >= limit {
-            scanned.more = true;
             break;
         }
         let (sequence, row) = row?;
@@ -308,6 +304,25 @@ pub(super) fn delete_rows_in_txn(
 /// Deletes every edge row with an end in `ids` and every redirty row naming one, in the
 /// caller's erase write. One complete scan of each feed: they hold only rows a follower has not
 /// acknowledged.
+/// How many edge and redirty rows name `id`: what an erase leaves at zero. A test door's read.
+#[cfg(oneiron_test_support)]
+pub(super) fn rows_naming_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<usize> {
+    let mut count = 0;
+    for row in EDGES.iter_from(store, txn, &[])? {
+        let (_, row) = row?;
+        count += usize::from(row.source == *id || row.target == *id);
+    }
+    for row in REDIRTY.iter_from(store, txn, &[])? {
+        let (_, row) = row?;
+        count += usize::from(row.turn == *id);
+    }
+    Ok(count)
+}
+
 pub(super) fn scrub_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

@@ -1,0 +1,16 @@
+{
+  "name": "calendar.connector.configure",
+  "description": "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorConfigureRequest",
+  "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.configure\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.admit",
+  "description": "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks.",
+  "input": "SkillOptimizeProposalRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+  "call": "crate::task_verb::sdk::skill_optimize_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.admit\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

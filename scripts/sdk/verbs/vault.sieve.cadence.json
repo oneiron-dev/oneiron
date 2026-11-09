@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.cadence",
+  "description": "Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model.",
+  "input": "crate::dreamer_wake::WakeCadenceRequest",
+  "output": "crate::dreamer_wake::WakeCadenceView",
+  "call": "crate::dreamer_wake::cadence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.cadence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

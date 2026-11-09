@@ -1,0 +1,21 @@
+{
+  "name": "ask",
+  "description": "Asks people or an authority a typed question and returns at admission with the ask's handle.",
+  "refs": [
+    "/what/reference/claim",
+    "/what/reference/turn",
+    "/what/context_refs/*/claim",
+    "/what/context_refs/*/turn"
+  ],
+  "refs_check": "crate::task_verb::admit_ask_references",
+  "input": "crate::task_verb::sdk::TaskAskRequest",
+  "output": "crate::task_verb::TaskAskReceipt",
+  "call": "memory.tasks_ask(&input.into_spec()?)?",
+  "scope": "Write",
+  "task_work": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": true
+}

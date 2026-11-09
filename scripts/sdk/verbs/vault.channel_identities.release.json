@@ -1,0 +1,17 @@
+{
+  "name": "vault.channel_identities.release",
+  "description": "Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule.",
+  "input": "crate::memory::channel_doors::ChannelIdentityReleaseRequest",
+  "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+  "call": "memory.channel_identity_release_as(&memory.embedded_owner(\"vault.channel_identities.release\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_paced": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

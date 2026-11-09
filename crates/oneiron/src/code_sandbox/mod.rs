@@ -8,17 +8,15 @@
 //! first-party writes are linked as typed traps, and foreign writes leave the
 //! sandbox as reviewable proposal deltas rather than commit authority.
 
-/// Host-pinned production QuickJS artifact loader and runtime factory.
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub mod quickjs;
-/// Fuel-limited Component Model request boundary (no WASI).
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub mod wasmtime_boundary;
-/// Typed Component Model adapter shared with the canonical CODE host boundary.
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub mod wasmtime_runtime;
+//! The backends themselves (the Wasmtime/QuickJS runtime, the Firecracker
+//! microVM and the OCI fenced container) live in the `oneiron-agent-runtime`
+//! crate, behind [`microvm::SandboxBackends`] and
+//! `engine_executor::JsCodeModeRuntime`.
 
 mod adapter;
+/// Per-step ceilings of a Wasmtime component run.
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod component_budget;
 mod contract;
 mod credential;
 /// Engine-owned open-web relay and owner-local receipts.
@@ -32,13 +30,12 @@ mod proposal;
 /// in process, JavaScript passed through byte for byte (FIX 8276).
 pub use oneiron_code_source::source;
 
-/// Firecracker-backed microVM lane (Linux; feature-gated).
-#[cfg(feature = "microvm-firecracker")]
-pub mod firecracker;
 /// MicroVM execution lane for foreign and ingested guest code.
 pub mod microvm;
 
 pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub use self::component_budget::ComponentBudget;
 pub use self::contract::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
     SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,

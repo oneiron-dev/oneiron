@@ -1,0 +1,13 @@
+{
+  "name": "calendar.invite",
+  "description": "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe.",
+  "input": "crate::memory::CalendarInviteSurfaceInput",
+  "output": "crate::memory::OutboundIntentReceipt",
+  "call": "memory.calendar_invite(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.spawn",
+  "description": "The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept.",
+  "input": "crate::team::doors::SpawnIntentRequest",
+  "output": "crate::team::doors::SpawnIntentReply",
+  "call": "crate::team::doors::spawn_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.spawn\")?, input, None, None, crate::unix_seconds_now())?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

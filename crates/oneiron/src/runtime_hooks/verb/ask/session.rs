@@ -90,7 +90,7 @@ pub(in crate::runtime_hooks::verb) fn retry(
     turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<Retry> {
     let invocation = call.invocation.0;
-    let keep = &vault.verb_hook_state.session;
+    let keep = &vault.runtime().verb_hook_state().session;
     // A pause another call of the same request took is that call's to
     // resume (FIX 5526): this one takes its own path.
     let named = hooks
@@ -214,7 +214,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<EntityId, String>> {
     let (binding_id, binding) = hook;
-    let keep = &vault.verb_hook_state.session;
+    let keep = &vault.runtime().verb_hook_state().session;
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Claim(binding_id));
     what.label = Some(format!("{label} {SESSION_ASK_NOTE}"));
     for (option, text) in [
@@ -280,7 +280,8 @@ pub(in crate::runtime_hooks::verb) fn take(
     token: &AskToken,
 ) -> bool {
     vault
-        .verb_hook_state
+        .runtime()
+        .verb_hook_state()
         .session
         .use_ask(vault, key, token.key, token.ask)
 }
@@ -292,11 +293,15 @@ pub(in crate::runtime_hooks::verb) fn take(
 /// reads an open saved call. Pending and approved-but-unused pauses stay.
 /// Returns how many it forgot.
 pub(in crate::runtime_hooks::verb) fn prune(vault: &Vault, cutoff: u64) -> usize {
-    vault.verb_hook_state.session.prune(cutoff, |row| {
-        let status = author_memory(vault, row.author, row.author_class, None)
-            .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
-        matches!(status, Ok(TaskAskStatus::Settled(result)) if !proceeds(&result))
-    })
+    vault
+        .runtime()
+        .verb_hook_state()
+        .session
+        .prune(cutoff, |row| {
+            let status = author_memory(vault, row.author, row.author_class, None)
+                .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
+            matches!(status, Ok(TaskAskStatus::Settled(result)) if !proceeds(&result))
+        })
 }
 
 /// The refusal a pause meets once its session closed.
@@ -333,7 +338,7 @@ impl Vault {
             return Ok(None);
         }
         if PRUNED_RECORDED_ASK_RUNS_NEW && recorded_ask(self, invocation, ask)? {
-            self.verb_hook_state.note_expired(invocation);
+            self.runtime().verb_hook_state().note_expired(invocation);
             return Ok(None);
         }
         Ok(Some(gone("")))

@@ -1,0 +1,16 @@
+{
+  "name": "vault.federation.coreference.link",
+  "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
+  "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
+  "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+  "call": "crate::task_verb::sdk::link_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.link\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
