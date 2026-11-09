@@ -15,10 +15,10 @@
 
 use oneiron::agent_dispatch::budget_doors::{OpenSpendLeaseRequest, SpendScopeRequest};
 use oneiron::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
-    SpendScopeId,
+    AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID, SpendScopeId,
 };
 use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt};
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::federation::FederationGrantRole;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::run_doors::RunBranchesRequest;
@@ -35,13 +35,15 @@ const SHARED: u64 = 42;
 const CREATOR_BYTES: [u8; 16] = [0xE1; 16];
 const AGENT_ERROR: &str = "the agent's own words about its failure";
 
+/// A process-owned vault, as an embedded owner opens it: it holds the
+/// writer lease, so the embedded owner's doors admit the owner.
 fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open_owned(dir.path(), config)?;
     Ok((dir, vault))
 }
 
@@ -84,19 +86,28 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         return Err("an agent-definition assignee routes to an agent dispatch".into());
     };
 
-    // The branch fails with the agent's own words.
-    let ClaimOutcome::Claimed(claimed) = AttemptQueue::new(&vault).claim_kind(
-        AGENT_DISPATCH_ATTEMPT_TYPE,
-        ClaimAttempt {
-            lease_owner: "run-tree-reader".to_owned(),
-            now: u64::MAX,
-        },
-    )?
-    else {
-        return Err("the TASK's attempt is ready to claim".into());
-    };
-    assert_eq!(claimed.id, attempt_ref);
-    AttemptQueue::new(&vault).fail(FailAttempt {
+    // The branch fails with the agent's own words. The dispatch rides the
+    // runner's queue kind; other rows the fresh vault queued are claimed past.
+    let queue = AttemptQueue::new(&vault);
+    let mut claimed = None;
+    for _ in 0..32 {
+        let ClaimOutcome::Claimed(row) = queue.claim_kind(
+            DREAMER_RUNNER_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "run-tree-reader".to_owned(),
+                now: u64::MAX,
+            },
+        )?
+        else {
+            break;
+        };
+        if row.id == attempt_ref {
+            claimed = Some(row);
+            break;
+        }
+    }
+    let claimed = claimed.ok_or("the TASK's attempt is ready to claim")?;
+    queue.fail(FailAttempt {
         id: claimed.id,
         lease_owner: "run-tree-reader".to_owned(),
         attempt_count: claimed.attempt_count,
