@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/dreamer_wake/types.rs` (core split slice 3: wake contract below core).
 //! `oneiron` re-exports each item at its old path.
 
+#[cfg(feature = "sync")]
 use crate::dreamer_runner::progress::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::types::DreamerParkCause;
 use crate::memory::wake_observation::ClaimAuthoringFallback;
@@ -8,6 +9,7 @@ use crate::model_step_effect::StepEffectBinding;
 use crate::settings::destination::ReadDestination;
 use crate::store::attempt_cancel::AttemptResumePoint;
 use crate::store::attempt_cancel::LandingTrigger;
+#[cfg(feature = "sync")]
 use loro::awareness::EphemeralStore;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::BudgetGuard;

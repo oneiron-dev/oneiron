@@ -41,7 +41,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
 #[doc(hidden)]
-#[doc(hidden)]
 pub use oneiron_wake_contract::settings::destination::ReadDestination;
 
 /// A caller at `locality` on a connection that proved `peer`: on this
