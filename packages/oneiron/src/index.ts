@@ -1002,6 +1002,12 @@ export class Oneiron {
         answer: (input: Facade.AgentRunEffectAnswer): Facade.AgentRunEffectAnswered => this.#call(() => this.#client.vaultAgentRunEffectAnswer(input) as Facade.AgentRunEffectAnswered),
       },
     },
+    agent_health: {
+      /** Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      calls: (input: Facade.AgentHealthCallsRequest): Facade.AgentCallReceipt[] => this.#call(() => this.#client.vaultAgentHealthCalls(input) as Facade.AgentCallReceipt[]),
+      /** Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      cards: (input: Facade.AgentHealthCardsRequest): Facade.AgentHealthCard[] => this.#call(() => this.#client.vaultAgentHealthCards(input) as Facade.AgentHealthCard[]),
+    },
     agents: {
       /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
       base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),
@@ -1884,8 +1890,16 @@ export class Oneiron {
       pin: (input: Facade.ConsolidationPinRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationPin(input) as Facade.ConsolidationRootAccounting),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
+      selection_timing: {
+        /** The owner, or a holder of engine.controls, sets how long a claim soaks before consolidation selects it and the recency window; the change writes an engine-control receipt. */
+        set: (input: Facade.ConsolidationSelectionTimingSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultConsolidationSelectionTimingSet(input) as Facade.EngineControlChangeEntry),
+      },
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+      strength: {
+        /** The owner, or a holder of engine.controls, sets the strength under which a quiet claim is archived and how long it stays quiet first; the change writes an engine-control receipt. */
+        set: (input: Facade.ConsolidationStrengthSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultConsolidationStrengthSet(input) as Facade.EngineControlChangeEntry),
+      },
       wake: {
         /** Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now. */
         status: (input: Facade.ConsolidationWakeStatusRequest): Facade.DreamerWakeView | null => this.#call(() => this.#client.vaultConsolidationWakeStatus(input) as Facade.DreamerWakeView | null),
@@ -1933,6 +1947,12 @@ export class Oneiron {
     critic: {
       /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
       review: (input: Facade.CriticReviewSubmit): Facade.CriticReviewOutcome => this.#call(() => this.#client.vaultCriticReview(input) as Facade.CriticReviewOutcome),
+    },
+    curator: {
+      cadence: {
+        /** The owner, or a holder of engine.controls, sets the curator's minimum age and the period between its passes; the change writes an engine-control receipt. */
+        set: (input: Facade.CuratorCadenceSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultCuratorCadenceSet(input) as Facade.EngineControlChangeEntry),
+      },
     },
     custody: {
       members: {
@@ -1984,6 +2004,8 @@ export class Oneiron {
       },
     },
     diagnostics: {
+      /** Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      evidence: (input: Facade.DiagnosticEvidenceRequest): Facade.DiagnosticEvidence => this.#call(() => this.#client.vaultDiagnosticsEvidence(input) as Facade.DiagnosticEvidence),
       /** Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt. */
       get: (input: Facade.DiagnosticsGetRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView | null> => this.#call(() => this.#client.vaultDiagnosticsGet(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView | null>),
       /** Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt. */
@@ -2026,6 +2048,10 @@ export class Oneiron {
       follower: {
         /** The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed. */
         keyframe: (input: Facade.EmptyRequest): Facade.DreamerFollowerKeyframeResult => this.#call(() => this.#client.vaultDreamerFollowerKeyframe(input) as Facade.DreamerFollowerKeyframeResult),
+      },
+      projector: {
+        /** The owner, or a holder of engine.controls, sets how many new statements the Dreamer's wake projector waits for; the change writes an engine-control receipt. */
+        set: (input: Facade.DreamerProjectorSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultDreamerProjectorSet(input) as Facade.EngineControlChangeEntry),
       },
     },
     edges: {
@@ -2146,6 +2172,12 @@ export class Oneiron {
       },
       /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
       sufficiency: (input: Facade.SufficiencyInput): Facade.SufficiencyCard => this.#call(() => this.#client.vaultEvalsSufficiency(input) as Facade.SufficiencyCard),
+    },
+    evaluation: {
+      retune_thresholds: {
+        /** The owner, or a holder of engine.controls, sets the score regressions past which tuned prompts, weights and manifest thresholds are retuned; the change writes an engine-control receipt. */
+        set: (input: Facade.RetuneThresholdsSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultEvaluationRetuneThresholdsSet(input) as Facade.EngineControlChangeEntry),
+      },
     },
     explain: {
       /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
@@ -2282,6 +2314,10 @@ export class Oneiron {
         set: (input: Facade.FreeTimePolicySetRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicySet(input) as Facade.FreeTimePolicyView),
         /** An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming. */
         set_as: (input: Facade.FreeTimePolicySetRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicySetAs(input) as Facade.FreeTimePolicyView),
+      },
+      schedule: {
+        /** A holder of engine.controls moves the schedule of an agent's standing free-time policy at the revision it read; the owner's units and split stay, and setting or clearing a policy stays the owner's act at vault.free_time.policy.set. */
+        set: (input: Facade.FreeTimeScheduleSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultFreeTimeScheduleSet(input) as Facade.EngineControlChangeEntry),
       },
     },
     gate: {
@@ -2420,7 +2456,7 @@ export class Oneiron {
     learning: {
       /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
       projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
-      /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+      /** The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
       read: (input: Facade.LearningReadRequest): Facade.LearningCellView => this.#call(() => this.#client.vaultLearningRead(input) as Facade.LearningCellView),
     },
     legal_holds: {
@@ -2919,6 +2955,10 @@ export class Oneiron {
         /** Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant. */
         get: (input: Facade.DigestReadRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigestGet(input) as Facade.ProactivityDigestView | null),
       }),
+      period: {
+        /** The owner, or a holder of engine.controls, sets the proactivity digest's period; the change writes an engine-control receipt. */
+        set: (input: Facade.ProactivityPeriodSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultProactivityPeriodSet(input) as Facade.EngineControlChangeEntry),
+      },
     },
     productivity: {
       /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
@@ -3217,7 +3257,7 @@ export class Oneiron {
       replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
       /** The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none. */
       run: (input: Facade.RetrievalRunRequest): Facade.RetrievalRunEvidence | null => this.#call(() => this.#client.vaultRetrievalRun(input) as Facade.RetrievalRunEvidence | null),
-      /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
+      /** The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
       runs: (input: Facade.RetrievalRunsRequest): Facade.RetrievalRunEvidence[] => this.#call(() => this.#client.vaultRetrievalRuns(input) as Facade.RetrievalRunEvidence[]),
       /** The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults. */
       trace: (input: Facade.RetrievalTraceRequest): Facade.RetrievalTrace | null => this.#call(() => this.#client.vaultRetrievalTrace(input) as Facade.RetrievalTrace | null),
@@ -3421,11 +3461,11 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
-      /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
+      /** The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
-        /** The owner clears one learned-setting row of a key, mode and scope. */
+        /** The owner, or a holder of engine.controls on a dial it may tune, clears one learned-setting row of a key, mode and scope; the owner's pins and work-budget rows stand. */
         clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
-        /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
+        /** The owner, or a holder of engine.controls on a dial it may tune, lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope; the owner's pins and caps stand. */
         put: (input: Facade.LearningSettingPut): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningPut(input) as Facade.LearningSettingsView),
       }),
       /** Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack. */
@@ -3442,7 +3482,7 @@ export class Oneiron {
         },
       },
       wake_policy: {
-        /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
+        /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. A holder of engine.controls sets it through the engine's holder door, with a receipt naming it. */
         set: (input: Facade.WakePolicySetRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsWakePolicySet(input) as Facade.PolicyActionOutcome),
       },
       /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
@@ -3530,6 +3570,10 @@ export class Oneiron {
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
     sieve: {
+      budgets: {
+        /** The owner, or a holder of engine.controls, lowers the sieve's per-pass budgets, each at or below its value in force; raising one stays the owner's act at vault.sieve.policy.set. */
+        lower: (input: Facade.SieveBudgetsLowerRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultSieveBudgetsLower(input) as Facade.EngineControlChangeEntry),
+      },
       /** Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model. */
       cadence: (input: Facade.WakeCadenceRequest): Facade.WakeCadenceView => this.#call(() => this.#client.vaultSieveCadence(input) as Facade.WakeCadenceView),
       /** Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner. */
@@ -3741,6 +3785,14 @@ export class Oneiron {
       totp: {
         /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
         reset: (input: Facade.StepUpTotpResetRequest): Facade.StepUpTotpReset => this.#call(() => this.#client.vaultStepUpTotpReset(input) as Facade.StepUpTotpReset),
+      },
+    },
+    stewardship: {
+      rules: {
+        period: {
+          /** The owner, or a holder of engine.controls, sets how often one standing stewardship rule falls due; the change writes an engine-control receipt. */
+          set: (input: Facade.StewardshipRulePeriodSetRequest): Facade.EngineControlChangeEntry => this.#call(() => this.#client.vaultStewardshipRulesPeriodSet(input) as Facade.EngineControlChangeEntry),
+        },
       },
     },
     structural: {

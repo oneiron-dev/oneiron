@@ -5,7 +5,8 @@
 //! Each runs the app's one action table ([`SharedActionExecutor::app`]) as
 //! `POST /v1/core/actions/{verb}` does: as the credential's own principal,
 //! reading under its read key. The wake policy also takes the owner's proof,
-//! as `/v1/owner` takes it; the inference defaults leave the caller's Auto
+//! as `/v1/owner` takes it, or a holder of `engine.controls` (untangle
+//! 6.6d), whose grant the engine checks in its write; the inference defaults leave the caller's Auto
 //! ceiling to the table, and carry the owner's proof when the vault's owner
 //! sets them in person, which the setter revalidates in its own transaction.
 //!
@@ -130,23 +131,37 @@ async fn run_action_answer(
 }
 
 /// `vault.settings.wake_policy.set`: the owner sets the dreamer's wake
-/// policy through `dreamer.wake_policy.set`, his act recording `surface`.
+/// policy through `dreamer.wake_policy.set`, his act recording `surface`; a
+/// holder of `engine.controls` on its own slip sets it through the engine's
+/// holder door, with the engine-control receipt (untangle 6.6d).
 pub(crate) async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     surface: ActSurface,
     input: WakePolicySetRequest,
 ) -> Listed<PolicyActionOutcome> {
-    let call = input.into_action().map_err(MemoryError::from);
-    run_action(
-        server,
-        auth,
-        "vault.settings.wake_policy.set",
-        call,
-        true,
-        surface,
-    )
-    .await
+    const VERB: &str = "vault.settings.wake_policy.set";
+    match super::engine_control_doors::engine_controller(server, auth, VERB) {
+        Ok(Some(_)) => {
+            let call = input.into_action().map_err(MemoryError::from);
+            run_action(server, auth, VERB, call, true, surface).await
+        }
+        // A holder of `engine.controls` (untangle 6.6d; wake cadence): the
+        // engine's holder door, which checks the grant in its write.
+        Ok(None) => {
+            let answer = super::substrate_read_doors::as_reader(
+                server,
+                auth,
+                VERB,
+                move |server, holder| {
+                    policy_setting_doors::wake_policy_set_as_holder(server.vault(), holder, input)
+                },
+            )
+            .await;
+            (answer, Vec::new())
+        }
+        Err(refusal) => (Err(refusal), Vec::new()),
+    }
 }
 
 /// `vault.settings.inference_defaults`: the per-purpose inference defaults,
