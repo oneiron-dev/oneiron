@@ -43,12 +43,14 @@ impl MintEvidence {
             git_push_bounds,
             verb_classes,
             wallet_ref,
+            steward,
         } = &self.record.change
         else {
             return false;
         };
         let grant = &standing.grant;
         self.record.grant == standing.id
+            && *steward == (grant.role == super::FederationGrantRole::Steward)
             && self.record.act.owner == standing.delegated_by
             && *member == grant.member_ref
             && *scope == grant.authority_scope

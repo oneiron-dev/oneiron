@@ -77,14 +77,26 @@ fn reach_in(
 }
 
 /// The rows a Dreamer write that takes back what it landed is judged by (X02): its Auto actor ceiling and its
-/// `Generated` permit. A receipt of such a write names them in its grant field.
+/// `Generated` permit. A receipt of such a write names them in its grant field while no host has minted the Dreamer's
+/// Steward grant.
 pub(crate) const DREAMER_LANDING_ROWS_REF: &str =
     "policy:dreamer:actor_ceiling_auto+generated_permit";
 
+/// The live policy's verdict on a Dreamer write that takes back what it landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DreamerLandingVerdict {
+    /// The policy frontier hash it was judged under.
+    pub(crate) frontier: [u8; 32],
+    /// What it was judged by, for the receipt's grant field: the Steward grant's id once a host minted it (untangle
+    /// 6.3), else [`DREAMER_LANDING_ROWS_REF`].
+    pub(crate) grant_ref: String,
+}
+
 /// The live policy's verdict, in the caller's transaction, on a Dreamer write that takes back what it landed (the
-/// strength archive, X02): the policy frontier hash it was judged under while `actor` still holds its Auto actor
-/// ceiling and its `Generated` permit, `None` once the owner narrowed or removed either. Its read grant is the scoped
-/// read's to apply. Slice 6.3 judges the Steward grant here instead.
+/// strength archive, X02): `None` once the owner narrowed or removed what lets it land. While no host has minted the
+/// Dreamer's Steward grant, that is its Auto actor ceiling and its `Generated` permit; after, the grant's `derive`
+/// (which yields those rows) and its `archive` ("archive inside its grant", the Steward ruling). Its read grant is the
+/// scoped read's to apply.
 ///
 /// # Errors
 ///
@@ -93,7 +105,7 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: crate::WriteActor,
-) -> Result<Option<[u8; 32]>> {
+) -> Result<Option<DreamerLandingVerdict>> {
     let policy = super::resolve_policy_manifest(store, txn)?;
     if !policy.lands_generated_auto(
         actor.actor_class().gate_actor_class(),
@@ -101,7 +113,26 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     ) {
         return Ok(None);
     }
-    policy.read_frontier_hash().map(Some)
+    let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
+        None => DREAMER_LANDING_ROWS_REF.to_owned(),
+        Some(None) => return Ok(None),
+        Some(Some(grant)) => {
+            let verbs = crate::federation::standing_steward_verbs_in(
+                store,
+                txn,
+                grant,
+                actor.entity_ref(),
+            )?;
+            if !verbs.contains(crate::federation::grant_scope::STEWARD_ARCHIVE_VERB) {
+                return Ok(None);
+            }
+            grant.to_hex()
+        }
+    };
+    Ok(Some(DreamerLandingVerdict {
+        frontier: policy.read_frontier_hash()?,
+        grant_ref,
+    }))
 }
 
 /// The trusted pack the grant edits, and its body: the one owner-authored
@@ -157,11 +188,24 @@ impl Vault {
         Ok(reach_in(&policy, &key, &actor_ref))
     }
 
-    /// Owner act: adds the Dreamer's three rows to one trusted policy pack.
-    /// Returns whether the policy changed; refuses, changing nothing, when
-    /// the edit would not let the Dreamer work or would move other policy.
+    /// Owner act: lets the Dreamer read and land. Once a host has minted the
+    /// Dreamer's Steward grant (untangle 6.3), the owner's whole Steward
+    /// default, minted as his signed act when no grant standing with it is
+    /// there, opted out or revoked before included. On a vault no host has
+    /// opened, as before: adds the Dreamer's three rows to one trusted policy
+    /// pack. Returns whether anything changed; refuses, changing nothing,
+    /// when the edit would not let the Dreamer work or would move other
+    /// policy.
     pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<bool> {
-        let actor_ref = self.dreamer_authority()?.entity_ref().to_hex();
+        let dreamer = self.dreamer_authority()?.entity_ref();
+        let marked = {
+            let txn = self.store.env.read_txn()?;
+            self.system_agent_grant_state_in(&txn, dreamer)?.is_some()
+        };
+        if marked {
+            return self.grant_dreamer_steward(owner);
+        }
+        let actor_ref = dreamer.to_hex();
         let key = ScopedReadActorKey::with_actor_class(actor_ref.clone(), DREAMER_ACTOR_CLASS)
             .ok_or_else(|| invalid("dreamer read key"))?;
         let mut txn = self.store.env.write_txn()?;
@@ -244,75 +288,200 @@ pub(super) fn with_shipped_dreamer_rows(manifest: Vec<u8>) -> Result<Vec<u8>> {
 /// The live manifest with the Dreamer's rows added, or `None` when every
 /// one is already there.
 fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
-    let Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut &live[..]).map_err(|_| invalid("decode live policy"))?
-    else {
-        return Err(invalid("live policy is not a map"));
-    };
-    let mut changed = push_unless_bound(
-        entry_mut(&mut entries, POLICY_ACTOR_CEILINGS_KEY),
-        actor_ref,
-        Value::Map(vec![
-            (
-                Value::from(ACTOR_CLASS_KEY),
-                Value::from(DREAMER_ACTOR_CLASS),
-            ),
-            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-            (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
-        ]),
-    )?;
-    changed |= push_unless_bound(
-        entry_mut(&mut entries, POLICY_SCOPED_GRANTS_KEY),
-        actor_ref,
-        Value::Map(vec![
-            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-            (
-                Value::from(ACTOR_CLASS_KEY),
-                Value::from(DREAMER_ACTOR_CLASS),
-            ),
-            (
-                Value::from("effector"),
-                Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
-            ),
-            (
-                Value::from("scope"),
-                crate::federation::scope_codec::encode_scope_value(
-                    &crate::federation::scope_codec::read_preset(),
-                )?,
-            ),
-            (Value::from("receipt_required"), Value::Boolean(false)),
-        ]),
-    )?;
-    let sources = entry_mut(&mut entries, POLICY_SOURCE_TRUST_KEY);
-    if matches!(sources, Value::Nil) {
-        *sources = Value::Map(Vec::new());
+    let mut entries = decode_live(live)?;
+    if !push_dreamer_rows(&mut entries, actor_ref, true, true)? {
+        return Ok(None);
     }
-    let Value::Map(sources) = sources else {
-        return Err(invalid("live source trust is not a map"));
-    };
-    // The Dreamer's permit sits beside any row already bound to another
-    // writer; decode keeps each binding in its own slot.
-    changed |= push_unless_bound(
-        entry_mut(sources, ClaimSource::Generated.as_str()),
+    encode_live(entries).map(Some)
+}
+
+/// `live` as the policy fold reads it once a base agent holds its reach
+/// through a Steward grant (untangle 6.3): every row that names `actor_ref`
+/// in `actor_ceilings`, `scoped_grants` and `source_trust` taken out, then
+/// the rows the grant's `verbs` give put back. `read` gives the read grant;
+/// `derive` gives the Auto actor ceiling and the `Generated` permit. They are
+/// the rows [`with_dreamer_rows`] writes, so a grant with both verbs reads
+/// exactly as the three rows did. `None` when nothing moved.
+///
+/// # Errors
+///
+/// A live policy that is not a map, or rows that are not lists.
+pub(crate) fn body_with_steward_rows(
+    live: &[u8],
+    actor_ref: &str,
+    verbs: &std::collections::BTreeSet<String>,
+) -> Result<Option<Vec<u8>>> {
+    let mut entries = decode_live(live)?;
+    let mut changed = strip_actor_rows(&mut entries, actor_ref)?;
+    changed |= push_dreamer_rows(
+        &mut entries,
         actor_ref,
-        Value::Map(vec![
-            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-            (
-                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
-                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
-            ),
-            (
-                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
-                Value::Boolean(true),
-            ),
-            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
-        ]),
+        verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB),
+        verbs.contains(crate::federation::grant_scope::STEWARD_DERIVE_VERB),
     )?;
     if !changed {
         return Ok(None);
     }
+    encode_live(entries).map(Some)
+}
+
+/// Whether the live policy holds the rows of `actor_ref` (untangle 6.3, the
+/// first mint's copy): its read row, and its two landing rows together.
+pub(crate) fn dreamer_rows_held(
+    policy: &super::PolicyManifestResolution,
+    actor_ref: &str,
+) -> Result<(bool, bool)> {
+    let key = ScopedReadActorKey::with_actor_class(actor_ref.to_owned(), DREAMER_ACTOR_CLASS)
+        .ok_or_else(|| invalid("dreamer read key"))?;
+    let reach = reach_in(policy, &key, actor_ref);
+    Ok((reach.reads, reach.lands_auto))
+}
+
+fn decode_live(live: &[u8]) -> Result<Vec<(Value, Value)>> {
+    let Value::Map(entries) =
+        rmpv::decode::read_value(&mut &live[..]).map_err(|_| invalid("decode live policy"))?
+    else {
+        return Err(invalid("live policy is not a map"));
+    };
+    Ok(entries)
+}
+
+fn encode_live(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries))
         .map_err(|_| invalid("encode dreamer weave grant"))?;
-    Ok(Some(data))
+    Ok(data)
+}
+
+/// Takes every row that names `actor_ref` out of one row list, a lone row
+/// included. Returns whether it took any; an emptied entry is removed.
+fn strip_rows(entries: &mut Vec<(Value, Value)>, key: &str, actor_ref: &str) -> Result<bool> {
+    let Some(index) = entries
+        .iter()
+        .position(|(name, _)| name.as_str() == Some(key))
+    else {
+        return Ok(false);
+    };
+    let stripped = match &mut entries[index].1 {
+        Value::Nil => false,
+        Value::Array(rows) => {
+            let before = rows.len();
+            rows.retain(|row| !names_actor(row, actor_ref));
+            rows.len() != before
+        }
+        single @ Value::Map(_) => names_actor(single, actor_ref),
+        _ => return Err(invalid("policy rows are not a list")),
+    };
+    if stripped
+        && match &entries[index].1 {
+            Value::Array(rows) => rows.is_empty(),
+            _ => true,
+        }
+    {
+        entries.remove(index);
+    }
+    Ok(stripped)
+}
+
+/// Takes `actor_ref`'s rows out of `actor_ceilings`, `scoped_grants` and
+/// every `source_trust` source. Returns whether any moved.
+fn strip_actor_rows(entries: &mut Vec<(Value, Value)>, actor_ref: &str) -> Result<bool> {
+    let mut changed = strip_rows(entries, POLICY_ACTOR_CEILINGS_KEY, actor_ref)?;
+    changed |= strip_rows(entries, POLICY_SCOPED_GRANTS_KEY, actor_ref)?;
+    if let Some((_, sources)) = entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(POLICY_SOURCE_TRUST_KEY))
+    {
+        match sources {
+            Value::Nil => {}
+            Value::Map(sources) => {
+                let names: Vec<String> = sources
+                    .iter()
+                    .filter_map(|(name, _)| name.as_str().map(str::to_owned))
+                    .collect();
+                for name in names {
+                    changed |= strip_rows(sources, &name, actor_ref)?;
+                }
+            }
+            _ => return Err(invalid("live source trust is not a map")),
+        }
+    }
+    Ok(changed)
+}
+
+/// Adds the Dreamer's read row (`read`) and its two landing rows (`derive`)
+/// unless a row already names it. Returns whether it added any.
+fn push_dreamer_rows(
+    entries: &mut Vec<(Value, Value)>,
+    actor_ref: &str,
+    read: bool,
+    derive: bool,
+) -> Result<bool> {
+    let mut changed = false;
+    if derive {
+        changed |= push_unless_bound(
+            entry_mut(entries, POLICY_ACTOR_CEILINGS_KEY),
+            actor_ref,
+            Value::Map(vec![
+                (
+                    Value::from(ACTOR_CLASS_KEY),
+                    Value::from(DREAMER_ACTOR_CLASS),
+                ),
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+            ]),
+        )?;
+    }
+    if read {
+        changed |= push_unless_bound(
+            entry_mut(entries, POLICY_SCOPED_GRANTS_KEY),
+            actor_ref,
+            Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(ACTOR_CLASS_KEY),
+                    Value::from(DREAMER_ACTOR_CLASS),
+                ),
+                (
+                    Value::from("effector"),
+                    Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+                ),
+                (
+                    Value::from("scope"),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )?,
+                ),
+                (Value::from("receipt_required"), Value::Boolean(false)),
+            ]),
+        )?;
+    }
+    if derive {
+        let sources = entry_mut(entries, POLICY_SOURCE_TRUST_KEY);
+        if matches!(sources, Value::Nil) {
+            *sources = Value::Map(Vec::new());
+        }
+        let Value::Map(sources) = sources else {
+            return Err(invalid("live source trust is not a map"));
+        };
+        // The Dreamer's permit sits beside any row already bound to another
+        // writer; decode keeps each binding in its own slot.
+        changed |= push_unless_bound(
+            entry_mut(sources, ClaimSource::Generated.as_str()),
+            actor_ref,
+            Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                    Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (
+                    Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                    Value::Boolean(true),
+                ),
+                (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+            ]),
+        )?;
+    }
+    Ok(changed)
 }

@@ -82,9 +82,28 @@ enum GoalRead {
     Read(EntityId, GoalRecord),
 }
 
+/// The project's goal as the Dreamer reads it (GOAL-PRIVACY, untangle 6.3):
+/// the engine's goal read takes no actor, so the goal claim must also pass
+/// the Dreamer's own scoped read, under its grant, in the same snapshot. A
+/// goal the Dreamer may not read is judged as an unreadable one.
 fn read_goal_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, project: EntityId) -> Result<GoalRead> {
     match vault.project_intake_goal_in_txn(txn, project) {
-        Ok(Some((claim, record))) => Ok(GoalRead::Read(claim, record)),
+        Ok(Some((claim, record))) => {
+            let dreamer = crate::WriteActor::new(
+                crate::dreamer_runner::authority::dreamer_actor_id()?,
+                crate::EdgeActorClass::System,
+            );
+            let key = crate::claim::ScopedReadActorKey::for_engine_actor(dreamer)
+                .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?;
+            if vault
+                .scoped_read(key)
+                .entity_raw_live_in(txn, &claim)?
+                .is_none()
+            {
+                return Ok(GoalRead::Unreadable);
+            }
+            Ok(GoalRead::Read(claim, record))
+        }
         Ok(None) => Ok(GoalRead::Absent),
         Err(Error::InvalidConfig(_) | Error::Record(_)) => Ok(GoalRead::Unreadable),
         Err(error) => Err(error),

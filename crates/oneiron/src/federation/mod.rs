@@ -203,6 +203,11 @@ use self::stale::register_foreign_world_for_pact;
 mod membership_gate_tests;
 #[cfg(test)]
 mod steward_tests;
+mod system_agent_grant;
+pub(crate) use system_agent_grant::{
+    SystemAgentGrantState, holds_system_agent_grant, standing_steward_verbs_in,
+    steward_grant_of_in, steward_rows_rewrite,
+};
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

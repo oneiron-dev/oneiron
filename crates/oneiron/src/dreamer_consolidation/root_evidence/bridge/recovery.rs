@@ -21,7 +21,7 @@ impl GrantedClose {
     pub(super) fn reader_key(&self) -> Result<ScopedReadActorKey> {
         let class = crate::edge::EdgeActorClass::try_from_u8(self.actor_class)
             .ok_or_else(|| invalid_consolidation("invalid root recovery actor class"))?;
-        ScopedReadActorKey::with_actor_class(self.actor.to_hex(), class.gate_actor_class())
+        ScopedReadActorKey::for_engine_actor(crate::WriteActor::new(self.actor, class))
             .ok_or_else(|| invalid_consolidation("invalid root recovery actor"))
     }
 }

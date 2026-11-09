@@ -59,11 +59,8 @@ impl<'a> BranchResources<'a> {
         attempt: AttemptId,
         requested: Option<&Scope>,
     ) -> Result<Self> {
-        let actor_key = ScopedReadActorKey::with_actor_class(
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
+        let actor_key = ScopedReadActorKey::for_engine_actor(actor)
+            .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
         let read = vault.scoped_read(actor_key);
         let (binding, turns) = {
             let txn = vault.store.env.read_txn()?;
