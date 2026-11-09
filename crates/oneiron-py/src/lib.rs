@@ -1711,6 +1711,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agent_health_calls(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agent_health.calls")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agent_health.calls", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agent_health_cards(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agent_health.cards")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agent_health.cards", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_agents_base(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.agents.base")?;
         let output = py
@@ -5479,6 +5493,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.devices.predecessor.name", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_diagnostics_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.diagnostics.evidence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.diagnostics.evidence", input))
             .map_err(raise)?;
         encode(&output)
     }

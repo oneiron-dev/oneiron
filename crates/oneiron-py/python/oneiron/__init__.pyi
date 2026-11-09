@@ -1043,6 +1043,8 @@ class Oneiron:
         @property
         def agent(self) -> "Oneiron._VaultAgentVerbs": ...
         @property
+        def agent_health(self) -> "Oneiron._VaultAgentHealthVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         def append_to_stream(self, spec: Facade.AppendToStreamRequest) -> None:
             """Appends one authored delta to this actor's generation-bound stream through its existing write gate."""
@@ -1372,6 +1374,11 @@ class Oneiron:
     class _VaultAgentRunEffectVerbs:
         def answer(self, spec: Facade.AgentRunEffectAnswer) -> Facade.AgentRunEffectAnswered:
             """The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it."""
+    class _VaultAgentHealthVerbs:
+        def calls(self, spec: Facade.AgentHealthCallsRequest) -> list[Facade.AgentCallReceipt]:
+            """Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
+        def cards(self, spec: Facade.AgentHealthCardsRequest) -> list[Facade.AgentHealthCard]:
+            """Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
     class _VaultAgentsVerbs:
         def base(self, spec: Facade.EmptyRequest | None = None) -> Facade.BaseAgentList:
             """The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."""
@@ -2371,6 +2378,8 @@ class Oneiron:
         def name(self, spec: Facade.DevicePredecessor) -> Facade.DevicePredecessor:
             """Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."""
     class _VaultDiagnosticsVerbs:
+        def evidence(self, spec: Facade.DiagnosticEvidenceRequest) -> Facade.DiagnosticEvidence:
+            """Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call."""
         def get(self, spec: Facade.DiagnosticsGetRequest) -> Facade.ScopedReadResult[Facade.DiagnosticEventView | None]:
             """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
         def list(self, spec: Facade.DiagnosticsListRequest) -> Facade.ScopedReadResult[list[Facade.DiagnosticEventView]]:
@@ -2806,7 +2815,7 @@ class Oneiron:
         def projection(self, spec: Facade.LearningProjectionRequest) -> Facade.LearningProjectionView:
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
         def read(self, spec: Facade.LearningReadRequest) -> Facade.LearningCellView:
-            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            """The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
     class _VaultLegalHoldsVerbs:
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
@@ -3566,7 +3575,7 @@ class Oneiron:
         def run(self, spec: Facade.RetrievalRunRequest) -> Facade.RetrievalRunEvidence | None:
             """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
         def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
-            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+            """The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
         def trace(self, spec: Facade.RetrievalTraceRequest) -> Facade.RetrievalTrace | None:
             """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
         def turn(self, spec: Facade.RetrievalTurnRequest) -> list[Facade.RetrievalRunEvidence]:
@@ -3821,7 +3830,7 @@ class Oneiron:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
-            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+            """The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type."""
         def clear(self, spec: Facade.LearningSettingClear) -> Facade.LearningSettingsView:
             """The owner clears one learned-setting row of a key, mode and scope."""
         def put(self, spec: Facade.LearningSettingPut) -> Facade.LearningSettingsView:

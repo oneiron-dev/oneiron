@@ -174,6 +174,8 @@ both bindings and their export-census tests in one change.
 - `vault.affect.wellness.policy.configure`
 - `vault.affect.wellness.policy.get`
 - `vault.agent.run_effect.answer`
+- `vault.agent_health.calls`
+- `vault.agent_health.cards`
 - `vault.agents.base`
 - `vault.agents.create`
 - `vault.agents.dreaming.get`
@@ -560,6 +562,7 @@ both bindings and their export-census tests in one change.
 - `vault.delivery_window.policy.put`
 - `vault.delivery_window.policy.retract`
 - `vault.devices.predecessor.name`
+- `vault.diagnostics.evidence`
 - `vault.diagnostics.get`
 - `vault.diagnostics.list`
 - `vault.disclosure.ceiling.clear`

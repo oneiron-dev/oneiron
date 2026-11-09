@@ -203,6 +203,8 @@ vaultAffectWellnessGet(input: unknown): unknown
 vaultAffectWellnessPolicyConfigure(input: unknown): unknown
 vaultAffectWellnessPolicyGet(input: unknown): unknown
 vaultAgentRunEffectAnswer(input: unknown): unknown
+vaultAgentHealthCalls(input: unknown): unknown
+vaultAgentHealthCards(input: unknown): unknown
 vaultAgentsBase(input: unknown): unknown
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsDreamingGet(input: unknown): unknown
@@ -589,6 +591,7 @@ vaultDeliveryWindowPolicyList(input: unknown): unknown
 vaultDeliveryWindowPolicyPut(input: unknown): unknown
 vaultDeliveryWindowPolicyRetract(input: unknown): unknown
 vaultDevicesPredecessorName(input: unknown): unknown
+vaultDiagnosticsEvidence(input: unknown): unknown
 vaultDiagnosticsGet(input: unknown): unknown
 vaultDiagnosticsList(input: unknown): unknown
 vaultDisclosureCeilingClear(input: unknown): unknown

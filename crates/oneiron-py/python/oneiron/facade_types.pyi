@@ -4,10 +4,10 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1359 facade rows, 4872 declarations.
-Inputs: 1279 of 1359 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1173 of 1359 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 20.
+Census: 1362 facade rows, 4877 declarations.
+Inputs: 1282 of 1362 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1175 of 1362 fully typed, 170 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Opaque serde_json::Value leaves: 123; unread shapes: 20.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -4687,6 +4687,39 @@ class AgentRunEffectAnswered(TypedDict):
     intent_ref: str
     resend: bool
     outcome: AgentRunEffectAnswerOutcome
+class AgentHealthCallsRequest(TypedDict):
+    agent_ref: str
+    since: int
+    limit: NotRequired[int | None]
+CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
+class CallOutcomeRefusedBody(TypedDict):
+    code: str
+class CallOutcomeRefused(TypedDict):
+    refused: CallOutcomeRefusedBody
+CallOutcome = Literal["ok"] | CallOutcomeRefused
+class CallAttemptRef(TypedDict):
+    attempt: EntityId
+    generation: int
+class CallReceipt(TypedDict):
+    receipt_ref: str
+    at: int
+    transport: CallTransport
+    verb: str
+    actor_ref: str
+    actor_class: str
+    credential_ref: NotRequired[str | None]
+    carrier_machine: NotRequired[str | None]
+    outcome: CallOutcome
+    request_digest: str
+    result_digest: NotRequired[str | None]
+    action_digest: NotRequired[str | None]
+    attempt_ref: NotRequired[CallAttemptRef | None]
+    served: list[str]
+    served_records: NotRequired[list[RecordRef]]
+class AgentCallReceipt(TypedDict):
+    receipt_ref: str
+    call: CallReceipt
+AgentHealthCardsRequest = TypedDict("AgentHealthCardsRequest", {"from": int, "to": int, "limit": NotRequired[int | None]})
 class BaseAgentPrincipal(TypedDict):
     name: str
     id: EntityId
@@ -12645,6 +12678,14 @@ class DeliveryWindowPolicyRetractRequest(TypedDict):
 class DevicePredecessor(TypedDict):
     client: str
     device_key: str
+class DiagnosticEvidenceRequest(TypedDict):
+    attempt: AttemptId
+    generation: NotRequired[int | None]
+    run_ref: NotRequired[str | None]
+class DiagnosticEvidence(TypedDict):
+    causes: list[HealthCauseSource]
+    spend: NotRequired[SpendScope | None]
+    step_feedback: list[Any]
 class DiagnosticsGetRequest(TypedDict):
     diagnostic_ref: str
 class DiagnosticsListRequest(TypedDict):
@@ -19013,31 +19054,6 @@ class ManifestEntry(TypedDict):
     version: str
     at: int
     revision: NotRequired[tuple[EntityId, RevisionRef] | None]
-CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
-class CallOutcomeRefusedBody(TypedDict):
-    code: str
-class CallOutcomeRefused(TypedDict):
-    refused: CallOutcomeRefusedBody
-CallOutcome = Literal["ok"] | CallOutcomeRefused
-class CallAttemptRef(TypedDict):
-    attempt: EntityId
-    generation: int
-class CallReceipt(TypedDict):
-    receipt_ref: str
-    at: int
-    transport: CallTransport
-    verb: str
-    actor_ref: str
-    actor_class: str
-    credential_ref: NotRequired[str | None]
-    carrier_machine: NotRequired[str | None]
-    outcome: CallOutcome
-    request_digest: str
-    result_digest: NotRequired[str | None]
-    action_digest: NotRequired[str | None]
-    attempt_ref: NotRequired[CallAttemptRef | None]
-    served: list[str]
-    served_records: NotRequired[list[RecordRef]]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
     kinds: NotRequired[list[str] | None]

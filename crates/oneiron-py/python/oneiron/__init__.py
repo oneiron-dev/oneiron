@@ -1400,6 +1400,9 @@ class Oneiron:
         def agent(self) -> "Oneiron._VaultAgentVerbs":
             return Oneiron._VaultAgentVerbs(self._client)
         @property
+        def agent_health(self) -> "Oneiron._VaultAgentHealthVerbs":
+            return Oneiron._VaultAgentHealthVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         def append_to_stream(self, spec):
@@ -1937,6 +1940,15 @@ class Oneiron:
         def answer(self, spec):
             """The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it."""
             return json.loads(_translate(lambda: self._client.vault_agent_run_effect_answer(json.dumps(spec))))
+    class _VaultAgentHealthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def calls(self, spec):
+            """Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_agent_health_calls(json.dumps(spec))))
+        def cards(self, spec):
+            """Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_agent_health_cards(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3662,6 +3674,9 @@ class Oneiron:
     class _VaultDiagnosticsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def evidence(self, spec):
+            """Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_evidence(json.dumps(spec))))
         def get(self, spec):
             """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_diagnostics_get(json.dumps(spec))))
@@ -4417,7 +4432,7 @@ class Oneiron:
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
             return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
         def read(self, spec):
-            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            """The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
             return json.loads(_translate(lambda: self._client.vault_learning_read(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -5703,7 +5718,7 @@ class Oneiron:
             """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_run(json.dumps(spec))))
         def runs(self, spec):
-            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+            """The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_runs(json.dumps(spec))))
         def trace(self, spec):
             """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
@@ -6126,7 +6141,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+            """The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type."""
             return json.loads(_translate(lambda: self._client.vault_settings_learning(json.dumps(spec))))
         def clear(self, spec):
             """The owner clears one learned-setting row of a key, mode and scope."""
