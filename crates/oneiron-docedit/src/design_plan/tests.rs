@@ -7,6 +7,7 @@
 use super::*;
 use crate::deck::Placeholder;
 use crate::deck::fixture::*;
+use crate::resource::Resources;
 use crate::retained_opc::Package;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -242,7 +243,12 @@ pub(crate) fn bare_parts() -> Vec<(&'static str, String)> {
 }
 
 fn template_named(names: [&str; 4]) -> Package {
-    Package::open(&archive(&template_parts(names)), limits()).unwrap()
+    Package::open(
+        &archive(&template_parts(names)),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap()
 }
 
 fn template() -> Package {
@@ -1006,7 +1012,7 @@ fn the_trace_covers_every_block_and_the_check_refuses_drift_from_it() {
 fn part_names_that_leave_no_room_refuse() {
     let mut parts = template_parts(NAMES);
     parts.push(("ppt/media/image4294967295.png", String::new()));
-    let template = Package::open(&archive(&parts), limits()).unwrap();
+    let template = Package::open(&archive(&parts), limits(), &Resources::measuring()).unwrap();
     let bytes = bytes(&brief());
     assert_eq!(
         compile(&kept("brief@7", &bytes), &template, &assets()).unwrap_err(),

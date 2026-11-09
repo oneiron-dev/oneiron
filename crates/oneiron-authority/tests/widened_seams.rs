@@ -7,15 +7,14 @@ use oneiron_authority::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmKind, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier,
     CONFIRM_KIND_ACCEPT, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
-    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FederationLifecycleAction,
-    FederationLifecycleKind, FoldedDevice, GenesisRecoveryStep, MAX_ATTESTATION_EVIDENCE_BYTES,
-    MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims,
-    SlipMintAction, authority_transcript, canonical_p256_key_bytes, decode_entry_value,
-    decode_hash, decode_hash_array, decode_key, decode_op, decode_optional_hash,
-    decode_signature_array, decode_slip_mint, decode_tier, entry_value,
+    DeviceAuthority, FederationLifecycleKind, FoldedDevice, GenesisRecoveryStep,
+    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_transcript, canonical_p256_key_bytes,
+    decode_entry_value, decode_hash, decode_hash_array, decode_key, decode_op,
+    decode_optional_hash, decode_signature_array, decode_slip_mint, decode_tier, entry_value,
     folded_device_can_authority_consent, folded_host_device_can_consent,
-    folded_peer_device_is_consent_root, is_terminal_federation_lifecycle, key_value, required,
-    roster_has_live_owner, slip_mint_value, tier_meets_floor, validate_op, verify_entry_signatures,
+    folded_peer_device_is_consent_root, key_value, required, roster_has_live_owner,
+    slip_mint_value, validate_op, verify_entry_signatures,
 };
 use oneiron_authority::credential_door::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, names_a_floor};
 use oneiron_authority::federation::codec::{
@@ -48,16 +47,15 @@ fn ed25519_signature(seed: u8, transcript: &[u8]) -> AuthoritySignature {
     }
 }
 
-/// A non-genesis entry signed by the `[7; 32]` key, with `cosigners` co-signing it.
+/// A non-genesis entry signed by the `[7; 32]` key, with `cosigners` co-signing it. Its op
+/// carries no entry-specific rule, so only the generic shape and signature checks apply.
 fn signed_entry(cosigners: &[u8]) -> AuthorityLogEntry {
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some([4; 32]),
         seq: 2,
         parent_hashes: vec![[8; 32]],
-        op: AuthorityOp::SetTierFloor {
-            tier_floor: AuthorityTier::Hardware,
-        },
+        op: AuthorityOp::SlipRevoke { slip_id: [1; 32] },
         signer: ed25519_signature(7, b"placeholder"),
         cosigns: cosigners
             .iter()
@@ -97,6 +95,13 @@ fn claims() -> SlipClaims {
                 .expect("a valid entity id")
                 .to_hex(),
         ),
+        grant_ref: None,
+        invitation_ref: None,
+        share_ref: None,
+        delegation: None,
+        comm: None,
+        trusted_contact: None,
+        seat_claim: None,
     }
 }
 
@@ -137,18 +142,6 @@ fn signature_validation_refuses_a_suite_that_does_not_match_its_key() {
         signature: vec![0; 64],
     };
     assert!(mismatched.validate().is_err());
-}
-
-#[test]
-fn a_software_key_never_meets_a_hardware_floor() {
-    assert!(!tier_meets_floor(
-        AuthorityTier::Software,
-        AuthorityTier::Hardware
-    ));
-    assert!(tier_meets_floor(
-        AuthorityTier::Hardware,
-        AuthorityTier::Hardware
-    ));
 }
 
 #[test]
@@ -338,7 +331,11 @@ fn consent_predicates_refuse_revoked_non_owner_and_cloud_keys() {
 
 #[test]
 fn slip_mint_decoder_revalidates_the_claims_it_reads() {
-    let action = SlipMintAction { claims: claims() };
+    let action = SlipMintAction {
+        claims: claims(),
+        renews: None,
+        minting_member: None,
+    };
     let Value::Map(entries) = slip_mint_value(&action) else {
         panic!("a slip mint encodes as a map");
     };
@@ -349,7 +346,11 @@ fn slip_mint_decoder_revalidates_the_claims_it_reads() {
 
     let mut expired = claims();
     expired.expires_at = expired.issued_at;
-    let Value::Map(entries) = slip_mint_value(&SlipMintAction { claims: expired }) else {
+    let Value::Map(entries) = slip_mint_value(&SlipMintAction {
+        claims: expired,
+        renews: None,
+        minting_member: None,
+    }) else {
         panic!("a slip mint encodes as a map");
     };
     assert!(decode_slip_mint(&entries).is_err());
@@ -398,8 +399,6 @@ fn genesis(
         device,
         genesis_nonce,
         recovery,
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     }
 }
 
@@ -574,45 +573,4 @@ fn federation_decoders_refuse_malformed_ids_scopes_and_foreign_worlds() {
     let encoded = federation_direction_scope_value(&foreign);
     assert!(decode_federation_direction_scope_value(&encoded).is_err());
     assert!(decode_federation_direction_scope_value(&Value::from(1)).is_err());
-}
-
-#[test]
-fn only_disconnect_dissolve_and_promote_are_terminal_lifecycle_shapes() {
-    let lifecycle = |kind| {
-        let mut entry = signed_entry(&[]);
-        entry.op = AuthorityOp::FederationLifecycle(FederationLifecycleAction {
-            kind,
-            pact_id: [1; 32],
-            grant_ref: EntityId::from_bytes([2; 16]).expect("a valid entity id"),
-            peer_vault_id: [3; 32],
-            pact_epoch: 1,
-            pact_scope: None,
-            effective_scope: None,
-            scope_digest: None,
-            gesture: None,
-            successor_vault_id: None,
-            pact_nonce: [4; 16],
-        });
-        entry
-    };
-    for kind in [
-        FederationLifecycleKind::Disconnect,
-        FederationLifecycleKind::Dissolve,
-        FederationLifecycleKind::Promote,
-    ] {
-        assert!(
-            is_terminal_federation_lifecycle(&lifecycle(kind)),
-            "{kind:?}"
-        );
-    }
-    for kind in [
-        FederationLifecycleKind::Connect,
-        FederationLifecycleKind::Rescope,
-    ] {
-        assert!(
-            !is_terminal_federation_lifecycle(&lifecycle(kind)),
-            "{kind:?}"
-        );
-    }
-    assert!(!is_terminal_federation_lifecycle(&signed_entry(&[])));
 }
