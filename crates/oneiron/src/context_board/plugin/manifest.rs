@@ -5,7 +5,6 @@ use super::errors::{PluginResult, PluginSectionError};
 use super::install::PluginInstallTarget;
 use crate::entity_id::EntityId;
 use crate::store::skill_package::HubPackage;
-use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord};
 use crate::write_envelope::skill_source::HubRef;
@@ -168,10 +167,9 @@ impl SectionVerbAllowlist {
     #[must_use]
     pub fn from_exported_verbs() -> Self {
         Self(
-            AgentVerb::ALL
+            crate::verb_names::SECTION_VERBS
                 .iter()
-                .filter(|verb| verb.is_section())
-                .map(|verb| SectionVerbRef(verb.as_str().to_owned()))
+                .map(|verb| SectionVerbRef((*verb).to_owned()))
                 .collect(),
         )
     }

@@ -12,12 +12,8 @@
 
 use super::AttemptQueue;
 use super::AttemptResumePoint;
-use super::encoding::decode_record;
-use super::telemetry::invalid_transition;
-use super::types::{AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState};
-use super::validate::{
-    append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
-};
+use super::lifecycle::{EngineHold, HoldWrite};
+use super::types::{AttemptId, AttemptPause, AttemptRecord, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -73,49 +69,20 @@ impl AttemptQueue<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         input: HoldAttemptForFanout,
     ) -> Result<AttemptRecord> {
-        validate_lease_owner(&input.lease_owner)?;
-        validate_resume_point(&input.resume_point)?;
-        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("fanout_hold", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Paused if record.fanout_hold_for(input.launch_ref) => return Ok(record),
-            AttemptState::Leased => {}
-            state => return Err(invalid_transition("fanout_hold", state.as_str())),
-        }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "fanout_hold",
-        )?;
-        // The note names the launch alone: the checkpoint lives in the
-        // resume point, so no note repeats it (FIX 9580).
-        let note = format!("{HOLD_NOTE_PREFIX}{}", input.launch_ref.to_hex());
-        // A held row is not claimable; the approval's resume restores it.
-        self.delete_ready_entry_for_record(wtxn, &record)?;
-        // A hold owes no outstanding stop request an answer.
-        record.cancel_state.landing = None;
-        record.cancel_state.pressure.pending = 0;
-        record.cancel_state.resume_point = Some(input.resume_point);
-        append_attempt_event(
-            &mut record,
-            AttemptInterventionKind::Pause,
-            FANOUT_HOLD_ACTOR.to_owned(),
-            Some(note),
-            input.now,
-        )?;
-        record.state = AttemptState::Paused;
-        record.active_pause = Some(AttemptPause::Fanout {
-            launch_ref: input.launch_ref,
-        });
-        record.lease_owner = None;
-        record.updated_at = input.now;
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
-        Ok(record)
+        self.hold_in_txn(
+            wtxn,
+            HoldWrite {
+                id: input.id,
+                lease_owner: input.lease_owner,
+                attempt_count: input.attempt_count,
+                resume_point: input.resume_point,
+                hold: EngineHold::Fanout {
+                    launch_ref: input.launch_ref,
+                },
+                actor: FANOUT_HOLD_ACTOR,
+                note: format!("{HOLD_NOTE_PREFIX}{}", input.launch_ref.to_hex()),
+                now: input.now,
+            },
+        )
     }
 }

@@ -203,8 +203,6 @@ use self::stale::register_foreign_world_for_pact;
 
 #[cfg(test)]
 mod membership_gate_tests;
-#[cfg(test)]
-mod steward_tests;
 mod system_agent_grant;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::SystemAgentGrantState;
@@ -225,6 +223,8 @@ pub use engine_controls::{
 };
 #[cfg(test)]
 mod shared_creation_tests;
+#[cfg(test)]
+mod steward_tests;
 #[cfg(test)]
 mod tests;
 

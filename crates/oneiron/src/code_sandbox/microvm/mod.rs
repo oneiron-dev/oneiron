@@ -45,8 +45,8 @@ pub use self::adapter::MicroVmSandboxAdapter;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 pub use self::backend::DevProcessBackend;
 pub use self::backend::{
-    DEV_BACKEND_NAME, MicroVmBackend, dev_backend_compiled, firecracker_backend_compiled,
-    select_backend_for_session, select_backend_for_tier,
+    DEV_BACKEND_NAME, MicroVmBackend, SandboxBackends, dev_backend_compiled,
+    firecracker_backend_compiled, select_backend_for_session, select_backend_for_tier,
 };
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
@@ -60,13 +60,6 @@ pub use self::output::{
 #[cfg(all(unix, feature = "microvm-firecracker"))]
 pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
-
-// Re-anchors the `super::firecracker` path inside `backend.rs`: the flat
-// microvm.rs resolved `super` to the parent `code_sandbox` module, while the
-// split child resolves it to this module. The alias keeps the moved body
-// byte-identical.
-#[cfg(feature = "microvm-firecracker")]
-use super::firecracker;
 
 #[cfg(test)]
 mod tests;
