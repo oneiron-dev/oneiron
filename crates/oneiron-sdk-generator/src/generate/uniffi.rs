@@ -374,9 +374,13 @@ type PyDict = Vec<(Value, Value)>;
 fn json_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan() => true,
-        (Value::List(a), Value::List(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| json_eq(x, y)),
+        (Value::List(a), Value::List(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| json_eq(x, y))
+        }
         (Value::Dict(a), Value::Dict(b)) => {
-            a.len() == b.len() && a.iter().all(|(key, x)| b.get(key).is_some_and(|y| json_eq(x, y)))
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, x)| b.get(key).is_some_and(|y| json_eq(x, y)))
         }
         _ => a.py_eq(b),
     }
@@ -937,11 +941,20 @@ mod tests {
             declaration(&one).map_err(|error| error.to_string()),
             Err("TypeError: unsupported operand type(s) for +: 'float' and 'str'".to_owned())
         );
-        let mixed = dict_of(&parse("[[1, \"a\"], [NaN, \"b\"], [1.0, \"c\"], [NaN, \"d\"], [true, \"e\"]]")).expect("a dict");
-        let shown: Vec<String> = mixed.iter().map(|(k, v)| format!("{}: {}", k.repr(), v.repr())).collect();
+        let mixed = dict_of(&parse(
+            "[[1, \"a\"], [NaN, \"b\"], [1.0, \"c\"], [NaN, \"d\"], [true, \"e\"]]",
+        ))
+        .expect("a dict");
+        let shown: Vec<String> = mixed
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k.repr(), v.repr()))
+            .collect();
         assert_eq!(shown, ["1: 'e'", "nan: 'd'"]);
         assert!(json_eq(&parse("[NaN]"), &parse("[NaN]")));
-        assert!(json_eq(&parse("{\"a\": NaN, \"b\": [NaN, 1]}"), &parse("{\"b\": [NaN, 1], \"a\": NaN}")));
+        assert!(json_eq(
+            &parse("{\"a\": NaN, \"b\": [NaN, 1]}"),
+            &parse("{\"b\": [NaN, 1], \"a\": NaN}")
+        ));
         assert!(!json_eq(&parse("[NaN]"), &parse("[1.0]")));
     }
 
