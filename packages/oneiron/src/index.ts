@@ -2139,6 +2139,10 @@ export class Oneiron {
       /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
       sufficiency: (input: Facade.SufficiencyInput): Facade.SufficiencyCard => this.#call(() => this.#client.vaultEvalsSufficiency(input) as Facade.SufficiencyCard),
     },
+    evidence: {
+      /** Reads exact byte spans of one TURN's text, or one source's version, through the caller's scoped read; a source that moved since the version named serves no bytes. */
+      spans: (input: Facade.EvidenceSpansRequest): Facade.ScopedReadResult<Facade.EvidenceSpans> => this.#call(() => this.#client.vaultEvidenceSpans(input) as Facade.ScopedReadResult<Facade.EvidenceSpans>),
+    },
     explain: {
       /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
       gate: (input: Facade.ExplainGateRequest): Facade.ExplainGateReply | null => this.#call(() => this.#client.vaultExplainGate(input) as Facade.ExplainGateReply | null),

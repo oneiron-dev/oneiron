@@ -617,6 +617,7 @@ both bindings and their export-census tests in one change.
 - `vault.evals.labels.blocked`
 - `vault.evals.labels.pick`
 - `vault.evals.sufficiency`
+- `vault.evidence.spans`
 - `vault.explain.gate`
 - `vault.explain.memory`
 - `vault.export`

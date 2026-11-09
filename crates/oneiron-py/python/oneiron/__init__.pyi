@@ -1133,6 +1133,8 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def evidence(self) -> "Oneiron._VaultEvidenceVerbs": ...
+        @property
         def explain(self) -> "Oneiron._VaultExplainVerbs": ...
         @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
@@ -2533,6 +2535,9 @@ class Oneiron:
             """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
         def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+    class _VaultEvidenceVerbs:
+        def spans(self, spec: Facade.EvidenceSpansRequest) -> Facade.ScopedReadResult[Facade.EvidenceSpans]:
+            """Reads exact byte spans of one TURN's text, or one source's version, through the caller's scoped read; a source that moved since the version named serves no bytes."""
     class _VaultExplainVerbs:
         def gate(self, spec: Facade.ExplainGateRequest) -> Facade.ExplainGateReply | None:
             """Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it."""

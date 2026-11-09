@@ -1535,6 +1535,9 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
         @property
+        def evidence(self) -> "Oneiron._VaultEvidenceVerbs":
+            return Oneiron._VaultEvidenceVerbs(self._client)
+        @property
         def explain(self) -> "Oneiron._VaultExplainVerbs":
             return Oneiron._VaultExplainVerbs(self._client)
         @property
@@ -3938,6 +3941,12 @@ class Oneiron:
         def pick(self, spec):
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
             return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
+    class _VaultEvidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def spans(self, spec):
+            """Reads exact byte spans of one TURN's text, or one source's version, through the caller's scoped read; a source that moved since the version named serves no bytes."""
+            return json.loads(_translate(lambda: self._client.vault_evidence_spans(json.dumps(spec))))
     class _VaultExplainVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

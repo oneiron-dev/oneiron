@@ -4,9 +4,9 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1353 facade rows, 4860 declarations.
-Inputs: 1273 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1167 of 1353 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Census: 1354 facade rows, 4867 declarations.
+Inputs: 1274 of 1354 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1168 of 1354 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 20.
 """
 
@@ -13715,6 +13715,36 @@ class EvalLabelPickRequest(TypedDict):
     decision: str
     case: EntityId
     choose_b: bool
+class SourceVersion(TypedDict):
+    entity: EntityId
+    entity_type: int
+    learned_at: int
+    revision: str
+    projection: NotRequired[str | None]
+class EvidenceRange(TypedDict):
+    start: int
+    end: int
+class EvidenceSpansRequest(TypedDict):
+    source: EntityId
+    version: NotRequired[SourceVersion | None]
+    ranges: NotRequired[list[EvidenceRange]]
+EvidenceSourceStatus = Literal["current", "moved", "withheld"]
+class EvidenceMessageSlice(TypedDict):
+    message: EntityId
+    start: int
+    end: int
+    revision: str
+    frontier: NotRequired[str | None]
+class EvidenceSpan(TypedDict):
+    start: int
+    end: int
+    text: str
+    content_hash: str
+    messages: list[EvidenceMessageSlice]
+class EvidenceSpans(TypedDict):
+    status: EvidenceSourceStatus
+    version: NotRequired[SourceVersion | None]
+    spans: list[EvidenceSpan]
 class ExplainGateRequest(TypedDict):
     receipt: str
 class ExplainGateNotice(TypedDict):

@@ -646,6 +646,7 @@ vaultEvalsInventory(input: unknown): unknown
 vaultEvalsLabelsBlocked(input: unknown): unknown
 vaultEvalsLabelsPick(input: unknown): unknown
 vaultEvalsSufficiency(input: unknown): unknown
+vaultEvidenceSpans(input: unknown): unknown
 vaultExplainGate(input: unknown): unknown
 vaultExplainMemory(input: unknown): unknown
 vaultExport(input: unknown): unknown
