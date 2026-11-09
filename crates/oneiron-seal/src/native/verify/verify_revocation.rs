@@ -107,9 +107,9 @@ pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool 
 /// One DSS CRL entry: parses, signature verifies against an
 /// embedded/anchored issuer cert with a consistent algorithm, is fresh at
 /// the applicable time, and lists no in-scope serial on its revoked list
-/// (§7.5 step 3). In-scope means every cert in the validation set
-/// (embedded, anchors, and the report's covered chains) issued by this
-/// CRL's issuer; any listed serial invalidates the evidence. The issuer is
+/// (§7.5 step 3). In-scope means a certificate of the report's covered
+/// chains that this CRL's key-bound signer issued; a listed in-scope
+/// serial is a revocation. The issuer is
 /// the first name-matched candidate whose KEY verifies the CRL signature —
 /// a same-subject/different-key shadow can only authenticate a CRL it
 /// truly signed, and the coverage rule below counts that CRL only for
@@ -173,24 +173,32 @@ pub(super) fn crl_entry_valid<'a>(
     ) {
         return Ok(Err(EvidenceRejection::Unusable));
     }
-    // Revocation evaluation: a validation-set certificate issued by this
-    // CRL's issuer whose serial is on the revoked list makes the evidence
-    // assert a revocation — it can never support validity. Name-matched
-    // scoping is deliberate (fail-closed): a shadow issuer listing a real
-    // serial still poisons its own CRL.
+    // Revocation evaluation: a covered chain certificate whose serial is on
+    // the revoked list, and whose key-bound issuer is this CRL's signer, is
+    // revoked: genuine evidence that can never support validity. A listed
+    // serial of a covered certificate with this CRL's issuer name that the
+    // signer did not issue (a same-subject shadow fabricating a revocation)
+    // is forged material about it: Unverifiable, never a failure a third
+    // party could append (lead ruling F). A listing about a certificate
+    // outside the covered chains claims nothing about them.
     if let Some(revoked) = &crl.tbs_cert_list.revoked_certificates {
-        let in_scope = embedded
+        let mut forged_listing = false;
+        let in_scope = covered
             .iter()
-            .chain(anchors.iter())
-            .chain(covered.iter())
             .filter(|c| c.cert.tbs_certificate.issuer == crl.tbs_cert_list.issuer);
         for cert in in_scope {
             if revoked
                 .iter()
                 .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
             {
-                return Ok(Err(EvidenceRejection::Revoked));
+                if issued_by(cert, issuer, memory)? {
+                    return Ok(Err(EvidenceRejection::Revoked));
+                }
+                forged_listing = true;
             }
+        }
+        if forged_listing {
+            return Ok(Err(EvidenceRejection::Unverifiable));
         }
     }
     Ok(Ok(issuer))
