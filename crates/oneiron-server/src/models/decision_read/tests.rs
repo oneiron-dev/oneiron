@@ -247,20 +247,28 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
     ]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
-    let door = bind(&config, tokio::runtime::Handle::current())
-        .unwrap()
-        .unwrap();
+    let door = bind(
+        &config,
+        tokio::runtime::Handle::current(),
+        &Arc::new(LlamaIdentityResolver::default()),
+    )
+    .unwrap()
+    .unwrap();
     let options: Vec<String> = (0..11).map(|bin| format!("bin {bin}")).collect();
     let first = read(&door, Some(options.clone()), true).await.unwrap();
     let retried = read(&door, Some(options.clone()), true).await.unwrap();
     let aliased = read(&door, Some(options.clone()), true).await.unwrap();
 
     for read in [&first, &retried, &aliased] {
-        for (got, want) in read.primary.iter().zip(PRIMARY) {
+        // LabelReadResponse is a pack of readouts since e624d9a55c3 (rule D):
+        // the joint readout's marginals, then the person readout's yes.
+        let (primary, paired_yes) = joint_marginals(&read.readouts[0]);
+        let person_yes = read.readouts.get(1).map(|readout| readout[0]);
+        for (got, want) in primary.iter().zip(PRIMARY) {
             assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         }
-        assert!((read.paired_yes - THINK).abs() < 1e-12);
-        assert!((read.person_yes.unwrap() - PERSON).abs() < 1e-12);
+        assert!((paired_yes - THINK).abs() < 1e-12);
+        assert!((person_yes.unwrap() - PERSON).abs() < 1e-12);
     }
     assert_eq!(
         (first.usage.input.total, first.usage.output.total),
@@ -312,14 +320,22 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
     // The probe reserves the prompt it sends, byte for byte, and the position
     // read, for each call a read may make.
     let state = json!({"head": "HEAD", "dynamic": "DYNAMIC"});
+    // A pack since e624d9a55c3: the primary question joint with its paired
+    // one, then the person question apart.
     let reserve = door.reserve(&LabelReadRequest {
         state: &state,
-        primary: LabelReadout {
-            text: "When?",
-            labels: LabelSet::Choice(&options),
-        },
-        paired: "Think?",
-        person: Some("Person?"),
+        questions: &[
+            LabelReadout {
+                text: "When?",
+                labels: LabelSet::Choice(&options),
+                paired: Some("Think?"),
+            },
+            LabelReadout {
+                text: "Person?",
+                labels: LabelSet::Noul,
+                paired: None,
+            },
+        ],
         work_until: None,
     });
     assert_eq!(reserve, Ok(2 * (prompt.len() as u64 + 1)));
