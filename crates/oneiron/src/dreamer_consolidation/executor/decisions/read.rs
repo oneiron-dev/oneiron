@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::{VERDICT_CEILING, holds, went_up};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelledRungs};
 use crate::dreamer_consolidation::executor::{ConsolidationDecisions, ConsolidationExecutor};
-use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
+use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::roles::RoleCall;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_wake::WakePassDeadline;
@@ -209,11 +209,13 @@ impl Decider<'_> {
             // The receipt names the role the ask went to and who answered it,
             // actor-free (FIX 2225); the kept ask beside it stays as it was.
             if let Some(ask) = &ask {
-                decision.receipt.bind_ask(ask);
+                crate::llm::decision::decision_receipt_bind_ask(&mut decision.receipt, ask);
             }
             kept.push(KeptDecision {
                 decision,
-                ask: ask.as_ref().map(KeptAsk::of),
+                ask: ask
+                    .as_ref()
+                    .map(crate::dreamer_consolidation::kept_ask::kept_ask_of),
             });
         }
         Ok(Some(kept))

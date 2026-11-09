@@ -894,7 +894,7 @@ export type SelfBudgetRequest = { attempt: string; run?: string | null }
 export type SpendLeaseView = { lease: SpendScope; spend: SpendRead }
 /** `oneiron::store::attempt_cancel::AttemptLandingReserve` */
 export type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null }
-/** `oneiron::store::attempt_cancel::LandingTrigger` */
+/** `oneiron_wake_contract::store::attempt_cancel::LandingTrigger` */
 export type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning"
 /** `oneiron::store::attempt_cancel::AttemptLanding` */
 export type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null }
@@ -904,7 +904,7 @@ export type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "
 export type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none"
 /** `oneiron::store::attempt_cancel::ForceCancelGrounds` */
 export type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality" | "erased_payload"
-/** `oneiron::store::attempt_cancel::AttemptResumePoint` */
+/** `oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint` */
 export type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number }
 /** `oneiron::store::attempt_cancel::AttemptCancelReceipt` */
 export type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null }
@@ -1602,7 +1602,7 @@ export type VectorSearchHit = { entity_ref: string; source_revision_ref?: string
 export type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean }
 /** `oneiron::memory::search_vector::VectorSearchResult` */
 export type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null }
-/** `oneiron::memory::asset_resolve::types::PixelRegion` */
+/** `oneiron_wake_contract::memory::asset_resolve::types::PixelRegion` */
 export type PixelRegion = { x: number; y: number; width: number; height: number }
 /** `oneiron::memory::asset_resolve::types::ImageViewRequest` */
 export type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null }
@@ -3990,7 +3990,7 @@ export type ReasoningCause = "paired_high" | "small_margin" | "second_measuremen
 export type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause }
 /** `oneiron_store::model_decision::types::DecisionTime` */
 export type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning }
-/** `oneiron::llm::decision::types::ImagePin` */
+/** `oneiron_wake_contract::llm::decision::types::ImagePin` */
 export type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number }
 /** `oneiron_store::model_decision::types::HostRuleRef` */
 export type HostRuleRef = { id: string; revision: number }
@@ -4000,13 +4000,13 @@ export type RoleRank = "responsible" | "board" | "owner"
 export type AskAct = "judgment" | "e_signature" | "payment"
 /** `oneiron_store::model_decision::roles::HolderKind` */
 export type HolderKind = "person" | "agent"
-/** `oneiron::llm::decision::types::ReceiptAnswerer` */
+/** `oneiron_wake_contract::llm::decision::types::ReceiptAnswerer` */
 export type ReceiptAnswerer = { role: RoleRank; project?: string | null; kind: HolderKind }
-/** `oneiron::llm::decision::types::ReceiptAsk` */
+/** `oneiron_wake_contract::llm::decision::types::ReceiptAsk` */
 export type ReceiptAsk = { seq?: number | null; role: RoleRank; project?: string | null; ceiling: RoleRank; act: AskAct; answered?: ReceiptAnswerer | null }
 /** `oneiron_store::model_decision::types::StateCut` */
 export type StateCut = { kept: number; of: number; text_cut_at_bytes?: number | null }
-/** `oneiron::llm::decision::types::DecisionReceipt` */
+/** `oneiron_wake_contract::llm::decision::types::DecisionReceipt` */
 export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null; state_cut?: StateCut | null }
 /** `oneiron::autoreason_campaign::judge::CampaignTaste` */
 export type CampaignTaste = { score: number; useful?: boolean | null; external_anchor_digest: string; receipts: DecisionReceipt[] }
@@ -4356,7 +4356,7 @@ export type ImagePoint = { x: number; y: number }
 export type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" }
 /** `oneiron_store::model_decision::types::HumanAskReason` */
 export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget"
-/** `oneiron::llm::decision::types::TypedDecision` */
+/** `oneiron_wake_contract::llm::decision::types::TypedDecision` */
 export type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null }
 /** `oneiron::policy_model::verdict::PolicyReadError` */
 export type PolicyReadError = "settlement_invariant"
@@ -8590,15 +8590,15 @@ export type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId }
 export type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null }
 /** `oneiron::memory::conflict_settle::candidate_decisions::DreamerCandidateDecisionsRequest` */
 export type DreamerCandidateDecisionsRequest = { job_ref: string }
-/** `oneiron::dreamer_consolidation::kept_ask::KeptRole` */
+/** `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptRole` */
 export type KeptRole = { rank: RoleRank; project?: string | null }
-/** `oneiron::dreamer_consolidation::kept_ask::KeptRoute` */
+/** `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptRoute` */
 export type KeptRoute = { role: KeptRole; ceiling: RoleRank; act: AskAct }
-/** `oneiron::dreamer_consolidation::kept_ask::KeptAnswer` */
+/** `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptAnswer` */
 export type KeptAnswer = { answer: DecisionAnswer; answered_at: number; role: KeptRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null }
-/** `oneiron::dreamer_consolidation::kept_ask::KeptAsk` */
+/** `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptAsk` */
 export type KeptAsk = { seq: number; to: KeptRoute; answer?: KeptAnswer | null }
-/** `oneiron::dreamer_consolidation::provenance::KeptDecision` */
+/** `oneiron_wake_contract::dreamer_consolidation::provenance::KeptDecision` */
 export type KeptDecision = { decision: TypedDecision; ask?: KeptAsk | null }
 /** `oneiron::memory::conflict_settle::candidate_decisions::DreamerDecidedCandidateView` */
 export type DreamerDecidedCandidateView = { job_ref: string; position: number; subject: string; corrects: string | null; decisions: KeptDecision[] }
@@ -8730,7 +8730,7 @@ export type SievePolicyRequest = Record<string, never>
 export type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number }
 /** `oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest` */
 export type SievePolicySetRequest = { policy: SievePolicy }
-/** `oneiron::dreamer_wake::recipes::WakeRecipePolicy` */
+/** `oneiron_wake_contract::dreamer_wake::recipes::WakeRecipePolicy` */
 export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; arc_synopsis_enabled: boolean; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number; thing_child_code_mode: boolean; thing_child_instruction: string; thing_child_input_window_divisor: number; thing_child_fallback_window_tokens: number }
 /** `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest` */
 export type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy }

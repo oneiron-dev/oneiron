@@ -368,9 +368,10 @@ impl ConsolidationExecutor<'_> {
                 return Ok(Some(charges.checkpoint()));
             }
             Err(error) => {
-                return Ok(Some(
-                    charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)),
-                ));
+                return Ok(Some(charges.park_for(
+                    &error.to_string(),
+                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                )));
             }
         };
         if ctx.deadline.expired() {

@@ -278,7 +278,7 @@ impl Vault {
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         let destination: ReadDestination = destination.into();
-        let locality = destination.locality();
+        let locality = crate::settings::read_destination_locality(&destination);
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;

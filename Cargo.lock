@@ -8025,6 +8025,7 @@ dependencies = [
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-wake-contract",
  "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
@@ -8995,6 +8996,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-wake-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "loro",
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "oneiron-store",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

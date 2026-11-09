@@ -223,73 +223,74 @@ impl ConsolidationExecutor<'_> {
             };
             decode_finding(response, &shown, &window).map(|_| ())
         };
-        let response = match call_as_step_checked(&step, call.backend, self.guard, request, &check)
-            .await
-        {
-            Ok(StepOutcome::Finished {
-                response,
-                memoized,
-                failure_policy,
-                binding,
-                ..
-            }) => {
-                if let Err(error) = charges.record_terminal(
-                    ctx.vault,
-                    binding.attempt_id,
-                    binding.step_hash,
-                    &response.usage,
-                ) {
-                    if !memoized {
-                        charges.record_usage(&response.usage);
-                    }
-                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
-                }
-                if failure_policy.is_some() {
-                    return match charges.park_on_fallback(
+        let response =
+            match call_as_step_checked(&step, call.backend, self.guard, request, &check).await {
+                Ok(StepOutcome::Finished {
+                    response,
+                    memoized,
+                    failure_policy,
+                    binding,
+                    ..
+                }) => {
+                    if let Err(error) = charges.record_terminal(
                         ctx.vault,
                         binding.attempt_id,
                         binding.step_hash,
-                        SIEVE_FALLBACK,
-                        &response,
+                        &response.usage,
                     ) {
-                        Ok(parked) => Ok(parked),
-                        Err(error) => {
-                            super::super::residency::spent_or_deferred(error, ctx, &charges)
+                        if !memoized {
+                            charges.record_usage(&response.usage);
                         }
-                    };
+                        return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                    if failure_policy.is_some() {
+                        return match charges.park_on_fallback(
+                            ctx.vault,
+                            binding.attempt_id,
+                            binding.step_hash,
+                            SIEVE_FALLBACK,
+                            &response,
+                        ) {
+                            Ok(parked) => Ok(parked),
+                            Err(error) => {
+                                super::super::residency::spent_or_deferred(error, ctx, &charges)
+                            }
+                        };
+                    }
+                    response
                 }
-                response
-            }
-            Ok(StepOutcome::Trapped { .. }) => {
-                return Ok(
-                    charges.park_for("durable step trapped for resume", DreamerParkCause::Signal)
-                );
-            }
-            Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                charges.record_usage(&usage);
-                return Ok(charges.checkpoint());
-            }
-            // A refused finding asks again after its retry delay, as a
-            // refused reading does (FIX 7218).
-            Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
-                charges.record_usage(&usage);
-                return Ok(charges.park_for(
-                    "sieve window finding schema refused",
-                    DreamerParkCause::Retry,
-                ));
-            }
-            Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
-            // A failed call's paid usage has no terminal step: it is handed
-            // to the driver's settlement with the park (FIX 11554).
-            Err(error) => {
-                if let DurableStepError::SpentLlm { usage, .. }
-                | DurableStepError::SpentFallback { usage, .. } = &error
-                {
-                    charges.record_usage(usage);
+                Ok(StepOutcome::Trapped { .. }) => {
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
-                return Ok(charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)));
-            }
-        };
+                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.checkpoint());
+                }
+                // A refused finding asks again after its retry delay, as a
+                // refused reading does (FIX 7218).
+                Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.park_for(
+                        "sieve window finding schema refused",
+                        DreamerParkCause::Retry,
+                    ));
+                }
+                Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+                // A failed call's paid usage has no terminal step: it is handed
+                // to the driver's settlement with the park (FIX 11554).
+                Err(error) => {
+                    if let DurableStepError::SpentLlm { usage, .. }
+                    | DurableStepError::SpentFallback { usage, .. } = &error
+                    {
+                        charges.record_usage(usage);
+                    }
+                    return Ok(charges.park_for(
+                        &error.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                    ));
+                }
+            };
         if ctx.deadline.expired() {
             return Ok(charges.checkpoint());
         }

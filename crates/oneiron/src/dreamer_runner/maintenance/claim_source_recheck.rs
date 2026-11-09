@@ -562,7 +562,10 @@ impl Spend {
                 self.note_before_error(ctx);
                 return Err(error);
             }
-            other => self.park(&other.to_string(), DreamerParkCause::of_step(&other)),
+            other => self.park(
+                &other.to_string(),
+                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+            ),
         })
     }
 }
