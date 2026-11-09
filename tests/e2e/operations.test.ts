@@ -477,9 +477,12 @@ interface SeededCase {
 }
 interface OperationsCases { cases: { "OPERATIONS-05": SeededCase } }
 interface Discovery {
-  feature_flags: { capabilities: string[] };
+  feature_flags: { groups: Record<string, { count: number; capabilities: string[] }> };
   predicate_namespaces: string[];
 }
+/** Discovery groups its capability tokens by family; this is every token. */
+const capabilities = (discovery: Discovery): string[] =>
+  Object.values(discovery.feature_flags.groups).flatMap(group => group.capabilities);
 function witnessInput(turn: TurnFixture, at: number): FacadeInput<"vault.witness"> {
   return { conversation_ref: turn.conversation_ref, turn_ref: turn.turn_ref, occurred_at: at,
     messages: [{ id: turn.message_ref, author: "user", message_type: "dialogue",
@@ -515,7 +518,7 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
   const recallInput = (query: string): FacadeInput<"vault.recall"> => ({ query, effort: "light", limit: 20, as_of: data.occurred_at });
   assertRecalledTurn(await engine.client.call("vault.recall", recallInput(data.before.query)), data.before, first);
   const discovered = await engine.cli.json<Discovery>(["api", "discover"]);
-  expect(discovered.feature_flags.capabilities).toEqual(expect.arrayContaining(data.required_capabilities));
+  expect(capabilities(discovered)).toEqual(expect.arrayContaining(data.required_capabilities));
 
   const put = await engine.client.call("vault.packs.put", { files: [{ path: "PACK.md", text: packText }] });
   expect(put.outcome).toBe("installed");
@@ -540,7 +543,7 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
   expect(claim.approval).toBe("auto");
   await engine.awaitReceipt(claim.receipt_ref);
   const afterDiscovery = (await engine.client.request<Discovery>("GET", "/api/core/discover")).body;
-  expect(afterDiscovery.feature_flags.capabilities).toEqual(expect.arrayContaining(data.required_capabilities));
+  expect(capabilities(afterDiscovery)).toEqual(expect.arrayContaining(data.required_capabilities));
   expect(afterDiscovery.predicate_namespaces).toContain(data.extension.predicate.split(".")[0]!);
 
   assertRecalledTurn(await engine.client.call("vault.recall", recallInput(data.before.query)), data.before, first);
@@ -618,7 +621,8 @@ suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery shoul
     engine.client.raw<{ error?: { code: string } }>("POST", `/v1/core/facade/${verb}`, input, { "x-oneiron-invocation": key });
   const address = { namespace: ["operations-06"], key: "burst" };
   const accepted = { text: "accepted once" };
-  const put = { ...address, value: accepted, request_id: "operations-06-put" };
+  // The owner states the value; an unsourced keyed write would wait on review.
+  const put = { ...address, value: accepted, request_id: "operations-06-put", source: "user_stated" };
   expect((await invoke("vault.kv.put", put, intent.put)).status).toBe(200);
   expect((await invoke("vault.get", { entity_ref: "not a ref" }, intent.refused)).status).toBe(400);
   const held = invoke("ai.steps.submit", stepSubmit("operations-06-held-step"), intent.held);
