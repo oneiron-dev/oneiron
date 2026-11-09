@@ -19,6 +19,7 @@
 use std::sync::Arc;
 
 use crate::sync_harness::make_entity_blob;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
@@ -92,7 +93,7 @@ fn put_local_entity(vault: &Vault, id: &EntityId, data: &[u8]) {
 #[test]
 fn forward_remat_never_writes_tombstoned_entity_even_transiently() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(temp.path(), test_config());
     let materializer = Materializer::new();
 
     let tombstoned = EntityId::now();
@@ -141,7 +142,7 @@ fn forward_remat_never_writes_tombstoned_entity_even_transiently() {
 #[test]
 fn forward_remat_never_readds_edge_with_tombstoned_endpoint() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(temp.path(), test_config());
     let materializer = Materializer::new();
 
     let src = EntityId::now();
@@ -206,7 +207,7 @@ fn forward_remat_never_readds_edge_with_tombstoned_endpoint() {
 #[test]
 fn forward_remat_overwrites_stale_active_stamp_with_retracted_crdt_bytes() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let materializer = Arc::new(Materializer::new());
 
     let a = EntityId::now();
@@ -361,7 +362,7 @@ fn forward_remat_overwrites_stale_active_stamp_with_retracted_crdt_bytes() {
 #[test]
 fn reverse_remat_backfills_missing_edges_for_entity_already_in_crdt() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(temp.path(), test_config());
 
     let a = EntityId::now();
     let b = EntityId::now();
@@ -433,7 +434,7 @@ fn reverse_remat_backfills_missing_edges_for_entity_already_in_crdt() {
 #[test]
 fn pm_and_reverse_remat_never_backfill_edges_to_tombstoned_target() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
 
     let s1 = EntityId::now(); // pm marker, byte-equal in CRDT → edge-backfill path
     let s2 = EntityId::now(); // pm marker, missing from CRDT → full-mirror path
@@ -545,7 +546,7 @@ fn pm_and_reverse_remat_never_backfill_edges_to_tombstoned_target() {
 #[test]
 fn remat_gates_fail_closed_on_non_binary_tombstone() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
 
     let s = EntityId::now();
     let e2 = EntityId::now(); // string tombstone, NOT in entities map, row survives

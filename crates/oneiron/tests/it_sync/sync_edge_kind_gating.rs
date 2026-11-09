@@ -18,13 +18,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::sync_harness::clear_policy_manifests;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc};
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{
-    EdgeActorClass, EdgeInfo, EdgeKind, EntityId, HnswConfig, TimeRange, Vad, Vault, VaultConfig,
+    EdgeActorClass, EdgeInfo, EdgeKind, EntityId, HnswConfig, TimeRange, Vad, VaultConfig,
     edge::EdgeConfirmationStatus, edge::EdgeProvenanceFlags, provenance::EdgeProvenanceClaimBody,
     provenance::EdgeRef, provenance::SupersessionStatus,
 };
@@ -63,7 +64,10 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
 #[test]
 fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let temp_a = tempfile::tempdir().unwrap();
-    let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+    let vault_a = Arc::new(open_vault_with_memory_keystore(
+        temp_a.path(),
+        test_config(),
+    ));
     clear_policy_manifests(&vault_a);
 
     // 2026-03 window; provenance actor + claim stay OUTSIDE the window so the
@@ -256,7 +260,10 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
 
     // 2. Forward re-materialization into a FRESH vault lands all five kinds.
     let temp_b = tempfile::tempdir().unwrap();
-    let vault_b = Arc::new(Vault::open(temp_b.path(), test_config()).unwrap());
+    let vault_b = Arc::new(open_vault_with_memory_keystore(
+        temp_b.path(),
+        test_config(),
+    ));
     let materializer = Arc::new(Materializer::new());
 
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();

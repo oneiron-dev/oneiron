@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::LoroDoc;
 use oneiron::edge::EdgeKind;
 use oneiron::habit::TaskRole;
@@ -45,17 +47,19 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     cfg.max_readers = 16;
-    let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), cfg));
     (dir, vault)
 }
 
-/// 25-byte envelope: type u8 + occurred_start/end + learned_at u64 BE.
+/// The metadata header: type u8 + occurred_start/end + learned_at +
+/// row_version u64 BE (zero).
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     blob.push(entity_type);
     blob.extend_from_slice(&occurred.start.to_be_bytes());
     blob.extend_from_slice(&occurred.end.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(data);
     blob
 }

@@ -15,6 +15,7 @@ use core::assert_matches;
 use std::sync::Arc;
 
 use crate::sync_harness::make_entity_blob;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::error::SyncError;
 use oneiron::sync::bridge::Materializer;
@@ -36,7 +37,7 @@ fn test_config() -> VaultConfig {
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     (temp, vault)
 }
 
@@ -623,7 +624,7 @@ fn open_fails_closed_on_corrupt_persisted_snapshot() {
 /// ARCH-0023b startup steps 1-2) must produce a doc equivalent — same
 /// oplog VV, same deep value — before and after the prune; and because
 /// `m:u_seq:w:{key}` is never reset, the row persisted after a prune gets
-/// the NEXT sequence number (`{seq:08x}`, monotonic), never a colliding
+/// the NEXT sequence number (`{seq:016x}`, monotonic), never a colliding
 /// reissue of a pruned one.
 #[test]
 fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
@@ -650,7 +651,7 @@ fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
     win.doc.commit();
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
@@ -670,12 +671,12 @@ fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(1u32.to_le_bytes().as_slice()),
+        Some(1u64.to_le_bytes().as_slice()),
         "the prune must NOT reset the m:u_seq high-water mark"
     );
 
     // The next local commit takes seq 2 — an implementation that reset
-    // m:u_seq would reissue `...:00000001` here and collide with the
+    // m:u_seq would reissue `...:0000000000000001` here and collide with the
     // pruned row's history.
     let id_b = EntityId::now();
     win.doc
@@ -688,14 +689,14 @@ fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
     win.doc.commit();
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_some(),
-        "post-prune updates must continue the monotonic {{seq:08x}} sequence"
+        "post-prune updates must continue the monotonic {{seq:016x}} sequence"
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none()
     );

@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::open_vault_with_memory_keystore;
 use crate::sync_harness::{clear_policy_manifests, make_entity_blob};
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
@@ -49,7 +50,7 @@ fn test_config() -> VaultConfig {
 
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     clear_policy_manifests(&vault);
     (dir, vault)
 }
@@ -78,7 +79,8 @@ fn wire_tombstone(reason_byte: u8, deleted_at: u64, request_byte: u8) -> Vec<u8>
 /// Returns the hyphenated `request_id` string of the receipt body.
 fn receipt_request_id(vault: &Vault, receipt_id: &EntityId) -> String {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     body["request_id"]
         .as_str()
         .expect("request_id string")
@@ -94,7 +96,7 @@ fn hard_erase_sweep_rows(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 /// AC6 (b): SoftErase (`user_delete`) on node A → replay on node B → B
-/// holds the 25 B shell (NOT a purge), B's text/vector indexes drop the
+/// holds the header-only shell (NOT a purge), B's text/vector indexes drop the
 /// entity, and NO `h:` row / NO receipt is written (contracts.ts
 /// user_delete: activeStoreHardPurgeV1 = false, receipt = false).
 #[test]
@@ -140,14 +142,14 @@ fn remote_soft_tombstone_keeps_shell_and_drops_indexes_without_receipt() {
     let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
     window_b.doc.import(&snapshot).unwrap();
 
-    // Shell-preserving SoftErase on the replica: 25 B header row survives
+    // Shell-preserving SoftErase on the replica: header-only row survives
     // (an unconditional-hard replay — the pre-ONE-1133 behavior — FAILS
     // here), payload + retrieval indexes are gone.
     let raw = vault_b
         .get_raw(&id)
         .unwrap()
-        .expect("user_delete replay must keep the 25 B shell on the replica");
-    assert_eq!(raw.len(), 25);
+        .expect("user_delete replay must keep the header-only shell on the replica");
+    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
     assert_eq!(vault_b.get(&id).unwrap().as_deref(), Some([].as_slice()));
     assert!(
         vault_b
@@ -721,8 +723,8 @@ fn uppercase_soft_tombstone_suppresses_lowercase_reput() {
     let shell = vault_b
         .get_raw(&id)
         .unwrap()
-        .expect("soft apply keeps the 25 B shell");
-    assert_eq!(shell.len(), 25);
+        .expect("soft apply keeps the header-only shell");
+    assert_eq!(shell.len(), ENTITY_METADATA_HEADER_LEN);
     assert!(
         vault_b
             .search_text("soft-case-body", 10)
@@ -757,7 +759,7 @@ fn uppercase_soft_tombstone_suppresses_lowercase_reput() {
     let raw = vault_b.get_raw(&id).unwrap().expect("shell stays");
     assert_eq!(
         raw.len(),
-        25,
+        ENTITY_METADATA_HEADER_LEN,
         "observer B must suppress the re-put via the uppercase tombstone alias"
     );
     assert!(
@@ -807,7 +809,7 @@ fn uppercase_soft_tombstone_blocks_reverse_remat_reinsert() {
         .get_raw(&id)
         .unwrap()
         .expect("the soft apply keeps the shell");
-    assert_eq!(raw.len(), 25);
+    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
     assert!(dt_marker(&vault_b, &id).is_none());
 }
 
@@ -844,7 +846,7 @@ fn soft_tombstone_does_not_downgrade_uppercase_hard_alias() {
 
 /// Origin headerless leg of the `dt:` marker (M4 fix wave): a hard delete
 /// routed through `delete_entity_without_header` (active residue — an
-/// orphan vector — with no entities row / 25 B header) must write the
+/// orphan vector — with no entities row / metadata header) must write the
 /// permanent `dt:{id_hex}` marker in the same txn as the purge, exactly
 /// like the headerful and replay paths. Without it, the Observer-B OR-gate
 /// has no local truth for this id: the minted CRDT tombstone lives in the
