@@ -1128,6 +1128,115 @@ mod tests {
         );
     }
 
+    // `<workspace>/.claude/jobs/51b185fd/tmp/g3/probe_items.py` on nelly (Python 3.14.7, from the checkout):
+    // print(repr(t.record('Tagged', 'Tagged', body, {}))) and print(repr(t.enum('Pairs', 'Pairs', meta, {}))) over an
+    // inventory whose null_fields, closed and redacted name them. They reach the lines no corpus tree reaches: a
+    // record's struct tag (uniffi_types.py:329, 356), `ident`'s `_2`/`_3` (:320) and a tuple variant (:387).
+    #[test]
+    fn record_and_enum_items_are_pythons() {
+        let mut inventory = empty_inventory();
+        inventory
+            .null_fields
+            .push(("Tagged".to_owned(), Value::Str("maybe".to_owned())));
+        for owner in ["Tagged", "Pairs"] {
+            inventory.closed.insert(owner.to_owned());
+        }
+        inventory.redacted.insert("Tagged".to_owned());
+        let mut types =
+            UniffiTypes::new(&mut inventory, &IndexSet::new()).expect("no declarations");
+        let text = |s: &str| Value::Str(s.to_owned());
+        let prim = |kind| Ir::Prim(kind, None);
+        let body = Ir::Object(
+            vec![
+                Field::new("kind", Ir::Lit(text("tagged")), false),
+                Field::new("fooBar", prim(Prim::String), false),
+                Field::new("foo_bar", Ir::Option(Box::new(prim(Prim::Bool))), false),
+                Field::new("foo-bar", Ir::Prim(Prim::Int, Some("u8".to_owned())), true),
+                Field::new("maybe", Ir::Option(Box::new(prim(Prim::String))), false),
+                Field::new("type", prim(Prim::Float), false),
+            ],
+            None,
+        );
+        assert_eq!(
+            types
+                .record("Tagged", "Tagged", &body, &Subst::new())
+                .as_deref(),
+            Ok(
+                "#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]\n#[serde(tag = \"kind\", rename = \"tagged\")]\n#[serde(deny_unknown_fields)]\npub struct Tagged {\n#[serde(rename = \"fooBar\")]\npub foo_bar: String,\n#[serde(rename = \"foo_bar\", default, skip_serializing_if = \"Option::is_none\")]\npub foo_bar_2: Option<bool>,\n#[serde(rename = \"foo-bar\", default, skip_serializing_if = \"Option::is_none\")]\npub foo_bar_3: Option<u8>,\n#[serde(rename = \"maybe\", default)]\npub maybe: Option<String>,\n#[serde(rename = \"type\")]\npub r#type: f64,\n}\nimpl std::fmt::Debug for Tagged {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"Tagged\").finish_non_exhaustive()\n    }\n}\n"
+            )
+        );
+        let variant = |name: &str, untagged, other, shape, member| VariantMeta {
+            name: name.to_owned(),
+            label: text(&name.to_lowercase()),
+            untagged,
+            other,
+            shape,
+            member,
+        };
+        let external = |label: &str, value: Ir, name: &str| {
+            Ir::Object(vec![Field::new(label, value, false)], Some(name.to_owned()))
+        };
+        let meta = EnumMeta {
+            tag: None,
+            content: None,
+            untagged: false,
+            variants: vec![
+                variant(
+                    "Pair",
+                    false,
+                    false,
+                    VariantShape::Tuple,
+                    external(
+                        "pair",
+                        Ir::Tuple(vec![
+                            prim(Prim::String),
+                            Ir::Prim(Prim::Int, Some("u128".to_owned())),
+                        ]),
+                        "Pair",
+                    ),
+                ),
+                variant(
+                    "One",
+                    false,
+                    false,
+                    VariantShape::Newtype,
+                    external("one", prim(Prim::Bool), "One"),
+                ),
+                variant(
+                    "Unit",
+                    false,
+                    true,
+                    VariantShape::Unit,
+                    Ir::Lit(text("unit")),
+                ),
+                variant(
+                    "Loose",
+                    true,
+                    false,
+                    VariantShape::Struct,
+                    Ir::Object(
+                        vec![Field::new("x", prim(Prim::String), false)],
+                        Some("Loose".to_owned()),
+                    ),
+                ),
+            ],
+        };
+        assert_eq!(
+            types
+                .r#enum("Pairs", "Pairs", &meta, &Subst::new())
+                .as_deref(),
+            Ok(
+                "#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]\n#[serde(deny_unknown_fields)]\npub enum Pairs {\n#[serde(rename = \"pair\")]\nPair(String, crate::WireJson),\n#[serde(rename = \"one\")]\nOne(bool),\n#[serde(rename = \"unit\", other)]\nUnit,\n#[serde(rename = \"loose\", untagged)]\nLoose {\n#[serde(rename = \"x\")]\nx: String,\n},\n}\n"
+            )
+        );
+        let leaves: Vec<(&str, &str)> = types
+            .leaves
+            .iter()
+            .map(|(at, why)| (at.as_str(), why.as_str()))
+            .collect();
+        assert_eq!(leaves, [("Pairs.Pair", "a 128-bit integer")]);
+    }
+
     // probe_types.py: print(repr(node), err(t.rt, node, subst, f'W{i}')) for each case, then the leaves, the tuple
     // cache and the items in order; `mangle` of seven values; `allocate` of eight names in a row.
     #[test]
