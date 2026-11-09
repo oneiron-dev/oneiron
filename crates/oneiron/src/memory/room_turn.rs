@@ -3,6 +3,7 @@
 use super::*;
 use crate::EntityId;
 use crate::claim::ScopedReadResult;
+use crate::verb_table::VerbTable;
 
 /// What a host hands an agent for one turn in a room. Every read runs through
 /// the facade's read lane inside `room_scope(roster)` for the room's current
@@ -67,16 +68,22 @@ impl<'v> RoomTurnHandle<'v> {
         ROOM_TURN_VERBS.contains(&verb)
     }
 
-    /// One SDK verb inside the turn; a verb that could read around the room
-    /// is refused rather than run unbound.
-    pub fn invoke(&self, verb: &str, input: serde_json::Value) -> MemoryResult<serde_json::Value> {
-        self.invoke_with_notice(verb, input).0
+    /// One SDK verb inside the turn, run through `verbs`; a verb that could
+    /// read around the room is refused rather than run unbound.
+    pub fn invoke(
+        &self,
+        verbs: &dyn VerbTable,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> MemoryResult<serde_json::Value> {
+        self.invoke_with_notice(verbs, verb, input).0
     }
 
     /// The same call, beside any caller-notice metadata its hook chain supplied.
     /// Missing metadata is unknown and never grants authority to run the call.
     pub fn invoke_with_notice(
         &self,
+        verbs: &dyn VerbTable,
         verb: &str,
         input: serde_json::Value,
     ) -> (MemoryResult<serde_json::Value>, Option<bool>) {
@@ -89,7 +96,7 @@ impl<'v> RoomTurnHandle<'v> {
                 None,
             );
         }
-        crate::task_verb::sdk::invoke_with_notice(&self.memory, verb, input)
+        verbs.invoke_with_notice(&self.memory, verb, input)
     }
 
     /// The record-ref check `verb`'s engine fn runs before its call, run
@@ -100,12 +107,17 @@ impl<'v> RoomTurnHandle<'v> {
     ///
     /// # Errors
     ///
-    /// As [`crate::task_verb::sdk::receipt_declared_refs`].
-    pub fn receipt_declared_refs(&self, verb: &str, input: serde_json::Value) -> MemoryResult<()> {
+    /// As [`VerbTable::receipt_declared_refs`].
+    pub fn receipt_declared_refs(
+        &self,
+        verbs: &dyn VerbTable,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> MemoryResult<()> {
         if !Self::serves(verb) {
             return Ok(());
         }
-        crate::task_verb::sdk::receipt_declared_refs(&self.memory, verb, input)
+        verbs.receipt_declared_refs(&self.memory, verb, input)
     }
 
     pub fn recall(
