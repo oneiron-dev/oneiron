@@ -192,17 +192,22 @@ pub(crate) fn withheld_by_lineage_in(
     LineagePass::new(vault, txn)?.withheld_by_lineage(id, scope)
 }
 
-/// One replication pass over ONE read snapshot (FIX 16254, FIX 17212): a
-/// window packing or an export asks of many rows, and each verdict on a
-/// row's ancestry holds for every later row of the pass that reaches it.
-/// The verdicts are kept by what the judge asks (the policy the asking row
-/// travels under, and whether every support counts), and only those that
-/// hold whatever row asks: each settled verdict (see
-/// [`Judge::row_readable`]). A pass lives no longer than `txn`, so no
-/// verdict outlives the snapshot it was read in.
+/// One replication pass (FIX 16254, FIX 17212): a window packing or an
+/// export asks of many rows, and each verdict on a row's ancestry holds for
+/// every later row of the pass that reaches it. The verdicts are kept by
+/// what the judge asks (the policy the asking row travels under, and
+/// whether every support counts), and only those that hold whatever row
+/// asks: each settled verdict (see [`Judge::row_readable`]). No verdict
+/// outlives the committed state it was read in.
+///
+/// A pass reads in its caller's snapshot ([`Self::new`]), or in a snapshot
+/// of its own for each ask ([`Self::per_ask`]). A pass whose caller opens
+/// read transactions between its asks needs the second: the vendored heed
+/// has no NOTLS, so a second read transaction on one thread fails with
+/// MDB_BAD_RSLOT (FIX 6992, WINDOW-LINEAGE-RSLOT).
 pub(crate) struct LineagePass<'a, 't> {
     vault: &'a Vault,
-    txn: &'a heed::RoTxn<'t>,
+    snapshot: PassSnapshot<'a, 't>,
     needs_lineage: bool,
     /// [`lineage_held_in`] by row.
     held: BTreeMap<EntityId, bool>,
@@ -210,8 +215,26 @@ pub(crate) struct LineagePass<'a, 't> {
     verdicts: BTreeMap<(Option<EntityId>, bool), BTreeMap<EntityId, bool>>,
 }
 
+/// Where a [`LineagePass`] reads.
+#[derive(Clone, Copy)]
+enum PassSnapshot<'a, 't> {
+    /// The caller's snapshot, for the whole pass.
+    Held(&'a heed::RoTxn<'t>),
+    /// A snapshot opened and dropped inside each ask. `read_at` is the last
+    /// committed write the kept verdicts were read after
+    /// ([`heed::RoTxn::id`]); an ask that sees a later write drops them
+    /// first, so the kept verdicts always read as one snapshot would.
+    PerAsk { read_at: Option<usize> },
+}
+
+/// Whether a row here can be held by its lineage at all: a policy is
+/// stored, or a source landed a row.
+fn needs_lineage_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
+}
+
 impl<'a, 't> LineagePass<'a, 't> {
-    /// A pass over `txn`.
+    /// A pass over the caller's snapshot `txn`.
     ///
     /// # Errors
     ///
@@ -219,16 +242,48 @@ impl<'a, 't> LineagePass<'a, 't> {
     pub(crate) fn new(vault: &'a Vault, txn: &'a heed::RoTxn<'t>) -> Result<Self> {
         Ok(Self {
             vault,
-            txn,
-            needs_lineage: super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?,
+            snapshot: PassSnapshot::Held(txn),
+            needs_lineage: needs_lineage_in(vault, txn)?,
             held: BTreeMap::new(),
             verdicts: BTreeMap::new(),
         })
     }
 
-    /// The snapshot every verdict of the pass is read in.
-    pub(crate) const fn txn(&self) -> &'a heed::RoTxn<'t> {
-        self.txn
+    /// A pass that reads each ask in a snapshot of its own, so its caller
+    /// may open read transactions between the asks. The verdicts are kept
+    /// while no write commits between the asks.
+    pub(crate) const fn per_ask(vault: &'a Vault) -> Self {
+        Self {
+            vault,
+            snapshot: PassSnapshot::PerAsk { read_at: None },
+            needs_lineage: true,
+            held: BTreeMap::new(),
+            verdicts: BTreeMap::new(),
+        }
+    }
+
+    /// `read` in the pass's snapshot: the caller's, or one of its own for
+    /// this ask, after the verdicts read before a later committed write are
+    /// dropped.
+    fn in_snapshot<T>(
+        &mut self,
+        read: impl FnOnce(&mut Self, &heed::RoTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        match self.snapshot {
+            PassSnapshot::Held(txn) => read(self, txn),
+            PassSnapshot::PerAsk { read_at } => {
+                let vault = self.vault;
+                let txn = vault.store.env.read_txn()?;
+                let at = txn.id();
+                if read_at != Some(at) {
+                    self.held.clear();
+                    self.verdicts.clear();
+                    self.needs_lineage = needs_lineage_in(vault, &txn)?;
+                    self.snapshot = PassSnapshot::PerAsk { read_at: Some(at) };
+                }
+                read(self, &txn)
+            }
+        }
     }
 
     /// [`withheld_from_replication_in`], in this pass.
@@ -241,7 +296,24 @@ impl<'a, 't> LineagePass<'a, 't> {
         id: &EntityId,
         scope: ReplicationScope,
     ) -> Result<bool> {
-        Ok(self.lineage_held(id)? || self.withheld_by_lineage(id, scope)?)
+        self.in_snapshot(|pass, txn| pass.withheld_from_replication_at(txn, id, scope))
+    }
+
+    /// Whether `other`, read in the pass's snapshot, holds, or else
+    /// [`Self::withheld_from_replication`] in the same snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and `other`'s.
+    pub(crate) fn withheld_from_replication_or(
+        &mut self,
+        id: &EntityId,
+        scope: ReplicationScope,
+        other: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+    ) -> Result<bool> {
+        self.in_snapshot(|pass, txn| {
+            Ok(other(txn)? || pass.withheld_from_replication_at(txn, id, scope)?)
+        })
     }
 
     /// [`lineage_held_in`], in this pass.
@@ -250,12 +322,7 @@ impl<'a, 't> LineagePass<'a, 't> {
     ///
     /// Storage failures.
     pub(crate) fn lineage_held(&mut self, id: &EntityId) -> Result<bool> {
-        if let Some(known) = self.held.get(id) {
-            return Ok(*known);
-        }
-        let held = lineage_held_in(self.vault, self.txn, id)?;
-        self.held.insert(*id, held);
-        Ok(held)
+        self.in_snapshot(|pass, txn| pass.lineage_held_at(txn, id))
     }
 
     /// [`withheld_by_lineage_in`], in this pass.
@@ -268,7 +335,34 @@ impl<'a, 't> LineagePass<'a, 't> {
         id: &EntityId,
         scope: ReplicationScope,
     ) -> Result<bool> {
-        let (vault, txn) = (self.vault, self.txn);
+        self.in_snapshot(|pass, txn| pass.withheld_by_lineage_at(txn, id, scope))
+    }
+
+    fn withheld_from_replication_at(
+        &mut self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        scope: ReplicationScope,
+    ) -> Result<bool> {
+        Ok(self.lineage_held_at(txn, id)? || self.withheld_by_lineage_at(txn, id, scope)?)
+    }
+
+    fn lineage_held_at(&mut self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        if let Some(known) = self.held.get(id) {
+            return Ok(*known);
+        }
+        let held = lineage_held_in(self.vault, txn, id)?;
+        self.held.insert(*id, held);
+        Ok(held)
+    }
+
+    fn withheld_by_lineage_at(
+        &mut self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        scope: ReplicationScope,
+    ) -> Result<bool> {
+        let vault = self.vault;
         let dbs = vault.store.read();
         if !self.needs_lineage {
             // No row here came from a landed one: only the row's own stamp
