@@ -73,6 +73,7 @@ pub(crate) use hold_override::erase_hold_override_actor_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use hold_override::hold_override_actor_in_txn;
 pub(crate) use hook_hold::HoldAttemptForHook;
+pub(crate) use lifecycle::HoldSignal;
 pub use lifecycle::{PauseKind, RunState};
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
