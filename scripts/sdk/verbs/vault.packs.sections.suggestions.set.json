@@ -1,0 +1,17 @@
+{
+  "name": "vault.packs.sections.suggestions.set",
+  "description": "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted.",
+  "input": "crate::memory::PluginSuggestionsSetRequest",
+  "output": "crate::memory::PluginSuggestionsView",
+  "call": "memory.plugin_suggestions_set_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.set\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.view",
+  "description": "Reads back a held image by its ref.",
+  "input": "crate::task_verb::sdk::BrowserViewInput",
+  "output": "crate::task_verb::sdk::BrowserImageOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.view(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserViewInput>",
+    "description": "Reads back a held image by its ref.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.lenses.resolve",
+  "description": "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span.",
+  "input": "crate::lens::LensSelectionResolveRequest",
+  "output": "crate::lens::LensSelectionResolved",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.resolve\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "projection_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_lists": true
+}

@@ -1,0 +1,27 @@
+{
+  "name": "vault.artifacts.undo",
+  "description": "Undoes one Keep by appending a new version.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::blob_artifact::ProposalSettleRequest",
+  "output": "crate::blob_artifact::UndoneKeep",
+  "call": "memory.artifacts_undo(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Undoes one Keep with a new version; the settle stays consumed.\n",
+      "ts": "/** Undoes one Keep with a new version; the settle stays consumed. */",
+      "py": "Undoes one Keep with a new version; the settle stays consumed."
+    }
+  }
+}

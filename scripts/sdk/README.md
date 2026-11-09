@@ -1,6 +1,7 @@
 # Agent verb projections
 
-`agent-verbs.json` is the shared facade/task/room verb table. `generate.py` emits the
+The verb table, one JSON file per verb in `scripts/sdk/verbs/` (`<verb name>.json`, read in name
+order), is the shared facade/task/room verb table: a verb PR adds or edits its own file. `generate.py` emits the
 engine dispatcher, MCP catalog, HTTP facade handlers, Rust client methods,
 N-API/PyO3 methods, and TypeScript/Python namespaces. All domain behavior stays
 in the engine. The facade methods use the same generated dispatch as tasks and rooms.
@@ -200,7 +201,7 @@ fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract), and
 `crates/oneiron/src/verbs/generated/code-mode.d.ts` is the same text at a second
 path. This script writes both from the table and the Rust types its rows name
 (`catalog_fragment.py`). Neither is edited by hand: a new row reaches both
-through its `agent-verbs.json` entry and a run of this script. The text covers every row
+through its `scripts/sdk/verbs/` file and a run of this script. The text covers every row
 code mode serves, at its full SDK path (`vault.recall`, `self.focus.refresh`,
 a bare `describe`). `self` is a namespace of constants, every other root a
 constant and a bare verb a function, so a row named by a reserved word

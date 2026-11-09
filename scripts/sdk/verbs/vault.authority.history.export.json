@@ -1,0 +1,17 @@
+{
+  "name": "vault.authority.history.export",
+  "description": "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves.",
+  "input": "EmptyRequest",
+  "output": "crate::task_verb::sdk::SignedAuthorityHistory",
+  "call": "crate::task_verb::sdk::export_authority_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.history.export\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

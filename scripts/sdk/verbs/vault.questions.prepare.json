@@ -1,0 +1,14 @@
+{
+  "name": "vault.questions.prepare",
+  "input": "crate::receipt::QuestionPrepareRequest",
+  "output": "crate::receipt::QuestionPrepared",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.prepare\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false
+}

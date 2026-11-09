@@ -1,0 +1,16 @@
+{
+  "name": "vault.authority.handoff_alarms.acknowledge",
+  "description": "The owner acknowledges one saved handoff fork alarm.",
+  "input": "crate::task_verb::sdk::HandoffAlarmRequest",
+  "output": "crate::authority::AuthorityHandoffAlarm",
+  "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

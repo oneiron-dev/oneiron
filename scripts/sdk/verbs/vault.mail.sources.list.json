@@ -1,0 +1,12 @@
+{
+  "name": "vault.mail.sources.list",
+  "description": "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::mail_pack::MailSourceView>",
+  "call": "memory.mail_sources_list()?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

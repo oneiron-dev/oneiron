@@ -1,0 +1,16 @@
+{
+  "name": "vault.calendar.outcome_policy.set",
+  "description": "Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence.",
+  "input": "crate::calendar::meeting::CalendarOutcomePolicy",
+  "output": "crate::calendar::meeting::CalendarOutcomePolicy",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.outcome_policy.set\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

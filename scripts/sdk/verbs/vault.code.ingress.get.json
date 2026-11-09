@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.ingress.get",
+  "description": "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance.",
+  "input": "crate::memory::origin_doors::CodePushIngressGetRequest",
+  "output": "Option<crate::memory::origin_doors::CodePushIngressView>",
+  "call": "memory.code_push_ingress_get_as(&memory.embedded_owner(\"vault.code.ingress.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

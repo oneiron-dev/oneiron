@@ -1,0 +1,27 @@
+{
+  "name": "vault.summaries.proposals.switch",
+  "description": "Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set.",
+  "input": "crate::scope_summary::SummaryProposalRequest",
+  "output": "crate::scope_summary::SummaryProposalView",
+  "call": "memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Switch)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryProposalRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true
+}

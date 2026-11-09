@@ -1,0 +1,17 @@
+{
+  "name": "vault.mesh.path_receipts",
+  "description": "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.",
+  "input": "crate::task_verb::sdk::MeshPathReceiptsRequest",
+  "output": "Vec<crate::sync::mesh_path::MeshPathReceipt>",
+  "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

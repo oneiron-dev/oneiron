@@ -1,0 +1,15 @@
+{
+  "name": "vault.questions.admit",
+  "input": "crate::receipt::QuestionAdmitRequest",
+  "output": "crate::llm::decision::questions::AnswerRecord",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.admit\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false
+}

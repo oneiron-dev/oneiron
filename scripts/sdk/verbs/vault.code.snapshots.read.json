@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.snapshots.read",
+  "description": "Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only.",
+  "input": "crate::memory::codebase_doors::CodeSnapshotReadRequest",
+  "output": "Option<crate::memory::codebase_doors::CodeSnapshotPinnedFile>",
+  "call": "memory.code_snapshot_read_as(&memory.embedded_owner(\"vault.code.snapshots.read\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

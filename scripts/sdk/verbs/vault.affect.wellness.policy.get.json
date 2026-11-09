@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.wellness.policy.get",
+  "description": "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent.",
+  "input": "EmptyRequest",
+  "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+  "call": "memory.wellness_policy_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.get\")?)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

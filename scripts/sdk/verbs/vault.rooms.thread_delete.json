@@ -1,0 +1,16 @@
+{
+  "name": "vault.rooms.thread_delete",
+  "description": "Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not.",
+  "input": "crate::workspace_roster::PrivateThreadDeleteRequest",
+  "output": "crate::workspace_roster::PrivateThreadDeleteReceipt",
+  "call": "memory.rooms_thread_delete(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

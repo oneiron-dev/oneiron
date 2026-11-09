@@ -1,0 +1,16 @@
+{
+  "name": "vault.shared.propose_add_owner",
+  "description": "Starts a shared vault's add_owner act: a live Owner adds another person as Owner.",
+  "input": "crate::task_verb::sdk::SharedAddOwnerRequest",
+  "output": "crate::federation::PendingAuthorityAct",
+  "call": "crate::task_verb::sdk::propose_shared_add_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_add_owner\")?, input)?",
+  "host_door": true,
+  "host_door_precheck": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "self.focus.unsubscribe",
+  "description": "Unsubscribes the run's board stream from the named scopes.",
+  "input": "BoardSubscriptionRequest",
+  "output": "crate::board_verb::BoardVerbOutput",
+  "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Unsubscribe { scopes: input.scopes })?",
+  "scope": "Read",
+  "context": "board",
+  "mcp_fields": {
+    "scopes": "scopes"
+  },
+  "mcp_required_fields": [
+    "scopes"
+  ],
+  "mcp_scope": "filtered",
+  "section": true,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
+    "output": "crate::task_verb::sdk::BoardSubscriptionReply",
+    "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
+    "host_door_caller": true,
+    "host_door_session": true,
+    "openapi": true
+  }
+}

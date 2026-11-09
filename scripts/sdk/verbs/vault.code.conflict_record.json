@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.conflict_record",
+  "description": "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves.",
+  "input": "crate::memory::code_doors::CodeConflictRecordRequest",
+  "output": "crate::memory::code_doors::CodeConflictView",
+  "call": "memory.code_conflict_record_as(&memory.embedded_owner(\"vault.code.conflict_record\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

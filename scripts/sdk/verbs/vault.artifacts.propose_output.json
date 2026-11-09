@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.propose_output",
+  "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
+  "refs": [
+    "/read_rows/*",
+    "/made_by/inputs/*/row",
+    "/made_by/trigger/task",
+    "/made_by/trigger/ask",
+    "/made_by/trigger/skill"
+  ],
+  "input": "crate::blob_artifact::NativeOutputRequest",
+  "output": "crate::edit_settle::PendingProposalView",
+  "call": "memory.artifacts_propose_output(&input)?",
+  "file_call": "memory.artifacts_propose_output_file(&input, body)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Offers one native organ result as the artifact's next version, held for Keep.\n",
+      "ts": "/** Offers one native organ result as the artifact's next version, held for Keep. */",
+      "py": "Offers one native organ result as the artifact's next version, held for Keep."
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.writes.critical_confirm.clear",
+  "description": "The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt.",
+  "input": "crate::memory::CriticalWriteConfirmRequest",
+  "output": "crate::memory::CriticalWriteConfirmSettlement",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.writes.critical_confirm.clear\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

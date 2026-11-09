@@ -1,0 +1,18 @@
+{
+  "name": "vault.affect.annotations.put",
+  "description": "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval.",
+  "input": "crate::memory::affect::AffectAnnotationPut",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.affect_annotation_put(&input)?",
+  "scope": "Write",
+  "proposes": true,
+  "refs": [
+    "/turn_ref"
+  ],
+  "admission": {
+    "claim_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

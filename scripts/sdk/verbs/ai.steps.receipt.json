@@ -1,0 +1,16 @@
+{
+  "name": "ai.steps.receipt",
+  "description": "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain.",
+  "input": "crate::llm::model_step::ModelStepReceiptRequest",
+  "output": "crate::llm::model_step::ModelStepReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.receipt\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}
