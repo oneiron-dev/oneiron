@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.snapshot_read.replace",
+  "description": "Replaces the owner's bounds on snapshot handles under the owner proof; a zero bound, or a default lifetime above the most lifetime, is refused. The next page reads the new bounds.",
+  "input": "crate::settings::snapshot_read::SnapshotReadSettings",
+  "output": "crate::settings::snapshot_read::SnapshotReadSettings",
+  "call": "crate::snapshot_read::replace_snapshot_read_settings(memory, input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

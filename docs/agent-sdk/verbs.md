@@ -1107,6 +1107,8 @@ both bindings and their export-census tests in one change.
 - `vault.settings.model_pack.replace`
 - `vault.settings.models.responses_store.read`
 - `vault.settings.models.responses_store.set`
+- `vault.settings.snapshot_read`
+- `vault.settings.snapshot_read.replace`
 - `vault.settings.wake_policy.set`
 - `vault.settings.web_connector`
 - `vault.settings.web_connector.replace`
@@ -1214,6 +1216,8 @@ both bindings and their export-census tests in one change.
 - `vault.slim.resume`
 - `vault.slim.resume_step`
 - `vault.slim.state`
+- `vault.snapshot.open`
+- `vault.snapshot.page`
 - `vault.standing_blocks.configure`
 - `vault.standing_blocks.get`
 - `vault.standing_blocks.list`

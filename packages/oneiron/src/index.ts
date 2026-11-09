@@ -3428,6 +3428,11 @@ export class Oneiron {
           set: (input: Facade.ModelResponsesStoreSettings): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreSet(input) as Facade.ModelResponsesStoreSettings),
         },
       },
+      /** Reads the owner's bounds on snapshot handles: open handles per actor, the default and the most lifetime, rows and bytes per page, and rows per handle. Unset reads as the defaults. */
+      snapshot_read: Object.assign((input: Facade.EmptyRequest): Facade.SnapshotReadSettings => this.#call(() => this.#client.vaultSettingsSnapshotRead(input) as Facade.SnapshotReadSettings), {
+        /** Replaces the owner's bounds on snapshot handles under the owner proof; a zero bound, or a default lifetime above the most lifetime, is refused. The next page reads the new bounds. */
+        replace: (input: Facade.SnapshotReadSettings): Facade.SnapshotReadSettings => this.#call(() => this.#client.vaultSettingsSnapshotReadReplace(input) as Facade.SnapshotReadSettings),
+      }),
       wake_policy: {
         /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
         set: (input: Facade.WakePolicySetRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsWakePolicySet(input) as Facade.PolicyActionOutcome),
@@ -3709,6 +3714,12 @@ export class Oneiron {
       resume_step: (input: Facade.SlimResumeStepRequest): Facade.SavedResumeStep => this.#call(() => this.#client.vaultSlimResumeStep(input) as Facade.SavedResumeStep),
       /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
       state: (input: Facade.EmptyRequest): Facade.SlimStateSnapshot => this.#call(() => this.#client.vaultSlimState(input) as Facade.SlimStateSnapshot),
+    },
+    snapshot: {
+      /** Opens a snapshot handle over kinds of rows for the caller: it pins the caller, the kinds, a read filter and an end, never a storage snapshot. */
+      open: (input: Facade.SnapshotOpenRequest): Facade.SnapshotHandle => this.#call(() => this.#client.vaultSnapshotOpen(input) as Facade.SnapshotHandle),
+      /** Reads the next page of a snapshot handle: the rows that read for the caller at this call, each with its source version; a row born or changed since the open is marked changed_since_open. */
+      page: (input: Facade.SnapshotPageRequest): Facade.ScopedReadResult<Facade.SnapshotPage> => this.#call(() => this.#client.vaultSnapshotPage(input) as Facade.ScopedReadResult<Facade.SnapshotPage>),
     },
     standing_blocks: {
       /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
