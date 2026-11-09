@@ -89,6 +89,53 @@ pub(crate) fn contains(container: &Value, needle: &Value) -> Result<bool, Genera
     }
 }
 
+/// `container[key]` for a key that may be no string, as Python subscripts a JSON value: a dict by its keys (`KeyError`
+/// with the key's `repr`; a list or dict key is unhashable), a list by an `int` or `bool` index counted from the end
+/// when negative (`IndexError` past either end, `TypeError` for any other key), a string by an `int` index only.
+pub(crate) fn subscript(container: &Value, key: &Value) -> Result<Value, GenerateError> {
+    // The position an `int` or `bool` key names in a sequence of `len` items, if it is in range.
+    let index = |len: usize| -> Option<usize> {
+        let at = match key {
+            Value::Int(at) => *at,
+            Value::Bool(flag) => i64::from(*flag),
+            _ => return None,
+        };
+        let len = i64::try_from(len).unwrap_or(i64::MAX);
+        let at = if at < 0 { at.saturating_add(len) } else { at };
+        usize::try_from(at).ok().filter(|_| at < len)
+    };
+    match container {
+        Value::Dict(dict) => {
+            key.check_hashable("a dict key")?;
+            key.as_str()
+                .and_then(|name| dict.get(name))
+                .cloned()
+                .ok_or_else(|| GenerateError::exception("KeyError", key.repr()))
+        }
+        Value::List(items) if matches!(key, Value::Int(_) | Value::Bool(_)) => index(items.len())
+            .and_then(|at| items.get(at).cloned())
+            .ok_or_else(|| GenerateError::index("list index out of range")),
+        Value::List(_) => Err(GenerateError::type_error(format!(
+            "list indices must be integers or slices, not {}",
+            key.type_name()
+        ))),
+        Value::Str(text) if matches!(key, Value::Int(_) | Value::Bool(_)) => {
+            index(text.chars().count())
+                .and_then(|at| text.chars().nth(at))
+                .map(|c| Value::Str(c.to_string()))
+                .ok_or_else(|| GenerateError::index("string index out of range"))
+        }
+        Value::Str(_) => Err(GenerateError::type_error(format!(
+            "string indices must be integers, not '{}'",
+            key.type_name()
+        ))),
+        other => Err(GenerateError::type_error(format!(
+            "'{}' object is not subscriptable",
+            other.type_name()
+        ))),
+    }
+}
+
 /// A row's type text as the inventory's `ts_type`/`py_type` take it (Python hashes it as a dict key first).
 pub(crate) fn row_type<'r>(row: &'r Dict, key: &str) -> Result<&'r str, GenerateError> {
     type_text(item(row, key)?)
@@ -398,8 +445,10 @@ fn ts_wire_body(
         let defaults = binding.dict_get("input_defaults")?.unwrap_or(&no_fields);
         let mut destructure = Vec::new();
         for name in fields.iterate()? {
+            // `name + (' = ' + json.dumps(defaults[name]) if name in defaults else '')`: the subscript with the field
+            // as it is, then the concatenation.
             let default = if contains(defaults, &name)? {
-                format!(" = {}", json(defaults.getitem(concat_left(&name)?)?))
+                format!(" = {}", json(&subscript(defaults, &name)?))
             } else {
                 String::new()
             };
@@ -774,5 +823,50 @@ mod tests {
             text(concat_left(&Value::Str("a".to_owned()))),
             Ok("a".to_owned())
         );
+    }
+
+    // python3 -c "import json; print(json.dumps(C[K]))" on nelly (3.14.7), or the exception's last line.
+    #[test]
+    fn subscripts_are_pythons() {
+        let parse = |text: &str| crate::py::json::loads(text).expect("a JSON value");
+        let cases = [
+            (
+                "[0.0, 1.0]",
+                "1.0",
+                "TypeError: list indices must be integers or slices, not float",
+            ),
+            (
+                "[[], 1]",
+                "[]",
+                "TypeError: list indices must be integers or slices, not list",
+            ),
+            (
+                "[{}, 1]",
+                "{}",
+                "TypeError: list indices must be integers or slices, not dict",
+            ),
+            (
+                "[null]",
+                "null",
+                "TypeError: list indices must be integers or slices, not NoneType",
+            ),
+            ("[5]", "5", "IndexError: list index out of range"),
+            ("[true]", "true", "IndexError: list index out of range"),
+            ("[1, 2]", "-1", "2"),
+            ("[1, 2]", "false", "1"),
+            (r#"{"a": 1}"#, r#""a""#, "1"),
+            (
+                r#""abc""#,
+                r#""b""#,
+                "TypeError: string indices must be integers, not 'str'",
+            ),
+        ];
+        for (container, key, expected) in cases {
+            let got = match subscript(&parse(container), &parse(key)) {
+                Ok(value) => json(&value),
+                Err(error) => error.to_string(),
+            };
+            assert_eq!(got, expected, "{container}[{key}]");
+        }
     }
 }

@@ -9,12 +9,12 @@
 //! The repository root is the nearest ancestor of the current directory that holds `scripts/sdk/verbs` (Python's is
 //! its script's own tree; the binary has no file in the tree).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use oneiron_sdk_generator::{GenerateError, Run, py_is_decimal, py_repr};
+use oneiron_sdk_generator::{GenerateError, Run, py_is_decimal, py_is_space, py_repr};
 
 /// The generator recurses as deep as the Python, which raised its own limit to 20,000 frames
 /// (`facade_types.py:24`), and a JSON input may nest 50,000 levels: it runs on a thread with a 256 MiB stack, as
@@ -223,7 +223,7 @@ impl Namespace {
                         Some(action),
                         &format!(
                             "invalid choice: {} (choose from {})",
-                            py_repr(&value),
+                            arg_repr(&value),
                             choices.join(", ")
                         ),
                     )));
@@ -278,7 +278,7 @@ fn consume_optional(
                 if sep.as_deref().is_some_and(|sep| !sep.is_empty()) || arg.starts_with('-') {
                     return Err(Parsed::Error(argument_error(
                         Some(current),
-                        &format!("ignored explicit argument {}", py_repr(&arg)),
+                        &format!("ignored explicit argument {}", arg_repr(&arg)),
                     )));
                 }
                 taken.push((current, Vec::new()));
@@ -311,7 +311,7 @@ fn consume_optional(
             } else {
                 return Err(Parsed::Error(argument_error(
                     Some(current),
-                    &format!("ignored explicit argument {}", py_repr(&arg)),
+                    &format!("ignored explicit argument {}", arg_repr(&arg)),
                 )));
             }
         } else {
@@ -411,15 +411,61 @@ const ACTIONS: [(&str, Option<&str>); 4] = [
     ),
 ];
 
-/// The formatter's width: `shutil.get_terminal_size().columns - 2`. `COLUMNS` when it holds a positive integer,
-/// else 80 (Python asks the terminal on standard output first, which the port cannot: a documented divergence).
+/// The widest `COLUMNS` the formatter takes as it is: no usage or help line comes near it, and the formatter's
+/// arithmetic (`3 * width`) stays in range.
+const COLUMNS_CAP: i64 = 1 << 40;
+
+/// The formatter's width: `shutil.get_terminal_size().columns - 2`. `COLUMNS` read as Python's `int()` reads it,
+/// when positive; else 80 (Python asks the terminal on standard output first, which the port does not: a documented
+/// divergence).
 fn formatter_width() -> i64 {
     let columns = std::env::var("COLUMNS")
         .ok()
-        .and_then(|text| text.trim().parse::<i64>().ok())
+        .and_then(|text| python_int(&text))
         .filter(|&columns| columns > 0)
         .unwrap_or(80);
-    columns - 2
+    columns.min(COLUMNS_CAP) - 2
+}
+
+/// `int(text)` (base 10), as `shutil.get_terminal_size` reads `COLUMNS`: white space around (`str.isspace()`), an
+/// optional sign, decimal digits of any script (`str.isdecimal()`), single underscores between digits, at most 4,300
+/// digits (`sys.int_info.default_max_str_digits`). `None` where Python raises `ValueError`; a value past `i64`
+/// saturates (the caller caps it).
+fn python_int(text: &str) -> Option<i64> {
+    let body = text.trim_matches(py_is_space);
+    let (negative, digits) = match body.strip_prefix(['+', '-']) {
+        Some(rest) => (body.starts_with('-'), rest),
+        None => (false, body),
+    };
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
+    {
+        return None;
+    }
+    let mut value: i64 = 0;
+    let mut count = 0_usize;
+    for c in digits.chars().filter(|&c| c != '_') {
+        let digit = decimal_value(c)?;
+        count += 1;
+        value = value.saturating_mul(10).saturating_add(digit);
+    }
+    (count <= 4300).then_some(if negative { -value } else { value })
+}
+
+/// A `str.isdecimal()` character's digit value: Unicode lays out each script's decimal digits as one run of ten from
+/// zero (`unicodedata.decimal`), so it is the distance from the start of its run of decimals, modulo ten.
+fn decimal_value(c: char) -> Option<i64> {
+    if !py_is_decimal(c) {
+        return None;
+    }
+    let code = u32::from(c);
+    let mut start = code;
+    while start > 0 && char::from_u32(start - 1).is_some_and(py_is_decimal) {
+        start -= 1;
+    }
+    Some(i64::from((code - start) % 10))
 }
 
 /// `len(text)`: its code points.
@@ -560,10 +606,101 @@ fn find_root() -> Result<PathBuf, String> {
         })
 }
 
+/// A line on stderr; a stderr that cannot take it changes nothing (Python's traceback is lost the same way, and the
+/// exit status stays).
+fn print_stderr(text: &str) {
+    let _ = writeln!(std::io::stderr(), "{text}");
+}
+
 /// The binary's exit: 0, Python's 1 for an uncaught exception or `SystemExit(message)`, argparse's 2.
 fn failure(error: &GenerateError) -> ExitCode {
-    eprintln!("{error}");
+    print_stderr(&error.to_string());
     ExitCode::FAILURE
+}
+
+// ---- arguments that are not UTF-8
+
+/// Byte `b` (0x80-0xFF) of an argument that is not UTF-8 stands as `U+10FF00 + b` while it is parsed: Python decodes
+/// `argv` with `surrogateescape`, giving the lone surrogate `U+DC00 + b`, which a Rust `String` cannot hold. (A real
+/// U+10FF80-U+10FFFF in an argument is shown as such a byte: private use, not met in a command line.)
+const ESCAPED_BYTE_BASE: u32 = 0x0010_FF00;
+
+/// An argument as Python's `sys.argv` holds it, with the stand-ins for its undecodable bytes.
+#[cfg(unix)]
+fn decode_argument(arg: &OsStr) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut text = String::new();
+    for chunk in arg.as_bytes().utf8_chunks() {
+        text.push_str(chunk.valid());
+        for &byte in chunk.invalid() {
+            text.push(
+                char::from_u32(ESCAPED_BYTE_BASE + u32::from(byte))
+                    .unwrap_or(char::REPLACEMENT_CHARACTER),
+            );
+        }
+    }
+    text
+}
+
+#[cfg(not(unix))]
+fn decode_argument(arg: &OsStr) -> String {
+    arg.to_string_lossy().into_owned()
+}
+
+/// The byte a stand-in holds.
+fn escaped_byte(c: char) -> Option<u32> {
+    let code = u32::from(c);
+    (ESCAPED_BYTE_BASE + 0x80..=ESCAPED_BYTE_BASE + 0xFF)
+        .contains(&code)
+        .then(|| code - ESCAPED_BYTE_BASE)
+}
+
+/// A message as Python's stderr writes it (`errors='backslashreplace'`): each lone surrogate as `\udcXX`.
+fn shown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match escaped_byte(c) {
+            Some(byte) => out.push_str(&format!("\\udc{byte:02x}")),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
+/// `repr(arg)` of an argument: a lone surrogate is `\udcXX` in Python's `repr`. `py_repr` writes a stand-in as the
+/// escape of a code point that is not printable (`\U0010ffXX`) and every real backslash doubled, so each such escape
+/// is a stand-in.
+fn arg_repr(arg: &str) -> String {
+    let repr = py_repr(arg);
+    let mut out = String::with_capacity(repr.len());
+    let mut rest = repr.as_str();
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("\\\\") {
+            out.push_str("\\\\");
+            rest = after;
+            continue;
+        }
+        let byte = tail
+            .strip_prefix("\\U")
+            .and_then(|hex| hex.get(..8))
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .and_then(char::from_u32)
+            .and_then(escaped_byte);
+        match byte {
+            Some(byte) => {
+                out.push_str(&format!("\\udc{byte:02x}"));
+                rest = &tail[10..];
+            }
+            None => {
+                out.push('\\');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Port of generate.py:2928-2983 (main): the module level, then the arguments, then one mode.
@@ -571,7 +708,7 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
     let root = match find_root() {
         Ok(root) => root,
         Err(message) => {
-            eprintln!("{prog}: {message}");
+            print_stderr(&format!("{prog}: {message}"));
             return ExitCode::FAILURE;
         }
     };
@@ -580,16 +717,17 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
         Err(error) => return failure(&error),
     };
     let width = formatter_width();
-    let args: Result<Vec<String>, &OsString> = args
-        .iter()
-        .map(|arg| arg.clone().into_string().map_err(|_| arg))
-        .collect();
-    let parsed = match args {
-        Ok(args) => parse(&args),
-        Err(arg) => Parsed::Error(format!(
-            "an argument that is not UTF-8: {}",
-            arg.to_string_lossy()
+    let args: Vec<String> = args.iter().map(|arg| decode_argument(arg)).collect();
+    let parsed = match parse(&args) {
+        // A directory named by bytes that are not UTF-8: Python writes there; the port refuses it (as G1a and G1b
+        // refuse such file names).
+        Parsed::Args {
+            out_dir: Some(dir), ..
+        } if dir.chars().any(|c| escaped_byte(c).is_some()) => Parsed::Error(format!(
+            "argument --out-dir: a directory name that is not UTF-8: {}",
+            arg_repr(&dir)
         )),
+        parsed => parsed,
     };
     let (check, out_dir, package) = match parsed {
         Parsed::Args {
@@ -604,7 +742,7 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
         Parsed::Error(message) => {
             let usage = format_usage(prog, width);
             let _ = std::io::stderr()
-                .write_all(format!("{usage}{prog}: error: {message}\n").as_bytes());
+                .write_all(format!("{usage}{prog}: error: {}\n", shown(&message)).as_bytes());
             return ExitCode::from(2);
         }
     };
@@ -625,10 +763,9 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
     } else {
         // generate.py:2959-2983: the tree's package outputs written (or checked), the old homes deleted, the census
         // printed, then agent-docs.py.
+        // A census stdout cannot take is Python's OSError from `print`, before agent-docs.py runs.
         run.write_tree(check).and_then(|census| {
-            let mut stdout = std::io::stdout();
-            let _ = stdout.write_all(census.as_bytes());
-            let _ = stdout.flush();
+            run.print(&census)?;
             run.agent_docs(&[if check { "--check" } else { "--generated" }])
         })
     };
@@ -657,7 +794,7 @@ fn dispatch(argv: &[OsString]) -> ExitCode {
             .map(|arg| arg.clone().into_string().ok())
             .collect();
         let Some(strings) = strings else {
-            eprintln!("{prog}: the port-harness arguments must be UTF-8");
+            print_stderr(&format!("{prog}: the port-harness arguments must be UTF-8"));
             return ExitCode::from(2);
         };
         return match oneiron_sdk_generator::port_harness(&strings) {
@@ -679,7 +816,9 @@ fn main() -> ExitCode {
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
         Err(error) => {
-            eprintln!("oneiron-sdk-generator: could not start the generator thread: {error}");
+            print_stderr(&format!(
+                "oneiron-sdk-generator: could not start the generator thread: {error}"
+            ));
             ExitCode::FAILURE
         }
     }
@@ -809,6 +948,62 @@ mod tests {
         assert_eq!(
             format_usage("oneiron-sdk-generator", 78),
             "usage: oneiron-sdk-generator [-h] [--check] [--out-dir OUT_DIR]\n                             [--package {docs,oneiron,oneiron-client,oneiron-py}]\n"
+        );
+    }
+
+    // python3 -c "print(int(T))" on nelly (3.14.7), None for a ValueError, for each T below.
+    #[test]
+    fn columns_are_read_as_python_int() {
+        let cases: [(&str, Option<i64>); 19] = [
+            (" 40 ", Some(40)),
+            ("+40", Some(40)),
+            ("-5", Some(-5)),
+            ("4_0", Some(40)),
+            ("4__0", None),
+            ("_40", None),
+            ("40_", None),
+            ("", None),
+            ("0x10", None),
+            ("1e3", None),
+            ("\u{664}\u{660}", Some(40)),
+            ("\u{ff14}\u{ff10}", Some(40)),
+            ("\u{1d7d2}\u{1d7ce}", Some(40)),
+            ("\u{2003} 72\u{3000}", Some(72)),
+            ("040", Some(40)),
+            ("- 5", None),
+            ("\u{b2}", None),
+            ("4\u{6f0}", Some(40)),
+            ("999999999999999999999999999999", Some(i64::MAX)),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(python_int(text), expected, "{text:?}");
+        }
+        assert_eq!(python_int(&"1".repeat(4300)), Some(i64::MAX));
+        assert_eq!(python_int(&"1".repeat(4301)), None);
+    }
+
+    // Python: sys.argv holds '\udcff' for a byte 0xff; repr('a\udcff') is 'a\udcff'; stderr writes it as \udcff.
+    #[test]
+    fn undecodable_arguments_show_as_python_shows_them() {
+        let stand_in = |byte: u32| char::from_u32(ESCAPED_BYTE_BASE + byte).expect("a stand-in");
+        let arg = format!("a{}", stand_in(0xff));
+        assert_eq!(arg_repr(&arg), r"'a\udcff'");
+        assert_eq!(shown(&format!("x {arg}")), r"x a\udcff");
+        assert_eq!(arg_repr(r"\U0010ffff"), r"'\\U0010ffff'");
+        assert_eq!(arg_repr("it's"), "\"it's\"");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let decoded = decode_argument(OsStr::from_bytes(b"--package=\xffx\xc3\xa9"));
+            assert_eq!(decoded, format!("--package={}x\u{e9}", stand_in(0xff)));
+        }
+        assert_eq!(parse(&[String::from("--help"), arg.clone()]), Parsed::Help);
+        assert_eq!(
+            parse(&[String::from("--package"), arg]),
+            Parsed::Error(
+                r"argument --package: invalid choice: 'a\udcff' (choose from 'docs', 'oneiron', 'oneiron-client', 'oneiron-py')"
+                    .to_owned()
+            )
         );
     }
 }

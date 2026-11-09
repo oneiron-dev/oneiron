@@ -247,6 +247,31 @@ fn python() -> String {
     })
 }
 
+/// Python's `OSError` for a failed write to a standard stream (`print`): the class its errno maps to and
+/// `[Errno <n>] <strerror>`, with no path (`OSError: [Errno 28] No space left on device`, `BrokenPipeError: [Errno 32]
+/// Broken pipe`).
+pub(crate) fn stream_error(error: &io::Error) -> GenerateError {
+    let kind = match error.kind() {
+        io::ErrorKind::BrokenPipe => "BrokenPipeError",
+        io::ErrorKind::ConnectionReset => "ConnectionResetError",
+        io::ErrorKind::PermissionDenied => "PermissionError",
+        io::ErrorKind::Interrupted => "InterruptedError",
+        io::ErrorKind::WouldBlock => "BlockingIOError",
+        _ => "OSError",
+    };
+    let message = match error.raw_os_error() {
+        Some(errno) => {
+            let text = io::Error::from_raw_os_error(errno).to_string();
+            let strerror = text
+                .strip_suffix(&format!(" (os error {errno})"))
+                .unwrap_or(&text);
+            format!("[Errno {errno}] {strerror}")
+        }
+        None => error.to_string(),
+    };
+    GenerateError::exception(kind, message)
+}
+
 /// `subprocess.CalledProcessError`'s text for a child that failed.
 fn called_process_error(argv: &[String], status: std::process::ExitStatus) -> GenerateError {
     let cmd: Vec<String> = argv
@@ -261,26 +286,102 @@ fn called_process_error(argv: &[String], status: std::process::ExitStatus) -> Ge
     GenerateError::exception("subprocess.CalledProcessError", message)
 }
 
-/// `Command '...' died with <Signals.SIGTERM: 15>.` (Linux's signal numbers).
+/// Python's `signal.Signals` on Linux (x86-64 and AArch64 numbering): `sorted((s.value, s.name) for s in
+/// signal.Signals)` on nelly (3.14.7). An alias (`SIGIOT`, `SIGCLD`, `SIGPOLL`) loses to the name that sorts first.
+#[cfg(unix)]
+const LINUX_SIGNALS: [(i32, &str); 33] = [
+    (1, "SIGHUP"),
+    (2, "SIGINT"),
+    (3, "SIGQUIT"),
+    (4, "SIGILL"),
+    (5, "SIGTRAP"),
+    (6, "SIGABRT"),
+    (7, "SIGBUS"),
+    (8, "SIGFPE"),
+    (9, "SIGKILL"),
+    (10, "SIGUSR1"),
+    (11, "SIGSEGV"),
+    (12, "SIGUSR2"),
+    (13, "SIGPIPE"),
+    (14, "SIGALRM"),
+    (15, "SIGTERM"),
+    (16, "SIGSTKFLT"),
+    (17, "SIGCHLD"),
+    (18, "SIGCONT"),
+    (19, "SIGSTOP"),
+    (20, "SIGTSTP"),
+    (21, "SIGTTIN"),
+    (22, "SIGTTOU"),
+    (23, "SIGURG"),
+    (24, "SIGXCPU"),
+    (25, "SIGXFSZ"),
+    (26, "SIGVTALRM"),
+    (27, "SIGPROF"),
+    (28, "SIGWINCH"),
+    (29, "SIGIO"),
+    (30, "SIGPWR"),
+    (31, "SIGSYS"),
+    (34, "SIGRTMIN"),
+    (64, "SIGRTMAX"),
+];
+
+/// Python's `signal.Signals` on macOS: the same listing on the owner's Mac.
+#[cfg(unix)]
+const MACOS_SIGNALS: [(i32, &str); 31] = [
+    (1, "SIGHUP"),
+    (2, "SIGINT"),
+    (3, "SIGQUIT"),
+    (4, "SIGILL"),
+    (5, "SIGTRAP"),
+    (6, "SIGABRT"),
+    (7, "SIGEMT"),
+    (8, "SIGFPE"),
+    (9, "SIGKILL"),
+    (10, "SIGBUS"),
+    (11, "SIGSEGV"),
+    (12, "SIGSYS"),
+    (13, "SIGPIPE"),
+    (14, "SIGALRM"),
+    (15, "SIGTERM"),
+    (16, "SIGURG"),
+    (17, "SIGSTOP"),
+    (18, "SIGTSTP"),
+    (19, "SIGCONT"),
+    (20, "SIGCHLD"),
+    (21, "SIGTTIN"),
+    (22, "SIGTTOU"),
+    (23, "SIGIO"),
+    (24, "SIGXCPU"),
+    (25, "SIGXFSZ"),
+    (26, "SIGVTALRM"),
+    (27, "SIGPROF"),
+    (28, "SIGWINCH"),
+    (29, "SIGINFO"),
+    (30, "SIGUSR1"),
+    (31, "SIGUSR2"),
+];
+
+/// `CalledProcessError.__str__` for a child a signal ended: `Command '...' died with <Signals.SIGTERM: 15>.`, or
+/// `unknown signal <n>` for a number `signal.Signals` does not name (on another Unix, every number).
+#[cfg(unix)]
+fn signal_message(cmd: &str, signal: i32) -> String {
+    let table: &[(i32, &str)] = if cfg!(target_os = "linux") {
+        &LINUX_SIGNALS
+    } else if cfg!(target_os = "macos") {
+        &MACOS_SIGNALS
+    } else {
+        &[]
+    };
+    match table.iter().find(|(number, _)| *number == signal) {
+        Some((_, name)) => format!("Command '{cmd}' died with <Signals.{name}: {signal}>."),
+        None => format!("Command '{cmd}' died with unknown signal {signal}."),
+    }
+}
+
 #[cfg(unix)]
 fn signal_text(cmd: &str, status: std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
-    let Some(signal) = status.signal() else {
-        return format!("Command '{cmd}' died with unknown signal 0.");
-    };
-    let names = [
-        "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE",
-        "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM",
-    ];
-    match usize::try_from(signal - 1)
-        .ok()
-        .and_then(|at| names.get(at))
-    {
-        Some(name) if cfg!(target_os = "linux") => {
-            format!("Command '{cmd}' died with <Signals.{name}: {signal}>.")
-        }
-        _ => format!("Command '{cmd}' died with unknown signal {signal}."),
-    }
+    signal_message(cmd, status.signal().unwrap_or(0))
 }
 
 #[cfg(not(unix))]
@@ -495,12 +596,8 @@ impl Generator {
             }
             write_text(&target, text)?;
         }
-        let output = |path: &str| files.get(path).flatten().unwrap_or_default();
-        let docs = super::docs::generated_artifacts(
-            &self.root,
-            output("crates/oneiron-py/python/oneiron/_facade_verbs.pyi"),
-            output("packages/oneiron/src/facade-types.ts"),
-        )?;
+        // agent-docs.py --from <dir> --out <dir>: its two outputs read back from `dir`.
+        let docs = super::docs::generated_artifacts(&self.root, dir)?;
         super::docs::write(&docs, dir)
     }
 
@@ -781,5 +878,35 @@ mod tests {
         );
         assert_eq!(package_outputs("nope"), None);
         assert_eq!(BUILD_TIME_OUTPUTS.len(), 16);
+    }
+
+    // python3 -c "import subprocess; print(subprocess.CalledProcessError(-N, ['x']))" on nelly (3.14.7).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn signals_are_named_as_python_names_them() {
+        let cmd = "['x']";
+        for (signal, expected) in [
+            (15, "Command '['x']' died with <Signals.SIGTERM: 15>."),
+            (24, "Command '['x']' died with <Signals.SIGXCPU: 24>."),
+            (6, "Command '['x']' died with <Signals.SIGABRT: 6>."),
+            (64, "Command '['x']' died with <Signals.SIGRTMAX: 64>."),
+            (35, "Command '['x']' died with unknown signal 35."),
+        ] {
+            assert_eq!(signal_message(cmd, signal), expected);
+        }
+    }
+
+    // python3 -c "print('x' * 9000)" with stdout on /dev/full, and into a closed pipe, on nelly: the last line.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stream_errors_are_pythons() {
+        assert_eq!(
+            stream_error(&io::Error::from_raw_os_error(28)).to_string(),
+            "OSError: [Errno 28] No space left on device"
+        );
+        assert_eq!(
+            stream_error(&io::Error::from_raw_os_error(32)).to_string(),
+            "BrokenPipeError: [Errno 32] Broken pipe"
+        );
     }
 }
