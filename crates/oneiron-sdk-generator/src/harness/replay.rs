@@ -68,10 +68,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
                 .ok_or_else(|| malformed(line))?;
             match method {
                 "names.update" => {
-                    for name in argument(1)?.as_list().unwrap_or_default() {
-                        if let Value::Str(name) = name {
-                            inventory.names.insert(name.clone());
-                        }
+                    // catalog_fragment's `names.update(TAKEN)`: strings only; anything else is no log the
+                    // recorder writes.
+                    for name in argument(1)?.as_list().ok_or_else(|| malformed(line))? {
+                        inventory.names.insert(text_of(name, line)?.to_owned());
                     }
                     Value::None
                 }

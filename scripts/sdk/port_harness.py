@@ -231,10 +231,12 @@ def record(log_path, out_dir, marker_dir):
     class LoggedNames(set):
         'The inventory\'s `names`: an `update` from outside (catalog_fragment\'s TAKEN) is logged.'
         def update(self, *others):
+            others = [list(other) for other in others]   # an iterator is read once, for the log and the update
             added = sorted(set().union(*others))
             return logged('names.update', self.owner, [added], lambda: set.update(self, *others))
 
     def init(self, root, rows):
+        rows = list(rows)   # an iterator is read once, for the log and the inventory
         fields = [row_fields(row) for row in rows]
         instances.append((self, fields))
         logged('Inventory', self, [fields], lambda: orig['__init__'](self, root, rows))
@@ -248,8 +250,10 @@ def record(log_path, out_dir, marker_dir):
         'ts_type', self, [text, prefix], lambda: orig['ts_type'](self, text, prefix))
     Inventory.py_type = lambda self, text, prefix='Facade.': logged(
         'py_type', self, [text, prefix], lambda: orig['py_type'](self, text, prefix))
-    Inventory.census = lambda self, rows: logged(
-        'census', self, [[row_fields(row) for row in rows]], lambda: orig['census'](self, rows))
+    def census(self, rows):
+        rows = list(rows)
+        return logged('census', self, [[row_fields(row) for row in rows]], lambda: orig['census'](self, rows))
+    Inventory.census = census
     Inventory.typescript = lambda self, lines: logged(
         'typescript', self, [lines], lambda: orig['typescript'](self, lines))
     Inventory.python = lambda self, lines: logged('python', self, [lines], lambda: orig['python'](self, lines))
