@@ -76,6 +76,34 @@ fn reach_in(
     }
 }
 
+/// The rows a Dreamer write that takes back what it landed is judged by (X02): its Auto actor ceiling and its
+/// `Generated` permit. A receipt of such a write names them in its grant field.
+pub(crate) const DREAMER_LANDING_ROWS_REF: &str =
+    "policy:dreamer:actor_ceiling_auto+generated_permit";
+
+/// The live policy's verdict, in the caller's transaction, on a Dreamer write that takes back what it landed (the
+/// strength archive, X02): the policy frontier hash it was judged under while `actor` still holds its Auto actor
+/// ceiling and its `Generated` permit, `None` once the owner narrowed or removed either. Its read grant is the scoped
+/// read's to apply. Slice 6.3 judges the Steward grant here instead.
+///
+/// # Errors
+///
+/// The policy's resolution.
+pub(crate) fn dreamer_landing_verdict_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: crate::WriteActor,
+) -> Result<Option<[u8; 32]>> {
+    let policy = super::resolve_policy_manifest(store, txn)?;
+    if !policy.lands_generated_auto(
+        actor.actor_class().gate_actor_class(),
+        &actor.entity_ref().to_hex(),
+    ) {
+        return Ok(None);
+    }
+    policy.read_frontier_hash().map(Some)
+}
+
 /// The trusted pack the grant edits, and its body: the one owner-authored
 /// pack, else the seeded default, else (a vault with no trusted pack) the
 /// shipped default at its id.

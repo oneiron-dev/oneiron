@@ -31432,7 +31432,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/weave_grant.rs",
@@ -42528,7 +42528,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerWeaveReach"
@@ -42536,7 +42536,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -42867,7 +42867,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 87,
+      "crate-vis": 88,
       "mod": 2,
       "re-export": 8
      }
@@ -90319,7 +90319,7 @@
      "path": "src/test_util/dreamer_rows.rs",
      "purpose": "A policy manifest without the Dreamer's actor-keyed rows, as a release before warm-by-default seeded it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
