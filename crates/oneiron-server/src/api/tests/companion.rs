@@ -1013,7 +1013,7 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
         .vault
         .request_access(
             request_id,
-            oneiron::AccessGrant::companion_profile_read(principal, person, first, 10),
+            oneiron::AccessGrant::companion_profile_read(principal, person, Some(first), 10),
         )
         .unwrap();
     let request_path = "/v1/companion/personas/access-requests";
@@ -1203,7 +1203,8 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
     let principal = seeded_test_entity_id(0x0002_6001);
     let person = seeded_test_entity_id(0x0002_6002);
     let persona = seeded_test_entity_id(0x0002_6003);
-    let mut grant = oneiron::AccessGrant::companion_profile_read(principal, person, persona, 1_000);
+    let mut grant =
+        oneiron::AccessGrant::companion_profile_read(principal, person, Some(persona), 1_000);
     grant.expires_at = Some(2_000);
     server
         .vault

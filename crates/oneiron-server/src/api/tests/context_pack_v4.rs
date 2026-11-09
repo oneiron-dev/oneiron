@@ -377,7 +377,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     );
 
     let grant =
-        oneiron::AccessGrant::companion_profile_read(principal_ref, person_ref, persona_ref, 12);
+        oneiron::AccessGrant::companion_profile_read(principal_ref, person_ref, Some(persona_ref), 12);
     server
         .vault
         .create_access_grant(&grant_id, &grant)

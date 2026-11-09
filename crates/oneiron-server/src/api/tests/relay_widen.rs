@@ -203,7 +203,8 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     let (dir, mut server) = auth_test_server();
     let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
     server.vault().ensure_host_root_slip(&issuer).unwrap();
-    Arc::get_mut(&mut server).unwrap().managed_issuer = Some(issuer);
+    Arc::get_mut(&mut server).unwrap().managed_issuer =
+        Some(crate::server::ManagedIssuer::new(Some(issuer)));
     let vault = server.vault();
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     let agent = oneiron::EntityId::now();
@@ -226,7 +227,12 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     let (slip, key) = slip_credentials::credential(&server, &agent_recipe);
     let proof = vault
         .verify_capability_slip(
-            &server.managed_issuer.as_ref().unwrap().public_key(),
+            &server
+                .managed_issuer
+                .as_ref()
+                .and_then(crate::server::ManagedIssuer::issuer)
+                .unwrap()
+                .public_key(),
             &slip,
             b"managed-widen",
             &key.sign(&slip.binding_transcript(b"managed-widen").unwrap())

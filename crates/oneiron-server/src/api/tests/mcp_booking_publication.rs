@@ -236,7 +236,7 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             MCP_TOOL_FIRST_PATH,
             label,
             "upsert",
-            oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str(),
+            oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str(),
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "write_memory"),
                 json!({"arguments": {"spec": input}}),

@@ -1203,7 +1203,12 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
 
     let run_id = oneiron::EntityId::from_hex(structured["run_id"].as_str().unwrap()).unwrap();
     let record = vault.get_code_run_replay_record(&run_id).unwrap().unwrap();
-    let clock = record.determinism.frozen_unix_ms;
+    // A run witnessed here keeps its frozen inputs.
+    let clock = record
+        .determinism
+        .as_ref()
+        .expect("witnessed frozen inputs")
+        .frozen_unix_ms;
     assert!(
         (started..=vault.now_recorded_at() * 1000).contains(&clock),
         "{clock}"

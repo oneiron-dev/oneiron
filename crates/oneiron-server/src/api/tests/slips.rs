@@ -214,7 +214,7 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     let issuer = HostSlipIssuer::from_secret(b"managed-vault-root").unwrap();
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     let mutable = Arc::get_mut(&mut server).unwrap();
-    mutable.managed_issuer = Some(issuer);
+    mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
     let actor = seed_turn(&server, "managed pairing holder");
@@ -276,7 +276,11 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     let slip = CapabilitySlip::from_token(body["token"].as_str().unwrap()).unwrap();
     let binding = holder.sign(&slip.binding_transcript(b"managed-proof").unwrap());
-    let issuer = server.managed_issuer.as_ref().unwrap();
+    let issuer = server
+        .managed_issuer
+        .as_ref()
+        .and_then(crate::server::ManagedIssuer::issuer)
+        .unwrap();
     assert!(
         server
             .vault()
@@ -344,7 +348,7 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     let issuer = HostSlipIssuer::from_secret(b"managed-mesh-pairing-root").unwrap();
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     let mutable = Arc::get_mut(&mut server).unwrap();
-    mutable.managed_issuer = Some(issuer);
+    mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
     let machine = oneiron::EntityId::now();
@@ -429,7 +433,11 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     let mut transcript = b"oneiron/mesh-machine-binding/v1\0".to_vec();
     transcript.extend_from_slice(machine.as_bytes());
     transcript.extend_from_slice(&endpoint_key);
-    let issuer = server.managed_issuer.as_ref().unwrap();
+    let issuer = server
+        .managed_issuer
+        .as_ref()
+        .and_then(crate::server::ManagedIssuer::issuer)
+        .unwrap();
     server
         .vault()
         .bind_mesh_machine(

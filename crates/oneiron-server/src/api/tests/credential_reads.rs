@@ -587,7 +587,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
     )
     .unwrap();
     claim.world = Some(world);
-    claim.rel = Some(space);
+    claim.rel = oneiron::write_envelope::claim_body::relationship_scope_of(Some(space));
     server
         .vault
         .put_claim(
