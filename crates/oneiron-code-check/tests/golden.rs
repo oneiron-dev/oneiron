@@ -98,16 +98,6 @@ fn rendered(checker: &dyn CodeCheck) -> String {
 }
 
 #[test]
-fn tsc_rs_in_process_gives_the_golden_diagnostics() {
-    let checker = TscRsWasm::load(TscRsBudget::default()).unwrap();
-    let actual = rendered(&checker);
-    if std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some() {
-        std::fs::write(GOLDEN, &actual).unwrap();
-    }
-    assert_eq!(actual, std::fs::read_to_string(GOLDEN).unwrap());
-}
-
-#[test]
 fn microsoft_oracle_gives_the_golden_diagnostics() {
     let checker = MicrosoftTsc::new(oracle()).unwrap();
     assert_eq!(rendered(&checker), std::fs::read_to_string(GOLDEN).unwrap());

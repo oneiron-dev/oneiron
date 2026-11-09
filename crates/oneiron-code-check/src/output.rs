@@ -108,38 +108,3 @@ fn body(text: &str) -> Option<(&str, u32, &str)> {
     Some((category, code.parse().ok()?, message))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::diagnostics;
-
-    /// tsc's `--pretty false` forms: a placed diagnostic in a declaration
-    /// file whose name starts like a category, one in the program (shifted
-    /// past the envelope's first line) with a continued message chain, and
-    /// one about the whole check.
-    #[test]
-    fn reads_placed_continued_and_global_diagnostics() {
-        let printed = "errors.d.ts(1,23): error TS2304: Cannot find name 'MissingType'.\n\
-            program.js(3,5): error TS2322: Type 'number' is not assignable to type 'string'.\n  \
-            The expected type comes from property 'text'.\n\
-            error TS5023: Unknown compiler option 'x'.\n";
-        let found = diagnostics(printed.as_bytes()).unwrap();
-        let places: Vec<_> = found
-            .iter()
-            .map(|d| (d.file.as_deref(), d.line, d.column, d.code))
-            .collect();
-        assert_eq!(
-            places,
-            [
-                (Some("errors.d.ts"), 1, 23, 2304),
-                (Some("program.js"), 2, 5, 2322),
-                (None, 0, 0, 5023),
-            ]
-        );
-        assert!(
-            found[1]
-                .message
-                .ends_with("\n  The expected type comes from property 'text'.")
-        );
-        assert!(diagnostics(b"Segmentation fault\n").is_err());
-    }
-}

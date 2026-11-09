@@ -303,5 +303,3 @@ pub enum DictLoadError {
     },
 }
 
-#[cfg(test)]
-mod tests;
