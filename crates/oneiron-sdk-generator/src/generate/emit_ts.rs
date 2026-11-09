@@ -19,6 +19,7 @@ use super::common::{
     str_receiver,
 };
 use super::row_access::{concat, item, json};
+use super::uniffi::json_eq;
 use super::{Generator, HEADER, RowId};
 use crate::error::GenerateError;
 use crate::facade_types::index_error;
@@ -69,10 +70,11 @@ pub(crate) fn first_item(value: &Value) -> Result<Value, GenerateError> {
     }
 }
 
-/// `needle in container` for a needle that may be no string.
+/// `needle in container` for a needle that may be no string. A list compares each item by identity, then equality
+/// (`json_eq`: every NaN of the rows is `json.loads`' one NaN object, so it is in a list that holds a NaN).
 pub(crate) fn contains(container: &Value, needle: &Value) -> Result<bool, GenerateError> {
     match (container, needle) {
-        (Value::List(items), _) => Ok(items.iter().any(|item| item.py_eq(needle))),
+        (Value::List(items), _) => Ok(items.iter().any(|item| json_eq(item, needle))),
         (Value::Dict(_), Value::List(_) | Value::Dict(_)) => {
             needle.check_hashable("a dict key").map(|()| false)
         }
@@ -854,6 +856,11 @@ mod tests {
             ("[true]", "true", "IndexError: list index out of range"),
             ("[1, 2]", "-1", "2"),
             ("[1, 2]", "false", "1"),
+            (
+                "[NaN]",
+                "NaN",
+                "TypeError: list indices must be integers or slices, not float",
+            ),
             (r#"{"a": 1}"#, r#""a""#, "1"),
             (
                 r#""abc""#,
@@ -867,6 +874,24 @@ mod tests {
                 Err(error) => error.to_string(),
             };
             assert_eq!(got, expected, "{container}[{key}]");
+        }
+    }
+
+    // python3 -c "import json; print(json.loads(K) in json.loads(C))" on nelly (3.14.7): json.loads returns one NaN
+    // object, and `in` compares by identity first.
+    #[test]
+    fn membership_is_pythons() {
+        let parse = |text: &str| crate::py::json::loads(text).expect("a JSON value");
+        for (container, key, expected) in [
+            ("[NaN]", "NaN", true),
+            ("[[NaN]]", "[NaN]", true),
+            (r#"[{"a": NaN}]"#, r#"{"a": NaN}"#, true),
+            ("[1.0]", "NaN", false),
+            ("[1, 2]", "true", true),
+            ("[0.0, 1.0]", "1", true),
+        ] {
+            let found = contains(&parse(container), &parse(key)).expect("a list");
+            assert_eq!(found, expected, "{key} in {container}");
         }
     }
 }
