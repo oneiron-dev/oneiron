@@ -33,6 +33,10 @@ pub use error::GenerateError;
 pub use facade_types::CRATES;
 pub use generate::outputs::Outputs;
 
+/// A digest of this crate's source files (set by its `build.rs`). `oneiron-sdk-build` mixes it into the digest that
+/// names a build's shared run directory, so a change to the generator makes a new run.
+pub const GENERATOR_SOURCE_DIGEST: &str = env!("GENERATOR_SOURCE_DIGEST");
+
 /// The stack of the generator's thread (brief 2.2.2).
 const STACK_BYTES: usize = 256 << 20;
 

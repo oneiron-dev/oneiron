@@ -52,8 +52,9 @@ to `./src/index.ts`; `./facade` and `./facade-types` resolve to the generated
 tree and declarations alone, with no fetch client. Users need no build step: the
 published package carries the generated `facade.ts` and `facade-types.ts`. They
 are not in git; the package's `prepare` and `prepublishOnly` scripts write them
-from the verb table (`generate.py --package oneiron-client`), so a checkout runs
-`bun run prepare` once before it imports them.
+from the verb table (`cargo run -p oneiron-sdk-generator -- --package
+oneiron-client`), so a checkout runs `bun run prepare` once, with Rust's
+`cargo` on `PATH`, before it imports them.
 
 That shape has a requirement attached, and `engines` declares it: the consuming
 runtime must load TypeScript itself. **Bun 1.3 or newer is the supported
