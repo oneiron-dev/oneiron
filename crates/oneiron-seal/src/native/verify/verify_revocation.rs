@@ -367,10 +367,18 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 
 /// An authenticated OCSP response: only `good` targets supply revocation
 /// coverage; an authenticated `unknown` remains unresolved, not invalid, for
-/// the certificate it names (`unknown_targets`, the bound certificates).
+/// the certificate it names (`unknown_statuses`).
 pub(crate) struct OcspEvidence<'a> {
     pub(crate) good_targets: Vec<&'a [u8]>,
-    pub(crate) unknown_targets: Vec<&'a EmbeddedCert>,
+    pub(crate) unknown_statuses: Vec<UnknownStatus<'a>>,
+}
+
+/// An authenticated `unknown` SingleResponse. Its CertID names a certificate
+/// by issuer and serial number: `target` is the first certificate it bound
+/// to, `issuer` the certificate whose key signed that target.
+pub(crate) struct UnknownStatus<'a> {
+    pub(crate) target: &'a EmbeddedCert,
+    pub(crate) issuer: &'a EmbeddedCert,
 }
 
 /// One DSS OCSP entry: successful basic response whose signature verifies
@@ -459,7 +467,7 @@ fn ocsp_basic_valid<'a>(
         return Ok(None);
     };
     let mut targets: Vec<&[u8]> = Vec::with_capacity(basic.tbs_response_data.responses.len());
-    let mut unknown_targets: Vec<&EmbeddedCert> = Vec::new();
+    let mut unknown_statuses: Vec<UnknownStatus<'_>> = Vec::new();
     for single in &basic.tbs_response_data.responses {
         let Some((target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors, memory)?
         else {
@@ -480,7 +488,7 @@ fn ocsp_basic_valid<'a>(
         if matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
             targets.push(target.der.as_slice());
         } else if matches!(single.cert_status, x509_ocsp::CertStatus::Unknown(_)) {
-            unknown_targets.push(target);
+            unknown_statuses.push(UnknownStatus { target, issuer });
         } else {
             return Ok(None);
         }
@@ -509,7 +517,7 @@ fn ocsp_basic_valid<'a>(
             .is_ok()
             .then_some(OcspEvidence {
                 good_targets: targets,
-                unknown_targets,
+                unknown_statuses,
             }),
     )
 }

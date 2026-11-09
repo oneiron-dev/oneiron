@@ -117,8 +117,10 @@ An authenticated OCSP `unknown` about a covered non-anchor certificate (one in a
 signer or TSA chain) records `not_run` with `revocation_status_unknown`. An
 `unknown` about any other certificate says nothing about the chain and changes
 nothing: material unrelated to the chain never changes a genuine result. An
-`unknown` names a certificate by its signed content, so a second encoding of a
-chain certificate does not hide it.
+`unknown` names a certificate by issuer and serial number, so it counts for the
+chain certificate with that issuer and serial even when it binds first to
+another certificate (a second encoding, or a second certificate with the same
+serial).
 These typed findings appear in `checks`; the existing `reasons` list still holds
 failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
 never a passed B-LT/B-LTA validation-material check.
@@ -138,7 +140,9 @@ CA are vouched for, so they are never shadows. A shadow makes the result invalid
 wherever it would otherwise be unavailable or unknown; beside complete genuine
 coverage it is disregarded, and the material passes. A shadow failure is never
 read as a missing trust root: when a timestamp's root is unavailable, the retry
-that treats covered certificates as provisional roots keeps it a failure.
+that treats covered certificates as provisional roots first re-reads the
+material under the real anchors, and a shadow found there, even one an earlier
+failure hid, keeps it a failure.
 
 Oneiron's evidence policy is stricter than ETSI EN 319 102-1 here: the standard
 reports unverifiable revocation evidence as INDETERMINATE
