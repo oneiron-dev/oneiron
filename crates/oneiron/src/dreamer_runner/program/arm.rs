@@ -36,7 +36,7 @@ const fn invalid(reason: &'static str) -> Error {
 /// for the same conversation and trigger again returns the standing
 /// registration.
 ///
-/// A `trigger` other than a turn (untangle slice 6.8c) names no conversation
+/// A trigger other than a turn (untangle slice 6.8c) names no conversation
 /// and seals `authority` into the arming (B-3): each occurrence's wake carries
 /// it, and each admission judges it again, as it judges a turn's.
 pub(crate) fn arm_turn_program_in_txn(
@@ -44,10 +44,10 @@ pub(crate) fn arm_turn_program_in_txn(
     txn: &mut heed::RwTxn<'_>,
     authority: &TurnProgramAuthority,
     input: &ArmTurnProgram,
-    trigger: ProgramTrigger,
     now: u64,
 ) -> Result<TurnProgramRegistration> {
     let actor = authority.actor();
+    let trigger = input.trigger;
     // A base agent is no one's delegated will: it arms nothing.
     if crate::dreamer_runner::authority::is_base_agent_actor(&actor)?
         || !authority.stands_in_txn(vault, txn)?

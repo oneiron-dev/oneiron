@@ -410,6 +410,15 @@ pub struct FeedAckRequest {
     pub through: Vec<FeedPosition>,
 }
 
+/// A request to end one of the caller's subscriptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeedUnsubscribeRequest {
+    #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
+    pub subscription: EntityId,
+}
+
 /// The stored subscription.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SubscriptionRow {

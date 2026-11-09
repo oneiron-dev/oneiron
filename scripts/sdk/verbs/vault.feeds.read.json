@@ -1,0 +1,14 @@
+{
+  "name": "vault.feeds.read",
+  "description": "Reads the next page of one of the caller's change feed subscriptions, showing only what its read lane shows now; it moves no cursor.",
+  "input": "crate::feeds::FeedReadRequest",
+  "output": "crate::feeds::FeedPage",
+  "call": "memory.feed_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true,
+  "section": false
+}

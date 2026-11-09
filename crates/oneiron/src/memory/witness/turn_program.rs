@@ -11,49 +11,34 @@
 
 use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason, keep_wake_label_in_txn};
 use crate::dreamer_runner::{
-    ArmTurnProgram, LandedTurnRef, ProgramTrigger, TurnProgramAuthority, TurnProgramRegistration,
+    ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
 };
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 impl Memory<'_> {
-    /// Arms a pinned callable SKILL entry for this actor's own future turns
-    /// (DOOR-141 setup), in the conversation `input` names or any of the
-    /// actor's own. Arming starts nothing: each turn the actor lands from now
-    /// on wakes the program once, under that turn's own authority. Arming
-    /// the same definition again returns the standing registration.
+    /// Arms a pinned callable SKILL entry for this actor (DOOR-141 setup) on
+    /// `input.trigger`: its own future turns, in the conversation `input`
+    /// names or any of its own, or (untangle slice 6.8) a due time, the host
+    /// turning idle, or one of its own change feed subscriptions moving.
+    /// Arming starts nothing: each turn or occurrence from now on wakes the
+    /// program once. A turn's wake carries that turn's own authority; a trigger
+    /// other than a turn seals this caller's authority into the arming, judged
+    /// again at each admission, so a slip that lapsed or was withdrawn runs
+    /// nothing. Arming the same definition on the same trigger again returns
+    /// the standing registration.
     ///
     /// # Errors
     ///
     /// Forbidden for a caller whose authority this surface cannot seal or
     /// that no longer stands; an unknown conversation or SKILL; a SKILL that
-    /// is not an active callable, or arguments its call contract refuses.
+    /// is not an active callable, or arguments its call contract refuses; a
+    /// trigger that names a conversation, repeats a timer more than once a
+    /// minute or waits no quiet time; a subscription that is not this
+    /// actor's.
     pub fn arm_turn_program(
         &self,
         input: &ArmTurnProgram,
-    ) -> MemoryResult<TurnProgramRegistration> {
-        self.arm_program(input, ProgramTrigger::Turn)
-    }
-
-    /// Arms a pinned callable SKILL entry for this actor on `trigger`
-    /// (untangle slice 6.8c): its own turns, as [`Self::arm_turn_program`]
-    /// arms, or a due time, the host turning idle, or a change feed
-    /// subscription of its own moving. A trigger other than a turn names no
-    /// conversation and seals this caller's authority into the arming: each
-    /// occurrence wakes the program once under that authority, judged again at
-    /// each admission, so a slip that lapsed or was withdrawn runs nothing.
-    /// Arming the same definition on the same trigger again returns the
-    /// standing registration.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Self::arm_turn_program`]; a trigger that names a
-    /// conversation, repeats a timer more than once a minute or waits no quiet
-    /// time; a subscription that is not this actor's.
-    pub fn arm_program(
-        &self,
-        input: &ArmTurnProgram,
-        trigger: ProgramTrigger,
     ) -> MemoryResult<TurnProgramRegistration> {
         // An off-record session keeps nothing, so it arms nothing.
         let authority = self
@@ -69,7 +54,7 @@ impl Memory<'_> {
         let now = self.vault.now_recorded_at();
         self.with_verified_actor_write_txn(|wtxn| {
             Ok(crate::dreamer_runner::arm_turn_program_in_txn(
-                self.vault, wtxn, &authority, input, trigger, now,
+                self.vault, wtxn, &authority, input, now,
             )?)
         })
     }
