@@ -3,30 +3,13 @@
 
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::federation::grant_scope;
 use crate::vault::Vault;
 use crate::workspace_roster::{GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord};
 
 /// The Steward verb that lets its holder tune the engine's stored knobs.
 pub const ENGINE_CONTROLS_VERB: &str = grant_scope::ENGINE_CONTROLS_VERB;
-
-/// The embedded owner's proof.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn owner(vault: &Vault) -> Result<AuthenticatedOwner> {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
-    vault.authenticate_owner(
-        owner,
-        &owner.to_hex(),
-        true,
-        crate::store::GateDecisionId::now(),
-    )
-}
 
 /// The Coach's actor id.
 ///

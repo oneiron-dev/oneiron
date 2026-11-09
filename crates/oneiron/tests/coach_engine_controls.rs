@@ -11,9 +11,16 @@
 //! --all-features --test coach_engine_controls`.
 #![cfg(oneiron_test_support)]
 
-use oneiron::federation::{EngineControlActor, EngineControlClass};
-use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERB, coach, owner, write_root_goal};
-use oneiron::test_doors::steward::{STEWARD_READ_VERB, STEWARD_VERBS, stand_steward_grant};
+use std::collections::BTreeSet;
+
+use oneiron::federation::{
+    EngineControlActor, EngineControlClass, SystemAgentGrantNarrowing, SystemFunction,
+};
+use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERB, coach, write_root_goal};
+use oneiron::test_doors::steward::{
+    GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, grant_mark, open_owner_carrier_vault, owner,
+    stand_steward_grant,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const CLASSES: [EngineControlClass; 4] = [
@@ -144,4 +151,71 @@ fn only_a_grant_that_names_engine_controls_gives_it() {
         EngineControlActor::Holder(agent),
         EngineControlClass::WorkBudget
     ));
+}
+
+/// The host's first mint gives the Coach its default grant, {read,
+/// engine.controls}, as the owner's signed act and marked system-critical:
+/// narrowing it off engine.controls warns first, and once confirmed the
+/// Coach tunes nothing.
+#[test]
+fn the_coachs_first_mint_holds_engine_controls_and_narrowing_it_warns() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let coach = coach(&vault).expect("the Coach");
+    assert!(!allowed(
+        &vault,
+        EngineControlActor::Holder(coach),
+        EngineControlClass::WorkBudget
+    ));
+
+    vault.provision_system_agent_grants().expect("first mint");
+    let Some(GrantMark::Minted { verbs, .. }) = grant_mark(&vault, coach).expect("mark") else {
+        panic!("the first mint gives the Coach its grant");
+    };
+    let read = BTreeSet::from([STEWARD_READ_VERB.to_owned()]);
+    let mut default = read.clone();
+    default.insert(ENGINE_CONTROLS_VERB.to_owned());
+    assert_eq!(verbs, default, "the Coach's default grant");
+    for class in CLASSES {
+        assert!(
+            allowed(&vault, EngineControlActor::Holder(coach), class),
+            "{class:?}: the minted grant gives control"
+        );
+    }
+
+    let SystemAgentGrantNarrowing::ConfirmRequired {
+        breaks, confirm, ..
+    } = vault
+        .narrow_system_agent_grant(&owner, coach, &read, None)
+        .expect("narrowing")
+    else {
+        panic!("the Coach's grant is system-critical");
+    };
+    assert_eq!(breaks, vec![SystemFunction::EngineControlsJobs]);
+    assert!(allowed(
+        &vault,
+        EngineControlActor::Holder(coach),
+        EngineControlClass::WorkBudget
+    ));
+    vault
+        .narrow_system_agent_grant(&owner, coach, &read, Some(confirm))
+        .expect("confirmed narrowing");
+    assert!(!allowed(
+        &vault,
+        EngineControlActor::Holder(coach),
+        EngineControlClass::WorkBudget
+    ));
+    assert!(
+        vault
+            .apply_engine_control(
+                EngineControlActor::Holder(coach),
+                EngineControlClass::WorkBudget,
+                "DREAMER_CONSOLIDATION_SELECTION",
+                "{}",
+                |_| Ok(()),
+            )
+            .is_err(),
+        "the door refuses a narrowed Coach"
+    );
 }
