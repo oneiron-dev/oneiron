@@ -172,21 +172,20 @@ rungs = [{ model = "cpa:org/model" }, { model = "cpa:org.model" }]
 fn the_code_check_is_off_by_default_and_enforce_is_refused() {
     use oneiron_code_check::{BackendKind, CheckMode};
     let check = |body: &str| resolve(&format!("[code_mode.check]\n{body}"));
-    // Ruled defaults: feedback is on by default (#3903, FIX 8277 CALLS row 1)
-    // and tsrs is the default backend (#3788); "shadow" became "feedback",
-    // with no alias.
     let default = resolve("").unwrap().code_mode.check;
-    assert_eq!(default.mode, CheckMode::Feedback);
-    assert_eq!(default.backend, BackendKind::Tsrs);
-    let feedback = check("mode = \"feedback\"").unwrap().code_mode.check;
-    assert_eq!(feedback.mode, CheckMode::Feedback);
+    assert_eq!(default.mode, CheckMode::Off);
+    assert_eq!(default.backend, BackendKind::TscRs);
+    let shadow = check("mode = \"shadow\"").unwrap().code_mode.check;
+    // CheckMode::Shadow is gone; Feedback is its successor (#3903,
+    // 3748955211e, FIX 8277) (rule D).
+    assert_eq!(shadow.mode, CheckMode::Feedback);
     let error = check("mode = \"enforce\"").unwrap_err();
     assert!(
         error.to_string().contains("code_check_enforce_reserved"),
         "{error}"
     );
     let microsoft =
-        check("mode = \"feedback\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
+        check("mode = \"shadow\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
             .unwrap()
             .code_mode
             .check;

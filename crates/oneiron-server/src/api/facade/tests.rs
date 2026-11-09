@@ -39,6 +39,9 @@ async fn every_facade_verb_has_its_http_post_route() {
 
 #[tokio::test]
 async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes() {
+    // oneiron::memory::caps::MAX_QUERY_BYTES is gone (FIX55, #4909,
+    // d396e233532); its value stands here (rule D).
+    const REMOVED_QUERY_CAP: usize = 8 * 1024;
     const SECRET: &str = "facade-cap-regression-secret";
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
@@ -88,6 +91,11 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
             "messages",
         ),
         ("claim_upsert", claim, "claim payload"),
+        (
+            "recall",
+            json!({"query": "x".repeat(REMOVED_QUERY_CAP + 1)}),
+            "query",
+        ),
     ];
     for (verb, payload, label) in requests {
         let response = app
@@ -137,28 +145,6 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
             .expect("receipts"),
         before
     );
-    // Ruled refusal removed (FIX55, #4909): the recall query's 8 KiB refusal
-    // is retired; the full text is served and measured against its byte row.
-    const REMOVED_QUERY_CAP: usize = 8 * 1024;
-    let response = app
-        .clone()
-        .oneshot(crate::test_credentials::bind_slip_request(
-            &server,
-            &slip,
-            &holder,
-            Request::builder()
-                .method("POST")
-                .uri("/v1/core/facade/recall")
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&json!({"query": "x".repeat(REMOVED_QUERY_CAP + 1)}))
-                        .expect("request JSON"),
-                ))
-                .expect("request"),
-        ))
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::OK, "recall");
 }
 
 #[tokio::test]
