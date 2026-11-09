@@ -34221,7 +34221,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 6,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -34785,7 +34785,7 @@
      "purpose": "How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own…",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -50750,7 +50750,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/trap.rs",
@@ -100692,7 +100692,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7244,
    "test_files": 895
@@ -158816,7 +158816,24 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "—",
      "surface": {
-      "mod": 3
+      "mod": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ParkOwnerClass",
+      "ParkResume",
+      "ParkResumer"
+     ],
+     "path": "src/dreamer_runner/park_resume.rs",
+     "purpose": "The Dreamer park resume table (untangle slice 3, the wake lifecycle owner; Engine 09:32 and 14:26, 9 Nov)",
+     "surface": {
+      "const": 9,
+      "enum": 2,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -158854,7 +158871,7 @@
      "path": "src/dreamer_runner/types/retry_policy.rs",
      "purpose": "Moved from `crates/oneiron/src/dreamer_runner/types/retry_policy.rs` (core split slice 3: wake contract…",
      "surface": {
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -159222,9 +159239,9 @@
      "purpose": "—"
     },
     "dreamer_runner": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -159273,7 +159290,7 @@
    },
    "over_bar": 0,
    "purpose": "The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports…",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 0
   },
   "oneiron-web-fetch": {
