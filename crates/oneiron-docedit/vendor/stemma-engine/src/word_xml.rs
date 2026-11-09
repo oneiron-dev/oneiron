@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasher;
 
 use std::io::Cursor;
 
@@ -594,6 +595,52 @@ fn split_qname(qname: QName<'_>) -> (Option<String>, String) {
     )
 }
 
+/// The most attributes one start tag may carry for its expanded-name duplicate
+/// check to stay a plain scan of the names already kept. Past it the check
+/// hashes each name first, because the scan alone made one tag with n
+/// attributes cost O(n^2) (FIX TEST-RED-DOCEDIT-STEMMA-BUDGET). Below it the
+/// scan is cheaper than hashing and allocates nothing. quick-xml switches its
+/// own duplicate check at the same count.
+const LINEAR_DUPLICATE_SCAN_LIMIT: usize = 32;
+
+/// The expanded-name duplicate check of one start tag: two attributes with
+/// the same namespace URI and local name, whatever their prefixes.
+struct ExpandedNameCheck {
+    /// A hash of each expanded name kept so far, for a tag past
+    /// [`LINEAR_DUPLICATE_SCAN_LIMIT`]; `None` for a smaller tag.
+    hashes: Option<HashSet<u64>>,
+}
+
+impl ExpandedNameCheck {
+    fn for_tag(attributes: usize) -> Self {
+        Self {
+            hashes: (attributes > LINEAR_DUPLICATE_SCAN_LIMIT)
+                .then(|| HashSet::with_capacity(attributes)),
+        }
+    }
+
+    /// Whether `name` repeats the expanded name of an attribute in `kept`.
+    /// A name whose hash is new is not a duplicate. A repeated hash, or a
+    /// small tag, scans `kept`, so the answer is exact either way.
+    fn is_duplicate(
+        &mut self,
+        name: &AttributeName,
+        kept: &xmltree::AttributeMap<AttributeName, String>,
+    ) -> bool {
+        if let Some(hashes) = &mut self.hashes {
+            let hash = hashes
+                .hasher()
+                .hash_one((&name.namespace, &name.local_name));
+            if hashes.insert(hash) {
+                return false;
+            }
+        }
+        kept.keys().any(|existing| {
+            existing.namespace == name.namespace && existing.local_name == name.local_name
+        })
+    }
+}
+
 /// Build an `Element` from a quick-xml start tag's bytes: split the name,
 /// partition attributes into xmlns-declarations (kept as this element's
 /// `namespaces` map) and ordinary attributes (kept in insertion order), and
@@ -725,6 +772,7 @@ fn element_from_start(
     // attributes), matching xml-rs's behavior.
     let mut attributes =
         xmltree::AttributeMap::<AttributeName, String>::with_capacity(plain_attrs.len());
+    let mut expanded_names = ExpandedNameCheck::for_tag(plain_attrs.len());
     for (mut an, val) in plain_attrs {
         if let Some(ref p) = an.prefix {
             an.namespace = resolve_in_frame_then_scope(&frame, scope, p).map(str::to_string);
@@ -738,9 +786,7 @@ fn element_from_start(
         // Two prefixes bound to the same URI still name one expanded
         // attribute; the replaced parser rejected the duplicate (FIX 6131
         // review).
-        if attributes.keys().any(|existing| {
-            existing.namespace == an.namespace && existing.local_name == an.local_name
-        }) {
+        if expanded_names.is_duplicate(&an, &attributes) {
             return Err(WordXmlError::QuickXml {
                 position: reader.buffer_position(),
                 reason: "duplicate attribute".to_string(),
