@@ -27,7 +27,7 @@ fn open() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
 /// The owner witnesses one TURN of one MESSAGE row.
 fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::Error>> {
     let receipt = memory.witness(&WitnessTurn {
-        conversation_ref: String::new(),
+        conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
         messages: vec![WitnessMessage {
