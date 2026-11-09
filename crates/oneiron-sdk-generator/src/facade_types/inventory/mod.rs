@@ -1,0 +1,376 @@
+//! Port of facade_types.py:619-695 (`Inventory`): the declarations every facade root reaches, and the census of
+//! what they read as. The walk (Rust type to IR), the census, and the TypeScript and Python renderers are this
+//! module's children, split by the Python class's section comments.
+
+mod census;
+mod python;
+mod rust_ir;
+mod typescript;
+
+use std::path::Path;
+use std::rc::Rc;
+
+use indexmap::{IndexMap, IndexSet};
+
+use super::index::{Index, ItemRef};
+use super::reader::parse_type;
+use super::{CRATES, Ir, Key, RESERVED, ROOT_CONTEXT, holds, type_names};
+use crate::error::GenerateError;
+use crate::py::value::{Dict, Value};
+
+/// The place a type text is read from, Python's `(crate, file, module)` context tuple.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Context {
+    pub(crate) crate_name: String,
+    pub(crate) file: String,
+    pub(crate) module: Vec<String>,
+}
+
+impl Context {
+    /// `(item.crate, item.file, item.module)`.
+    pub(crate) fn of(item: &ItemRef) -> Self {
+        Self {
+            crate_name: item.crate_name.clone(),
+            file: item.file.clone(),
+            module: item.module.clone(),
+        }
+    }
+}
+
+/// One declaration (Python's `{'name', 'params', 'item', 'ir'}` dict). `ir` is `None` while its own body is walked.
+#[derive(Clone, Debug)]
+pub(crate) struct Decl {
+    pub(crate) name: String,
+    pub(crate) params: Vec<String>,
+    pub(crate) item: ItemRef,
+    pub(crate) ir: Option<Ir>,
+}
+
+impl Decl {
+    /// `decl['ir']` where Python reads it as a tuple: `None` there is its `TypeError`.
+    pub(crate) fn ir(&self) -> Result<&Ir, GenerateError> {
+        self.ir
+            .as_ref()
+            .ok_or_else(|| GenerateError::type_error("'NoneType' object is not subscriptable"))
+    }
+}
+
+/// A variant's payload shape: Python's `'unit'`, `'newtype'`, `'tuple'` or `'struct'`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VariantShape {
+    Unit,
+    Newtype,
+    Tuple,
+    Struct,
+}
+
+impl VariantShape {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Unit => "unit",
+            Self::Newtype => "newtype",
+            Self::Tuple => "tuple",
+            Self::Struct => "struct",
+        }
+    }
+}
+
+/// One variant of a derived enum (facade_types.py:966-967).
+#[derive(Clone, Debug)]
+pub(crate) struct VariantMeta {
+    pub(crate) name: String,
+    pub(crate) label: Value,
+    pub(crate) untagged: bool,
+    pub(crate) other: bool,
+    pub(crate) shape: VariantShape,
+    pub(crate) member: Ir,
+}
+
+/// A derived enum's serde tagging and variants (facade_types.py:968-969), by declaration name.
+#[derive(Clone, Debug)]
+pub(crate) struct EnumMeta {
+    pub(crate) tag: Option<String>,
+    pub(crate) content: Option<String>,
+    pub(crate) untagged: bool,
+    pub(crate) variants: Vec<VariantMeta>,
+}
+
+/// Port of facade_types.py:619-1254 (`Inventory`). Fields keep the Python names; a Python `set` is an `IndexSet`
+/// whose order nothing reads.
+#[derive(Debug)]
+pub(crate) struct Inventory {
+    pub(crate) index: Index,
+    /// item key -> declaration, in the order names were taken (a type is named when first reached).
+    pub(crate) decls: IndexMap<Key, Decl>,
+    /// The declarations in the order their bodies were finished (postorder).
+    pub(crate) order: Vec<Key>,
+    /// Every name taken: the type_names.json pins, then each allocation (a set).
+    pub(crate) names: IndexSet<String>,
+    /// (declaration, rust text, reason)
+    pub(crate) fallbacks: Vec<(String, String, String)>,
+    /// (declaration, rust text): serde_json values, opaque by design.
+    pub(crate) opaques: Vec<(String, String)>,
+    /// Each derived enum's serde tagging and variants, by declaration name.
+    pub(crate) variants: IndexMap<String, EnumMeta>,
+    /// Each named field a writer must send as `null` rather than omit, by (owner, key) (a set).
+    pub(crate) null_fields: Vec<(String, Value)>,
+    /// Each declaration that refuses unknown fields (a set).
+    pub(crate) closed: IndexSet<String>,
+    /// Each struct that derives no `Debug` (FIX 4993) (a set).
+    pub(crate) redacted: IndexSet<String>,
+    /// rust text -> IR, in rooting order.
+    pub(crate) roots: IndexMap<String, Ir>,
+    /// item key -> the name a codec module gives its mirror.
+    pub(crate) preferred: IndexMap<Key, String>,
+    /// `_py_erased`, `_py_erased_at`: the erased names and the `len(order)` they were found at.
+    py_erased_cache: (IndexSet<String>, Option<usize>),
+    pub(crate) root_context: Context,
+    /// `TYPE_NAMES`: Rust path -> pinned name.
+    type_names: Dict,
+    /// How deep `item_ir` has recursed through conversions (an endless chain is Python's RecursionError).
+    conversion_depth: usize,
+}
+
+impl Inventory {
+    /// Port of facade_types.py:622-647 (`Inventory.__init__`), reading `TYPE_NAMES` as the Python import does.
+    pub(crate) fn new(root: &Path, rows: &[&Dict]) -> Result<Self, GenerateError> {
+        let names = type_names(root)?;
+        Self::with_type_names(root, rows, &names)
+    }
+
+    /// `Inventory.__init__` with `TYPE_NAMES` already read (by `Generator::new`, at the Python import's place):
+    /// the index first, then the pinned names, then each row's input and output, rooted in row order.
+    pub(crate) fn with_type_names(
+        root: &Path,
+        rows: &[&Dict],
+        pins: &Value,
+    ) -> Result<Self, GenerateError> {
+        let index = Index::new(root)?;
+        // set(TYPE_NAMES.values())
+        let Value::Dict(pins) = pins else {
+            return Err(GenerateError::attribute(pins.type_name(), "values"));
+        };
+        let mut names = IndexSet::new();
+        for value in pins.values() {
+            value.check_hashable("a set element")?;
+            // A pin that is not a string never equals a name the inventory compares it with.
+            if let Value::Str(name) = value {
+                names.insert(name.clone());
+            }
+        }
+        let (crate_name, file) = ROOT_CONTEXT;
+        let base = CRATES
+            .iter()
+            .find(|(name, _)| *name == crate_name)
+            .map_or("", |(_, dir)| *dir);
+        let file = &file[base.len() + 1..];
+        let module = Path::new(file)
+            .parent()
+            .map(|parent| {
+                parent
+                    .iter()
+                    .map(|part| part.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut inventory = Self {
+            index,
+            decls: IndexMap::new(),
+            order: Vec::new(),
+            names,
+            fallbacks: Vec::new(),
+            opaques: Vec::new(),
+            variants: IndexMap::new(),
+            null_fields: Vec::new(),
+            closed: IndexSet::new(),
+            redacted: IndexSet::new(),
+            roots: IndexMap::new(),
+            preferred: IndexMap::new(),
+            py_erased_cache: (IndexSet::new(), None),
+            root_context: Context {
+                crate_name: crate_name.to_owned(),
+                file: file.to_owned(),
+                module,
+            },
+            type_names: pins.clone(),
+            conversion_depth: 0,
+        };
+        for row in rows {
+            // `(row['input'], row['output'])` is built before either is rooted.
+            let input = row_field(row, "input")?;
+            let output = row_field(row, "output")?;
+            inventory.root_ir_value(input)?;
+            inventory.root_ir_value(output)?;
+        }
+        Ok(inventory)
+    }
+
+    /// Port of facade_types.py:649-653 (`Inventory.root_ir`): a row type, named as the SDK module names it.
+    pub(crate) fn root_ir(&mut self, text: &str) -> Result<Ir, GenerateError> {
+        if let Some(found) = self.roots.get(text) {
+            return Ok(found.clone());
+        }
+        let context = self.root_context.clone();
+        let value = self.ir(&parse_type(text)?, &context, &[], text)?;
+        self.roots.insert(text.to_owned(), value.clone());
+        Ok(value)
+    }
+
+    /// `root_ir` on a row's JSON value: Python hashes it as a dict key, then hands it to a regex, so a list or a
+    /// dict is an unhashable `TypeError`, and any other non-string `expected string or bytes-like object`.
+    pub(crate) fn root_ir_value(&mut self, text: &Value) -> Result<Ir, GenerateError> {
+        self.root_ir(type_text(text)?)
+    }
+
+    /// Port of facade_types.py:655-657 (`Inventory.ts_type`): a row type as TypeScript spells it outside the
+    /// declarations module (Python's default prefix is `Facade.`).
+    pub(crate) fn ts_type(&mut self, text: &str, prefix: &str) -> Result<String, GenerateError> {
+        let node = self.root_ir(text)?;
+        self.ts(&node, prefix)
+    }
+
+    /// Port of facade_types.py:659-661 (`Inventory.py_type`): a row type as the Python stubs spell it outside the
+    /// declarations module (Python's default prefix is `Facade.`).
+    pub(crate) fn py_type(&mut self, text: &str, prefix: &str) -> Result<String, GenerateError> {
+        let node = self.root_ir(text)?;
+        self.py_outer(&node, prefix)
+    }
+
+    /// `self.decls[key]`.
+    pub(crate) fn decl(&self, key: &Key) -> Result<&Decl, GenerateError> {
+        self.decls
+            .get(key)
+            .ok_or_else(|| GenerateError::exception("KeyError", key.repr()))
+    }
+
+    /// Whether `(owner, key)` is in `null_fields`.
+    pub(crate) fn is_null_field(&self, owner: &str, key: &Value) -> bool {
+        self.null_fields
+            .iter()
+            .any(|(at, field)| at == owner && field == key)
+    }
+
+    // ---- naming
+
+    /// Port of facade_types.py:665-682 (`Inventory.allocate`): a pinned name, else the item's (or its codec
+    /// module's) name; a name another type took is a contest the author settles in type_names.json; a reserved
+    /// name takes module-suffix prefixes, shortest first, then a number.
+    fn allocate(&mut self, item: &ItemRef) -> Result<String, GenerateError> {
+        let path = item.key.path();
+        if let Some(pin) = self.type_names.get(&path) {
+            return match pin {
+                Value::Str(name) => Ok(name.clone()),
+                // Python returns the pin and fails where a string operation first meets it (best effort: the
+                // `prefix + name` of the first type spelling).
+                other => Err(GenerateError::type_error(format!(
+                    "can only concatenate str (not \"{}\") to str",
+                    other.type_name()
+                ))),
+            };
+        }
+        let mut name = self
+            .preferred
+            .get(&item.key)
+            .cloned()
+            .unwrap_or_else(|| item.name.clone());
+        if self.names.contains(&name) {
+            return Err(GenerateError::exception(
+                "ValueError",
+                format!(
+                    "{path}: the name {name} is contested; pin each contestant in scripts/sdk/type_names.json"
+                ),
+            ));
+        }
+        if holds(RESERVED, &name) {
+            let mut taken = None;
+            for size in 1..=item.module.len() {
+                let prefix: String = item.module[item.module.len() - size..]
+                    .iter()
+                    .map(|part| crate::py::text::title(part).replace('_', ""))
+                    .collect();
+                let candidate = format!("{prefix}{name}");
+                if !self.names.contains(&candidate) && !holds(RESERVED, &candidate) {
+                    taken = Some(candidate);
+                    break;
+                }
+            }
+            name = match taken {
+                Some(candidate) => candidate,
+                None => {
+                    let (base, mut n) = (name.clone(), 2);
+                    while self.names.contains(&name) || holds(RESERVED, &name) {
+                        name = format!("{base}{n}");
+                        n += 1;
+                    }
+                    name
+                }
+            };
+        }
+        self.names.insert(name.clone());
+        Ok(name)
+    }
+
+    /// Port of facade_types.py:684-691 (`Inventory.declare`): names the item when first reached, before its body is
+    /// walked (so a cycle meets the placeholder), and appends it to `order` after.
+    pub(crate) fn declare(&mut self, item: &ItemRef) -> Result<Key, GenerateError> {
+        let key = Rc::clone(&item.key);
+        if !self.decls.contains_key(&key) {
+            let name = self.allocate(item)?;
+            let decl = Decl {
+                name: name.clone(),
+                params: item.generics.clone(),
+                item: Rc::clone(item),
+                ir: None,
+            };
+            self.decls.insert(Rc::clone(&key), decl);
+            let value = self.item_ir(item, &name)?;
+            if let Some(decl) = self.decls.get_mut(&key) {
+                decl.ir = Some(value);
+            }
+            self.order.push(Rc::clone(&key));
+        }
+        Ok(key)
+    }
+
+    /// Port of facade_types.py:693-695 (`Inventory.fallback`).
+    pub(crate) fn fallback(&mut self, location: &str, text: &str, reason: &str) -> Ir {
+        self.fallbacks.push((
+            location.to_owned(),
+            crate::py::text::strip(text).to_owned(),
+            reason.to_owned(),
+        ));
+        Ir::Unknown(reason.to_owned())
+    }
+
+    /// Adds `(owner, key)` to `null_fields`; a dict key cannot be a set element's part.
+    pub(crate) fn add_null_field(&mut self, owner: &str, key: &Value) -> Result<(), GenerateError> {
+        if matches!(key, Value::List(_) | Value::Dict(_)) {
+            return Err(GenerateError::type_error(format!(
+                "cannot use 'tuple' as a set element (unhashable type: '{}')",
+                key.type_name()
+            )));
+        }
+        if !self.is_null_field(owner, key) {
+            self.null_fields.push((owner.to_owned(), key.clone()));
+        }
+        Ok(())
+    }
+}
+
+/// `row[name]`: a missing key is Python's `KeyError`.
+pub(crate) fn row_field<'r>(row: &'r Dict, name: &str) -> Result<&'r Value, GenerateError> {
+    row.get(name).ok_or_else(|| GenerateError::key(name))
+}
+
+/// A row's type text as `root_ir` takes it: a list or dict fails as a dict key, any other non-string in the type
+/// tokenizer's regex.
+pub(crate) fn type_text(text: &Value) -> Result<&str, GenerateError> {
+    text.check_hashable("a dict key")?;
+    match text {
+        Value::Str(text) => Ok(text),
+        other => Err(GenerateError::type_error(format!(
+            "expected string or bytes-like object, got '{}'",
+            other.type_name()
+        ))),
+    }
+}

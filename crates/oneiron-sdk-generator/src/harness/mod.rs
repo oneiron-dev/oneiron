@@ -1,6 +1,7 @@
 //! The `port-harness` subcommand (DESIGN 6; temporary, G6 deletes it with `scripts/sdk/port_harness.py`): each
 //! subcommand prints the same canonical dump as the Python half, so `diff` proves the port.
 
+mod replay;
 mod unicode;
 
 use crate::error::GenerateError;
@@ -11,6 +12,7 @@ const USAGE: &str = "usage: oneiron-sdk-generator port-harness unicode --out <fi
 pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     match args.first().map(String::as_str) {
         Some("unicode") => unicode::run(&args[1..]),
+        Some("replay") => replay::run(&args[1..]),
         _ => Err(GenerateError::exit(USAGE)),
     }
 }

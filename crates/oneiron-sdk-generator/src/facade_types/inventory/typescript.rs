@@ -1,0 +1,147 @@
+//! Port of facade_types.py:1053-1099 (the `TypeScript` section of `Inventory`): IR as TypeScript, and the
+//! declarations module (`facade-types.ts`).
+
+use super::super::{Ir, compound, dumps, ts_key};
+use super::Inventory;
+use crate::error::GenerateError;
+
+impl Inventory {
+    /// Port of facade_types.py:1055-1087 (`Inventory.ts`): an IR value as TypeScript, references spelled with
+    /// `prefix` (Python's default is `''`).
+    pub(crate) fn ts(&self, node: &Ir, prefix: &str) -> Result<String, GenerateError> {
+        Ok(match node {
+            Ir::Prim(prim, _) => match prim {
+                super::super::Prim::String => "string",
+                super::super::Prim::Int | super::super::Prim::Float => "number",
+                super::super::Prim::Bool => "boolean",
+                super::super::Prim::Null => "null",
+            }
+            .to_owned(),
+            Ir::Unknown(_) | Ir::Opaque => "unknown".to_owned(),
+            Ir::Never => "never".to_owned(),
+            Ir::Lit(value) => dumps(value),
+            Ir::Param(name) => name.clone(),
+            Ir::Array(inner) => {
+                let inner = self.ts(inner, prefix)?;
+                if compound(&inner, "|&") {
+                    format!("({inner})[]")
+                } else {
+                    inner + "[]"
+                }
+            }
+            Ir::Option(inner) => {
+                let inner = self.ts(inner, prefix)?;
+                if inner.ends_with("| null") || inner == "null" {
+                    inner
+                } else {
+                    inner + " | null"
+                }
+            }
+            Ir::Tuple(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| self.ts(item, prefix))
+                    .collect::<Result<Vec<_>, _>>()?;
+                format!("[{}]", items.join(", "))
+            }
+            Ir::Map(inner) => format!("Record<string, {}>", self.ts(inner, prefix)?),
+            Ir::Union(members) => {
+                let mut parts: Vec<String> = Vec::new();
+                for member in members {
+                    let text = self.ts(member, prefix)?;
+                    if !parts.contains(&text) {
+                        parts.push(text);
+                    }
+                }
+                parts
+                    .iter()
+                    .map(|part| {
+                        if compound(part, "&") {
+                            format!("({part})")
+                        } else {
+                            part.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            }
+            Ir::And(members) => {
+                let parts = members
+                    .iter()
+                    .map(|member| self.ts(member, prefix))
+                    .collect::<Result<Vec<_>, _>>()?;
+                parts
+                    .iter()
+                    .map(|part| {
+                        if compound(part, "|") {
+                            format!("({part})")
+                        } else {
+                            part.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" & ")
+            }
+            Ir::Partial(inner) => format!("Partial<{}>", self.ts(inner, prefix)?),
+            Ir::Object(fields, _) => {
+                if fields.is_empty() {
+                    return Ok("Record<string, never>".to_owned());
+                }
+                let mut members = Vec::with_capacity(fields.len());
+                for field in fields {
+                    let optional = if field.optional { "?" } else { "" };
+                    members.push(format!(
+                        "{}{optional}: {}",
+                        ts_key(&field.key)?,
+                        self.ts(&field.value, prefix)?
+                    ));
+                }
+                format!("{{ {} }}", members.join("; "))
+            }
+            Ir::Ref(key, arguments) => {
+                let decl = self.decl(key)?;
+                let arguments = if arguments.is_empty() {
+                    String::new()
+                } else {
+                    let items = arguments
+                        .iter()
+                        .map(|argument| self.ts(argument, prefix))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    format!("<{}>", items.join(", "))
+                };
+                format!("{prefix}{}{arguments}", decl.name)
+            }
+        })
+    }
+
+    /// Port of facade_types.py:1089-1099 (`Inventory.typescript`): the declarations module, one `export type` per
+    /// declaration in `order`, under the census lines.
+    pub(crate) fn typescript(&self, census_lines: &[String]) -> Result<String, GenerateError> {
+        let mut out = String::from(
+            "// Generated by scripts/sdk/generate.py from the Rust types each facade row\n",
+        );
+        out.push_str("// of scripts/sdk/verbs/ names; edit the Rust types or the table.\n");
+        for line in census_lines {
+            out.push_str("// ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        for key in &self.order {
+            let decl = self.decl(key)?;
+            let params = if decl.params.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", decl.params.join(", "))
+            };
+            out.push_str("/** `");
+            out.push_str(&decl.item.key.path());
+            out.push_str("` */\n");
+            out.push_str(&format!(
+                "export type {}{params} = {}\n",
+                decl.name,
+                self.ts(decl.ir()?, "")?
+            ));
+        }
+        Ok(out)
+    }
+}
