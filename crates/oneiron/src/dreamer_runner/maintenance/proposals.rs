@@ -108,6 +108,9 @@ pub(super) struct FindingPlace {
     pub(super) scope: Option<Value>,
     /// The claim's world; `None` leaves it in base reality.
     pub(super) world: Option<EntityId>,
+    /// The relationships whose members read the claim; `None` leaves it
+    /// to every relationship (OPUS-LEAKS).
+    pub(super) relationships: crate::write_envelope::claim_body::RelationshipScope,
 }
 
 /// [`emit_in_txn`] for a finding whose claim stands where `place` puts it.
@@ -217,6 +220,7 @@ fn write_in_txn(
             || crate::claim::session_claim_producer(&body) != Some(envelope.actor().entity_ref())
             || place.is_some_and(|place| {
                 body.scope != place.scope
+                    || body.rel != place.relationships
                     || body.world.unwrap_or_else(crate::claim::base_world_id)
                         != place.world.unwrap_or_else(crate::claim::base_world_id)
             })
@@ -245,6 +249,9 @@ fn write_in_txn(
         }
         if let Some(world) = place.world {
             candidate = candidate.with_world(world);
+        }
+        if place.relationships.is_some() {
+            candidate = candidate.with_relationships(place.relationships.clone());
         }
     }
     let mut envelope = envelope.clone();
@@ -309,7 +316,21 @@ impl Landing {
         now: u64,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<MaintenanceInverse>,
     ) -> Result<EntityId> {
-        let (id, fresh) = write_in_txn(vault, txn, finding, None, &self.envelope, now)?;
+        self.land_placed_in_txn(vault, txn, finding, None, now, effect)
+    }
+
+    /// [`Self::land_in_txn`] for a finding whose claim stands where `place`
+    /// puts it, when one is given.
+    pub(super) fn land_placed_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        finding: &Finding<'_>,
+        place: Option<&FindingPlace>,
+        now: u64,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<MaintenanceInverse>,
+    ) -> Result<EntityId> {
+        let (id, fresh) = write_in_txn(vault, txn, finding, place, &self.envelope, now)?;
         if self.applied && fresh {
             let inverse = effect(txn)?;
             self.record_in_txn(vault, txn, id, inverse, now)?;
