@@ -69,7 +69,7 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
-pub(crate) use hold_override::scrub_hold_override_actor_in_txn;
+pub(crate) use hold_override::erase_hold_override_actor_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use hold_override::hold_override_actor_in_txn;
 pub(crate) use hook_hold::HoldAttemptForHook;

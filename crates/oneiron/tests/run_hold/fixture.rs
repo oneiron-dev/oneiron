@@ -12,6 +12,10 @@ use oneiron::attempt_queue::{
 };
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::task_verb::TaskCreateSpec;
+use oneiron::wave_orchestration::{
+    PlannedTask, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION, WaveApplyOutcome, WavePlan,
+};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 pub(crate) const KIND: &str = "test.run_hold";
@@ -205,4 +209,77 @@ pub(crate) fn annotation_held_row(
     );
 
     (row, actor_id)
+}
+
+/// A wave's planning attempt parked on its launch's fan-out hold: a gated
+/// apply with no decider holds the cut for the owner.
+pub(crate) struct HeldWave {
+    pub(crate) row: AttemptRecord,
+    pub(crate) launch: EntityId,
+    pub(crate) actor: EntityId,
+    pub(crate) epic: EntityId,
+}
+
+/// The two-task cut of `epic` the held wave applies.
+pub(crate) fn wave_plan(epic: EntityId) -> WavePlan {
+    WavePlan {
+        schema_version: WAVE_PLAN_SCHEMA_VERSION,
+        plan_ref: "run-hold-plan".to_owned(),
+        epic_task_ref: epic,
+        tasks: ["a", "b"]
+            .into_iter()
+            .map(|key| PlannedTask {
+                local_key: key.to_owned(),
+                label: format!("task {key}"),
+                spec: serde_json::Value::Null,
+                assignee_ref: None,
+                blocked_by: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn held_wave_planner(vault: &Vault, queue: &AttemptQueue<'_>, now: u64) -> HeldWave {
+    let actor = person(vault, now);
+    let epic = vault
+        .memory(actor, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("split the epic"),
+            Some("epic".into()),
+            None,
+            Some(now),
+        ))
+        .expect("the epic is created")
+        .task_ref
+        .expect("open task effects");
+    let row = enqueued(
+        vault
+            .enqueue_wave_plan(epic, "split the epic", serde_json::json!({}), now)
+            .expect("enqueue the planning attempt"),
+    );
+    let first = claimed(claim(queue, WAVE_PLAN_ATTEMPT_KIND, now + 1));
+    let launch = match vault
+        .apply_wave_plan_attempt_gated(
+            actor,
+            EdgeActorClass::Human,
+            &first,
+            wave_plan(epic),
+            None,
+            now + 2,
+        )
+        .expect("the gated apply")
+    {
+        WaveApplyOutcome::Paused(receipt) => receipt.launch_ref,
+        WaveApplyOutcome::Applied(_) => panic!("with no decider the cut waits for the owner"),
+    };
+    assert!(
+        read(queue, row.id).fanout_hold_for(launch),
+        "the planner waits on the launch"
+    );
+    HeldWave {
+        row,
+        launch,
+        actor,
+        epic,
+    }
 }

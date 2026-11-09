@@ -525,6 +525,24 @@ impl AgentDispatcher<'_> {
     }
 }
 
+/// The plan hold table's actor scrub (an actor's erase, and a restore's rerun
+/// of it): a hold `actor` resumed, by its own door or by an override
+/// (RUN-HOLD), reads as resumed by an erased actor. The resume stands.
+pub(crate) fn erase_plan_hold_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &crate::entity_id::EntityId,
+) -> Result<()> {
+    let hex = actor.to_hex();
+    for (root, mut hold) in PLAN_HOLD.scan(&vault.store, wtxn)? {
+        if hold.resumed_by.as_deref() == Some(hex.as_str()) {
+            hold.resumed_by = Some(crate::receipt::ERASED_CALL_IDENTITY.to_owned());
+            PLAN_HOLD.put(&vault.store, wtxn, &root, &hold)?;
+        }
+    }
+    Ok(())
+}
+
 /// The producer of a held run's owner notice.
 const BUDGET_HOLD_NOTIFICATION_PRODUCER: &str = "agent_dispatch.budget_hold";
 

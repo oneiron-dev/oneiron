@@ -2,8 +2,9 @@
 //! - a hook hold's override releases the hold and grants nothing: the saved
 //!   wait stays, so the next claim meets the hook boundary on the same ask,
 //!   and no override record is kept for it;
-//! - the annotation override record goes with its row, and an actor erasure
-//!   leaves the release without the actor.
+//! - the annotation override record goes with its row;
+//! - an actor's erase, through the scrubs the override tables register,
+//!   leaves every release (annotation, budget, fan-out) without that actor.
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_hold_doors`.
@@ -13,14 +14,18 @@
 mod fixture;
 
 use fixture::{
-    KIND, WORKER, annotation_held_row, claim, claimed, enqueued, last_note, open, person, read,
-    resume, unix_now,
+    HeldWave, KIND, WORKER, annotation_held_row, claim, claimed, enqueued, held_wave_planner,
+    last_note, open, person, read, resume, unix_now,
 };
+use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease, BudgetHoldState};
 use oneiron::attempt_queue::{
     AttemptInterventionEffect, AttemptQueue, AttemptResumePoint, EnqueueAttempt, PauseKind,
     RunState,
 };
 use oneiron::test_doors::run_hold;
+
+/// The erased actor's name in a record that keeps its row.
+const ERASED: &str = "erased";
 
 /// The lead's condition 3: an override never grants hook consent.
 #[test]
@@ -102,15 +107,19 @@ fn annotation_override_goes_with_its_row_and_loses_an_erased_actor() {
     );
 
     // Another actor's erasure leaves it; the operator's erasure scrubs it.
-    run_hold::scrub_hold_override_actor(&vault, &actor_id).expect("scrub");
+    assert_eq!(
+        run_hold::erase_actor_in_run_hold_tables(&vault, &actor_id).expect("erase"),
+        3,
+        "each override table registers its actor scrub"
+    );
     assert_eq!(
         run_hold::hold_override_actor(&vault, row.id).expect("override read"),
         Some(operator.to_hex())
     );
-    run_hold::scrub_hold_override_actor(&vault, &operator).expect("scrub");
+    run_hold::erase_actor_in_run_hold_tables(&vault, &operator).expect("erase");
     assert_eq!(
         run_hold::hold_override_actor(&vault, row.id).expect("override read"),
-        Some("erased".to_owned()),
+        Some(ERASED.to_owned()),
         "the release stands without the erased actor"
     );
 
@@ -121,5 +130,70 @@ fn annotation_override_goes_with_its_row_and_loses_an_erased_actor() {
         run_hold::hold_override_actor(&vault, row.id).expect("override read"),
         None,
         "the override record is gone with its row"
+    );
+}
+
+/// Review round 1 of #6895: the budget and fan-out records that name an
+/// override's actor lose an erased actor too; the releases stand.
+#[test]
+fn budget_and_fanout_overrides_lose_an_erased_actor() {
+    let (_dir, vault) = open();
+    let queue = AttemptQueue::new(&vault);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let now = unix_now();
+    let operator = person(&vault, now);
+
+    // A budget hold, released by the operator's override.
+    let row = enqueued(
+        queue
+            .enqueue(EnqueueAttempt {
+                kind: KIND.to_owned(),
+                payload: b"run".to_vec(),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })
+            .expect("enqueue"),
+    );
+    let leased = claimed(claim(&queue, KIND, now + 1));
+    dispatcher
+        .hold_for_budget(
+            row.id,
+            BudgetHoldLease {
+                attempt: leased.id,
+                lease_owner: WORKER.to_owned(),
+                attempt_count: leased.attempt_count,
+                resume_point: AttemptResumePoint::new("step-3", now + 2),
+            },
+            None,
+            "spend cap",
+            now + 2,
+        )
+        .expect("the budget hold is admitted");
+    resume(&queue, row.id, &operator.to_hex(), now + 3);
+
+    // A fan-out hold, released by the operator's override.
+    let HeldWave {
+        row: planner,
+        launch,
+        ..
+    } = held_wave_planner(&vault, &queue, now + 4);
+    resume(&queue, planner.id, &operator.to_hex(), now + 8);
+    assert_eq!(
+        run_hold::launch_override_actors(&vault, launch).expect("launch read"),
+        vec![operator.to_hex()]
+    );
+
+    run_hold::erase_actor_in_run_hold_tables(&vault, &operator).expect("erase");
+    let hold = dispatcher
+        .plan_hold(row.id)
+        .expect("plan hold")
+        .expect("the hold record stays");
+    assert_eq!(hold.state, BudgetHoldState::Resumed, "the resume stands");
+    assert_eq!(hold.resumed_by.as_deref(), Some(ERASED));
+    assert_eq!(
+        run_hold::launch_override_actors(&vault, launch).expect("launch read"),
+        vec![ERASED.to_owned()],
+        "the planner's release stands without the erased actor"
     );
 }

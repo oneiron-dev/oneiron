@@ -68,7 +68,7 @@ use crate::outbound_chokepoint::{
     admit_fanout_with_history, answer_fanout_width_check, approve_and_resume_fanout,
     fanout_estimate, fanout_plan_digest, fanout_width_check_row,
 };
-use crate::receipt::ReceiptRecord;
+use crate::receipt::{ERASED_CALL_IDENTITY, ReceiptRecord};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::wave_orchestration::{
     ValidatedWavePlan, WAVE_PLAN_SCHEMA_VERSION, WavePlan, WaveTaskWrite,
@@ -491,6 +491,47 @@ pub(crate) fn follow_fanout_hold_override_in_txn(
         });
     }
     save_launch(vault, txn, &launch)
+}
+
+/// The actors of the planner releases recorded on `launch_ref`, in order.
+#[cfg(oneiron_test_support)]
+pub(crate) fn launch_override_actors_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    launch_ref: EntityId,
+) -> Result<Vec<String>> {
+    Ok(load_launch(vault, txn, launch_ref)?
+        .map(|launch| {
+            launch
+                .resumed_by_override
+                .into_iter()
+                .map(|released| released.actor)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// The override pass of an actor's erase over the launches (RUN-HOLD): each
+/// planner release `actor_hex` made reads as made by an erased actor. The
+/// release stands.
+pub(super) fn erase_launch_override_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor_hex: &str,
+) -> Result<()> {
+    for (key, mut launch) in FANOUT_LAUNCHES.scan(&vault.store, txn)? {
+        let mut named = false;
+        for released in &mut launch.resumed_by_override {
+            if released.actor == actor_hex {
+                released.actor = ERASED_CALL_IDENTITY.to_owned();
+                named = true;
+            }
+        }
+        if named {
+            FANOUT_LAUNCHES.put(&vault.store, txn, &key, &launch)?;
+        }
+    }
+    Ok(())
 }
 
 /// The ref of `actor`'s launch of the cut named `plan_ref`.

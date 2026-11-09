@@ -408,6 +408,8 @@ mod symbol_lease_tests;
 
 pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use fanout_launch::launch_override_actors_in_txn;
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
