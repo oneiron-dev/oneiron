@@ -4,8 +4,8 @@
 
 use crate::claim::ClaimSource;
 use crate::derive::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSupersede,
-    ItemOutcome, ItemRef,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
@@ -39,11 +39,31 @@ pub struct Supersede {
     pub old: Named,
 }
 
+/// An answer to one open conflict, for a door batch.
+#[derive(Debug, Clone)]
+pub enum Settlement {
+    /// This member stands.
+    Keep(Named),
+    /// Every member stays active.
+    HoldBoth,
+    /// The marker named no real contradiction.
+    Dismiss,
+}
+
+/// A settlement for a door batch.
+#[derive(Debug, Clone)]
+pub struct Settle {
+    pub local: &'static str,
+    pub marker: Named,
+    pub settlement: Settlement,
+}
+
 /// One item of a door batch.
 #[derive(Debug, Clone)]
 pub enum Derived {
     Claim(Claim),
     Supersede(Supersede),
+    Settle(Settle),
 }
 
 /// One item's outcome, as the commit answered it or the batch record keeps
@@ -123,6 +143,15 @@ pub fn commit(
                     new: named(&supersede.new),
                     old: named(&supersede.old),
                 }),
+                Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
+                    local: settle.local.to_owned(),
+                    marker: named(&settle.marker),
+                    settlement: match &settle.settlement {
+                        Settlement::Keep(kept) => DerivedSettlement::Keep(named(kept)),
+                        Settlement::HoldBoth => DerivedSettlement::HoldBoth,
+                        Settlement::Dismiss => DerivedSettlement::Dismiss,
+                    },
+                }),
             })
             .collect(),
     };
@@ -169,14 +198,53 @@ pub fn claim_lifecycle(vault: &Vault, id: EntityId) -> Result<Option<String>> {
         .map(|body| body.lifecycle.as_str().to_owned()))
 }
 
+/// Opens a conflict between the stored claims `new` and `old`, as the
+/// claim lifecycle's supersession coaching opens one: the Dreamer writes the
+/// pair's `core.conflict.open` marker as a proposal. Its id.
+///
+/// # Errors
+///
+/// The vault's, and a `new` that is no stored claim.
+pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<EntityId> {
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+    let raw = vault.get(&new)?.ok_or(crate::error::Error::EntityNotFound)?;
+    let body = crate::claim::decode_claim_body(&raw, true)?;
+    let envelope = WriteEnvelope::new(
+        vault.dreamer_authority()?,
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::Map(vec![(
+            rmpv::Value::from("surface"),
+            rmpv::Value::from("test.open_conflict"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let marker = crate::claim::conflict_marker(&new, &old, &body, &envelope)?;
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        let mut envelope = marker.envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(txn, &marker.id, &marker.candidate, &mut envelope)?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &marker.id,
+                marker.candidate.clone(),
+                &envelope,
+                crate::TimeRange { start: now, end: now },
+                now,
+            )
+            .apply_recording_gate_decisions(txn)
+    })?;
+    Ok(marker.id)
+}
+
 /// The items of the committed batch `batch`, as its record keeps them.
 ///
 /// # Errors
 ///
 /// The vault's.
 pub fn batch_items(vault: &Vault, batch: EntityId) -> Result<Option<Vec<Item>>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(crate::derive::batch_record_in_txn(vault, &txn, batch)?.map(|record| {
+    Ok(vault.derive_batch(batch)?.map(|record| {
         record
             .items
             .into_iter()
@@ -198,8 +266,7 @@ pub fn batch_items(vault: &Vault, batch: EntityId) -> Result<Option<Vec<Item>>> 
 ///
 /// The vault's.
 pub fn batches_of(vault: &Vault, actor: EntityId) -> Result<Vec<EntityId>> {
-    let txn = vault.store.env.read_txn()?;
-    crate::derive::batches_of_actor_in_txn(vault, &txn, actor)
+    vault.derive_batches_of(actor)
 }
 
 /// The reason tokens of the refusal receipt the batch record names for its
@@ -213,10 +280,10 @@ pub fn refusal_receipt(
     batch: EntityId,
     local: &str,
 ) -> Result<Option<Vec<String>>> {
-    let txn = vault.store.env.read_txn()?;
-    let Some(record) = crate::derive::batch_record_in_txn(vault, &txn, batch)? else {
+    let Some(record) = vault.derive_batch(batch)? else {
         return Ok(None);
     };
+    let txn = vault.store.env.read_txn()?;
     let Some(receipt) = record
         .items
         .iter()
@@ -269,5 +336,15 @@ pub fn derive_verdict(
 /// Every refusal token of the derive verdict.
 #[must_use]
 pub fn refusal_tokens() -> Vec<&'static str> {
-    DeriveRefusal::ALL.iter().map(|refusal| refusal.token()).collect()
+    [
+        DeriveRefusal::NoLandingRows,
+        DeriveRefusal::OptedOut,
+        DeriveRefusal::GrantGone,
+        DeriveRefusal::GrantLacksDerive,
+        DeriveRefusal::GrantLacksArchive,
+        DeriveRefusal::OutsideGrant,
+    ]
+    .into_iter()
+    .map(DeriveRefusal::token)
+    .collect()
 }

@@ -14,12 +14,12 @@ use crate::{EntityId, Vault};
 /// The refusal of a supersession that would close user-stated truth: a
 /// `Generated` claim over a user-stated (or unlabelled) one, or an observed
 /// preference over a stated one.
-pub(crate) const SUPERSEDE_PROTECTED_SOURCE: &str = "gate.deny.derive.supersede_protected_source";
+pub const SUPERSEDE_PROTECTED_SOURCE: &str = "gate.deny.derive.supersede_protected_source";
 
 /// The refusal of a supersession the claim lifecycle does not allow: either
 /// side is not a live claim, the old one is already closed, or a claim names
 /// itself.
-pub(crate) const SUPERSEDE_LIFECYCLE: &str = "gate.deny.derive.supersede_lifecycle";
+pub const SUPERSEDE_LIFECYCLE: &str = "gate.deny.derive.supersede_lifecycle";
 
 /// The reason a landed supersession's receipt names.
 const SUPERSEDE_ALLOWED: &str = "gate.allow.derive.supersede";

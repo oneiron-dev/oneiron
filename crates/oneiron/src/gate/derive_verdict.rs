@@ -62,17 +62,6 @@ pub(crate) enum DeriveRefusal {
 }
 
 impl DeriveRefusal {
-    /// Every refusal, in token order: the list `vault.policy.preflight`
-    /// shows.
-    pub(crate) const ALL: [Self; 6] = [
-        Self::NoLandingRows,
-        Self::OptedOut,
-        Self::GrantGone,
-        Self::GrantLacksDerive,
-        Self::GrantLacksArchive,
-        Self::OutsideGrant,
-    ];
-
     /// The stable reason token a commit receipts and a preflight shows.
     pub(crate) const fn token(self) -> &'static str {
         match self {

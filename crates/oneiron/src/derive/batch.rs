@@ -11,21 +11,21 @@ use crate::EntityId;
 /// recorded lineage. The verbs (6.7d) build it from the live-run attachment
 /// and an engine job from its attempt; a caller never supplies it.
 #[derive(Debug, Clone)]
-pub(crate) struct DerivationStamp {
+pub struct DerivationStamp {
     /// The committing actor.
-    pub(crate) actor: WriteActor,
+    pub actor: WriteActor,
     /// The run the batch belongs to, as recorded; `None` for an engine job
     /// with no run.
-    pub(crate) run: Option<String>,
+    pub run: Option<String>,
     /// The source classes the run's inputs carried. Every derived claim is
     /// `Generated`; this adds what it was derived from.
-    pub(crate) lineage: SourceLineage,
+    pub lineage: SourceLineage,
 }
 
 /// A row a derivation item names: one already stored, or one an earlier item
 /// of the same batch lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ItemRef {
+pub enum ItemRef {
     /// A stored row, by id.
     Stored(EntityId),
     /// The row an earlier item of the batch lands, by that item's local name.
@@ -34,58 +34,84 @@ pub(crate) enum ItemRef {
 
 /// A claim an agent derived.
 #[derive(Debug, Clone)]
-pub(crate) struct DerivedClaim {
+pub struct DerivedClaim {
     /// The item's name inside its batch: unique there, and what later items
     /// name it by.
-    pub(crate) local: String,
+    pub local: String,
     /// The claim's predicate.
-    pub(crate) predicate: String,
+    pub predicate: String,
     /// What the claim is about.
-    pub(crate) subject: ItemRef,
+    pub subject: ItemRef,
     /// The claim's value.
-    pub(crate) value: serde_json::Value,
+    pub value: serde_json::Value,
     /// Its confidence, in `[0, 1]`.
-    pub(crate) confidence: f32,
+    pub confidence: f32,
     /// The rows it was derived from. The derivation floor (GATE-12) needs at
     /// least one of them to be live evidence.
-    pub(crate) evidence: Vec<ItemRef>,
+    pub evidence: Vec<ItemRef>,
 }
 
 /// A supersession an agent derived: the claim `new` replaces the claim
 /// `old`, which the agent's grant reaches.
 #[derive(Debug, Clone)]
-pub(crate) struct DerivedSupersede {
+pub struct DerivedSupersede {
     /// The item's name inside its batch.
-    pub(crate) local: String,
+    pub local: String,
     /// The claim that stands.
-    pub(crate) new: ItemRef,
+    pub new: ItemRef,
     /// The claim it replaces.
-    pub(crate) old: ItemRef,
+    pub old: ItemRef,
+}
+
+/// An agent's answer to one open conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DerivedSettlement {
+    /// This member stands; each other live member is superseded by it.
+    Keep(ItemRef),
+    /// Every member stays active: the pair is held and its gap is known.
+    HoldBoth,
+    /// The marker named no real contradiction.
+    Dismiss,
+}
+
+/// A settlement an agent derived for the open conflict `marker`.
+#[derive(Debug, Clone)]
+pub struct DerivedSettle {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The open conflict's marker.
+    pub marker: ItemRef,
+    /// The answer.
+    pub settlement: DerivedSettlement,
 }
 
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
-pub(crate) enum DerivationItem {
+pub enum DerivationItem {
     /// A `Generated` claim (kind 1).
     Claim(DerivedClaim),
     /// A supersession (kind 3).
     Supersede(DerivedSupersede),
+    /// A conflict settlement (kind 3).
+    Settle(DerivedSettle),
 }
 
 impl DerivationItem {
     /// The item's name inside its batch.
-    pub(crate) fn local(&self) -> &str {
+    pub fn local(&self) -> &str {
         match self {
             Self::Claim(claim) => &claim.local,
             Self::Supersede(supersede) => &supersede.local,
+            Self::Settle(settle) => &settle.local,
         }
     }
 
     /// The kind's name, as the batch record and the receipts name it.
-    pub(crate) const fn kind(&self) -> &'static str {
+    pub const fn kind(&self) -> &'static str {
         match self {
             Self::Claim(_) => "claim",
             Self::Supersede(_) => "supersede",
+            Self::Settle(_) => "settle",
         }
     }
 
@@ -96,6 +122,10 @@ impl DerivationItem {
                 .chain(claim.evidence.iter())
                 .collect(),
             Self::Supersede(supersede) => vec![&supersede.new, &supersede.old],
+            Self::Settle(settle) => match &settle.settlement {
+                DerivedSettlement::Keep(kept) => vec![&settle.marker, kept],
+                DerivedSettlement::HoldBoth | DerivedSettlement::Dismiss => vec![&settle.marker],
+            },
         }
     }
 }
@@ -103,13 +133,13 @@ impl DerivationItem {
 /// The items one commit lands, in order: an item names only rows stored
 /// before the batch or landed by an item before it.
 #[derive(Debug, Clone)]
-pub(crate) struct DerivationBatch {
+pub struct DerivationBatch {
     /// The items, in the order they stage.
-    pub(crate) items: Vec<DerivationItem>,
+    pub items: Vec<DerivationItem>,
 }
 
 /// The most items one batch holds.
-pub(crate) const MAX_BATCH_ITEMS: usize = 256;
+pub const MAX_BATCH_ITEMS: usize = 256;
 
 impl DerivationBatch {
     /// Checks the batch's shape: at least one item and no more than
@@ -119,7 +149,7 @@ impl DerivationBatch {
     /// # Errors
     ///
     /// A malformed batch, which aborts the whole commit.
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         if self.items.is_empty() {
             return Err(malformed("a derivation batch holds at least one item"));
         }

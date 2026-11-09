@@ -1,10 +1,12 @@
-//! Supersession items of a derivation batch (untangle 6.7a-2): a claim an
-//! agent derived replaces one its live `derive` grant reaches, through the
-//! claim lifecycle's own supersession, and never over user-stated truth.
+//! Supersession and settlement items of a derivation batch (untangle 6.7a):
+//! a claim an agent derived replaces one its live `derive` grant reaches,
+//! through the claim lifecycle's own supersession, and never over
+//! user-stated truth; an agent answers an open conflict its grant reaches
+//! through the conflict settlement's own door.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
-//! --all-features --test derive_supersede`.
+//! --all-features --test derive_settlement`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -15,7 +17,8 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, Supersede, claim_lifecycle, commit, refusal_receipt,
+    Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit, open_conflict,
+    refusal_receipt,
 };
 use oneiron::test_doors::steward::{STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant};
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -24,6 +27,7 @@ use serde_json::json;
 const READER: &str = "reader";
 const PROTECTED: &str = "gate.deny.derive.supersede_protected_source";
 const LACKS_DERIVE: &str = "gate.deny.derive.grant_lacks_derive";
+const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
     let id = EntityId::now();
@@ -202,6 +206,100 @@ fn a_supersession_needs_the_derive_grant() {
     };
     assert!(!replace.landed);
     assert_eq!(replace.reasons, vec![LACKS_DERIVE.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned())
+    );
+}
+
+#[test]
+fn a_derived_settlement_keeps_one_member_of_an_open_conflict() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(settled.landed, "the settlement lands: {settled:?}");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("superseded".to_owned()),
+        "the other member is superseded by the kept one"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, second).expect("read"),
+        Some("active".to_owned())
+    );
+}
+
+#[test]
+fn a_settlement_of_a_row_that_is_no_open_conflict_is_refused() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-not-a-conflict",
+        &[Derived::Settle(Settle {
+            local: "settle_a_claim",
+            marker: Named::Stored(first),
+            settlement: Settlement::Dismiss,
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(!settled.landed);
+    assert_eq!(settled.reasons, vec![SETTLE_REFUSED.to_owned()]);
+}
+
+#[test]
+fn a_settlement_needs_the_derive_grant() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+    stand_steward_grant(
+        &fixture.vault,
+        fixture.dreamer,
+        &[STEWARD_READ_VERB, STEWARD_ARCHIVE_VERB],
+    )
+    .expect("a grant without derive");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-narrowed",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(!settled.landed);
+    assert_eq!(settled.reasons, vec![LACKS_DERIVE.to_owned()]);
     assert_eq!(
         claim_lifecycle(&fixture.vault, first).expect("read"),
         Some("active".to_owned())
