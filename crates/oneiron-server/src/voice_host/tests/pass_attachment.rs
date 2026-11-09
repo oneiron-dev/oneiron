@@ -214,6 +214,8 @@ fn consolidation_factory(fixture: &Fixture) -> ConsolidationExecutorFactory {
         oneiron::llm::HostInferenceBinding::Advertised {
             model,
             locality: oneiron::ModelLocality::OwnServer,
+            // Paid, as before FIX 10592: no keyless attestation.
+            keyless: false,
         },
         Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),

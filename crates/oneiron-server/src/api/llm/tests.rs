@@ -237,7 +237,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
     tokio::task::spawn_blocking(move || {
         // Pair through the public SDK adapter; do not use the issuer secret as
         // the LLM client's credential.
-        let (origin, credential) = oneiron_remote::OneironClient::pair(&link).unwrap();
+        let (origin, credential, _reach) = oneiron_remote::OneironClient::pair(&link).unwrap();
         let client = RemoteLlmClient::connect(&origin, &credential).unwrap();
         let guard =
             BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);

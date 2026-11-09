@@ -119,7 +119,16 @@ async fn imported_update_vv_and_content_survive_server_recreation_without_commit
         doc.import_with(&update, "conn:1").unwrap();
         // Deliberately NO doc.commit(): the import already advanced state and
         // oplog, and a commit here would author a server-side boundary.
-        server.persist_imported_update(&key, &update).unwrap();
+        // A full-window update: no copy edit lands new bytes, and no
+        // promoted-window credential is rechecked.
+        server
+            .persist_imported_update(
+                &key,
+                &update,
+                &oneiron::sync::selector::RepoSyncLandings::default(),
+                None,
+            )
+            .unwrap();
 
         assert_eq!(
             deep_map_bytes(&doc, "entities", entity.to_hex().as_str()).as_deref(),

@@ -145,7 +145,9 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
         &read_secret_value(&b"cli synthetic rotated"[..]).unwrap(),
     )
     .unwrap();
-    assert_eq!((rotated.from_generation, rotated.to_generation), (0, 1));
+    // This install wrote the rotation, so the reply carries its receipt.
+    let receipt = rotated.receipt.as_ref().expect("the rotation's receipt");
+    assert_eq!((receipt.from_generation, receipt.to_generation), (0, 1));
     assert!(
         !serde_json::to_string(&rotated)
             .unwrap()

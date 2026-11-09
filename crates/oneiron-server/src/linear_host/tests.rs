@@ -208,7 +208,8 @@ fn enabled_linear_host_refuses_unauthenticated_core_writers() {
 #[test]
 fn missing_effect_grants_refuse_before_any_linear_http_request() {
     use oneiron::linear_sync::{
-        LinearEffectKind, LinearEffectRequest, LinearSyncDirection, linear_operation_id,
+        LinearEffectKind, LinearEffectRequest, LinearSyncDirection, LinearTaskStore as _,
+        linear_operation_id,
     };
     use oneiron::task_verb::TaskCreateSpec;
     use oneiron::{EdgeActorClass, TimeRange, Vault, VaultConfig};

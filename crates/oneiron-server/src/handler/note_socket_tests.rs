@@ -268,7 +268,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
             .unwrap()
             .authorship
             .iter()
-            .any(|record| record.operation == edit.request_id && record.actor == actor)
+            .any(|record| record.operation == edit.request_id && record.actor.is(actor))
     );
     assert!(matches!(
         b.resolve_note_pin(&pin).unwrap(),
