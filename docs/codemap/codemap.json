@@ -77830,13 +77830,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/source_audience/walk.rs",
      "purpose": "The source-audience conjunct every audience read meets: a row reads to its viewers only while each of them…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -99201,6 +99201,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/window_open_lineage.rs",
+     "purpose": "A window opens over the rows learned in its month (WINDOW-LINEAGE-RSLOT)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "wit/generated/imports.rs",
@@ -100820,10 +100828,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7248,
-   "test_files": 903
+   "test_files": 904
   },
   "oneiron-android": {
    "files": [
