@@ -5,9 +5,10 @@ crate::side_table::side_tables! {
     /// A change feed subscription: its actor, what it follows and when it was made. Key: id16
     /// (actor) + id16 (subscription).
     FEED_SUBSCRIPTION: VaultMeta b"feeds:subscription:v1:" Named
-        // Restore class: a subscription is its actor's standing intent, kept as the live vault
-        // holds it, as an armed turn program is.
-        [restore: live] [family: unclassified] [tier: canonical]
+        // Restore class: content, as its cursors and the feed rows they point into are, and as
+        // a fact hook's binding, cursor and feed are: a restore takes a subscription and its
+        // cursors back together (review #6897).
+        [restore: content] [family: unclassified] [tier: canonical]
         => crate::feeds::erase_feed_actor_in_txn;
     /// A subscription's cursor in one source: the last position its actor acknowledged.
     /// Key: id16 (subscription) + u8 (source).

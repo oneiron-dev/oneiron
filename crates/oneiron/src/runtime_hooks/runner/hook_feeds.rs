@@ -20,7 +20,8 @@ use crate::{EntityId, Result, Vault};
 /// snapshot, held back or not, and of every change feed subscription that
 /// follows the feed (untangle slice 6.8), or every row while neither is, at most
 /// `max_rows` a feed, planned in that snapshot and deleted in one write only
-/// when there are any. The pass's own binding list is not the floor: a
+/// when there are any; that write keeps each planned row a subscription made
+/// since the snapshot has not passed (review #6897). The pass's own binding list is not the floor: a
 /// binding enabled since the pass began holds its rows too (review #6767).
 /// Each such binding moves its cursor past each row it takes or skips, so a
 /// row below the floor is one no binding reads again. A binding enabled
@@ -68,10 +69,47 @@ pub(crate) fn prune_hook_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
     }
     vault.with_write_txn_grouped(|txn| {
         for (source, rows) in &planned {
-            source::delete_feed_rows_in_txn(vault, txn, *source, rows)?;
+            let rows = still_passed_in_txn(vault, txn, *source, rows)?;
+            source::delete_feed_rows_in_txn(vault, txn, *source, &rows)?;
         }
         Ok(())
     })
+}
+
+/// The planned `rows` of `source` that every change feed subscription has
+/// still passed, read in the prune's own write (review #6897): a
+/// subscription made after the plan's snapshot, one that starts at the
+/// feed's beginning above all, holds the rows its cursor has not passed,
+/// though no binding reads them again. A binding enabled after the snapshot
+/// starts past every planned row, so only the subscriptions are read again.
+fn still_passed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    rows: &[u64],
+) -> Result<Vec<u64>> {
+    Ok(match crate::feeds::floor_in_txn(vault, txn, source)? {
+        crate::feeds::FeedFloor::Unfollowed => rows.to_vec(),
+        crate::feeds::FeedFloor::AtStart => Vec::new(),
+        crate::feeds::FeedFloor::At(floor) => rows
+            .iter()
+            .copied()
+            .filter(|row| row_position(source, *row).is_some_and(|position| position <= floor))
+            .collect(),
+    })
+}
+
+/// The position of row `row` of `source`'s hook feed; `None` for the claim
+/// changelog, which this prune never takes.
+const fn row_position(source: FactSource, row: u64) -> Option<FactPosition> {
+    match source {
+        FactSource::Settlement => Some(FactPosition::Settlement(source::SettlementPosition(row))),
+        FactSource::Schedule => Some(FactPosition::Schedule(source::SchedulePosition(row))),
+        FactSource::SurfaceInbound => Some(FactPosition::SurfaceInbound(
+            source::SurfaceInboundPosition(row),
+        )),
+        FactSource::ClaimChangelog => None,
+    }
 }
 
 /// The lowest stored cursor of `readers` and of every change feed

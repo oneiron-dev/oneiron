@@ -30,6 +30,7 @@ pub(crate) mod tables;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{PointRead, ScopedRead};
+use crate::error::ClaimError;
 use crate::ports::{ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::runtime_hooks::{ClaimChangelogPosition, FactPosition, FactSource, SettlementPosition};
 use crate::side_table::{self, Named, SideTable};
@@ -367,10 +368,10 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedSubscribeRequest,
     ) -> Result<FeedSubscription> {
-        let actor = reader_actor(reader)?;
         validate_selector(&request.selector)?;
         let subscription = EntityId::now();
         self.with_write_txn(|txn| {
+            let actor = live_reader_actor_in(reader, txn)?;
             let at = self.store.clock.now_recorded_at();
             let row = SubscriptionRow {
                 selector: request.selector.clone(),
@@ -402,8 +403,8 @@ impl Vault {
     ///
     /// The read, or a stored row that does not decode.
     pub fn feed_subscriptions(&self, reader: &ScopedRead<'_>) -> Result<Vec<FeedSubscription>> {
-        let actor = reader_actor(reader)?;
         let txn = self.store.env.read_txn()?;
+        let actor = live_reader_actor_in(reader, &txn)?;
         let mut rows = Vec::new();
         for row in SUBSCRIPTIONS.iter_from(&self.store, &txn, actor.as_bytes())? {
             let ((_, subscription), row) = row?;
@@ -431,7 +432,6 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedPage> {
-        let actor = reader_actor(reader)?;
         let limit = request.limit.unwrap_or(FEED_READ_DEFAULT_LIMIT);
         if limit == 0 {
             return Err(invalid("a feed read's limit is at least 1"));
@@ -439,6 +439,7 @@ impl Vault {
         let limit = limit.min(FEED_READ_MAX_LIMIT);
         let _bodies = reader.prepare_point_read::<Error>()?;
         let txn = self.store.env.read_txn()?;
+        let actor = live_reader_actor_in(reader, &txn)?;
         let row = SUBSCRIPTIONS
             .get(&self.store, &txn, &(actor, request.subscription))?
             .ok_or(Error::EntityNotFound)?;
@@ -481,8 +482,8 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedAckRequest,
     ) -> Result<FeedSubscription> {
-        let actor = reader_actor(reader)?;
         self.with_write_txn(|txn| {
+            let actor = live_reader_actor_in(reader, txn)?;
             ack_feed_in_txn(self, txn, actor, request)?;
             let row = SUBSCRIPTIONS
                 .get(&self.store, txn, &(actor, request.subscription))?
@@ -502,8 +503,8 @@ impl Vault {
         reader: &ScopedRead<'_>,
         subscription: EntityId,
     ) -> Result<bool> {
-        let actor = reader_actor(reader)?;
         self.with_write_txn(|txn| {
+            let actor = live_reader_actor_in(reader, txn)?;
             if !SUBSCRIPTIONS.delete(&self.store, txn, &(actor, subscription))? {
                 return Ok(false);
             }
@@ -626,9 +627,18 @@ pub(crate) fn erase_feed_actor_in_txn(
 }
 
 /// The subscriber: the actor `reader` reads as.
-fn reader_actor(reader: &ScopedRead<'_>) -> Result<EntityId> {
-    EntityId::from_hex(reader.actor_key().actor_ref())
-        .map_err(|_| invalid("a feed subscriber reads as an entity"))
+/// `reader`'s actor, once its credential and owner binding still hold in `txn` (review #6897):
+/// every feed door checks it in the transaction that touches the subscription, so a key revoked
+/// or lapsed since it was made neither reads, lists, moves nor ends one.
+fn live_reader_actor_in(reader: &ScopedRead<'_>, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
+    let actor = EntityId::from_hex(reader.actor_key().actor_ref())
+        .map_err(|_| invalid("a feed subscriber reads as an entity"))?;
+    if !reader.credential_live_in(txn)? {
+        return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+            reason: "a feed subscriber's credential no longer holds",
+        }));
+    }
+    Ok(actor)
 }
 
 fn validate_selector(selector: &FeedSelector) -> Result<()> {
