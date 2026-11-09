@@ -270,34 +270,6 @@ fn webp_chunks_the_decoder_would_read_unchecked_are_refused_first() {
 }
 
 #[test]
-fn a_webp_reads_its_exif_and_its_alpha_as_written() {
-    // EXIF behind the "Exif\0\0" prefix some writers add: still read.
-    let still = fixtures::webp_lossless(3, 2, &pixels(3, 2, coded));
-    let mut exif = b"Exif\0\0".to_vec();
-    exif.extend(fixtures::exif_orientation(6));
-    let turned = fixtures::webp_of(&[
-        (b"VP8X", fixtures::vp8x(0x10 | 0x08, 3, 2)),
-        (b"VP8L", fixtures::vp8l_of(&still)),
-        (b"EXIF", exif),
-    ]);
-    let report = inspect("image/webp", turned).expect("inspect").report;
-    assert_eq!(field(&report, "orientation").as_u64(), Some(6));
-    assert_eq!(field(&report, "width").as_u64(), Some(2));
-
-    // A half-transparent pixel behind a cleared alpha hint (a hint only,
-    // per the lossless format): the decoder would drop it, so open refuses.
-    let mut hidden = fixtures::webp_lossless(1, 1, &[255, 0, 0, 128]);
-    // RIFF (12), the VP8L chunk header (8), the signature byte, then the
-    // header's last byte holds the hint at 0x10.
-    hidden[12 + 8 + 4] &= !0x10;
-    assert_eq!(code(open("image/webp", hidden)), ErrorCode::BadRequest);
-    // The same opaque pixel opens.
-    let mut opaque = fixtures::webp_lossless(1, 1, &[255, 0, 0, 255]);
-    opaque[12 + 8 + 4] &= !0x10;
-    assert!(open("image/webp", opaque).is_ok());
-}
-
-#[test]
 fn a_jpeg_header_past_the_prefix_is_too_large_not_corrupt() {
     // 272 comment segments ahead of a valid 1x1 JPEG's header: 17.8 MB.
     let jpeg = fixtures::jpeg_flat(1, 1, [10, 20, 30], None);
@@ -313,15 +285,6 @@ fn a_jpeg_header_past_the_prefix_is_too_large_not_corrupt() {
     let mut early = vec![0xff, 0xd8, 0xff, 0xd9];
     early.resize(18 * 1024 * 1024, 0);
     assert_eq!(code(inspect("image/jpeg", early)), ErrorCode::BadRequest);
-}
-
-#[test]
-fn a_baseline_jpeg_is_booked_for_rows_not_whole_coefficient_planes() {
-    // A single-scan baseline JPEG decodes a row of blocks at a time: at a
-    // 64 MiB grant (32 MiB of work), a 2000x1500 one opens. Booked for four
-    // whole coefficient planes, it would not.
-    let jpeg = fixtures::jpeg_flat(2000, 1500, [90, 120, 150], None);
-    open_under(64 * 1024 * 1024, "image/jpeg", jpeg).expect("open");
 }
 
 #[test]

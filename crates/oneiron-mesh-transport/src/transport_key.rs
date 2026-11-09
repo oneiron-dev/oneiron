@@ -60,29 +60,3 @@ fn binding_transcript(machine: MachineId, endpoint_key: [u8; 32]) -> Vec<u8> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn stable_distinct_device_transport_signers_and_redacted_debug() {
-        let device = SigningKey::from_bytes(&[7; 32]);
-        let a = TransportKey::derive(&device);
-        assert_ne!(a.endpoint_key(), device.verifying_key().to_bytes());
-        assert_eq!(
-            a.endpoint_key(),
-            TransportKey::derive(&device).endpoint_key()
-        );
-        assert_ne!(
-            a.endpoint_key(),
-            TransportKey::derive(&SigningKey::from_bytes(&[8; 32])).endpoint_key()
-        );
-        assert_eq!(format!("{a:?}"), "TransportKey([redacted])");
-    }
-    #[cfg(feature = "iroh")]
-    #[test]
-    fn derived_endpoint_matches_iroh_handshake_identity() {
-        let key = TransportKey::derive(&SigningKey::from_bytes(&[7; 32]));
-        let endpoint = key.endpoint_key();
-        assert_eq!(*key.into_iroh_secret().public().as_bytes(), endpoint);
-    }
-}

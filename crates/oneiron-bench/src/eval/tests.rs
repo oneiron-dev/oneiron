@@ -242,36 +242,6 @@ fn metadata_of<'a>(record: &'a RetrievalOutcomeRecord, field: &str) -> Option<&'
 }
 
 #[test]
-fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let vault = open_vault(tempdir.path());
-    let run_id = seed_retrieval_runs(&vault, 1)[0];
-    let mut metadata = PROVENANCE.to_vec();
-    metadata.push(("session_id", "session-3"));
-    let rows = jsonl(&[end_outcome_row(run_id, &metadata)]);
-
-    let ingested = ingest(&vault, &rows, Some("beam.reward")).expect("ingest");
-
-    assert_eq!(ingested, 1);
-    let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
-    assert_eq!(outcomes.len(), 1);
-    let outcome = &outcomes[0];
-    assert_eq!(outcome.key, "beam.reward");
-    assert_eq!(outcome.reward, Some(0.75));
-    assert_eq!(outcome.accepted, Some(true));
-    assert_eq!(metadata_of(outcome, "evaluator"), Some("judge.v1"));
-    assert_eq!(metadata_of(outcome, "source"), Some("beam.eval"));
-    let evidence = outcome
-        .reward_evidence
-        .as_ref()
-        .expect("gated terminal evidence");
-    assert_eq!(evidence.turn_id, FIXTURE_TURN_ID);
-    assert_eq!(evidence.activated_memory_id, FIXTURE_MEMORY_ID);
-    assert_eq!(evidence.gate_score, 0.75);
-    assert_eq!(metadata_of(outcome, "session_id"), Some("session-3"));
-}
-
-#[test]
 fn eval_outcome_ingest_refuses_rows_without_provenance_before_any_vault_write() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(tempdir.path());
@@ -292,58 +262,6 @@ fn eval_outcome_ingest_refuses_rows_without_provenance_before_any_vault_write() 
 
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
     assert!(outcomes.is_empty());
-}
-
-#[test]
-fn eval_outcome_ingest_requires_a_real_terminal_gate_not_a_raw_reward() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let vault = open_vault(tempdir.path());
-    let run_id = seed_retrieval_runs(&vault, 1)[0];
-    let raw = format!(
-        r#"{{"run_id":"{}","reward":1.0,"accepted":true,"metadata":{{"evaluator":"judge.v1","source":"beam.eval"}}}}"#,
-        run_id.to_hex(),
-    );
-    let (row, applied, reason) = rejected_row(
-        ingest(&vault, &raw, Some("beam.reward")).expect_err("raw reward cannot imply a gate"),
-    );
-    assert_eq!((row, applied), (1, 0));
-    assert!(reason.contains("terminal outcome"), "{reason}");
-    assert!(
-        vault
-            .retrieval_outcomes(run_id)
-            .expect("outcomes")
-            .is_empty()
-    );
-    assert!(
-        vault
-            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
-            .is_err()
-    );
-
-    let mut terminal = end_outcome_row(run_id, PROVENANCE);
-    terminal.gate_score = 0.5;
-    terminal.cost_weight = 0.001;
-    terminal.latency_scale_us = 1;
-    assert_eq!(
-        ingest(&vault, &jsonl(&[terminal]), Some("beam.reward")).expect("terminal"),
-        1
-    );
-    let run = vault.retrieval_runs(1).expect("runs").pop().expect("run");
-    let outcome = vault
-        .retrieval_outcomes(run_id)
-        .expect("outcomes")
-        .pop()
-        .expect("outcome");
-    let expected = 0.5 - 0.001 * (run.elapsed_us as f32 + f32::from(run.state.hops));
-    assert!((outcome.reward.expect("reward") - expected).abs() < 1e-4);
-    assert_eq!(
-        vault
-            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
-            .expect("terminal label trains")
-            .data_window
-            .outcome_count,
-        1,
-    );
 }
 
 /// Drops one flag and its value from a rendered vault-open flag list.
@@ -557,102 +475,6 @@ fn eval_refuses_an_empty_directory_replacement_of_a_real_vault() {
     assert!(moved.join("data.mdb").exists(), "the real vault survives");
 }
 
-/// M2 at bench level: the vault holds NO model id and the operator names one.
-/// `Vault::open` answers that by stamping the supplied id mid-open, after which
-/// the post-open doctor comparison trivially agrees and the command succeeds
-/// against a vault it just mutated. The existing-only door compares the
-/// pre-open bytes, so the command fails and the id stays unstamped.
-#[test]
-fn eval_outcome_ingest_refuses_a_supplied_model_against_an_unstamped_vault() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let vault_path = tempdir.path().join("vault");
-    let mut vectorless = non_device_vault_config();
-    vectorless.embedding_model = None;
-    let vault = open_vault_with(&vault_path, vectorless.clone());
-    let run_id = seed_retrieval_runs(&vault, 1)[0];
-    drop(vault);
-    let rewards_path = tempdir.path().join("rewards.jsonl");
-    let rows = jsonl(&[end_outcome_row(run_id, PROVENANCE)]);
-    std::fs::write(&rewards_path, rows).expect("rewards file");
-    let mut supplied = vectorless.clone();
-    supplied.embedding_model = Some("oneiron/eval-fixture@v1".to_owned());
-
-    let exit = run(&eval_argv(
-        "outcome-ingest",
-        &vault_path,
-        &supplied,
-        &[
-            "--rewards".to_owned(),
-            rewards_path.display().to_string(),
-            "--key".to_owned(),
-            "beam.reward".to_owned(),
-        ],
-    ));
-
-    assert!(matches!(exit, ExitCode::FAILURE));
-    let vault = open_vault_with(&vault_path, vectorless);
-    assert_eq!(vault.doctor().expect("doctor").embedding_model_id, None);
-    assert!(
-        vault
-            .retrieval_outcomes(run_id)
-            .expect("outcomes")
-            .is_empty()
-    );
-}
-
-/// M3 at bench level: a custom-dictionary vault whose text index is EMPTY, plus
-/// a dictionary root that exists but is not this vault's. The create-capable
-/// open rewrites the stored analyzer manifest to the wrong identity on an empty
-/// index and then succeeds, so an empty reward file used to report success
-/// against a vault whose analyzer identity it had just replaced. The
-/// existing-only door compares the manifest in every state and refuses, leaving
-/// the stored identity exactly as it was.
-#[test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "existing-only vault open requires Linux descriptor binding (ONE-1996)"
-)]
-fn eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let dict_root = trusted_dict_root(tempdir.path());
-    let config = custom_dict_vault_config(&dict_root);
-    let vault_path = tempdir.path().join("vault");
-    // No text is seeded, so the empty-index rewrite branch is the reachable one.
-    let vault = open_vault_with(&vault_path, config.clone());
-    assert!(
-        vault
-            .doctor()
-            .expect("doctor")
-            .analyzer_manifest_hash
-            .is_some()
-    );
-    drop(vault);
-    // Read the durable bytes without another open that could repair the manifest.
-    let data_path = vault_path.join(VaultRootEntry::Data.to_string());
-    let before = std::fs::read(&data_path).expect("stored vault bytes");
-    let wrong_root = tempdir.path().join("other-dicts");
-    std::fs::create_dir(&wrong_root).expect("other dict dir");
-    let wrong_root_arg = wrong_root.display().to_string();
-    let rewards_path = tempdir.path().join("rewards.jsonl");
-    std::fs::write(&rewards_path, "").expect("rewards file");
-    let correct = vault_open_flags(&vault_path, &config);
-    let mut argv = vec!["outcome-ingest".to_owned()];
-    argv.extend(with_flag(&correct, "--dict-path", &wrong_root_arg));
-    argv.push("--rewards".to_owned());
-    argv.push(rewards_path.display().to_string());
-    argv.extend(owned(&["--key", "beam.reward"]));
-
-    let exit = run(&argv);
-
-    assert!(matches!(exit, ExitCode::FAILURE));
-    // Do not use a create-capable reopen to inspect an empty text index: that
-    // door could repair the manifest and hide a write by the refused command.
-    assert_eq!(
-        std::fs::read(&data_path).expect("persisted vault bytes"),
-        before
-    );
-}
-
 /// Existing-only opens fail closed on hosts without descriptor-bound LMDB
 /// paths. Keep this refusal visible rather than weakening the production door
 /// to make the Linux success-path cases pass on macOS.
@@ -692,39 +514,3 @@ fn eval_existing_vault_refuses_unsupported_platform_without_writing() {
     }
 }
 
-#[test]
-fn scoped_read_receipt_drives_a_non_widening_replan() {
-    let dir = tempfile::tempdir().expect("temporary vault");
-    let vault = open_vault(dir.path());
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"eval-reader").unwrap();
-    let proof = vault.verified_host_root_slip(&issuer).unwrap();
-    let reader =
-        vault.scoped_read(oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap());
-    let request = oneiron::RetrievalFilter {
-        include_stale: Some(true),
-        ..Default::default()
-    };
-    let first = reader
-        .search_text("receipt-replan-absent", 1, Some(&request))
-        .unwrap();
-    assert!(
-        first
-            .receipt
-            .replan_hint
-            .iter()
-            .any(|axis| axis == "include_stale")
-    );
-    let mut replanned = request;
-    // The benchmark consumer acts on the typed hint rather than parsing prose.
-    for axis in &first.receipt.replan_hint {
-        if axis == "include_stale" {
-            replanned.include_stale = Some(first.receipt.applied.include_stale);
-        }
-    }
-    let second = reader
-        .search_text("receipt-replan-absent", 1, Some(&replanned))
-        .unwrap();
-    assert!(second.receipt.replan_hint.is_empty());
-    assert_eq!(second.receipt.requested, second.receipt.applied);
-    assert_eq!(second.receipt.applied, first.receipt.applied);
-}

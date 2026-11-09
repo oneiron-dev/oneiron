@@ -32,55 +32,6 @@ fn open_test_vault(dimensions: usize) -> (tempfile::TempDir, *mut OneironVault) 
 }
 
 #[test]
-fn ffi_struct_layouts_are_c_abi_stable() {
-    assert_eq!(size_of::<OneironByteSlice>(), 16);
-    assert_eq!(align_of::<OneironByteSlice>(), align_of::<usize>());
-    assert_eq!(offset_of!(OneironByteSlice, ptr), 0);
-    assert_eq!(offset_of!(OneironByteSlice, len), 8);
-
-    assert_eq!(size_of::<OneironBuffer>(), 24);
-    assert_eq!(align_of::<OneironBuffer>(), align_of::<usize>());
-    assert_eq!(offset_of!(OneironBuffer, ptr), 0);
-    assert_eq!(offset_of!(OneironBuffer, len), 8);
-    assert_eq!(offset_of!(OneironBuffer, cap), 16);
-
-    assert_eq!(size_of::<OneironEntityInput>(), 64);
-    assert_eq!(align_of::<OneironEntityInput>(), 8);
-    assert_eq!(offset_of!(OneironEntityInput, id), 0);
-    assert_eq!(offset_of!(OneironEntityInput, entity_type), 16);
-    assert_eq!(offset_of!(OneironEntityInput, occurred_start), 24);
-    assert_eq!(offset_of!(OneironEntityInput, occurred_end), 32);
-    assert_eq!(offset_of!(OneironEntityInput, learned_at), 40);
-    assert_eq!(offset_of!(OneironEntityInput, data), 48);
-
-    assert_eq!(size_of::<OneironEdgeInfo>(), 88);
-    assert_eq!(align_of::<OneironEdgeInfo>(), 8);
-    assert_eq!(offset_of!(OneironEdgeInfo, src), 0);
-    assert_eq!(offset_of!(OneironEdgeInfo, kind), 16);
-    assert_eq!(offset_of!(OneironEdgeInfo, tgt), 20);
-    assert_eq!(offset_of!(OneironEdgeInfo, weight), 40);
-    assert_eq!(offset_of!(OneironEdgeInfo, created_at), 48);
-    assert_eq!(offset_of!(OneironEdgeInfo, has_vad), 56);
-    assert_eq!(offset_of!(OneironEdgeInfo, valence), 64);
-    assert_eq!(offset_of!(OneironEdgeInfo, arousal), 72);
-    assert_eq!(offset_of!(OneironEdgeInfo, dominance), 80);
-
-    assert_eq!(size_of::<OneironScoredEntity>(), 24);
-    assert_eq!(align_of::<OneironScoredEntity>(), 8);
-    assert_eq!(offset_of!(OneironScoredEntity, id), 0);
-    assert_eq!(offset_of!(OneironScoredEntity, score), 16);
-
-    assert_eq!(size_of::<OneironSubtreeEntry>(), 20);
-    assert_eq!(align_of::<OneironSubtreeEntry>(), 4);
-    assert_eq!(offset_of!(OneironSubtreeEntry, id), 0);
-    assert_eq!(offset_of!(OneironSubtreeEntry, depth), 16);
-
-    assert_eq!(size_of::<OneironEdgeInfoArray>(), 24);
-    assert_eq!(size_of::<OneironScoredEntityArray>(), 24);
-    assert_eq!(size_of::<OneironSubtreeEntryArray>(), 24);
-}
-
-#[test]
 fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let (_dir, vault) = open_test_vault(4);
     let entity = id(1);

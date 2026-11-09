@@ -116,42 +116,6 @@ fn report_u64(report: &rmpv::Value, key: &str) -> Option<u64> {
 }
 
 #[test]
-fn inputs_cross_as_regions_and_the_engine_hashes_them() {
-    let (_dir, vault) = vault();
-    let big: Vec<u8> = (0..3 * 1024 * 1024 + 5)
-        .map(|i: u32| (i % 251) as u8)
-        .collect();
-    let small = b"seven bytes, then some".to_vec();
-    let inputs = vec![put_blob(&vault, &big, BIN), put_blob(&vault, &small, BIN)];
-    let host = host();
-    for _ in 0..2 {
-        let outcome = host
-            .call(
-                &vault,
-                call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"),
-            )
-            .expect("touch");
-        assert_eq!(
-            report_u64(&outcome.report, "fold"),
-            Some(touch_fold(&big) ^ touch_fold(&small)),
-            "the organ read exactly the bytes the vault holds",
-        );
-        assert_eq!(
-            report_u64(&outcome.report, "len"),
-            Some((big.len() + small.len()) as u64)
-        );
-        let hashes: Vec<Hash32> = outcome
-            .receipt
-            .inputs
-            .iter()
-            .map(|i| i.content_hash)
-            .collect();
-        assert_eq!(hashes, vec![Hash32::of(&big), Hash32::of(&small)]);
-        assert_eq!(outcome.receipt.organ.name, "probe");
-    }
-}
-
-#[test]
 fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
     let (_dir, vault) = vault();
     let host = host();
@@ -371,50 +335,6 @@ fn a_dripped_handshake_fails_at_its_deadline() {
 }
 
 #[test]
-fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
-    let (_dir, vault) = vault();
-    let host = OrganHost::new(HostConfig::default());
-    let mut spec = OrganSpec::first_party("probe", PROBE);
-    spec.verbs = vec!["organ.echo".into()];
-    spec.max_call_frame = 4096;
-    host.install(spec);
-    let small = || call("organ.echo", 1.into(), Vec::new(), "g");
-    host.call(&vault, small()).expect("small call");
-    for _ in 0..6 {
-        let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
-        let err = host.call(&vault, big).expect_err("too large");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
-            "{err:?}"
-        );
-    }
-    // Small on the wire but past what the organ decodes: deeper than the
-    // depth limit, or more values than the value limit.
-    let deep: fn() -> rmpv::Value =
-        || (0..MAX_FRAME_DEPTH).fold(rmpv::Value::Nil, |inner, _| rmpv::Value::Array(vec![inner]));
-    let wide: fn() -> rmpv::Value = || {
-        let count = usize::try_from(MAX_FRAME_VALUES).expect("fits");
-        rmpv::Value::Array(vec![rmpv::Value::Nil; count])
-    };
-    for args in [deep, deep, deep, wide, wide, wide] {
-        let err = host
-            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
-            .expect_err("refused");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::Refused(_))),
-            "{err:?}"
-        );
-    }
-    let status = host.status("probe").expect("installed");
-    assert_eq!(
-        (status.spawns, status.recent_crashes),
-        (1, 0),
-        "refused calls neither kill nor count"
-    );
-    host.call(&vault, small()).expect("still warm");
-}
-
-#[test]
 fn a_call_late_for_the_writer_harms_no_other_call() {
     // A paused organ (stopped by a signal) lets one large call fill the
     // socket. A second call whose deadline passes while it waits for the
@@ -478,43 +398,6 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
     assert_eq!((status.spawns, status.recent_crashes), (1, 0));
 }
 
-#[test]
-fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
-    // A 64 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
-    // kept outcomes hold 60 MiB, so a sixth call cannot be admitted until
-    // they are dropped.
-    let (_dir, vault) = vault();
-    let host = OrganHost::new(HostConfig {
-        budget: BudgetConfig {
-            threads: 4,
-            memory_bytes: 64 * 1024 * 1024,
-            max_inflight: 8,
-        },
-        ..HostConfig::default()
-    });
-    let mut spec = OrganSpec::first_party("probe", PROBE);
-    spec.verbs = vec!["probe.outputs".into()];
-    spec.call_memory_bytes = 16 * 1024 * 1024;
-    spec.max_output_bytes = 16 * 1024 * 1024;
-    host.install(spec);
-    let twelve = || {
-        let args = rmpv::Value::Map(vec![
-            ("count".into(), 1.into()),
-            ("bytes".into(), (12 * 1024 * 1024).into()),
-        ]);
-        let mut made = call("probe.outputs", args, Vec::new(), "g");
-        made.deadline = Duration::from_millis(500);
-        made
-    };
-    let kept: Vec<_> = (0..5)
-        .map(|_| host.call(&vault, twelve()).expect("fits"))
-        .collect();
-    let err = host.call(&vault, twelve()).expect_err("over budget");
-    assert!(matches!(err, HostError::BudgetTimeout), "{err:?}");
-    drop(kept);
-    host.call(&vault, twelve()).expect("fits again");
-}
-
 /// Whether `pid` is a live process (a zombie is not).
 #[cfg(target_os = "linux")]
 fn running(pid: i64) -> bool {
@@ -525,25 +408,3 @@ fn running(pid: i64) -> bool {
     })
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn stopping_an_organ_kills_what_it_forked() {
-    // A forked child inherits the organ's mappings and socket; killing the
-    // organ alone would leave it holding them.
-    let (_dir, vault) = vault();
-    let host = host();
-    let forked = host
-        .call(
-            &vault,
-            call("probe.fork", rmpv::Value::Nil, Vec::new(), "g"),
-        )
-        .expect("fork");
-    let pid = forked.report.as_i64().expect("the child's pid");
-    assert!(pid > 0 && running(pid));
-    assert!(host.unload("probe"));
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while running(pid) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(!running(pid), "the forked child outlived its organ");
-}

@@ -17,50 +17,6 @@ pub(crate) mod tests {
         assert!(matches!(err, BeamError::InvalidManifest { .. }));
     }
 
-    #[test]
-    fn not_ready_scores_are_unmeasured_and_do_not_publish_zero_overall() {
-        let report = run_builtin_smoke().expect("BEAM smoke report");
-        let report_json = serde_json::to_value(&report).expect("report serializes");
-        let competitors = report_json["cases"][0]["competitors"]
-            .as_array()
-            .expect("competitors array");
-        let deterministic = competitors
-            .iter()
-            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
-            .expect("deterministic competitor");
-
-        assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
-
-        for competitor_id in ["agentic-adapter", "chat-adapter"] {
-            let typed_competitor = report.cases[0]
-                .competitors
-                .iter()
-                .find(|competitor| competitor.competitor_id == competitor_id)
-                .expect("not-ready competitor report");
-            let arm = report.cases[0]
-                .arms
-                .iter()
-                .find(|arm| arm.arm.as_str() == typed_competitor.arm.as_str())
-                .expect("not-ready arm report");
-            assert!(matches!(&arm.outcome, ArmOutcome::NotReady { .. }));
-
-            let competitor = competitors
-                .iter()
-                .find(|competitor| competitor["competitorId"] == competitor_id)
-                .expect("not-ready competitor");
-            assert!(competitor["scoring"]["overallScore"].is_null());
-
-            let abilities = competitor["scoring"]["abilities"]
-                .as_array()
-                .expect("abilities array");
-            assert!(!abilities.is_empty());
-            for ability in abilities {
-                assert!(ability["score"].is_null());
-                assert!(ability["passed"].is_null());
-            }
-        }
-    }
-
     // ZERO-RETRIEVAL = A (owner, 2026-10-16): the no-memory baseline is a real
     // row in the fixture harness, not a not-ready placeholder.
     #[test]

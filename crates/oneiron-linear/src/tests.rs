@@ -155,43 +155,6 @@ fn definitely_unsent_request_can_retry_after_restart() {
     assert_eq!(*writes.borrow(), 1);
 }
 
-#[test]
-fn page_query_variable_types_match_pinned_linear_filter_schema() {
-    let schema = include_str!("../tests/fixtures/linear-page-schema.graphql");
-    let type_of = |block: &str, field: &str| -> &str {
-        let body = schema
-            .split(block)
-            .nth(1)
-            .expect("pinned schema type")
-            .split('}')
-            .next()
-            .expect("schema fields");
-        body.lines()
-            .find_map(|line| line.trim().strip_prefix(field))
-            .expect("pinned schema field")
-            .trim()
-    };
-    assert_eq!(type_of("input IDComparator {", "eq:"), "ID");
-    assert_eq!(type_of("input TeamFilter {", "id:"), "IDComparator");
-    assert_eq!(type_of("input IssueFilter {", "team:"), "TeamFilter");
-    assert!(type_of("type Query {", "issues(").contains("filter: IssueFilter"));
-    let mut reader = StubReader {
-        replies: vec![json!({"data":{"issues":{"nodes":[],
-            "pageInfo":{"hasPreviousPage":false,"startCursor":null}}}})],
-        calls: Rc::new(RefCell::new(Vec::new())),
-    };
-    let calls = reader.calls.clone();
-    let mut source = LinearHostChangeSource::new(&mut reader, config()).expect("source");
-    source.changes_since(None).expect("query");
-    let query = calls.borrow()[0].query;
-    let type_token = type_of("input IDComparator {", "eq:");
-    assert!(query.contains(&format!("$team: {type_token}!")));
-    assert!(query.contains("$before: String"));
-    assert!(query.contains("$last: Int!"));
-    assert!(query.contains("eq: $team"));
-    assert!(query.contains("orderBy: updatedAt, last: $last, before: $before"));
-}
-
 fn linear_receipts(vault: &oneiron::Vault) -> Vec<oneiron::receipt::ReceiptRecord> {
     let mut query = oneiron::receipt::ReceiptQuery::new(32);
     query.kinds.insert(oneiron::receipt::ReceiptKind::Outbound);

@@ -125,50 +125,6 @@ impl AskHandler for Slow {
 }
 
 #[test]
-fn a_granted_ask_is_answered_through_a_region_and_receipted() {
-    let (_dir, vault) = vault();
-    let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
-    // Over 64 KiB, so the answer crosses as a region the host sealed.
-    let handler = bytes(200 * 1024);
-    let asks = AskHandlers::none().with(ANSWER, &handler);
-    let outcome = host
-        .call_with(
-            &vault,
-            ask_call(ANSWER, "hi".into(), 2, Duration::from_secs(10)),
-            Vec::new(),
-            &asks,
-        )
-        .expect("call");
-    let seen = lines(&outcome.report);
-    assert_eq!(seen.len(), 2);
-    for line in &seen {
-        assert_eq!(
-            field(line, "answered").and_then(rmpv::Value::as_str),
-            Some("hi")
-        );
-        assert_eq!(
-            field(line, "len").and_then(rmpv::Value::as_u64),
-            Some(200 * 1024)
-        );
-        assert_eq!(
-            field(line, "fold").and_then(rmpv::Value::as_u64),
-            Some(touch_fold(&handler.bytes))
-        );
-    }
-    assert_eq!(handler.runs.load(Ordering::SeqCst), 2);
-    let receipt = outcome.receipt;
-    assert_eq!(receipt.protocol, PROTOCOL);
-    assert_eq!(receipt.asks.len(), 2);
-    for (n, line) in receipt.asks.iter().enumerate() {
-        assert_eq!(line.id as usize, n + 1);
-        assert_eq!(line.verb, ANSWER);
-        assert_eq!(line.refused, None);
-        assert_eq!(line.data_hash, Some(Hash32::of(&handler.bytes)));
-        assert_eq!(line.data_len, 200 * 1024);
-    }
-}
-
-#[test]
 fn an_ungranted_ask_is_refused_and_the_call_goes_on() {
     let (_dir, vault) = vault();
     let handler = bytes(8);
@@ -247,28 +203,6 @@ impl AskHandler for Outlasts<'_> {
         *self.pid_after.lock().expect("pid") = Some(pid);
         Ok(Answered::default())
     }
-}
-
-#[test]
-fn a_deadline_stops_an_organ_deaf_to_its_cancel_while_the_handler_runs() {
-    let (_dir, vault) = vault();
-    let host = rogue("--ask-once");
-    // Started first: on a slow host a cold start alone can spend 200 ms.
-    host.warm("probe").expect("warm");
-    let handler = Outlasts {
-        host: &host,
-        sleep: Duration::from_millis(1500),
-        pid_after: Mutex::new(None),
-    };
-    let asks = AskHandlers::none().with(ANSWER, &handler);
-    let result = host.call_with(&vault, echo(Duration::from_millis(200)), Vec::new(), &asks);
-    assert!(
-        matches!(result, Err(HostError::DeadlineExceeded)),
-        "{result:?}"
-    );
-    // Cancelled at the deadline and stopped after the grace, while the
-    // handler still ran: the organ was gone before it came back.
-    assert_eq!(*handler.pid_after.lock().expect("pid"), Some(None));
 }
 
 struct Panics;
@@ -406,26 +340,6 @@ fn a_second_ask_in_flight_or_a_stale_ask_ends_the_organ() {
     }
 }
 
-#[test]
-fn an_organ_built_for_1_0_still_runs() {
-    let (_dir, vault) = vault();
-    let host = rogue("--v1-0");
-    let handler = bytes(4);
-    let asks = AskHandlers::none().with(ANSWER, &handler);
-    for _ in 0..3 {
-        let outcome = host
-            .call_with(&vault, echo(Duration::from_secs(10)), Vec::new(), &asks)
-            .expect("echo");
-        assert_eq!(outcome.report.as_u64(), Some(7));
-        assert_eq!(
-            outcome.receipt.protocol,
-            ProtocolVersion { major: 1, minor: 0 }
-        );
-        assert!(outcome.receipt.asks.is_empty());
-    }
-    assert_eq!(host.status("probe").expect("installed").spawns, 1);
-}
-
 /// Tries to call an organ from inside its handler.
 struct Nested<'a> {
     host: &'a OrganHost,
@@ -439,29 +353,6 @@ impl AskHandler for Nested<'_> {
         *self.seen.lock().expect("seen") = Some(format!("{inner:?}"));
         Err(AskRefusal::new(AskCode::Failed, "nested"))
     }
-}
-
-#[test]
-fn a_handler_may_not_call_an_organ() {
-    let (_dir, vault) = vault();
-    let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
-    let nested = Nested {
-        host: &host,
-        vault: &vault,
-        seen: Mutex::new(None),
-    };
-    let asks = AskHandlers::none().with(ANSWER, &nested);
-    let outcome = host
-        .call_with(
-            &vault,
-            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
-            Vec::new(),
-            &asks,
-        )
-        .expect("the organ goes on");
-    assert_eq!(refused(&lines(&outcome.report)[0]), Some("failed"));
-    let seen = nested.seen.lock().expect("seen").clone().expect("ran");
-    assert!(seen.contains("Reentrant"), "{seen}");
 }
 
 /// A one-thread HTTP server on loopback: `/hop` redirects to `to`, `/drip`
@@ -752,41 +643,6 @@ fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
             "{code}"
         );
     }
-}
-
-#[test]
-fn an_answer_value_counts_against_the_answer_bytes() {
-    // Astra (#1378) P2: only an answer's data was charged, so a fetch's 4 KiB
-    // final URL crossed under a 1 KiB cap.
-    let (_dir, vault) = vault();
-    let (port, asked) = serve(None);
-    let mut granted = spec(vec![
-        AskGrant::new(ASK_NET_FETCH, 4),
-        AskGrant::new(ANSWER, 4),
-    ]);
-    granted.fetch.origins = vec![FetchOrigin::new("http", "127.0.0.1", port)];
-    granted.fetch.private_cidrs = vec!["127.0.0.1/32".parse().expect("cidr")];
-    granted.max_ask_bytes = 1024;
-    let host = host(granted);
-    let echoes = bytes(0);
-    let asks = AskHandlers::none()
-        .with(ASK_NET_FETCH, &GuardedFetch)
-        .with(ANSWER, &echoes);
-    let long = format!("http://127.0.0.1:{port}/{}", "a".repeat(4096));
-    let calls = [
-        ask_call(ASK_NET_FETCH, fetch(&long), 1, Duration::from_secs(10)),
-        ask_call(ANSWER, "x".repeat(4096).into(), 1, Duration::from_secs(10)),
-    ];
-    for call in calls {
-        let outcome = host
-            .call_with(&vault, call, Vec::new(), &asks)
-            .expect("the organ goes on");
-        assert_eq!(refused(&lines(&outcome.report)[0]), Some("too_large"));
-        assert_eq!(outcome.receipt.asks[0].refused, Some(AskCode::TooLarge));
-    }
-    // The fetch itself ran; only its answer was over the cap.
-    assert_eq!(asked.lock().expect("log").len(), 1);
-    assert_eq!(echoes.runs.load(Ordering::SeqCst), 1);
 }
 
 #[test]

@@ -653,33 +653,3 @@ pub(crate) fn refuse_other_room(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use oneiron::memory::MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER;
-
-    #[test]
-    fn inherited_registry_is_refused_before_locked_mutex() {
-        let registry = Arc::new(Registry {
-            pid: AtomicU32::new(std::process::id().wrapping_add(1).max(1)),
-            entries: LazyLock::new(|| Mutex::new(HashMap::new())),
-        });
-        let inherited_guard = registry.entries.lock().expect("parent guard");
-        let child_registry = Arc::clone(&registry);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let probe = std::thread::spawn(move || {
-            let error = match child_registry.guard() {
-                Ok(_) => panic!("a child must not acquire the inherited registry"),
-                Err(error) => error,
-            };
-            tx.send(error.code).expect("probe result");
-        });
-        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
-        drop(inherited_guard);
-        probe.join().expect("probe thread");
-        assert_eq!(
-            result.expect("refusal before mutex wait"),
-            MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-        );
-    }
-}

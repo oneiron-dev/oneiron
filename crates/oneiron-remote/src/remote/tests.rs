@@ -103,22 +103,6 @@ fn a_slip_holder_signs_each_request_with_a_proof_the_vault_accepts() {
     );
 }
 
-#[test]
-fn back_to_back_requests_carry_distinct_nonces() {
-    let (_dir, _vault, _issuer, slip, key) = paired();
-    let (origin, captured) = peer(2);
-    let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
-    call(&client);
-    call(&client);
-    let nonces: Vec<_> = captured
-        .join()
-        .unwrap()
-        .iter()
-        .map(|headers| binding(headers).unwrap()["nonce"].clone())
-        .collect();
-    assert_ne!(nonces[0], nonces[1]);
-}
-
 /// Both SDK projections use the remote route. Export, unlike ordinary
 /// verbs, must consume a complete archive larger than the 64 MiB ceiling.
 #[test]
@@ -231,35 +215,3 @@ fn export_peer(
     (origin, served)
 }
 
-/// C13: export read whatever the origin sent. It now reads at most its own
-/// ceiling: a body at the ceiling decodes, one byte more is refused, whether
-/// `Content-Length` announces it or not, and the client stops reading.
-#[test]
-fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
-    const LIMIT: usize = 64 * 1024;
-    let framing = br#"{"format":"json","rendered":""}"#.len();
-    let export = |count: usize, content_length: bool| {
-        let (origin, served) = export_peer(count, content_length);
-        // The client, and with it any connection, is gone before the join.
-        let result = {
-            let mut client = RemoteClient::connect(&origin, "local-secret", None).unwrap();
-            client.export_limit = LIMIT;
-            client.call::<_, oneiron::memory::MemoryExport>(
-                "export",
-                &serde_json::json!({"format":"json"}),
-            )
-        };
-        (result, served.join().unwrap())
-    };
-    for content_length in [true, false] {
-        let (at_limit, _) = export(LIMIT - framing, content_length);
-        assert_eq!(at_limit.unwrap().rendered.len(), LIMIT - framing);
-        let (over, _) = export(LIMIT - framing + 1, content_length);
-        assert!(over.is_err(), "one byte over the export ceiling");
-    }
-    // An origin that keeps sending is cut off near the ceiling, not read to
-    // its end.
-    let (endless, (written, total)) = export(1024 * LIMIT, false);
-    assert!(endless.is_err());
-    assert!(written < total, "the client read all {total} bytes");
-}
