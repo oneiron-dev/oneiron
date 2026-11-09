@@ -196,6 +196,7 @@ pub mod task_type;
 pub mod task_verb;
 pub mod team;
 pub mod verb_names;
+pub mod verb_table;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
