@@ -1,0 +1,217 @@
+//! A Steward's membership acts are asks (untangle 6.3d, S63-4 = A; ARCH-0043
+//! Steward): its add-member call writes an ask and changes no membership; a
+//! live Owner applies it through the add door, and the receipt names both.
+//!
+//! Runs on public paths: `cargo test -p oneiron --all-features --test
+//! steward_member_asks`.
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{
+    FederationGrantRole as Role, InitialSharedMember, MemberAskChange, MemberAskStatus,
+    SharedMemberChange, SharedVaultChange,
+};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
+use oneiron::temporal::TimeRange;
+use oneiron::{EntityId, Vault, VaultConfig};
+
+const SHARED: u64 = 42;
+
+fn person(vault: &Vault) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    id
+}
+
+fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("a person proof")
+}
+
+#[test]
+fn a_stewards_add_member_call_becomes_an_ask_an_owner_applies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let steward = person(&vault);
+    let invitee = person(&vault);
+    let (owner_proof, steward_proof, invitee_proof) = (
+        proof(&vault, owner),
+        proof(&vault, steward),
+        proof(&vault, invitee),
+    );
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: steward,
+                    role: Some(Role::Steward),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault with a Steward");
+    let add = MemberAskChange::Add {
+        member: invitee.to_hex(),
+        role: None,
+    };
+
+    // The add door itself refuses a Steward.
+    assert!(
+        vault
+            .add_shared_member(&steward_proof, SHARED, invitee, None)
+            .is_err()
+    );
+
+    // The Steward's add-member call becomes an ask: no invitation is issued.
+    let SharedMemberChange::Asked(ask) = vault
+        .shared_member_change(&steward_proof, SHARED, add.clone(), None)
+        .expect("the Steward's add-member call")
+    else {
+        panic!("a Steward's add-member call is an ask");
+    };
+    assert_eq!(ask.steward, steward.to_hex());
+    assert_eq!(ask.change, add);
+    assert_eq!(ask.status, MemberAskStatus::Open);
+    assert!(
+        vault
+            .shared_invitations(&invitee_proof, SHARED)
+            .expect("invitations")
+            .is_empty()
+    );
+
+    // Asking again answers the open ask; the Steward reads its own ask.
+    assert_eq!(
+        vault
+            .ask_shared_member_change(&steward_proof, SHARED, add.clone())
+            .expect("the same ask"),
+        ask
+    );
+    assert_eq!(
+        vault
+            .shared_member_asks(&steward_proof, SHARED)
+            .expect("asks"),
+        vec![ask.clone()]
+    );
+
+    // A Steward never asks about its own membership, and never applies.
+    assert!(
+        vault
+            .ask_shared_member_change(
+                &steward_proof,
+                SHARED,
+                MemberAskChange::AssignRole {
+                    member: steward.to_hex(),
+                    role: Role::Admin,
+                },
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .apply_shared_member_ask(&steward_proof, &ask.id, None)
+            .is_err()
+    );
+    assert!(
+        vault
+            .shared_invitations(&invitee_proof, SHARED)
+            .expect("invitations")
+            .is_empty()
+    );
+
+    // The Owner applies it through the add door: the receipt names the
+    // Owner as actor and the Steward as proposer, and the ask closes.
+    let receipt = vault
+        .apply_shared_member_ask(&owner_proof, &ask.id, None)
+        .expect("the Owner applies the ask");
+    assert_eq!(receipt.actor, owner.to_hex());
+    assert_eq!(receipt.proposer, Some(steward.to_hex()));
+    assert!(matches!(
+        &receipt.change,
+        SharedVaultChange::MemberInvited { member, .. } if *member == invitee.to_hex()
+    ));
+    assert_eq!(
+        vault
+            .shared_invitations(&invitee_proof, SHARED)
+            .expect("invitations")
+            .len(),
+        1
+    );
+    let asks = vault
+        .shared_member_asks(&owner_proof, SHARED)
+        .expect("asks");
+    let [closed] = asks.as_slice() else {
+        panic!("one ask, found {}", asks.len());
+    };
+    assert_eq!(
+        closed.status,
+        MemberAskStatus::Applied {
+            by: owner.to_hex(),
+            receipt: receipt.id.clone(),
+        }
+    );
+    assert!(
+        vault
+            .apply_shared_member_ask(&owner_proof, &ask.id, None)
+            .is_err()
+    );
+
+    // An Owner's own member change applies at once, with no proposer.
+    let other = person(&vault);
+    let SharedMemberChange::Applied(direct) = vault
+        .shared_member_change(
+            &owner_proof,
+            SHARED,
+            MemberAskChange::Add {
+                member: other.to_hex(),
+                role: None,
+            },
+            None,
+        )
+        .expect("the Owner's member change")
+    else {
+        panic!("an Owner's member change applies");
+    };
+    assert_eq!(direct.proposer, None);
+
+    // A declined ask changes no membership.
+    let later = person(&vault);
+    let declined = vault
+        .ask_shared_member_change(
+            &steward_proof,
+            SHARED,
+            MemberAskChange::Add {
+                member: later.to_hex(),
+                role: None,
+            },
+        )
+        .expect("a second ask");
+    let declined = vault
+        .decline_shared_member_ask(&owner_proof, &declined.id)
+        .expect("the Owner declines");
+    assert_eq!(
+        declined.status,
+        MemberAskStatus::Declined { by: owner.to_hex() }
+    );
+    assert!(
+        vault
+            .shared_invitations(&proof(&vault, later), SHARED)
+            .expect("invitations")
+            .is_empty()
+    );
+}
