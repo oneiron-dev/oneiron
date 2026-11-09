@@ -1,0 +1,16 @@
+{
+  "name": "calendar.connector.get",
+  "description": "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+  "output": "Option<crate::calendar::connectors::door::CalendarConnectorRegistration>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.get\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

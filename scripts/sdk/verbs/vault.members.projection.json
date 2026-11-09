@@ -1,0 +1,13 @@
+{
+  "name": "vault.members.projection",
+  "description": "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority.",
+  "input": "crate::task_verb::sdk::SharedMemberRequest",
+  "output": "crate::task_verb::sdk::MemberProjection",
+  "call": "crate::task_verb::sdk::read_member_projection(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

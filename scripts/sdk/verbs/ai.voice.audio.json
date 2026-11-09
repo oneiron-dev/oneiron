@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.audio",
+  "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply.",
+  "input": "crate::task_verb::sdk::LiveVoiceAudioRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.audio\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

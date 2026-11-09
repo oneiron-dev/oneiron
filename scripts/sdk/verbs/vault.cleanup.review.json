@@ -1,0 +1,16 @@
+{
+  "name": "vault.cleanup.review",
+  "description": "The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts.",
+  "input": "crate::vault_cleanup::CleanupReviewRequest",
+  "output": "crate::vault_cleanup::CleanupReviewView",
+  "call": "crate::vault_cleanup::review_cleanup_proposal_as(memory, &memory.embedded_owner(\"vault.cleanup.review\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

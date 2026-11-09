@@ -1,0 +1,13 @@
+{
+  "name": "vault.messages.durability",
+  "description": "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane.",
+  "input": "crate::memory::MessageDurabilityRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>",
+  "call": "memory.messages_durability(&input)?",
+  "scope": "Read",
+  "admission": {
+    "projection_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

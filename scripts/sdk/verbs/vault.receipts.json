@@ -1,0 +1,53 @@
+{
+  "name": "vault.receipts",
+  "description": "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest.",
+  "input": "crate::task_verb::sdk::VaultReceiptsRequest",
+  "output": "crate::task_verb::sdk::VaultReceiptsPage",
+  "mcp_served_output": "output.receipts.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
+  "call": "memory.receipts_page(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), input.kinds.as_deref().unwrap_or_default(), input.after.as_deref())?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?;"
+  },
+  "page": {
+    "rows": "receipts",
+    "cursor": "next_after",
+    "resume": "spec",
+    "within": "after"
+  },
+  "section": false,
+  "binding": {
+    "assemble": true,
+    "native": "agent_verb",
+    "args": [
+      {
+        "name": "limit",
+        "kind": "limit",
+        "default": 100
+      },
+      {
+        "name": "kinds",
+        "kind": "kinds"
+      },
+      {
+        "name": "after",
+        "kind": "ref"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Lists governance receipts, newest first, a page at a time: the gate\n    /// decision ledger, or the receipts of the named kinds. `after` takes the\n    /// page before's `next_after`.\n",
+      "ts": "/** Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. `after` takes the page before's `next_after`. */",
+      "py": "Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. ``after`` takes the page before's ``next_after``."
+    }
+  },
+  "uniffi": {
+    "args": {
+      "limit": "u32",
+      "kinds": "Option<Vec<String>>",
+      "after": "Option<String>"
+    },
+    "output": "FacadeReceiptPage"
+  },
+  "session_read": "Receipts"
+}

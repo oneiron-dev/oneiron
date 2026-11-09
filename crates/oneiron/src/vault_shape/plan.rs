@@ -156,7 +156,10 @@ fn classify(
         (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
             if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
                 Authority
-            } else if now.reach() > was.reach() {
+            } else if now.reach() > was.reach()
+                // A Steward made a Member gains `write`, which no Steward holds.
+                || (*was == ShapeMemberRole::Steward && *now == ShapeMemberRole::Member)
+            {
                 Widening
             } else {
                 Receipted

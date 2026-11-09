@@ -1,0 +1,26 @@
+{
+  "name": "vault.claims.admit",
+  "description": "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.",
+  "refs": [
+    "/subject_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "input": "AdmitImportedClaimInput"
+    },
+    "output": "CommitReceipt"
+  },
+  "input": "crate::memory::AdmitImportedClaimInput",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.admit_imported_claim(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "proposes": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.voices.packs.put",
+  "description": "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op.",
+  "input": "crate::task_verb::sdk::VoiceBankPackPutRequest",
+  "output": "crate::task_verb::sdk::VoiceBankPackReceipt",
+  "call": "crate::task_verb::sdk::put_voice_bank_pack(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "voice_bank"
+}

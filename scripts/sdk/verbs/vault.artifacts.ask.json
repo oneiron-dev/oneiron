@@ -1,0 +1,13 @@
+{
+  "name": "vault.artifacts.ask",
+  "description": "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard.",
+  "input": "crate::blob_artifact::ArtifactAskSubmit",
+  "output": "crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>",
+  "call": "crate::task_verb::sdk::ActAnswer::Done(memory.artifacts_ask(&input)?)",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "host_door_proof": "artifact_asker"
+}

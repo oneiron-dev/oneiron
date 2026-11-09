@@ -1,0 +1,22 @@
+{
+  "name": "vault.artifacts.threads.comment",
+  "description": "Appends a comment as the caller; returns its first stored part, with every part available through threads.read.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::anchored_annotation::AnnotationCommentRequest",
+  "output": "crate::anchored_annotation::AnnotationCommentView",
+  "call": "memory.artifacts_threads_comment(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "prose_links": [
+    "/text"
+  ],
+  "openapi": true
+}

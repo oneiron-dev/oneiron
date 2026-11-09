@@ -173,6 +173,7 @@ fn browser_session_ready(
     floor: Arc<dyn HostNetFloor>,
 ) -> Result<PackConnectionEvidence, String> {
     let backend = select_backend_for_session(
+        &oneiron::code_sandbox::SANDBOX_BACKENDS,
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,

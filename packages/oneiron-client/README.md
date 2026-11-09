@@ -5,7 +5,7 @@ SDK verb table, with raw-response passthrough. It is the second lane of the
 packaging ladder — the lane for agents and apps that can install one package —
 and it exists to save typing, never to become the contract.
 
-The verb table, `scripts/sdk/agent-verbs.json`, is the contract. This package
+The verb table, `scripts/sdk/verbs/`, is the contract. This package
 is a small fetch wrapper over it: it builds URLs and default headers, types
 every verb's input and result, and hands back the raw `Response`.
 
@@ -49,9 +49,11 @@ npm install @oneiron/client   # or: bun add @oneiron/client
 
 Source-direct and dependency-free: `main`, `types`, and the `.` export resolve
 to `./src/index.ts`; `./facade` and `./facade-types` resolve to the generated
-tree and declarations alone, with no fetch client. There is no build step: the
-generated files are checked in, and `generate.py --check` fails CI when they
-drift from the table.
+tree and declarations alone, with no fetch client. Users need no build step: the
+published package carries the generated `facade.ts` and `facade-types.ts`. They
+are not in git; the package's `prepare` and `prepublishOnly` scripts write them
+from the verb table (`generate.py --package oneiron-client`), so a checkout runs
+`bun run prepare` once before it imports them.
 
 That shape has a requirement attached, and `engines` declares it: the consuming
 runtime must load TypeScript itself. **Bun 1.3 or newer is the supported

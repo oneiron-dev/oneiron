@@ -1,0 +1,17 @@
+{
+  "name": "vault.packs.sections.grant",
+  "description": "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.",
+  "input": "crate::memory::PluginSectionGrantRequest",
+  "output": "crate::memory::PluginSectionGrant",
+  "call": "memory.plugin_section_grant_as_owner(&memory.embedded_owner(\"vault.packs.sections.grant\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

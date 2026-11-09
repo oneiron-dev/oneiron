@@ -1,0 +1,17 @@
+{
+  "name": "vault.artifacts.repoint",
+  "description": "Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.repoint\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "host_door_proof": "artifact_publisher"
+}

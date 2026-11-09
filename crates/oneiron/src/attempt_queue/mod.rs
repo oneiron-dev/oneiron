@@ -23,9 +23,11 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod hold_override;
 mod hook_hold;
 mod index;
 mod kind_payload_erase;
+mod lifecycle;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
@@ -67,7 +69,11 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub(crate) use hold_override::erase_hold_override_actor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use hold_override::hold_override_actor_in_txn;
 pub(crate) use hook_hold::HoldAttemptForHook;
+pub use lifecycle::{PauseKind, RunState};
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;

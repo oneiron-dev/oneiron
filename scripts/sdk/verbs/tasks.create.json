@@ -1,0 +1,40 @@
+{
+  "name": "tasks.create",
+  "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`).",
+  "prose_links": [
+    "/label",
+    "/spec/title",
+    "/spec/description",
+    "/spec/brief",
+    "/spec/notes",
+    "/spec/instructions"
+  ],
+  "refs": [
+    "/parent_ref"
+  ],
+  "input": "TaskCreateRequest",
+  "output": "crate::task_verb::TaskCreateReceipt",
+  "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
+  "scope": "Write",
+  "task_decisions": true,
+  "proposes": true,
+  "mcp_fields": {
+    "spec": "spec",
+    "label": "label",
+    "assignee": "assignee",
+    "intent_key": "intent_key",
+    "brief": "brief",
+    "ttl": "ttl",
+    "parent_ref": "parent_ref",
+    "due_at": "due_at",
+    "watch": "watch"
+  },
+  "mcp_required_fields": [
+    "spec"
+  ],
+  "admission": {
+    "born_record_scope": true
+  },
+  "mcp_scope": "born",
+  "section": true
+}

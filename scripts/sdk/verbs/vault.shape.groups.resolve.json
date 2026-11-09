@@ -1,0 +1,17 @@
+{
+  "name": "vault.shape.groups.resolve",
+  "description": "The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged.",
+  "input": "crate::memory::ShapeGroupResolveRequest",
+  "output": "crate::vault_shape::ShapeApplyReceipt",
+  "call": "memory.resolve_shape_inbox_group(&memory.embedded_owner(\"vault.shape.groups.resolve\")?, None, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

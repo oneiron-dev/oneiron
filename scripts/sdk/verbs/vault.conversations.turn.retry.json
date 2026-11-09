@@ -1,0 +1,13 @@
+{
+  "name": "vault.conversations.turn.retry",
+  "description": "Queues a new answer to the user turn an assistant turn answered; the old reply stays.",
+  "input": "crate::conversation::TurnActionRequest",
+  "output": "crate::conversation::TurnActionReceipt",
+  "call": "memory.conversations_turn_retry(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

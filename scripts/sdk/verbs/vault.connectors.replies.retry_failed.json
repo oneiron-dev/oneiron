@@ -1,0 +1,16 @@
+{
+  "name": "vault.connectors.replies.retry_failed",
+  "description": "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history.",
+  "input": "ConnectorReplyRetryRequest",
+  "output": "crate::task_verb::sdk::ConnectorReplyRetryView",
+  "call": "crate::task_verb::sdk::retry_failed_connector_reply_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.replies.retry_failed\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}
