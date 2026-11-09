@@ -26,3 +26,6 @@ libc = "0.2"
 
 [lints]
 workspace = true
+
+[build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
