@@ -393,7 +393,7 @@ impl AgentDispatcher<'_> {
                 .get_in_write_txn(&wtxn, held.attempt)?
                 .is_some_and(|record| record.budget_hold());
             if still_held {
-                queue.intervene_in_txn(
+                queue.release_hold_in_txn(
                     &mut wtxn,
                     InterveneAttempt {
                         id: held.attempt,
@@ -414,6 +414,61 @@ impl AgentDispatcher<'_> {
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(hold)
+    }
+
+    /// RUN-HOLD: a generic Resume released `attempt` (the row as it stood
+    /// before the Resume) from its budget hold, in that Resume's transaction.
+    /// The attempt leaves the plan hold that lists it, and the hold reads
+    /// Resumed, by the override's actor, once no attempt is left on it, so
+    /// it owes no held notice after that. A wave's queue-only hold has no
+    /// plan hold, and nothing more moves.
+    pub(crate) fn follow_budget_hold_override_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt: &AttemptRecord,
+        actor: &str,
+        now: u64,
+    ) -> Result<()> {
+        let Some((root, mut hold)) = self.plan_hold_listing_in_txn(wtxn, attempt)? else {
+            return Ok(());
+        };
+        hold.held.retain(|held| held.attempt != attempt.id);
+        if hold.held.is_empty() {
+            hold.state = BudgetHoldState::Resumed;
+            hold.resumed_at = Some(now);
+            hold.resumed_by = Some(actor.to_owned());
+        }
+        PLAN_HOLD.put(&self.vault.store, wtxn, &root, &hold)
+    }
+
+    /// The plan hold that lists `attempt` as held, with its root: the hold
+    /// keyed by the attempt itself, then those keyed by an attempt of its
+    /// run, then every hold.
+    fn plan_hold_listing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &AttemptRecord,
+    ) -> Result<Option<(AttemptId, PartialResultHold)>> {
+        let lists =
+            |hold: &PartialResultHold| hold.held.iter().any(|held| held.attempt == attempt.id);
+        if let Some(hold) = PLAN_HOLD.get(&self.vault.store, txn, &attempt.id)?
+            && lists(&hold)
+        {
+            return Ok(Some((attempt.id, hold)));
+        }
+        if let Some(run) = attempt.run_id.as_deref() {
+            for row in AttemptQueue::new(self.vault).list_run_in_txn(txn, run)? {
+                if let Some(hold) = PLAN_HOLD.get(&self.vault.store, txn, &row.id)?
+                    && lists(&hold)
+                {
+                    return Ok(Some((row.id, hold)));
+                }
+            }
+        }
+        Ok(PLAN_HOLD
+            .scan(&self.vault.store, txn)?
+            .into_iter()
+            .find(|(_, hold)| lists(hold)))
     }
 
     /// The saved hold for a run, if one was warned or held.
@@ -470,6 +525,24 @@ impl AgentDispatcher<'_> {
     }
 }
 
+/// The plan hold table's actor scrub (an actor's erase, and a restore's rerun
+/// of it): a hold `actor` resumed, by its own door or by an override
+/// (RUN-HOLD), reads as resumed by an erased actor. The resume stands.
+pub(crate) fn erase_plan_hold_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &crate::entity_id::EntityId,
+) -> Result<()> {
+    let hex = actor.to_hex();
+    for (root, mut hold) in PLAN_HOLD.scan(&vault.store, wtxn)? {
+        if hold.resumed_by.as_deref() == Some(hex.as_str()) {
+            hold.resumed_by = Some(crate::receipt::ERASED_CALL_IDENTITY.to_owned());
+            PLAN_HOLD.put(&vault.store, wtxn, &root, &hold)?;
+        }
+    }
+    Ok(())
+}
+
 /// The producer of a held run's owner notice.
 const BUDGET_HOLD_NOTIFICATION_PRODUCER: &str = "agent_dispatch.budget_hold";
 
@@ -487,10 +560,14 @@ impl AgentDispatcher<'_> {
         let Some(hold) = self.plan_hold(root)? else {
             return Ok(None);
         };
-        if !hold
-            .notice
-            .as_ref()
-            .is_some_and(|notice| notice.delivered_at.is_none())
+        // RUN-HOLD: a hold that holds nothing any more (resumed, or every
+        // attempt released by an override) owes no held notice.
+        if hold.state != BudgetHoldState::Held
+            || hold.held.is_empty()
+            || !hold
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.delivered_at.is_none())
         {
             return Ok(None);
         }
