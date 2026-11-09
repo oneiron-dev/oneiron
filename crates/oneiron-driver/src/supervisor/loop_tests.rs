@@ -1,5 +1,5 @@
 //! Loop, panic-containment, shutdown, and redrive acceptance tests.
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::*;
@@ -182,6 +182,45 @@ async fn pass_panic_outside_the_attempt_boundary_restarts_with_backoff() {
         "redrive after backoff ran the completing pass"
     );
     assert_eq!(report.attempts_completed, 1);
+}
+
+/// Completes attempts synchronously and requests supervisor shutdown from
+/// inside the first execution — without an attempt-boundary yield the whole
+/// backlog would drain in a single poll before the biased select! ever
+/// saw the request.
+struct ShutdownRequestingExec {
+    handle: ShutdownHandle,
+}
+
+impl DreamerAttemptExecutor for ShutdownRequestingExec {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        self.handle.shutdown();
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 40,
+        })
+    }
+}
+
+struct ShutdownRequestingFactory {
+    handle: Arc<Mutex<Option<ShutdownHandle>>>,
+}
+
+impl PassExecutorFactory for ShutdownRequestingFactory {
+    type Exec<'p> = ShutdownRequestingExec;
+
+    fn executor<'p>(&'p mut self, _guard: &'p BudgetGuard) -> Result<ShutdownRequestingExec> {
+        let handle = self
+            .handle
+            .lock()
+            .expect("handle slot")
+            .clone()
+            .expect("handle wired before run");
+        Ok(ShutdownRequestingExec { handle })
+    }
 }
 
 #[tokio::test]

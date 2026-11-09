@@ -524,6 +524,12 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
             }
         }
     }
+
+    #[cfg(test)]
+    fn with_retry_hint(mut self, hint: SessionHint, arrival_ms: u64) -> Self {
+        self.retry_hint = Some(SessionHintCarrier::point(hint, None, arrival_ms));
+        self
+    }
 }
 
 impl<T: TickSource> TickSource for SessionTicks<'_, T> {
