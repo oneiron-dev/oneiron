@@ -3629,7 +3629,7 @@ export class Oneiron {
       },
       /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
       fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
-      /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+      /** Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence. */
       get: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsGet(input) as Facade.SkillLibraryView),
       governance: {
         /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
@@ -3639,7 +3639,7 @@ export class Oneiron {
       },
       /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
       import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
-      /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+      /** Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence. */
       list: (input: Facade.SkillLibraryListRequest): Facade.SkillLibraryPage => this.#call(() => this.#client.vaultSkillsList(input) as Facade.SkillLibraryPage),
       optimize: {
         /** Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks. */

@@ -4017,13 +4017,13 @@ class Oneiron:
         def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
             """The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
         def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
-            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+            """Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence."""
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
         def import_(self, spec: Facade.HubImportRequest) -> Facade.HubSkillImported:
             """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
         def list(self, spec: Facade.SkillLibraryListRequest) -> Facade.SkillLibraryPage:
-            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+            """Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence."""
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
         @property

@@ -6457,7 +6457,7 @@ class Oneiron:
             """The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
             return json.loads(_translate(lambda: self._client.vault_skills_fork(json.dumps(spec))))
         def get(self, spec):
-            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+            """Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence."""
             return json.loads(_translate(lambda: self._client.vault_skills_get(json.dumps(spec))))
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
@@ -6466,7 +6466,7 @@ class Oneiron:
             """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
             return json.loads(_translate(lambda: self._client.vault_skills_import(json.dumps(spec))))
         def list(self, spec):
-            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+            """Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence."""
             return json.loads(_translate(lambda: self._client.vault_skills_list(json.dumps(spec))))
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs":
