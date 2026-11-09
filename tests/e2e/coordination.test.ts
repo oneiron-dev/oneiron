@@ -220,6 +220,15 @@ async function coordination01HouseCard(engine: EngineFixture, providers: Scripte
  *   binds the tap to the card's principal, consent_eval.rs:158-186, so board-human binds to the owner);
  *   a claims scope distinct from the parent (fixture error: the record inherits the root's scope at every
  *   birth, and the per-project memory scope is the project id itself, see the report).
+ * DEFECT (red since the first fleet run, Tue 10 Nov 2026; FIX row HOUSE-SOURCE-READ-DENIED): the decider is never asked. The
+ *   house reads the source MESSAGE through a key with no proof, authority or explicit scope
+ *   (agent_dispatch/project_proposal.rs:159-166); require_relationship_grants grants nothing on its own
+ *   (claim/scoped_read/actor_key.rs:691-709). With no scoped grant for that actor, a non-owner's read floor is
+ *   deny_all (gate/retrieval_filter.rs:205-214). The shipped manifest carries read rows only for the Dreamer
+ *   and the Coach, none for the house (gate/default_manifest.rs:1054-1060). So the message is refused
+ *   (claim/scoped_read/visibility.rs:629), and the question settles Unread before the ladder
+ *   (project_proposal.rs:91-94). PR #6857 relaxed the relationship conjunct only. Not worked around: an owner
+ *   read grant for the house through vault.gate.policy.put would hide it.
  */
 suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an agent's card mints nothing until its person confirms, and a dismissed card never mints", async () => {
   const scenario = await coordination01Scenario();
