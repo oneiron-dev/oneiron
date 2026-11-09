@@ -47,7 +47,7 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 fn shared_with_steward(vault: &Vault, steward: EntityId) -> (EntityId, FederationGrant) {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     person(vault, steward);
-    let creation = vault
+    vault
         .initialize_shared_vault(
             &proof(vault, owner),
             SHARED,
@@ -65,12 +65,24 @@ fn shared_with_steward(vault: &Vault, steward: EntityId) -> (EntityId, Federatio
             1,
         )
         .expect("a shared vault with a Steward");
-    creation
-        .grant_refs
-        .iter()
-        .find_map(|hex| {
-            let id = EntityId::from_hex(hex).expect("grant id");
-            let body = vault.get(&id).expect("grant row").expect("grant body");
+    // A founding member other than the creator joins by invitation (OF-531):
+    // the Steward accepts its own, and its grant is written then.
+    let steward_proof = proof(vault, steward);
+    let invitation = vault
+        .shared_invitations(&steward_proof, SHARED)
+        .expect("the Steward's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward's founding invitation");
+    vault
+        .accept_shared_invitation(&steward_proof, SHARED, &invitation.id)
+        .expect("the Steward accepts");
+    vault
+        .entities_by_type(ENTITY_TYPE_FEDERATION_GRANT)
+        .expect("grants")
+        .into_iter()
+        .find_map(|id| {
+            let body = vault.get(&id).expect("grant row")?;
             let grant = decode_federation_grant_body(&body).expect("a grant");
             (grant.member_ref == steward).then_some((id, grant))
         })
