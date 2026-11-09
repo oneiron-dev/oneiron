@@ -19,10 +19,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/provenance.rs` | src | s | 1 struct · 3 fn | KeptDecision | Moved from `crates/oneiron/src/dreamer_consolidation/provenance.rs` (core split slice 3: wake contract below… |
 | `src/dreamer_runner/admission/budget_line.rs` | src | s | 1 struct · 2 fn | AdmittedBudgetLine | Moved from `crates/oneiron/src/dreamer_runner/admission/budget_line.rs` (core split slice 3: wake contract… |
 | `src/dreamer_runner/admission/mod.rs` | src | s | 1 mod | — | — |
-| `src/dreamer_runner/mod.rs` | src | s | 3 mod | — | — |
+| `src/dreamer_runner/mod.rs` | src | s | 4 mod | — | — |
+| `src/dreamer_runner/park_resume.rs` | src | m | 1 struct · 2 enum · 5 fn · 9 const | ParkOwnerClass, ParkResume, ParkResumer | The Dreamer park resume table (untangle slice 3, the wake lifecycle owner; Engine 09:32 and 14:26, 9 Nov) |
 | `src/dreamer_runner/progress.rs` | src | s | 1 struct · 5 fn · 2 const | DreamerAttemptProgressProducer | Moved from `crates/oneiron/src/dreamer_runner/progress.rs` (core split slice 3: wake contract below core) |
 | `src/dreamer_runner/types.rs` | src | s | 1 enum · 2 fn · 1 mod | DreamerParkCause | Moved from `crates/oneiron/src/dreamer_runner/types.rs` (core split slice 3: wake contract below core) |
-| `src/dreamer_runner/types/retry_policy.rs` | src | s | 2 fn | — | Moved from `crates/oneiron/src/dreamer_runner/types/retry_policy.rs` (core split slice 3: wake contract… |
+| `src/dreamer_runner/types/retry_policy.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/dreamer_runner/types/retry_policy.rs` (core split slice 3: wake contract… |
 | `src/dreamer_wake/deadline.rs` | src | s | 2 struct · 21 fn · 1 type · 4 const | WakeCancellation, WakePassDeadline | Moved from `crates/oneiron/src/dreamer_wake/deadline.rs` (core split slice 3: wake contract below core) |
 | `src/dreamer_wake/mod.rs` | src | s | 6 mod | — | — |
 | `src/dreamer_wake/observation/live.rs` | src | s | 3 struct · 4 fn | ActiveCall, ActiveWake, WakeBinding | Moved from `crates/oneiron/src/dreamer_wake/observation/live.rs` (core split slice 3: wake contract below… |
