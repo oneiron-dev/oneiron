@@ -1,7 +1,7 @@
 import { afterAll, test, expect } from "bun:test";
 import { defineFile } from "./support/run.ts";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import type { DecisionQuestion, DecisionRung, QuestionAnswer, QuestionDefinitionInput, ArtifactAskOutcome, PairedReading, ProviderPin, QuestionCriteria, TypedDecision } from "@oneiron/client/facade-types";
+import type { DecisionQuestion, DecisionRung, QuestionAnswer, QuestionDefinitionInput, ArtifactAskOutcome, PairedReading, ProviderPin, QuestionCriteria, TypedDecision, MemoryPack, RetrievalRunEvidence, RetrievalRunId, RetrievalTrace, RetrievalBlendWeights } from "@oneiron/client/facade-types";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
@@ -1477,92 +1477,1065 @@ enabled = false
  */
 suite.todo(test, "JUDGMENTS-04", "waits on owner/grant-checked public SAVED_QUERY structural registration for self.saved_query.create on a fresh served vault (Saved query cache and live membership should work)");
 
+interface judg05Fixture {
+  scenario: string;
+  corpus: { alias: string; text: string }[];
+  query: string;
+  expectedSource: string;
+  outcome: { confirmed_fact_hit: boolean; gate_score: number };
+  expected: { optInStages: string[] };
+}
+const judg05OccurredAt = 1700000000;
+const judg05TurnId = Array.from({ length: 16 }, (_, index) => index + 1);
+const judg05EpisodeId = Array.from({ length: 16 }, (_, index) => index + 33);
+function judg05RunId(pack: MemoryPack): RetrievalRunId {
+  expect(pack.retrieval_run_id).toBeDefined();
+  if (!pack.retrieval_run_id) throw new Error("Serving recall omitted its finalized telemetry handle");
+  expect(pack.retrieval_run_id.bytes).toHaveLength(16);
+  return pack.retrieval_run_id;
+}
+function judg05Run(row: RetrievalRunEvidence | null): RetrievalRunEvidence {
+  expect(row).not.toBeNull();
+  if (!row) throw new Error("Serving handle has no public finalized run");
+  return row;
+}
+function judg05Trace(row: RetrievalRunEvidence): RetrievalTrace {
+  expect(row.run.trace).toBeDefined();
+  if (!row.run.trace) throw new Error("Explicit trace opt-in produced no trace");
+  expect(row.run.trace.fork_hash).toHaveLength(32);
+  return row.run.trace;
+}
+function judg05Hex(bytes: readonly number[]): string {
+  return bytes.map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+async function judg05Witness(engine: EngineFixture, text: string) {
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: judg05OccurredAt, occurred_end: judg05OccurredAt, learned_at: judg05OccurredAt,
+  });
+  expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value?.kind).toBe("CONVERSATION");
+  const write = await engine.client.call("vault.witness", {
+    conversation_ref: conversation.id, occurred_at: judg05OccurredAt,
+    messages: [{ author: "user", message_type: "text", content: text, is_visible: true, order: 0 }],
+  });
+  expect(write.message_short_ids).toHaveLength(1);
+  const message = (await engine.client.call("vault.get", { entity_ref: write.message_short_ids[0]! })).value;
+  const turn = (await engine.client.call("vault.get", { entity_ref: write.turn_short_id })).value;
+  expect(message?.body).toMatchObject({ content: text });
+  expect(turn?.kind).toBe("TURN");
+  if (!message || !turn) throw new Error("Witnessed fixture is not publicly readable");
+  return { message, turn, shortIds: [write.turn_short_id, ...write.message_short_ids] };
+}
+async function judg05Corpus(engine: EngineFixture, facts: judg05Fixture) {
+  const corpus = new Map<string, Awaited<ReturnType<typeof judg05Witness>>>();
+  for (const source of facts.corpus) corpus.set(source.alias, await judg05Witness(engine, source.text));
+  const expected = corpus.get(facts.expectedSource);
+  if (!expected) throw new Error("Fixture expectedSource has no authored corpus row");
+  await awaitPublic(() => engine.client.call("vault.search.bm25", { query: facts.query, limit: 10 }),
+    page => page.value.some(hit => expected.shortIds.includes(hit.short_id)
+      || hit.record?.id === expected.turn.id_hex || hit.record?.id === expected.message.id_hex),
+    { label: "judg05 fixture lexical publication" });
+  return expected;
+}
+function judg05Useful(pack: MemoryPack, source: Awaited<ReturnType<typeof judg05Witness>>) {
+  expect(pack.items.some(item => source.shortIds.includes(item.short_id)
+    || item.record?.id === source.turn.id_hex || item.record?.id === source.message.id_hex)).toBe(true);
+}
+async function judg05Refuse<V extends FacadeVerb>(
+  engine: EngineFixture, client: PublicHttpClient, verb: V, input: FacadeInput<V>,
+  status: number, code: string, actorRef: string, actorClass: string,
+): Promise<string> {
+  let failure: unknown;
+  try { await client.call(verb, input); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error(`Expected public refusal for ${verb}`);
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+  if (typeof receiptRef !== "string") throw new Error(`Refusal has no receiptRef: ${verb}`);
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await awaitPublic(() => client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    row => row !== null, { label: `judg05 refusal receipt ${verb}` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+    verb: `v1/core/facade/${verb}`, actor_ref: actorRef, actor_class: actorClass,
+    outcome: { refused: { code } } });
+  // The live owner can independently read this actor's receipt too.
+  expect(await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef })).toEqual(receipt);
+  return receiptRef;
+}
+function judg05TraceStages(trace: RetrievalTrace, row: RetrievalRunEvidence, expectedStages: string[]) {
+  expect([...new Set([...trace.per_channel.map(channel => channel.stage), trace.fused.stage,
+    trace.blended.stage, trace.reranked.stage, trace.final.stage])].sort()).toEqual([...expectedStages].sort());
+  const allowed = row.run.result_ids.map(judg05Hex);
+  for (const stage of [...trace.per_channel, trace.fused, trace.blended, trace.reranked, trace.final]) {
+    expect(Array.isArray(stage.candidates)).toBe(true);
+    for (const candidate of stage.candidates) {
+      expect(allowed).toContain(judg05Hex(candidate.result_id));
+      expect(Number.isFinite(candidate.final_score)).toBe(true);
+    }
+  }
+  expect(trace.final.candidates).toEqual(row.run.score_breakdown);
+}
+
 /* JUDGMENTS-05 — Local retrieval telemetry and replay should work.
- * Fixture: judgments-telemetry (telemetry.json). OF-106/259/260/265.
- *
- * Current recall is {query,effort,scope?,limit?,as_of?,deadline_ms?,...} ->
- * MemoryPack {items,scope_honesty,retrieval_meta,pack_version,narrowing,...}.
- * Canon's instrumented run is RetrievalState/action plus run identity and a
- * separately linked outcome (run_id); trace is opt-in per-stage candidates.
- * A turn outcome names exact retrievalRunIds[], never guessed overlap.
- *
- * Activate: use two fresh independent vaults serially inside this one-slot
- * file (not EngineFixture.peers, which needs two slots). Exercise capture
- * off, capture on without trace, and explicitly enabled trace. Recall the
- * fixed corpus/query, attach an owned outcome to the public serving run,
- * export through supported local diagnostic CLI/HTTP, then repeat the same
- * pinned replay on the SAME vault. Compare ordered source IDs/stage values
- * and fork identity; ignore run occurrence IDs and wall-clock metadata.
- * Change policy, model revision and source frontier ONE AT A TIME; each
- * material change must change that vault's replay identity. Deny cross-vault
- * run reads and outcome attachment with no foreign mutation. The per-vault
- * keyed hashes are not a cross-tenant equality oracle. Exports must contain
- * no raw query, pack text, raw frontier samples or trace key.
- *
- * Blocker: recall exposes neither the telemetry run handle/trace nor typed
- * run/outcome/export/replay operations. The shipped CLI catalog has no such
- * diagnostic commands; oneiron-bench's internal-vault tooling is outside
- * the allowed public server/CLI surface. Generic oneiron api and full-vault
- * export do not supply the missing typed diagnostic contract. Do not persist
- * the query in a fabricated run row or compare hashes across vaults.
+ * OF-106/259/260/265. Proves owner-local capture/trace controls, exact outcome links, redacted export,
+ * recorded-score replay, same-input identity, source/policy forks and restart durability.
+ * A second serial vault proves disabled capture and foreign-handle refusal without
+ * comparing tenant hashes. Live model-revision activation and execution replay need
+ * grant-backed public contracts; snapshot replay does not claim to rerun retrieval.
  */
-suite.todo(test, "JUDGMENTS-05", "waits on typed retrieval run/outcome, trace and diagnostic replay/export doors (Local retrieval telemetry and replay should work)");
+suite.test(test, "JUDGMENTS-05", "Owner retrieval telemetry links outcomes, exports redacted evidence, and replays recorded scores after restart", async () => {
+  const facts = await (await loadFixtures()).readJson<judg05Fixture>("judgments-telemetry");
+  const engine = await EngineFixture.start({ id: "JUDGMENTS-05-a", profile,
+    serverConfig: "[recall]\nretrieval_telemetry_capture = true\n" });
+  const recall: FacadeInput<"vault.recall"> = { query: facts.query, effort: "light", limit: 10, as_of: judg05OccurredAt };
+  const source = await judg05Corpus(engine, facts);
+  const noTrace = await engine.client.call("vault.recall", recall);
+  judg05Useful(noTrace, source);
+  const firstId = judg05RunId(noTrace);
+  const first = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: firstId }));
+  expect(first.run.trace ?? null).toBeNull();
+  expect(first.outcomes).toEqual([]);
+  const tracedRecall = { ...recall, telemetry: { capture_trace: true,
+    turn: { turn_id: judg05TurnId, episode_id: judg05EpisodeId, turn_idx: 1 } } };
+  const secondPack = await engine.client.call("vault.recall", tracedRecall);
+  const thirdPack = await engine.client.call("vault.recall", { ...tracedRecall,
+    telemetry: { ...tracedRecall.telemetry, turn: { ...tracedRecall.telemetry.turn, turn_idx: 2 } } });
+  judg05Useful(secondPack, source);
+  judg05Useful(thirdPack, source);
+  const secondId = judg05RunId(secondPack);
+  const thirdId = judg05RunId(thirdPack);
+  const second = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: secondId }));
+  const third = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: thirdId }));
+  expect(second.run.turn).toEqual(tracedRecall.telemetry.turn);
+  expect(third.run.turn).toEqual({ ...tracedRecall.telemetry.turn, turn_idx: 2 });
+  const trace = judg05Trace(second);
+  judg05TraceStages(trace, second, facts.expected.optInStages);
+  expect(judg05Trace(third)).toEqual(trace);
+  expect(third.run.result_ids).toEqual(second.run.result_ids);
+  expect(third.run.score_breakdown).toEqual(second.run.score_breakdown);
+  const forkHash = trace.fork_hash!;
+  expect(await engine.client.call("vault.retrieval.trace", { fork_hash: forkHash })).toEqual(trace);
+  expect((await engine.client.call("vault.retrieval.runs", { limit: 10 })).slice(0, 3).map(row => row.run.run_id))
+    .toEqual([thirdId, secondId, firstId]);
+  expect((await engine.client.call("vault.retrieval.turn", { turn_id: judg05TurnId })).map(row => row.run.run_id))
+    .toEqual([secondId, thirdId]);
+
+  const raw: FacadeInput<"vault.retrieval.outcomes.put"> = {
+    run_id: secondId, key: "e2e.raw", reward: 0.5, accepted: true, metadata: { note: "plain-token" },
+  };
+  await engine.client.call("vault.retrieval.outcomes.put", raw);
+  let linked = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: secondId }));
+  expect(linked.outcomes).toHaveLength(1);
+  expect(linked.outcomes[0]).toMatchObject(raw);
+  expect(linked.outcomes[0]!.reward_evidence ?? null).toBeNull();
+  const terminal: FacadeInput<"vault.retrieval.outcomes.end"> = {
+    retrievalRunIds: [secondId, thirdId], key: "e2e.end", turn_id: judg05TurnId,
+    gate_score: facts.outcome.gate_score, confirmed_fact_hit: facts.outcome.confirmed_fact_hit,
+    latency_scale_us: 1000000, cost_weight: 0, metadata: { note: "plain-token" },
+  };
+  await engine.client.call("vault.retrieval.outcomes.end", terminal);
+  await engine.client.call("vault.retrieval.outcomes.end", terminal);
+  for (const runId of [secondId, thirdId]) {
+    const read = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: runId }));
+    const outcomes = read.outcomes.filter(row => row.key === terminal.key);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ run_id: runId, reward: 1, accepted: true,
+      reward_evidence: { retrievalRunIds: terminal.retrievalRunIds, turn_id: judg05TurnId,
+        gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0 } });
+  }
+  expect(judg05Run(await engine.client.call("vault.retrieval.run", { run_id: firstId })).outcomes).toEqual([]);
+  const beforeRefusals = await engine.client.call("vault.retrieval.turn", { turn_id: judg05TurnId });
+  const ownerRefusal = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, status = 400, code = "BAD_REQUEST") =>
+    judg05Refuse(engine, engine.client, verb, input, status, code, engine.pairedActor.principalRef, "human");
+  await ownerRefusal("vault.retrieval.outcomes.end", { ...terminal, turn_id: Array(16).fill(99) });
+  await ownerRefusal("vault.retrieval.outcomes.end", { ...terminal, retrievalRunIds: [firstId] });
+  await ownerRefusal("vault.retrieval.outcomes.end", { ...terminal, retrievalRunIds: [secondId, secondId] });
+  await ownerRefusal("vault.retrieval.outcomes.put", { ...raw, key: terminal.key });
+  await ownerRefusal("vault.retrieval.outcomes.put", { ...raw, key: "not a valid key" });
+  expect(await engine.client.call("vault.retrieval.turn", { turn_id: judg05TurnId })).toEqual(beforeRefusals);
+
+  const exported = await engine.client.call("vault.retrieval.export", { run_ids: [secondId, thirdId] });
+  expect(exported.contract_version).toBe("oneiron.retrieval_diagnostic_export.v1");
+  expect(exported.runs.map(row => row.run.run_id)).toEqual([secondId, thirdId]);
+  for (const row of exported.runs) {
+    expect(row.run.replay_inputs?.query_ref ?? null).toBeNull();
+    expect(row.run.replay_inputs?.corpus_snapshot_ref ?? null).toBeNull();
+    for (const outcome of row.outcomes) expect(outcome.metadata).toEqual({});
+    judg05TraceStages(judg05Trace(row), row, facts.expected.optInStages);
+  }
+  const exportJson = JSON.stringify(exported);
+  for (const forbidden of [facts.query, ...facts.corpus.map(row => row.text), "plain-token", "trace_key", "raw_frontier_samples", "query_hash"])
+    expect(exportJson).not.toContain(forbidden);
+  await ownerRefusal("vault.retrieval.export", { run_ids: [secondId, secondId] });
+  const replay = await engine.client.call("vault.retrieval.replay", { run_ids: [secondId] });
+  expect(replay.contract_version).toBe("oneiron.retrieval_diagnostic_replay.v1");
+  expect(replay.runs).toEqual([{ source_run_id: secondId, turn: second.run.turn,
+    state: second.run.state, result_ids: second.run.result_ids,
+    pack: second.run.result_ids.map(id => second.run.score_breakdown.find(score => judg05Hex(score.result_id) === judg05Hex(id))!), trace }]);
+  expect(await engine.client.call("vault.retrieval.replay", { run_ids: [secondId] })).toEqual(replay);
+
+  await judg05Witness(engine, "Parcel R17 locker cobalt has a spare key in the depot.");
+  const frontier = judg05Run(await engine.client.call("vault.retrieval.run", {
+    run_id: judg05RunId(await engine.client.call("vault.recall", tracedRecall)),
+  }));
+  expect(judg05Trace(frontier).fork_hash).not.toEqual(forkHash);
+  const beforePin = await engine.client.call("vault.retrieval.policy.get", {});
+  expect(beforePin.active.weights.relevance).not.toBeCloseTo(0.7, 6);
+  await engine.client.call("vault.retrieval.policy.pin", { signal: "relevance", value: 0.7 });
+  const pinned = await engine.client.call("vault.retrieval.policy.get", {});
+  expect(pinned.pins.find(pin => pin.signal === "relevance")?.value).toBeCloseTo(0.7, 6);
+  expect(pinned.active.weights.relevance).toBeCloseTo(0.7, 6);
+  const policy = judg05Run(await engine.client.call("vault.retrieval.run", {
+    run_id: judg05RunId(await engine.client.call("vault.recall", tracedRecall)),
+  }));
+  expect(judg05Trace(policy).fork_hash).not.toEqual(judg05Trace(frontier).fork_hash);
+  expect(await engine.client.call("vault.retrieval.replay", { run_ids: [secondId] })).toEqual(replay);
+
+  const beforeAgent = await engine.client.call("vault.retrieval.turn", { turn_id: judg05TurnId });
+  const agentId = "eeeeeeeeeeeeeeeeeeeeeeeeeeee0505";
+  await engine.client.call("vault.agents.create", { agent_def_ref: agentId,
+    definition: { agent_id: "judg05-reader", display_name: "Retrieval diagnostic reader", desc: "Inert wrong-actor control", version: "1" } });
+  expect((await engine.client.call("vault.get", { entity_ref: agentId })).value?.kind).toBe("AGENT_DEF");
+  const agent = await engine.pairActor({ principalRef: agentId, actorClass: "agent" });
+  expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentId, actor_class: "agent" });
+  const agentRefusal = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>) =>
+    judg05Refuse(engine, agent.client, verb, input, 403, "FORBIDDEN", agentId, "agent");
+  const refusalRef = await agentRefusal("vault.retrieval.run", { run_id: secondId });
+  await agentRefusal("vault.retrieval.runs", {});
+  await agentRefusal("vault.retrieval.turn", { turn_id: judg05TurnId });
+  await agentRefusal("vault.retrieval.trace", { fork_hash: forkHash });
+  await agentRefusal("vault.retrieval.export", { run_ids: [secondId] });
+  await agentRefusal("vault.retrieval.replay", { run_ids: [secondId] });
+  await agentRefusal("vault.retrieval.outcomes.put", raw);
+  await agentRefusal("vault.retrieval.outcomes.end", terminal);
+  linked = judg05Run(await engine.client.call("vault.retrieval.run", { run_id: secondId }));
+  expect(await engine.client.call("vault.retrieval.turn", { turn_id: judg05TurnId })).toEqual(beforeAgent);
+  for (const row of beforeAgent.slice(2)) expect(row.outcomes).toEqual([]);
+  expect(linked).toEqual(beforeRefusals[0]);
+  await engine.restart();
+  expect(await engine.client.call("vault.retrieval.run", { run_id: secondId })).toEqual(linked);
+  expect(await engine.client.call("vault.retrieval.replay", { run_ids: [secondId] })).toEqual(replay);
+  expect(await engine.client.call("vault.retrieval.export", { run_ids: [secondId, thirdId] })).toEqual(exported);
+  expect(await engine.client.call("vault.retrieval.policy.get", {})).toEqual(pinned);
+  expect(await engine.client.call("vault.receipts.get", { receipt_ref: refusalRef })).toMatchObject({
+    actor_ref: agentId, actor_class: "agent", outcome: { refused: { code: "FORBIDDEN" } },
+  });
+  expect((await engine.client.call("vault.get", { entity_ref: source.message.id_hex })).value?.body).toEqual(source.message.body);
+  await engine.close();
+
+  // One slot: A is closed before the independent capture-disabled vault starts.
+  const other = await EngineFixture.start({ id: "JUDGMENTS-05-b", profile });
+  const otherSource = await judg05Corpus(other, facts);
+  for (const request of [recall, tracedRecall]) {
+    const pack = await other.client.call("vault.recall", request);
+    judg05Useful(pack, otherSource);
+    expect(pack.retrieval_run_id ?? null).toBeNull();
+  }
+  expect(await other.client.call("vault.retrieval.runs", {})).toEqual([]);
+  expect(await other.client.call("vault.retrieval.run", { run_id: secondId })).toBeNull();
+  expect(await other.client.call("vault.retrieval.trace", { fork_hash: forkHash })).toBeNull();
+  await judg05Refuse(other, other.client, "vault.retrieval.outcomes.put", raw, 400, "BAD_REQUEST", other.pairedActor.principalRef, "human");
+  await judg05Refuse(other, other.client, "vault.retrieval.outcomes.end", terminal, 400, "BAD_REQUEST", other.pairedActor.principalRef, "human");
+  await judg05Refuse(other, other.client, "vault.retrieval.export", { run_ids: [secondId] }, 404, "NOT_FOUND", other.pairedActor.principalRef, "human");
+  await judg05Refuse(other, other.client, "vault.retrieval.replay", { run_ids: [secondId] }, 404, "NOT_FOUND", other.pairedActor.principalRef, "human");
+  expect(await other.client.call("vault.retrieval.runs", {})).toEqual([]);
+  expect(await other.client.call("vault.retrieval.turn", { turn_id: judg05TurnId })).toEqual([]);
+  await other.close();
+});
+
+interface judg06PolicyFixture {
+  scenario: string;
+  corpus: { alias: string; text: string }[];
+  training: { query: string; relevant: string[]; confirmed: boolean; gate_score: number }[];
+  heldOut: { query: string; relevant: string[] }[];
+  ownerPin: { target: string; value: number; mode: string };
+  attempts: string[];
+  expected: { pinAfterEveryAttempt: number; factsAfterEveryAttempt: string; foreignOutcomeUsed: boolean; ungatedOutcomeUsed: boolean; regressionAutoApplied: boolean; receiptFields: string[]; smallTrial: string };
+}
+const judg06AT = 1700000000;
+const judg06TRAIN_CONFIG = { max_runs: 10, learning_rate: 0.05, min_reward_count: 10 } satisfies FacadeInput<"vault.retrieval.policy.train">;
+const judg06BLEND_SIGNALS = ["recency", "salience", "confidence", "gravity", "relevance"] as const;
+function judg06Bytes(fill: number): number[] {
+  return Array.from({ length: 16 }, () => fill);
+}
+function judg06EntityId(label: string): string {
+  return createHash("sha256").update(`judgments-06:${label}`).digest("hex").slice(0, 32);
+}
+function judg06RunKey(run: RetrievalRunId): string {
+  return run.bytes.join(",");
+}
+function judg06WeightSum(weights: RetrievalBlendWeights): number {
+  return weights.recency + weights.salience + weights.confidence + weights.gravity + weights.relevance;
+}
+function judg06PinRow(view: FacadeResult<"vault.retrieval.policy.get">): FacadeResult<"vault.retrieval.policy.get">["rows"][number] {
+  const row = view.rows.find(entry => entry.signal === "relevance");
+  if (!row) throw new Error("Policy view names no relevance row");
+  return row;
+}
+function judg06ExpectPin(pins: FacadeResult<"vault.retrieval.policy.get">["pins"]) {
+  expect(pins).toHaveLength(1);
+  expect(pins[0]!.signal).toBe("relevance");
+  expect(pins[0]!.value).toBeCloseTo(0.7, 6);
+}
+async function judg06ClaimSnapshot(owner: PublicHttpClient, ownerRef: string) {
+  const listed = await owner.call("vault.claims.list", { subject_ref: ownerRef, limit: 1000 });
+  return listed.value.map(row => ({ predicate: row.predicate, value: row.value, confidence: row.confidence, source: row.source, approval: row.approval })).sort((a, b) => a.predicate.localeCompare(b.predicate));
+}
+async function judg06Refusal<V extends FacadeVerb>(engine: EngineFixture, caller: PublicHttpClient, actorRef: string, actorClass: string, verb: V, input: FacadeInput<V>, status: number, code: string) {
+  let failure: unknown;
+  try { await caller.call(verb, input); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error(`Expected public refusal for ${verb}`);
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+  if (typeof receiptRef !== "string") throw new Error(`Missing refusal receipt for ${verb}`);
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }), value => value !== null, { label: `judg06 refusal receipt ${verb}` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade", verb: `v1/core/facade/${verb}`, actor_ref: actorRef, actor_class: actorClass, outcome: { refused: { code } } });
+  return { failure, receiptRef };
+}
 
 /* JUDGMENTS-06 — Learned retrieval policy retains owner pins should work.
- * Fixture: judgments-policy (policy.json). OF-092/093.
- *
- * Canon: RetrievalState/action + gated owned outcomes train the retrieval
- * skill's parameters at sleep. Immutable held-out queries/labels score a
- * candidate; declared owner pin/manifest weight stays authoritative.
- * learning.* is recorded/projector-only, not an ordinary claim write.
- * Existing vault.settings.learning{,.put,.clear} manages catalogued owner
- * seeds/pins; it is NOT a retrieval training or weight-table update call.
- *
- * Activate: publicly populate the fixed corpus, pin the selected weight to
- * 0.7, and snapshot that row and authoritative source claims. Attach the
- * training outcomes to their contributing runs, retain held-out labels only
- * for evaluation, and request the declared policy update. Read its candidate,
- * acceptance result, routing/model pins, weight origins, corpus digest and
- * accuracy/cost tradeoff. Submit a regression, an attempted pin overwrite,
- * foreign/ungated outcomes and an attempt to turn derived reward into fact.
- * Each must preserve the owner pin and original facts. An accepted update
- * may change only unpinned policy parameters inside its authority. This tiny
- * set cannot establish not-worse sufficiency: unknown stays an offer, never
- * an auto-approved switch or invented universal quality threshold.
- *
- * Blocker: no typed retrieval-outcome training/update, held-out policy
- * evaluation/admission or retrieval weight/routing receipt call exists in
- * the public HTTP/SDK catalog. The private blend tuner and generic learned
- * settings calls cannot stand in for OF-092's retrieval-policy loop. No
- * direct learning.* claims, private tuner calls or new production knobs.
+ * Fixture: judgments-policy (policy.json). OF-092/093. Partial: owner blend
+ * pins, ungated exclusion, refused admissions, explicit insufficient-evidence
+ * offers and priors CAS on one engine with capture on, no providers at all.
+ * Proves: pin 0.7 on relevance served at once and read back through a second
+ * door; two real serving runs with exact turn-linked gated outcomes (reward
+ * 1); the fixture's gate_score 0 row refused; raw observations never become
+ * gated labels; train/evaluate/admit/update shapes with the evidence digest
+ * and tradeoff scores; stale-digest, pin-overwrite and insufficient-admission
+ * refusals; invalid configs refused; priors CAS with its gate receipt; ten
+ * paired-agent 403s with receiptRef read back; pin, priors, outcomes and
+ * facts intact across restart; and the tiny-stays-offer promise under default
+ * update config (D1: expected red if two-row evidence auto-applies; the pin
+ * must survive either way). The regression-gate message path is not covered:
+ * no pin-respecting regressed input is constructible from public reads, the
+ * gate itself is source-true and not dropped as broken. Unproved here:
+ * immutable held-out manifest declaration/readback, principal/gate-bound
+ * outcome receipts, learned-action serving receipts, model/corpus revision
+ * receipts and Coach engine.controls admission (each names its missing door
+ * in the report). Retrieval self-tuning
+ * belongs to the Coach under the 6.6 ruling; this case proves owner authority
+ * only, against today's owner-only verbs.
  */
-suite.todo(test, "JUDGMENTS-06", "waits on typed retrieval-policy training/evaluation/update and weight receipts (Learned retrieval policy retains owner pins should work)");
+suite.test(test, "JUDGMENTS-06", "Owner retrieval pins survive candidate training, refused admission, insufficient-evidence offers, and restart", async () => {
+  const catalog = await loadFixtures();
+  const fixture = await catalog.readJson<judg06PolicyFixture>("judgments-policy");
+  expect(fixture.scenario).toBe("JUDGMENTS-06");
+  expect(fixture.corpus.map(row => row.alias)).toEqual(["locker", "handoff", "irrelevant"]);
+  expect(fixture.training).toHaveLength(3);
+  expect(fixture.training[2]).toMatchObject({ confirmed: false, gate_score: 0 });
+  expect(fixture.heldOut).toHaveLength(2);
+  expect(fixture.ownerPin.value).toBe(0.7);
+  expect(fixture.ownerPin.mode).toBe("pin");
+  expect(fixture.expected.pinAfterEveryAttempt).toBe(0.7);
+  expect(fixture.expected.foreignOutcomeUsed).toBe(false);
+  expect(fixture.expected.ungatedOutcomeUsed).toBe(false);
+  expect(fixture.expected.regressionAutoApplied).toBe(false);
+  expect(fixture.expected.smallTrial).toContain("offer");
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "JUDGMENTS-06", profile, serverConfig: "[recall]\nretrieval_telemetry_capture = true\n[models.dreamer]\nenabled = false\n" });
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const baseScope = await ownerBaseClaimScope(owner, ownerRef);
+    const claimRefs: string[] = [];
+    for (const row of fixture.corpus) {
+      const upserted = await owner.call("vault.claims.upsert", { predicate: `profile.judgments_policy_${row.alias}`, subject_ref: ownerRef, value: row.text, confidence: 0.875, source: "user_stated", scope: baseScope, occurred_at: judg06AT, learned_at: judg06AT });
+      expect(["auto", "approved"]).toContain(upserted.approval);
+      await engine.awaitReceipt(upserted.receipt_ref);
+      claimRefs.push(upserted.claim_short_id);
+    }
+    expect((await owner.call("vault.hydrate", { refs: claimRefs })).value).toHaveLength(3);
+    const factsBefore = await judg06ClaimSnapshot(owner, ownerRef);
+    for (const row of fixture.corpus) {
+      const found = factsBefore.filter(claim => claim.predicate === `profile.judgments_policy_${row.alias}`);
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ value: row.text, confidence: 0.875, source: "user_stated" });
+    }
+    const policyBefore = await owner.call("vault.retrieval.policy.get", {});
+    expect(policyBefore.pins).toEqual([]);
+    expect(policyBefore.policy_version).toBe(policyBefore.active.version);
+    expect(Array.isArray(policyBefore.routing)).toBe(true);
+    const priorsBefore = await owner.call("vault.retrieval.weights.get", {});
+    expect(priorsBefore.weights).toEqual({ affect: 0, arousal: 0, community: 0, vad: 0 });
+    expect(priorsBefore.body_hash).toMatch(/^[a-f0-9]{64}$/);
+    const pinned = await owner.call("vault.retrieval.policy.pin", { signal: "relevance", value: 0.7 });
+    judg06ExpectPin(pinned.pins);
+    const policyAfterPin = await owner.call("vault.retrieval.policy.get", {});
+    expect(policyAfterPin).toEqual(pinned);
+    const pinRow = judg06PinRow(policyAfterPin);
+    expect(pinRow.weight).toBeCloseTo(0.7, 5);
+    expect(pinRow.origin).toBe("owner_pin");
+    expect(pinRow.pinned).toBe(true);
+    expect(policyAfterPin.rows.filter(row => row.signal !== "relevance").every(row => row.origin === "bootstrap" && !row.pinned)).toBe(true);
+    expect(judg06WeightSum(policyAfterPin.active.weights)).toBeCloseTo(1, 5);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    const episode = judg06Bytes(0xe0);
+    const turns = [judg06Bytes(0xa0), judg06Bytes(0xa1)];
+    const aliasIndex = new Map(fixture.corpus.map((row, index) => [row.alias, index]));
+    const runIds: RetrievalRunId[] = [];
+    for (const [index, training] of fixture.training.slice(0, 2).entries()) {
+      const pack = await owner.call("vault.recall", { query: training.query, effort: "light", scope: { kinds: ["CLAIM"] }, limit: 10, as_of: judg06AT, telemetry: { turn: { turn_id: turns[index]!, episode_id: episode, turn_idx: index + 1 } } });
+      expect(pack.retrieval_run_id ?? null).not.toBeNull();
+      const runId = pack.retrieval_run_id!;
+      runIds.push(runId);
+      const wanted = training.relevant.map(alias => claimRefs[aliasIndex.get(alias)!]!);
+      expect(pack.items.some(item => wanted.includes(item.short_id))).toBe(true);
+      const evidence = await owner.call("vault.retrieval.run", { run_id: runId });
+      expect(evidence?.run.turn).toMatchObject({ turn_idx: index + 1 });
+      expect(evidence?.run.turn?.turn_id).toEqual(turns[index]);
+      expect(evidence?.run.turn?.episode_id).toEqual(episode);
+      expect(evidence?.run.result_ids.length ?? 0).toBeGreaterThan(0);
+      expect(evidence?.run.score_breakdown.length ?? 0).toBeGreaterThan(0);
+      const blendHits = (evidence?.run.score_breakdown ?? []).filter(hit => hit.components.some(part => (judg06BLEND_SIGNALS as readonly string[]).includes(part.signal)));
+      expect(blendHits.length).toBeGreaterThan(0);
+      expect(evidence?.outcomes).toEqual([]);
+    }
+    expect(judg06RunKey(runIds[0]!)).not.toBe(judg06RunKey(runIds[1]!));
+    for (const [index, runId] of runIds.entries()) {
+      const ended = await owner.call("vault.retrieval.outcomes.end", { retrievalRunIds: [runId], key: `judgments.confirmed.${index}`, turn_id: turns[index]!, gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, metadata: {} });
+      expect(ended).toHaveLength(1);
+      expect(judg06RunKey(ended[0]!.run.run_id)).toBe(judg06RunKey(runId));
+      expect(ended[0]!.outcomes).toHaveLength(1);
+      const record = ended[0]!.outcomes[0]!;
+      expect(record.key).toBe(`judgments.confirmed.${index}`);
+      expect(record.reward).toBe(1);
+      expect(record.accepted).toBe(true);
+      expect(record.reward_evidence).toMatchObject({ gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, turn_id: turns[index] });
+      expect(record.reward_evidence?.retrievalRunIds).toHaveLength(1);
+      expect(judg06RunKey(record.reward_evidence!.retrievalRunIds[0]!)).toBe(judg06RunKey(runId));
+      expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    }
+    expect((await owner.call("vault.retrieval.run", { run_id: runIds[0]! }))?.outcomes.map(row => row.key)).toEqual(["judgments.confirmed.0"]);
+    const zeroGate = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.end", { retrievalRunIds: [runIds[0]!], key: "judgments.training.2", turn_id: turns[0]!, gate_score: fixture.training[2]!.gate_score, confirmed_fact_hit: fixture.training[2]!.confirmed, latency_scale_us: 1000000, cost_weight: 0, metadata: {} }, 400, "BAD_REQUEST");
+    expect(zeroGate.failure.error?.message).toBe("invalid gated retrieval end outcome");
+    const raw = await owner.call("vault.retrieval.outcomes.put", { run_id: runIds[0]!, key: "judgments.raw", reward: 999, accepted: true, metadata: {} });
+    expect(raw).toHaveLength(2);
+    const rawRow = raw.find(row => row.key === "judgments.raw")!;
+    expect(rawRow.reward).toBe(999);
+    expect(rawRow.accepted).toBe(true);
+    expect(rawRow.reward_evidence ?? null).toBeNull();
+    const rawOverGated = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.put", { run_id: runIds[0]!, key: "judgments.confirmed.0", reward: 0.1, accepted: true, metadata: {} }, 400, "BAD_REQUEST");
+    expect(rawOverGated.failure.error?.message).toBe("raw retrieval outcome cannot replace a gated end outcome");
+    const unknownRun: RetrievalRunId = { bytes: judg06Bytes(0x07) };
+    const unknownPut = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.put", { run_id: unknownRun, key: "judgments.raw", reward: 0.5, accepted: true, metadata: {} }, 400, "BAD_REQUEST");
+    expect(unknownPut.failure.error?.message).toBe("retrieval outcome references unknown run id");
+    const unknownEnd = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.end", { retrievalRunIds: [unknownRun], key: "judgments.confirmed.x", turn_id: turns[0]!, gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, metadata: {} }, 400, "BAD_REQUEST");
+    expect(unknownEnd.failure.error?.message).toBe("retrieval end outcome references unknown run id");
+    const duplicateEnd = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.end", { retrievalRunIds: [runIds[0]!, runIds[0]!], key: "judgments.confirmed.0", turn_id: turns[0]!, gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, metadata: {} }, 400, "BAD_REQUEST");
+    expect(duplicateEnd.failure.error?.message).toBe("retrieval end outcome contains duplicate run ids");
+    const wrongTurn = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.outcomes.end", { retrievalRunIds: [runIds[0]!], key: "judgments.confirmed.0", turn_id: turns[1]!, gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, metadata: {} }, 400, "BAD_REQUEST");
+    expect(wrongTurn.failure.error?.message).toBe("retrieval end outcome does not name this run and turn");
+    expect((await owner.call("vault.retrieval.run", { run_id: runIds[0]! }))?.outcomes.map(row => row.key).sort()).toEqual(["judgments.confirmed.0", "judgments.raw"]);
+    expect(judg06PinRow(await owner.call("vault.retrieval.policy.get", {})).weight).toBeCloseTo(0.7, 5);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    const candidate = await owner.call("vault.retrieval.policy.train", { ...judg06TRAIN_CONFIG });
+    expect(candidate.algorithm).toBe("oneiron.retrieval.blend_tuner.v2");
+    expect(candidate.manifest_digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(candidate.held_out.verdict).toBe("insufficient");
+    expect(candidate.held_out.reward_count).toBe(1);
+    expect(candidate.training_reward_count).toBe(1);
+    expect(candidate.ungated_outcomes_skipped).toBe(1);
+    expect(candidate.weights.relevance).toBeCloseTo(0.7, 5);
+    expect(Number.isFinite(candidate.held_out.candidate_score)).toBe(true);
+    expect(Number.isFinite(candidate.held_out.active_score)).toBe(true);
+    expect(candidate.data_window.run_count).toBe(1);
+    expect(candidate.data_window.outcome_count).toBe(1);
+    expect(candidate.data_window.candidate_count).toBeGreaterThanOrEqual(1);
+    const candidatePinRow = candidate.rows.find(row => row.signal === "relevance")!;
+    expect(candidatePinRow.pinned).toBe(true);
+    expect(candidatePinRow.origin).toBe("owner_pin");
+    expect(candidate.rows.find(row => row.signal === "salience")?.origin).toBe("learned");
+    expect(await owner.call("vault.retrieval.policy.get", {})).toEqual(policyAfterPin);
+    const judged = await owner.call("vault.retrieval.policy.evaluate", { weights: candidate.weights, config: { ...judg06TRAIN_CONFIG } });
+    expect(judged.manifest_digest).toBe(candidate.manifest_digest);
+    expect(judged.pins_respected).toBe(true);
+    expect(judged.held_out.verdict).toBe("insufficient");
+    expect(judged.ungated_outcomes_skipped).toBe(1);
+    expect(judged.active_weights).toEqual(policyAfterPin.active.weights);
+    const flat: RetrievalBlendWeights = { recency: 0.2, salience: 0.2, confidence: 0.2, gravity: 0.2, relevance: 0.2 };
+    const flatJudged = await owner.call("vault.retrieval.policy.evaluate", { weights: flat, config: { ...judg06TRAIN_CONFIG } });
+    expect(flatJudged.pins_respected).toBe(false);
+    expect(flatJudged.manifest_digest).toBe(candidate.manifest_digest);
+    const pinOverwrite = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.admit", { weights: flat, manifest_digest: flatJudged.manifest_digest, config: { ...judg06TRAIN_CONFIG } }, 400, "BAD_REQUEST");
+    expect(pinOverwrite.failure.error?.message).toBe("retrieval policy candidate would overwrite an owner-pinned weight");
+    const staleAdmit = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.admit", { weights: candidate.weights, manifest_digest: "0".repeat(64), config: { ...judg06TRAIN_CONFIG } }, 400, "BAD_REQUEST");
+    expect(staleAdmit.failure.error?.message).toBe("retrieval policy candidate was judged on a stale evidence manifest");
+    const shortAdmit = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.admit", { weights: candidate.weights, manifest_digest: candidate.manifest_digest, config: { ...judg06TRAIN_CONFIG } }, 400, "BAD_REQUEST");
+    expect(shortAdmit.failure.error?.message).toBe("retrieval policy candidate lacks held-out evidence for admission");
+    const zeroMax = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.train", { max_runs: 0 }, 400, "BAD_REQUEST");
+    expect(zeroMax.failure.error?.message).toBe("retrieval blend tuning max_runs must be positive");
+    const zeroMin = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.train", { min_reward_count: 0 }, 400, "BAD_REQUEST");
+    expect(zeroMin.failure.error?.message).toBe("retrieval blend tuning min_reward_count must be positive");
+    const zeroRate = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.train", { learning_rate: 0 }, 400, "BAD_REQUEST");
+    expect(zeroRate.failure.error?.message).toBe("retrieval blend tuning learning_rate must be finite and positive");
+    const badPin = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.policy.pin", { signal: "relevance", value: 1.5 }, 400, "BAD_REQUEST");
+    expect(badPin.failure.error?.message).toBe("retrieval policy pin value must be within 0..=1");
+    expect(await owner.call("vault.retrieval.policy.get", {})).toEqual(policyAfterPin);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    const defaultJudged = await owner.call("vault.retrieval.policy.evaluate", { weights: candidate.weights });
+    expect(defaultJudged.manifest_digest).not.toBe(candidate.manifest_digest);
+    expect(defaultJudged.pins_respected).toBe(true);
+    expect(["not_worse", "regression", "insufficient"]).toContain(defaultJudged.held_out.verdict);
+    // Regression against the fixture's independent held-out labels needs the
+    // missing public immutable-manifest admission/readback door. Today's reward
+    // proxy does not consume those labels; do not call its near-tie a quality
+    // regression. Existing pin/stale/insufficient admission gates stay exercised.
+    const updated = await owner.call("vault.retrieval.policy.update", { ...judg06TRAIN_CONFIG });
+    expect(updated.disposition).toBe("offered");
+    expect(updated.reason).toBe("retrieval policy candidate lacks held-out evidence for admission");
+    expect(updated.candidate.manifest_digest).toBe(candidate.manifest_digest);
+    expect(updated.candidate.weights).toEqual(candidate.weights);
+    expect(updated.view.active.weights).toEqual(policyAfterPin.active.weights);
+    judg06ExpectPin(updated.view.pins);
+    expect(updated.view.posterior_labeled_runs).toBe(0);
+    expect(updated.view.posterior_observations).toBe(0);
+    expect(await owner.call("vault.retrieval.policy.get", {})).toEqual(updated.view);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    const priorsLive = await owner.call("vault.retrieval.weights.get", {});
+    expect(priorsLive).toEqual(priorsBefore);
+    const configured = await owner.call("vault.retrieval.weights.configure", { expected_body_hash: priorsLive.body_hash, weights: { affect: 0.4, arousal: 0, community: 0, vad: 0 } });
+    expect(configured.receipt_ref).toMatch(/^gate:[a-f0-9]{32}$/);
+    expect(configured.configuration.weights.affect).toBeCloseTo(0.4, 6);
+    expect(configured.configuration.weights.arousal).toBe(0);
+    expect(configured.configuration.weights.community).toBe(0);
+    expect(configured.configuration.weights.vad).toBe(0);
+    expect(configured.configuration.body_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(configured.configuration.body_hash).not.toBe(priorsLive.body_hash);
+    expect(configured.configuration.manifest_ref).toBe(priorsLive.manifest_ref);
+    expect(await owner.call("vault.retrieval.weights.get", {})).toEqual(configured.configuration);
+    expect(await engine.awaitReceipt(configured.receipt_ref)).toMatchObject({ receipt_ref: configured.receipt_ref });
+    const gateRow = (await owner.call("vault.receipts", { limit: 1000 })).receipts.find(row => row.receipt_ref === configured.receipt_ref)!;
+    expect(gateRow.reason_codes).toContain("gate.allow.owner_retrieval_weights");
+    expect(gateRow.outcome).toBe("allow");
+    const staleCas = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.weights.configure", { expected_body_hash: priorsLive.body_hash, weights: { affect: 0.1, arousal: 0, community: 0, vad: 0 } }, 400, "BAD_REQUEST");
+    expect(staleCas.failure.error?.message).toBe("expected_body_hash must match the current policy manifest");
+    const badPriors = await judg06Refusal(engine, owner, ownerRef, "human", "vault.retrieval.weights.configure", { expected_body_hash: configured.configuration.body_hash, weights: { affect: 0.5, arousal: 0, community: 0, vad: 0 } }, 400, "BAD_REQUEST");
+    expect(badPriors.failure.error?.message).toContain("emotion_weight");
+    expect(await owner.call("vault.retrieval.weights.get", {})).toEqual(configured.configuration);
+    expect(judg06PinRow(await owner.call("vault.retrieval.policy.get", {})).weight).toBeCloseTo(0.7, 5);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    const agentRef = judg06EntityId("observer");
+    await owner.call("vault.agents.create", { agent_def_ref: agentRef, definition: { agent_id: "judg06-observer", display_name: "Policy refusal observer", desc: "Inert retrieval-policy refusal control", version: "1" } });
+    expect((await owner.call("vault.get", { entity_ref: agentRef })).value?.kind).toBe("AGENT_DEF");
+    const agent = await engine.pairActor({ principalRef: agentRef, actorClass: "agent" });
+    expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+    const ownerVerb = (verb: string) => `${verb} is the vault owner's`;
+    const agentGet = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.get", {}, 403, "FORBIDDEN");
+    expect(agentGet.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.get"));
+    expect(agentGet.failure.error?.suggestions).toContain("Present the owner's own verified, unattenuated credential.");
+    const agentPin = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.pin", { signal: "relevance", value: 0.7 }, 403, "FORBIDDEN");
+    expect(agentPin.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.pin"));
+    const agentTrain = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.train", {}, 403, "FORBIDDEN");
+    expect(agentTrain.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.train"));
+    const agentEvaluate = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.evaluate", { weights: candidate.weights }, 403, "FORBIDDEN");
+    expect(agentEvaluate.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.evaluate"));
+    const agentAdmit = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.admit", { weights: candidate.weights, manifest_digest: candidate.manifest_digest }, 403, "FORBIDDEN");
+    expect(agentAdmit.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.admit"));
+    const agentUpdate = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.policy.update", {}, 403, "FORBIDDEN");
+    expect(agentUpdate.failure.error?.message).toBe(ownerVerb("vault.retrieval.policy.update"));
+    const agentWeightsGet = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.weights.get", {}, 403, "FORBIDDEN");
+    expect(agentWeightsGet.failure.error?.message).toBe(ownerVerb("vault.retrieval.weights.get"));
+    const agentWeightsConfigure = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.weights.configure", { expected_body_hash: configured.configuration.body_hash, weights: configured.configuration.weights }, 403, "FORBIDDEN");
+    expect(agentWeightsConfigure.failure.error?.message).toBe(ownerVerb("vault.retrieval.weights.configure"));
+    const agentPut = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.outcomes.put", { run_id: runIds[0]!, key: "judgments.agent", reward: 0.1, accepted: true, metadata: {} }, 403, "FORBIDDEN");
+    expect(agentPut.failure.error?.message).toBe(ownerVerb("vault.retrieval.outcomes.put"));
+    const agentEnd = await judg06Refusal(engine, agent.client, agentRef, "agent", "vault.retrieval.outcomes.end", { retrievalRunIds: [runIds[0]!], key: "judgments.agent", turn_id: turns[0]!, gate_score: 1, confirmed_fact_hit: true, latency_scale_us: 1000000, cost_weight: 0, metadata: {} }, 403, "FORBIDDEN");
+    expect(agentEnd.failure.error?.message).toBe(ownerVerb("vault.retrieval.outcomes.end"));
+    expect(await owner.call("vault.retrieval.policy.get", {})).toEqual(updated.view);
+    expect(await owner.call("vault.retrieval.weights.get", {})).toEqual(configured.configuration);
+    expect((await owner.call("vault.retrieval.run", { run_id: runIds[0]! }))?.outcomes.map(row => row.key).sort()).toEqual(["judgments.confirmed.0", "judgments.raw"]);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    // Read the default update before restarting; defer the predicted red so
+    // durability is still exercised if today's engine auto-applies tiny evidence.
+    const defaultUpdated = await owner.call("vault.retrieval.policy.update", {});
+    judg06ExpectPin(defaultUpdated.view.pins);
+    expect(judg06PinRow(defaultUpdated.view).weight).toBeCloseTo(0.7, 5);
+    expect(defaultUpdated.candidate.manifest_digest).toBe(defaultJudged.manifest_digest);
+    expect(await owner.call("vault.retrieval.policy.get", {})).toEqual(defaultUpdated.view);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    await engine.restart();
+    const policyRestarted = await owner.call("vault.retrieval.policy.get", {});
+    judg06ExpectPin(policyRestarted.pins);
+    expect(policyRestarted.active.weights).toEqual(defaultUpdated.view.active.weights);
+    expect(policyRestarted.posterior_labeled_runs).toBe(defaultUpdated.view.posterior_labeled_runs);
+    expect(policyRestarted.posterior_observations).toBe(defaultUpdated.view.posterior_observations);
+    expect(judg06PinRow(policyRestarted).weight).toBeCloseTo(0.7, 5);
+    expect(await owner.call("vault.retrieval.weights.get", {})).toEqual(configured.configuration);
+    const run0Restarted = await owner.call("vault.retrieval.run", { run_id: runIds[0]! });
+    expect(run0Restarted?.outcomes.map(row => row.key).sort()).toEqual(["judgments.confirmed.0", "judgments.raw"]);
+    expect(run0Restarted?.outcomes.find(row => row.key === "judgments.confirmed.0")?.reward).toBe(1);
+    expect(run0Restarted?.outcomes.find(row => row.key === "judgments.confirmed.0")?.reward_evidence?.turn_id).toEqual(turns[0]);
+    expect(await judg06ClaimSnapshot(owner, ownerRef)).toEqual(factsBefore);
+    // D1: a tiny trial remains an offer and never changes the served weights.
+    expect(defaultUpdated.disposition).toBe("offered");
+    expect(defaultUpdated.reason ?? "").toContain("held-out");
+    expect(defaultUpdated.view.active.weights).toEqual(updated.view.active.weights);
+  } finally {
+    await engine?.close();
+  }
+});
+
+interface judg07Fixture {
+  scenario: string;
+  source: { alias: string; text: string };
+  distractor: { alias: string; text: string };
+  extraction: { claimText: string; prospectiveQueries: string[]; usage: { inputTokens: number; outputTokens: number } };
+  query: string;
+  expected: { beforeExtraction: string; afterExtraction: string; hintTrust: string; independentEvidence: boolean; independentIdentity: boolean; afterSourceErasure: string; distractorAfterErasure: string };
+}
+const judg07OccurredAt = 1700000000;
+const judg07AgentId = "aa0701".padStart(32, "0");
+const judg07Predicate = "item.location";
+const judg07Confidence = 0.9;
+const judg07Speaker = "the speaker";
+const judg07AboutText = "The speaker has a stated fact.";
+const judg07SummaryText = "A short note was recorded.";
+const judg07PersonAboutPrompt = "You write the one-line `about` of a person on an agent's roster of people. The facts below are everything you may use, one per line as `predicate: value`. Write one plain sentence of at most 25 words that says who this person is. Never add, guess or imply a fact that is not listed, and never say that facts are missing. A fact marked (observed) was read from what the person did; where it disagrees with a fact marked (stated), go by the stated one. No markup and no quotes.";
+type judg07BackgroundKey = "follower_instruction" | "follower_keyframe_instruction" | "novelty_instruction" | "audit_window_instruction";
+const judg07BackgroundReplies: Partial<Record<judg07BackgroundKey, string>> = {
+  follower_keyframe_instruction: "No change to the keyframe.",
+  audit_window_instruction: JSON.stringify({ discovered: [] }),
+};
+// The Dreamer background producers, answered strictly or parked loudly. A
+// keyframe fold and a window audit have static valid answers; follower and
+// novelty readings have none, so they keep a declared 503 the step retries
+// and then parks, exactly as the suite's proven extraction cases do.
+function judg07Background(model: string, recipes: Record<string, string>): ProviderStep[] {
+  return (["follower_instruction", "follower_keyframe_instruction", "novelty_instruction", "audit_window_instruction"] as const)
+    .map(key => {
+      const text = judg07BackgroundReplies[key];
+      const system = recipes[key];
+      if (typeof system !== "string" || system.length === 0) throw new Error(`Shipped recipe default missing: ${key}`);
+      return { id: `judg07-background-${key}`, origin: "extraction", role: "extraction_teacher",
+        purpose: `judg07 background ${key}`, standing: true as const,
+        request: { method: "POST" as const, path: "/v1/chat/completions", model, system },
+        response: text === undefined
+          ? { kind: "json" as const, status: 503,
+            body: { error: { type: "fixture_background_unscripted", message: "Background producer is not scripted" } } }
+          : openaiText(`judg07-background-${key}`, model, text, { inputTokens: 64, outputTokens: 8 }) };
+    });
+}
+type judg07MesoClaim = NonNullable<FacadeResult<"vault.memory.signal_extraction.result">>["claims"][number];
+type judg07EraseFirst = Extract<FacadeResult<"vault.records.erase_confirm">, { first: unknown }>["first"];
+interface judg07RedactionAudit {
+  request_id: string;
+  scope: { entity_ids: string[]; revision_ids: string[] };
+  requested_at: number;
+  hard_purge_complete_at: number;
+  sweep_queued_at: number | null;
+  affected_revision_ids: string[];
+  custody_retirements: string[];
+  capture_failures?: unknown[];
+  verification: Record<string, string>;
+}
+interface judg07HousekeepingReport {
+  started_at: number;
+  sweeps: { sweep: string; outcome: string; complete?: boolean; work?: { hard_erase?: {
+    jobs_processed: number; jobs_failed: number; jobs_deferred: number; windows_deferred_live: number;
+    windows_deferred_raced: number; windows_deferred_held: number; receipts_finalized: number;
+    deadline_breaches: number; obligations_undecodable: number } } }[];
+}
+async function judg07GrantExtraction(engine: EngineFixture): Promise<void> {
+  // Public stopped-vault owner command, before authoring any source.
+  await engine.kill();
+  const grant = await engine.cli.run(["dreamer", "grant", "--config", `${engine.root}/oneiron.toml`,
+    "--extraction-route", "own_server"]);
+  expect(grant.exitCode).toBe(0);
+  await engine.restart();
+}
+async function judg07Conversation(engine: EngineFixture): Promise<string> {
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: judg07OccurredAt, occurred_end: judg07OccurredAt, learned_at: judg07OccurredAt,
+  });
+  expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value?.kind).toBe("CONVERSATION");
+  return conversation.id;
+}
+async function judg07Witness(engine: EngineFixture, conversation: string, text: string) {
+  const receipt = await engine.client.call("vault.witness", {
+    conversation_ref: conversation, occurred_at: judg07OccurredAt,
+    messages: [{ author: "user", message_type: "text", content: text, is_visible: true, order: 0 }],
+  });
+  expect(receipt.message_short_ids).toHaveLength(1);
+  if (!receipt.turn) throw new Error("Witness returned no typed TURN record");
+  const turn = (await engine.client.call("vault.get", { entity_ref: receipt.turn_short_id })).value;
+  const message = (await engine.client.call("vault.get", { entity_ref: receipt.message_short_ids[0]! })).value;
+  expect(turn?.kind).toBe("TURN");
+  expect(message?.body).toMatchObject({ content: text });
+  if (!turn || !message) throw new Error("Witnessed turn is not publicly readable");
+  expect(turn.id_hex).toBe(receipt.turn.id);
+  return { turnId: turn.id_hex, turnShort: receipt.turn_short_id,
+    messageId: message.id_hex, messageShort: receipt.message_short_ids[0]! };
+}
+async function judg07Refusal<V extends FacadeVerb>(
+  engine: EngineFixture, caller: PublicHttpClient, principal: string, verb: V,
+  input: FacadeInput<V>, status: number, code: string,
+): Promise<string> {
+  let failure: unknown;
+  try { await caller.call(verb, input); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error(`Expected ${verb} public refusal`);
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+  if (typeof receiptRef !== "string") throw new Error(`Missing ${verb} refusal receipt`);
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null, { label: `judg07 ${verb} refusal receipt` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+    verb: `v1/core/facade/${verb}`, actor_ref: principal, actor_class: "agent",
+    outcome: { refused: { code } } });
+  return receiptRef;
+}
+async function judg07Failure(action: () => Promise<unknown>, status: number, code: string): Promise<PublicHttpError> {
+  try { await action(); } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBe(status);
+    expect(error.error?.code).toBe(code);
+    expect(error.error?.receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+    return error;
+  }
+  throw new Error(`Expected HTTP ${status} ${code}`);
+}
+async function judg07Erase(client: PublicHttpClient, record: string): Promise<judg07EraseFirst> {
+  const preview = await client.call("vault.records.erase_preview", { record });
+  expect(preview.record).toBe(record);
+  expect(preview.preview_digest.length).toBeGreaterThan(0);
+  expect(preview.shared_with).toEqual([]);
+  expect(preview.held_bytes).toEqual([]);
+  expect(preview.lfs_chunks).toEqual([]);
+  expect(preview.same_bytes).toEqual([]);
+  expect(preview.remote_copies_may_remain).toBe(false);
+  const outcome = await client.call("vault.records.erase_confirm", {
+    record, preview_digest: preview.preview_digest, also_same_bytes: false,
+  });
+  if (!("first" in outcome)) throw new Error("Erase confirm answered no first receipt");
+  expect(outcome.first_act ?? null).toBeNull();
+  expect(outcome.same_bytes).toEqual([]);
+  expect(outcome.first.existed).toBe(true);
+  expect(outcome.first.reason).toBe("owner_erase");
+  expect(outcome.first.receipt_ref).toEqual(expect.stringMatching(/^redaction:[a-f0-9]{32}$/));
+  expect(outcome.first.state).toBe("applied");
+  return outcome.first;
+}
+async function judg07Audit(client: PublicHttpClient, receiptRef: string | null | undefined, record: string, forbidden: readonly string[]): Promise<judg07RedactionAudit> {
+  const match = /^redaction:([a-f0-9]{32})$/.exec(receiptRef ?? "");
+  if (!match) throw new Error("Erase returned no redaction receipt reference");
+  const result = await client.call("vault.get", { entity_ref: match[1]! });
+  expect(result.value).not.toBeNull();
+  expect(result.value?.kind).toBe("REDACTION_AUDIT");
+  const body = result.value?.body as judg07RedactionAudit;
+  expect(body.scope.entity_ids).toContain(record);
+  expect(body.request_id).toMatch(/^[a-f0-9-]+$/i);
+  expect(body.hard_purge_complete_at).toBeGreaterThanOrEqual(body.requested_at);
+  expect(body.sweep_queued_at).not.toBeNull();
+  const text = JSON.stringify(body);
+  for (const content of forbidden) expect(text.includes(content)).toBe(false);
+  for (const id of [...body.scope.entity_ids, ...body.scope.revision_ids, ...body.affected_revision_ids]) {
+    expect(id).toMatch(/^[a-f0-9]{32}$/i);
+  }
+  expect(body.capture_failures ?? []).toEqual([]);
+  for (const retirement of body.custody_retirements) {
+    expect(retirement).toMatch(/^[a-z0-9_]+\.[a-f0-9]{32}\.[a-f0-9]+$/i);
+  }
+  expect(Object.keys(body.verification).sort()).toEqual(["att_client", "att_pk", "att_sig", "att_v"]);
+  expect(body.verification.att_client).toMatch(/^[a-f0-9]{16}$/);
+  expect(body.verification.att_pk).toMatch(/^[a-f0-9]{64}$/);
+  expect(body.verification.att_sig).toMatch(/^[a-f0-9]{128}$/);
+  expect(body.verification.att_v).toBe("1");
+  return body;
+}
+async function judg07Sweep(engine: EngineFixture): Promise<void> {
+  // One explicit owner action; its response awaits the production sweep.
+  const reply = await engine.client.request<judg07HousekeepingReport>("POST", "/v1/owner/maintain");
+  const sweep = reply.body.sweeps.find(row => row.sweep === "hard_erase_sweep");
+  expect(sweep?.outcome).toBe("ran");
+  expect(sweep?.complete).toBe(true);
+  const work = sweep?.work?.hard_erase;
+  expect(work).toBeDefined();
+  expect(work?.jobs_failed).toBe(0);
+  expect(work?.jobs_deferred).toBe(0);
+  expect(work?.windows_deferred_live).toBe(0);
+  expect(work?.windows_deferred_raced).toBe(0);
+  expect(work?.windows_deferred_held).toBe(0);
+  expect(work?.obligations_undecodable).toBe(0);
+  expect(work?.deadline_breaches).toBe(0);
+  await engine.artifacts.json("judg07-historical-sweep.json", reply.body);
+}
+async function judg07People(client: PublicHttpClient) {
+  const rows: FacadeResult<"vault.people.list">["people"] = [];
+  let page = 0;
+  for (;;) {
+    const result = await client.call("vault.people.list", { page });
+    rows.push(...result.people);
+    if (!result.more) return rows;
+    page++;
+  }
+}
+async function judg07ReferenceGone(client: PublicHttpClient, reference: string, forbidden: readonly string[]): Promise<void> {
+  try {
+    const result = await client.call("vault.refs.resolve", { reference });
+    const text = JSON.stringify(result);
+    for (const content of forbidden) expect(text.includes(content)).toBe(false);
+    expect(result.value.snippet ?? null).toBeNull();
+    expect(result.value.revision ?? null).toBeNull();
+    expect((await client.call("vault.get", { entity_ref: reference })).value).toBeNull();
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    const text = JSON.stringify(error.reply.body);
+    for (const content of forbidden) expect(text.includes(content)).toBe(false);
+    expect([404, 422]).toContain(error.reply.status);
+    const code = error.error?.code;
+    if (code === undefined) throw error;
+    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(code);
+  }
+}
 
 /* JUDGMENTS-07 — Prospective hints remain derived should work.
  * Fixture: judgments-hints (hints.json). OF-105.
- * Canon also: write-path #prospective-query, ARCH-0038 derived invalidation.
- *
- * Current WitnessTurn {conversation_ref,messages,occurred_at,...} and
- * vault.search.bm25({query,limit}) give the ingest/read ends. ClaimInput has
- * {predicate,subject_ref,value,confidence,source,...}, no prospective hints.
- * ConsolidationEnqueueRequest is {scope,input:unknown,run_id?,dedupe_key?,
- * now?}; status returns DreamerAttemptView, not a typed extraction result.
- *
- * Activate: witness the source and distractor through the public door.
- * Before extraction the fixture's query words have no literal lexical hit.
- * Run the scripted extractor to emit the fixed claim plus prospective query,
- * await its public completion, then search for the hint wording. Assert the
- * hit resolves to the source claim, carries the original turn/revision and
- * generated hint provenance, and is not an independent identity/evidence
- * claim. Erase the source through the owner-confirmed public deletion flow,
- * await its receipt and requery: no source or orphan hint survives, while
- * the independent distractor remains readable. A hint must never authorize
- * a write or be counted as another corroborating source.
- *
- * Blocker: no typed HTTP/SDK extraction producer/result carries prospective
- * queries or their source links. The consolidation input's unknown payload
- * is not a typed extraction call. No generic vault.batch/claim-value seed,
- * manually written lexical_query_hint, private batch builder or raw index
- * manipulation may fabricate a successful extractor for this scenario.
+ * The scripted extractor emits the fixed item.location claim plus its
+ * prospective query over the witnessed source turn; the hint wording finds
+ * the source claim through bm25, and the result carries the original turn,
+ * message, parent-verified revision and content hash with generated source.
+ * Owner-confirmed erase (preview, confirm, audit, sweep, maintain) removes
+ * the turn, message, claim and hint hit while the distractor stays readable.
+ * A paired non-owner is refused on both extraction doors and erase preview,
+ * each refusal carrying a readable call receipt; all state is re-read after
+ * a restart. Expected red: signed MACHINE promotions land no typed hint
+ * rows, so the prospective_queries assertion exposes the engine (D1).
+ * The missing public hint-citation admission/refusal door leaves adversarial
+ * write-authority and corroboration checks unproved. Provider-outage variants
+ * are extra coverage; the final restart is this scenario's failure leg.
  */
-suite.todo(test, "JUDGMENTS-07", "waits on typed extraction prospective-query output and completion/source receipts (Prospective hints remain derived should work)");
+suite.test(test, "JUDGMENTS-07", "Extracted query wording finds its generated source claim, then confirmed source erase removes both", async () => {
+  const facts = await (await loadFixtures()).readJson<judg07Fixture>("judgments-hints");
+  expect(facts.scenario).toBe("JUDGMENTS-07");
+  expect(facts.source.text).toBe("I left my Brompton beside rack seventeen.");
+  expect(facts.distractor.text).toBe("The telescope cover is dry.");
+  expect(facts.query).toBe("bicycle parking location");
+  expect(facts.extraction.claimText).toBe("Brompton beside rack seventeen");
+  expect(facts.extraction.prospectiveQueries).toEqual(["bicycle parking location"]);
+  expect(facts.extraction.usage).toEqual({ inputTokens: 24, outputTokens: 8 });
+  expect(facts.expected.hintTrust).toBe("generated/derived");
+  expect(facts.expected.independentEvidence).toBe(false);
+  expect(facts.expected.independentIdentity).toBe(false);
+  const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
+  const recipes = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text()) as Record<string, string>;
+  expect(typeof extractionPrompt.system).toBe("string");
+  const providers = await ScriptedProviders.start({ id: "JUDGMENTS-07", steps: [{
+    id: "judg07-extract", origin: "extraction", role: "extraction_teacher", purpose: "extract cited location plus prospective query",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "hints-extract",
+      fields: { stream: false }, system: extractionPrompt.system as string }, barrier: "extract",
+    response: openaiText("judg07-extract", "hints-extract", JSON.stringify({
+      candidates: [{ subject: "new:P1", predicate: judg07Predicate, value: facts.extraction.claimText,
+        confidence: judg07Confidence, evidence_refs: [{ source: "T1", quote: facts.extraction.claimText }],
+        prospective_queries: facts.extraction.prospectiveQueries }],
+      persons: [{ id: "new:P1", name: judg07Speaker, evidence_turn_refs: ["T1"] }],
+    }), { inputTokens: facts.extraction.usage.inputTokens, outputTokens: facts.extraction.usage.outputTokens }),
+  }, ...judg07Background("hints-extract", recipes), {
+    id: "judg07-summary", origin: "summary", role: "dreamer_current", purpose: "narrative scope summary",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "hints-summary",
+      fields: { response_format: { type: "json_schema" } } },
+    response: openaiText("judg07-summary", "hints-summary",
+      JSON.stringify({ text: judg07SummaryText, keep: "" }), { inputTokens: 128, outputTokens: 16 }),
+  }, {
+    id: "judg07-about", origin: "summary", role: "dreamer_current", purpose: "extracted person roster About",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "hints-summary", system: judg07PersonAboutPrompt },
+    response: openaiText("judg07-about", "hints-summary", judg07AboutText, { inputTokens: 128, outputTokens: 16 }),
+  }] });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "JUDGMENTS-07", profile, serverConfig: `
+[models]
+extraction_egress = true
+[models.providers.hints_extraction]
+kind = "local-openai-compat"
+base_url = "${providers.urls.extraction}"
+revision = "e2e-v1"
+timeout_secs = 2
+[models.roles.extraction_teacher]
+model = "hints_extraction:hints-extract"
+[models.providers.hints_summary]
+kind = "local-openai-compat"
+base_url = "${providers.urls.summary}"
+revision = "e2e-v1"
+timeout_secs = 2
+[models.roles.dreamer_current]
+model = "hints_summary:hints-summary"
+[models.roles.generative_reasoner]
+model = "hints_summary:hints-summary"
+[models.dreamer]
+enabled = true
+[models.workflows]
+enabled = false
+` });
+    const owner = engine.client;
+    await judg07GrantExtraction(engine);
+    const sourceRoom = await judg07Conversation(engine);
+    const distractorRoom = await judg07Conversation(engine);
+    expect(distractorRoom).not.toBe(sourceRoom);
+    const sourceTurn = await judg07Witness(engine, sourceRoom, facts.source.text);
+    const distractorTurn = await judg07Witness(engine, distractorRoom, facts.distractor.text);
+    expect(distractorTurn.turnId).not.toBe(sourceTurn.turnId);
+    await owner.call("vault.agents.create", { agent_def_ref: judg07AgentId,
+      definition: { agent_id: "judg07-observer", display_name: "Judgment derivation observer",
+        desc: "Inert extraction refusal control", version: "1" } });
+    expect((await owner.call("vault.get", { entity_ref: judg07AgentId })).value?.kind).toBe("AGENT_DEF");
+    const agent = await engine.pairActor({ principalRef: judg07AgentId, actorClass: "agent" });
+    expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: judg07AgentId, actor_class: "agent" });
+    // The corpus is indexed before the honest negative: both witnessed texts
+    // are found by their own words, while the hint wording has no hit.
+    const brompton = await awaitPublic(() => owner.call("vault.search.bm25", { query: "Brompton", limit: 10 }),
+      page => page.value.some(hit => hit.short_id === sourceTurn.messageShort || hit.record?.id === sourceTurn.messageId),
+      { label: "judg07 source text indexed" });
+    expect(brompton.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId)).toBe(false);
+    const telescope = await awaitPublic(() => owner.call("vault.search.bm25", { query: "telescope", limit: 10 }),
+      page => page.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId),
+      { label: "judg07 distractor text indexed" });
+    expect(telescope.value.some(hit => hit.short_id === sourceTurn.messageShort || hit.record?.id === sourceTurn.messageId)).toBe(false);
+    expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
+    await judg07Failure(() => owner.call("vault.memory.signal_extraction", { turn_refs: [] }), 400, "BAD_REQUEST");
+    const refusals: string[] = [];
+    refusals.push(await judg07Refusal(engine, agent.client, judg07AgentId,
+      "vault.memory.signal_extraction", { turn_refs: [sourceTurn.turnId] }, 403, "FORBIDDEN"));
+    refusals.push(await judg07Refusal(engine, agent.client, judg07AgentId,
+      "vault.memory.signal_extraction.result", { job_ref: "0".repeat(32) }, 403, "FORBIDDEN"));
+    refusals.push(await judg07Refusal(engine, agent.client, judg07AgentId,
+      "vault.records.erase_preview", { record: sourceTurn.turnId }, 403, "FORBIDDEN"));
+    expect(new Set(refusals).size).toBe(refusals.length);
+    expect((await owner.call("vault.get", { entity_ref: sourceTurn.turnId })).value?.kind).toBe("TURN");
+    const ticket = await owner.call("vault.memory.signal_extraction", { turn_refs: [sourceTurn.turnId] });
+    expect(ticket.job_refs.length).toBeGreaterThan(0);
+    const unknownJob = ticket.job_refs[0]!.slice(0, 31) + (ticket.job_refs[0]!.endsWith("0") ? "1" : "0");
+    expect(await owner.call("vault.memory.signal_extraction.result", { job_ref: unknownJob })).toBeNull();
+    providers.releaseBarrier("extract");
+    const extracted: judg07MesoClaim[] = [];
+    for (const job_ref of ticket.job_refs) {
+      const result = await awaitPublic(
+        () => owner.call("vault.memory.signal_extraction.result", { job_ref }),
+        value => value?.job.state === "completed",
+        { label: "judg07 production signal extraction" });
+      if (!result) throw new Error("Completed extraction has no typed result");
+      expect(result.job.job_ref).toBe(job_ref);
+      expect(result.job.last_error ?? null).toBeNull();
+      extracted.push(...result.claims);
+    }
+    const matches = extracted.filter(row => row.claim.predicate === judg07Predicate && row.claim.value === facts.extraction.claimText);
+    expect(matches.length).toBeGreaterThan(0);
+    for (const row of matches) {
+      expect(row.claim.source).toBe("generated");
+      expect(row.claim.approval).toBe("auto");
+      expect(row.claim.stale).toBe(false);
+    }
+    const active = matches.filter(row => row.claim.lifecycle === "active");
+    expect(active).toHaveLength(1);
+    const meso = active[0]!;
+    expect(meso.claim.confidence).toBeCloseTo(judg07Confidence, 5);
+    const shortRef = meso.claim.short_ref;
+    expect(shortRef).toBeTruthy();
+    if (!shortRef) throw new Error("Meso claim has no public short ref");
+    const subject = (await owner.call("vault.get", { entity_ref: meso.claim.subject_ref })).value;
+    expect(subject?.kind).toBe("PERSON");
+    expect((subject?.body as Record<string, unknown> | null | undefined)?.["name"]).toBe(judg07Speaker);
+    expect(meso.sources.length).toBeGreaterThan(0);
+    const source = meso.sources.find(pin => pin.source_ref === sourceTurn.turnId);
+    if (!source) throw new Error("Meso claim cites no source-turn provenance");
+    expect(source.claim_ref ?? null).toBeNull();
+    expect(source.content_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(source.messages.length).toBeGreaterThan(0);
+    const messagePin = source.messages.find(pin => pin.message_ref === sourceTurn.messageId);
+    if (!messagePin) throw new Error("Meso claim cites no source-message span");
+    expect(messagePin.revision).toMatch(/^[a-f0-9]{64}$/);
+    expect(facts.source.text.slice(messagePin.byte_range[0], messagePin.byte_range[1])).toBe(facts.extraction.claimText);
+    if (source.byte_range) {
+      const [start, end] = source.byte_range;
+      expect(Number.isInteger(start) && Number.isInteger(end) && end > start).toBe(true);
+    }
+    const messagePreview = await owner.call("vault.refs.resolve", { reference: sourceTurn.messageShort });
+    expect(messagePreview.value.record.id).toBe(sourceTurn.messageId);
+    expect(messagePreview.value.revision).toBeTruthy();
+    const found = await awaitPublic(() => owner.call("vault.search.bm25", { query: facts.query, limit: 10 }),
+      page => page.value.some(hit => hit.short_id === shortRef || hit.record?.id === meso.claim.claim_ref),
+      { label: "judg07 hint wording finds its source claim" });
+    for (const hit of found.value) expect(hit.kind).toBe("CLAIM");
+    const hit = found.value.find(row => row.short_id === shortRef || row.record?.id === meso.claim.claim_ref)!;
+    const hitPreview = await owner.call("vault.refs.resolve", { reference: hit.short_id });
+    expect(hitPreview.value.record.id).toBe(meso.claim.claim_ref);
+    expect(hitPreview.value.record.kind).toBe("CLAIM");
+    const listed = await owner.call("vault.claims.list", { predicate: judg07Predicate, limit: 100 });
+    expect(listed.value.some(row => row.claim_ref === meso.claim.claim_ref)).toBe(true);
+    for (const row of listed.value) expect(row.value).toBe(facts.extraction.claimText);
+    expect((await owner.call("vault.get", { entity_ref: meso.claim.claim_ref })).value?.kind).toBe("CLAIM");
+    const persons = await judg07People(owner);
+    expect(persons.some(row => row.name === judg07Speaker)).toBe(true);
+    for (const row of persons) expect(/bicycle|parking|location/i.test(row.name)).toBe(false);
+    const claimRefs = [...new Set(listed.value.map(row => row.claim_ref))];
+    const claimShorts = [...new Set(listed.value.map(row => row.short_ref).filter((ref): ref is string => typeof ref === "string"))];
+    // Captured now: the typed-hint assertion runs last so one run exercises
+    // the erase, sweep and restart legs even while the engine folds hints.
+    const hintRows = meso.prospective_queries;
+    const first = await judg07Erase(owner, sourceTurn.turnId);
+    const redaction = first.receipt_ref;
+    if (!redaction) throw new Error("Erase has no redaction receipt");
+    const erasedIds = [sourceTurn.turnId, sourceTurn.messageId, ...claimRefs];
+    for (const entity_ref of erasedIds) {
+      expect((await owner.call("vault.get", { entity_ref })).value).toBeNull();
+    }
+    expect((await owner.call("vault.hydrate", { refs: erasedIds })).value).toEqual([]);
+    expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
+    expect((await owner.call("vault.search.bm25", { query: "Brompton", limit: 10 })).value).toEqual([]);
+    for (const job_ref of ticket.job_refs) {
+      await judg07Failure(() => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
+    }
+    expect((await owner.call("vault.claims.list", { predicate: judg07Predicate, limit: 100 })).value).toEqual([]);
+    const forbidden = [facts.source.text, facts.extraction.claimText, facts.query];
+    for (const reference of claimShorts) await judg07ReferenceGone(owner, reference, forbidden);
+    const distractorAfter = await owner.call("vault.search.bm25", { query: "telescope", limit: 10 });
+    expect(distractorAfter.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId)).toBe(true);
+    expect((await owner.call("vault.get", { entity_ref: distractorTurn.turnId })).value?.kind).toBe("TURN");
+    expect((await owner.call("vault.get", { entity_ref: distractorTurn.messageId })).value?.body).toMatchObject({ content: facts.distractor.text });
+    const audit = await judg07Audit(owner, redaction, sourceTurn.turnId, forbidden);
+    const sweep = await owner.call("vault.records.erase_sweep", { receipt_ref: redaction });
+    if (!sweep || sweep.deadline_at == null || sweep.sweep_queued_at == null) {
+      throw new Error("Erase has no recorded historical-sweep deadline and queue time");
+    }
+    expect(sweep.deadline_at).toBeGreaterThanOrEqual(sweep.requested_at);
+    await judg07Sweep(engine);
+    expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
+    await engine.artifacts.json("judg07-extraction-erase.json", { claim: meso.claim.claim_ref,
+      shortRef, jobs: ticket.job_refs, erase: redaction, auditAt: audit.requested_at, hintRows: hintRows.length });
+    await engine.restart();
+    expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
+    const distractorRestarted = await owner.call("vault.search.bm25", { query: "telescope", limit: 10 });
+    expect(distractorRestarted.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId)).toBe(true);
+    expect((await owner.call("vault.get", { entity_ref: distractorTurn.turnId })).value?.kind).toBe("TURN");
+    for (const job_ref of ticket.job_refs) {
+      await judg07Failure(() => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
+    }
+    for (const receipt_ref of refusals) {
+      expect(await owner.call("vault.receipts.get", { receipt_ref })).toMatchObject({
+        receipt_ref, actor_class: "agent", outcome: { refused: { code: "FORBIDDEN" } },
+      });
+    }
+    expect((await owner.call("vault.records.erase_sweep", { receipt_ref: redaction }))?.receipt_ref).toBe(redaction);
+    // D1, expected red on today's tree: the promise is typed hint rows, not
+    // merely folded birth text. Kept whole; the report carries the defect.
+    expect(hintRows).toHaveLength(1);
+    expect(hintRows[0]).toMatchObject({ target_ref: meso.claim.claim_ref, query: facts.query, source: "generated" });
+    expect(hintRows[0]?.hint_ref).toMatch(/^[a-f0-9]{32}$/);
+    const extractCalls = providers.seenFixtureCalls.filter(call => call.fixtureId === "judg07-extract");
+    expect(extractCalls.length).toBeGreaterThan(0);
+    for (const call of extractCalls) {
+      const body = call.body as { model?: unknown; stream?: unknown };
+      expect(body.model).toBe("hints-extract");
+      expect(body.stream).toBe(false);
+    }
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});
