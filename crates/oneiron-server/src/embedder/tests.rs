@@ -2163,27 +2163,26 @@ fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
 /// nothing. Two 20 KiB texts on the Oneiron wire go out as two requests.
 #[test]
 fn each_request_a_paid_remote_sends_is_its_own_paid_call() {
-    use oneiron::embed::{
-        Embedder as _, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
-    };
+    use oneiron::embed::{Embedder as _, PendingEmbeddingInput, PendingEmbeddingPayload};
     use oneiron::llm::run_admission::MemoryReceipts;
     let remote = MockEndpoint::start(MockBehaviour::ListingDown);
-    let config = endpoint_config("http://127.0.0.1:1");
-    let section = remote_section(&remote.base, oneiron::EntityId::now());
+    let mut config = endpoint_config("http://127.0.0.1:1");
+    config.remote = Some(remote_section(&remote.base, oneiron::EntityId::now()));
     let receipts = Arc::new(MemoryReceipts::default());
-    let http = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();
-    http.hold_as_rung(Arc::new(Mutex::new(super::remote::RungHold {
-        transform: Some(MOCK_TRANSFORM.to_owned()),
-        measured: false,
-    })));
-    http.pay_through(Arc::new(
-        super::admitted::AdmittedRequests::unmetered(
-            &section,
-            EmbedderLocality::ThirdParty,
-            receipts.clone(),
-        )
-        .unwrap(),
-    ));
+    // The third-party rung as serve builds it: held to the transform, its
+    // answers judged by the section's egress rule (FIX 9488), and each request
+    // it sends admitted as a paid call on `receipts`.
+    let rung = super::remote::build_remote_rung(
+        &config,
+        Arc::new(Mutex::new(super::remote::RungHold {
+            transform: Some(MOCK_TRANSFORM.to_owned()),
+            measured: false,
+        })),
+        receipts.clone(),
+    )
+    .unwrap()
+    .expect("a remote rung");
+    let http = &rung.embedder;
     let inputs: Vec<PendingEmbeddingInput> = (0..2)
         .map(|_| PendingEmbeddingInput {
             entity_id: oneiron::EntityId::now(),

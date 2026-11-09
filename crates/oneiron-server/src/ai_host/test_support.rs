@@ -47,6 +47,8 @@ pub(crate) fn pin_every_role(vault: &Vault, model: &str, route: oneiron::ModelLo
                         slot: ModelSlot::Llm,
                         tier: oneiron::ModelTierRef("pinned".into()),
                         route_models: Default::default(),
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })

@@ -22,6 +22,7 @@ pub(super) fn test_run() -> RunAdmission {
     undeclared_run(
         "models-test",
         BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend),
+        None,
         Arc::new(MemoryReceipts::default()),
     )
 }
@@ -35,6 +36,8 @@ fn events(rows: &[RunReceipt]) -> Vec<&'static str> {
             RunEvent::Dispatched { .. } => "dispatched",
             RunEvent::Settled { .. } => "settled",
             RunEvent::Revised { .. } => "revised",
+            RunEvent::ResidentOverdraft { .. } => "resident_overdraft",
+            RunEvent::PlanModelSubstituted { .. } => "plan_model_substituted",
         })
         .collect()
 }
@@ -63,7 +66,7 @@ pub(super) fn request(model: &ModelId, text: &str) -> LlmRequest {
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: text.into() }],
+            content: vec![ContentPart::Text { text: text.into(), signature: None }],
         }],
         tools: Vec::new(),
         params: BTreeMap::new(),
@@ -77,7 +80,7 @@ pub(super) fn text_of(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -134,7 +137,8 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"cpa:olety7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let response = generate(seat, "hi").await;
     assert_eq!(text_of(&response.message), "hello there");
@@ -170,7 +174,8 @@ async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"cpa:olety7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let run = test_run();
     let mut fallback_list = request(&seat.model, "hi");
@@ -219,14 +224,15 @@ base_url = "{}"
 rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
 "#,
         failing.base_url, answering.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let floor = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
     let guard = BudgetGuard::new("models-test", 100 * floor, BudgetExhaustionPolicy::Suspend);
     let receipts = Arc::new(MemoryReceipts::default());
     let mut charges = Vec::new();
     for _ in 0..2 {
-        let run = undeclared_run("models-test", guard.clone(), receipts.clone());
+        let run = undeclared_run("models-test", guard.clone(), None, receipts.clone());
         let before = guard.read().used_units;
         let response = seat
             .ladder
@@ -273,7 +279,8 @@ async fn anthropic_compatible_provider_generates_and_streams_through_a_seat() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\nmax_output_tokens = 900\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::DreamerCurrent).expect("seat");
     assert_eq!(seat.locality, ModelLocality::ThirdParty);
     let response = generate(seat, "hi").await;
@@ -314,7 +321,8 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
         let runtime = ModelRuntime::build(Some(&config(&format!(
             "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nmax_output_tokens = 64\n{field_line}",
             fake.base_url
-        ))));
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,);
         let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
         // A workflow step generates; a chat turn streams.
         generate(seat, "step").await;
@@ -352,7 +360,8 @@ async fn local_openai_compatible_server_takes_a_v1_base_and_no_key() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}/v1\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     assert_eq!(seat.locality, ModelLocality::OwnServer);
     assert_eq!(text_of(&generate(seat, "hi").await.message), "local answer");
@@ -372,7 +381,8 @@ async fn a_reply_without_usage_still_names_the_model_that_served_it() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     // `"usage": null` on a plain reply.
     let response = generate(seat, "hi").await;
@@ -404,7 +414,8 @@ async fn an_anthropic_reply_without_usage_still_names_the_model_that_served_it()
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     // `"usage": null` on a plain reply.
     let response = generate(seat, "hi").await;
@@ -439,7 +450,8 @@ async fn a_streamed_event_past_the_bound_is_refused_not_buffered() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     let run = test_run();
     let mut events = seat
@@ -475,7 +487,8 @@ rungs = [
 ]
 "#,
         down.base_url, up.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     // The widest rung bounds where the seat's data may go.
     assert_eq!(seat.locality, ModelLocality::ThirdParty);
@@ -519,7 +532,8 @@ rungs = [
 ]
 "#,
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let (_dir, vault) = crate::ai_host::test_support::rooted_vault();
     let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
@@ -539,6 +553,7 @@ rungs = [
         let run = undeclared_run(
             "models-test",
             guard.clone(),
+            None,
             Arc::new(MemoryReceipts::default()),
         );
         route
@@ -571,7 +586,8 @@ async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
         let runtime = ModelRuntime::build(Some(&config(&format!(
             "[providers.first]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[providers.second]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"first:small\" }}, {{ model = \"second:big\" }}]\n",
             first.base_url, second.base_url
-        ))));
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,);
         let seat = runtime.seat(ModelRole::Checker).expect("seat");
         let run = test_run();
         let mut events = seat
@@ -669,7 +685,8 @@ rungs = [
 ]
 "#,
         fake.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     // Rung 0 has no key, so rung 1 answers the ladder.
     assert_eq!(
@@ -715,7 +732,8 @@ rungs = [
 async fn an_unset_key_variable_takes_the_provider_out_and_says_why() {
     let runtime = ModelRuntime::build(Some(&config(
         "default = \"cloud:m\"\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"https://h\"\nkey_env = \"ONEIRON_TEST_KEY_THAT_IS_NEVER_SET\"\n",
-    )));
+    )),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     assert!(runtime.seat(ModelRole::GenerativeReasoner).is_none());
     let status = serde_json::to_value(runtime.status()).unwrap();
     assert_eq!(status["providers"][0]["state"], json!("unavailable"));
@@ -747,7 +765,8 @@ async fn one_config_edit_swaps_the_seat_model_with_the_same_calling_code() {
     for default in ["a:model-one", "b:model-two"] {
         let runtime = ModelRuntime::build(Some(&config(&format!(
             "default = \"{default}\"\n{providers}"
-        ))));
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,);
         let seat = runtime.seat(ModelRole::DreamerCurrent).unwrap();
         answers.push(text_of(&generate(seat, "same call").await.message));
     }
@@ -797,7 +816,8 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
         keyed.base_url, own.base_url
-    ))))
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,)
     .with_receipts(receipts.clone());
     let keyed_id = ModelId::new("keyed/teacher@live").unwrap();
     let own_id = ModelId::new("own/small@live").unwrap();
@@ -916,7 +936,8 @@ async fn a_declared_runs_receipt_log_carries_no_run_text() {
     let runtime = ModelRuntime::build(Some(&config(&format!(
         "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}, {{ model = \"own:other\" }}]\n",
         own.base_url
-    ))));
+    ))),
+    oneiron::HostingPrivacyPosture::SelfHostLocal,);
     let own_id = ModelId::new("own/small@live").unwrap();
     // Served here, so the refusal is the run's: it did not declare this teacher.
     let undeclared = ModelId::new("own/other@live").unwrap();
@@ -986,7 +1007,8 @@ async fn each_http_transport_sends_a_call_once_and_follows_no_redirect() {
         let runtime = ModelRuntime::build(Some(&config(&format!(
             "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
             fake.base_url
-        ))));
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,);
         let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
         for sent in 1..=6 {
             let run = test_run();
@@ -1115,7 +1137,11 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             "a child that let its channel go" => &dropped,
             _ => &config,
         };
-        let runtime = ModelRuntime::build_with_keys(Some(config), Some(door.clone()));
+        let runtime = ModelRuntime::build_with_keys(
+            Some(config),
+            Some(door.clone()),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let model = runtime
             .seat(ModelRole::Checker)
             .expect("seat")
@@ -1123,7 +1149,7 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             .clone();
         let receipts = Arc::new(MemoryReceipts::default());
         let meter = BudgetGuard::new("broker-test", 100_000, BudgetExhaustionPolicy::Suspend);
-        let run = undeclared_run("broker-test", meter.clone(), receipts.clone());
+        let run = undeclared_run("broker-test", meter.clone(), None, receipts.clone());
         let (_, ladder) = runtime.router().unwrap().served(&model).unwrap();
         let refused = ladder.generate(&run, request(&model, "hi"), None).await;
         assert!(refused.is_err(), "{case}");
@@ -1163,7 +1189,8 @@ async fn a_provider_set_to_no_schema_sends_no_response_format() {
         let runtime = ModelRuntime::build(Some(&config(&format!(
             "default = \"p:m\"\n[providers.p]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n{line}",
             fake.base_url
-        ))));
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,);
         let seat = runtime.seat(ModelRole::DreamerCurrent).expect("seat");
         let run = test_run();
         let mut call = request(&seat.model, "extract");

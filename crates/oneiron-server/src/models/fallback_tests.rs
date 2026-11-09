@@ -61,6 +61,7 @@ pub(super) fn kept(
         Some(config),
         None,
         OfferCooldowns::in_vault_on(Arc::clone(vault), Arc::clone(clock)),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
     )
 }
 
@@ -120,6 +121,7 @@ pub(super) fn kept_here(back: Option<(u64, u64)>) -> LlmError {
     RetryableLlmError::KeptOnDevice {
         retry_after,
         resets_at,
+        reason: None,
     }
     .into()
 }
