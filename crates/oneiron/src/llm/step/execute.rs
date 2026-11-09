@@ -2,7 +2,7 @@
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
-    LlmResponse, LlmUsage,
+    LlmResponse, LlmUsage, RetryableLlmError,
 };
 use super::retry::TransportRetries;
 use super::source::StepSource;
@@ -137,7 +137,7 @@ pub async fn call_as_step_checked(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
+        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
         None,
     )
     .await
@@ -160,7 +160,7 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
+        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
         Some(&mut unsaved_usage),
     )
     .await;
@@ -181,7 +181,7 @@ pub async fn call_as_step_with_fallbacks(
         guard,
         request,
         fallbacks,
-        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
+        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
     )
     .await
 }
@@ -189,14 +189,15 @@ pub async fn call_as_step_with_fallbacks(
 /// The same durable execution path with the caller's own retry count; retries
 /// past the engine schedule pace at its last interval (FIX 9930), and a send
 /// held unsent by its offer's health waits within the plan's rest wait,
-/// spending none (FIX 11226).
+/// spending none (FIX 11226). A rest past that wait ends the step with the
+/// rest unsent and unfailed, the plan's spent retries kept for its resume.
 pub(super) async fn call_as_step_with_fallbacks_and_retries(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
-    retries: TransportRetries,
+    retries: &TransportRetries,
 ) -> DurableStepResult<StepOutcome> {
     durable_step(ctx, backend, guard, request, fallbacks, None, retries, None).await
 }
@@ -208,7 +209,7 @@ async fn durable_step(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
-    retries: TransportRetries,
+    retries: &TransportRetries,
     mut unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
@@ -396,6 +397,15 @@ async fn durable_step(
                     step_budget_hit(ctx, guard, &request);
                 }
             });
+        }
+        // A health rest the step could not wait out (FIX 11226): nothing went
+        // out and nothing failed, so it is no failed step and takes no
+        // failure policy. The caller parks the step until the offer is back.
+        Err(DurableStepError::Llm(
+            source @ LlmError::Retryable(RetryableLlmError::HealthRest { .. }),
+        )) if !answered => {
+            settle_failed_usage(guard, &admission.lease, &failed_usage);
+            return Err(DurableStepError::Llm(source));
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);

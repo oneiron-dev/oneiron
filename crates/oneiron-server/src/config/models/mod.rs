@@ -93,6 +93,9 @@ pub(crate) struct ModelsFile {
     raw_budget_units: Option<u64>,
     /// A down provider's first health rest, in seconds (FIX 11226).
     health_rest_secs: Option<u64>,
+    /// How long one durable step submission waits for its offer back from a
+    /// health rest before the step parks, in seconds (FIX 11226).
+    step_rest_wait_secs: Option<u64>,
     #[serde(default)]
     providers: BTreeMap<String, ProviderFile>,
     #[serde(default)]
@@ -229,6 +232,11 @@ pub struct ModelsConfig {
     /// health rest, 60 seconds. Unset keeps 5; one second is the floor of
     /// the vault's seconds clock.
     pub health_rest_secs: u64,
+    /// `step_rest_wait_secs`: how long, in all, one `ai.steps.submit` waits
+    /// for its offer back from a health rest before the step parks and
+    /// resumes on its own (FIX 11226). The vault's longest wait for an offer
+    /// back caps it; unset is that longest wait.
+    pub step_rest_wait_secs: Option<u64>,
     pub dreamer: DreamerSettings,
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
@@ -653,6 +661,7 @@ impl ModelsFile {
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             health_rest_secs,
+            step_rest_wait_secs: self.step_rest_wait_secs,
             dreamer,
             chat,
             workflows,

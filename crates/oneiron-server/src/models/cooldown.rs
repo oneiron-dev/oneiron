@@ -52,6 +52,37 @@ const QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
 pub(crate) const HEALTH_REST_SECS: u64 = 5;
 /// The longest health rest, in seconds.
 pub(crate) const HEALTH_REST_MAX_SECS: u64 = 60;
+
+/// The host's `[models]` settings for its offers' health rests (FIX 11226).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HealthRestSettings {
+    /// A down provider's first health rest, in seconds.
+    pub(crate) first_secs: u64,
+    /// How long, in seconds, one durable step submission waits for its offer
+    /// back from a health rest before the step parks; the vault's longest
+    /// wait caps it. `None` is that longest wait.
+    pub(crate) step_wait_secs: Option<u64>,
+}
+
+impl HealthRestSettings {
+    /// The settings `models` names, else the shipped ones.
+    pub(crate) fn of(models: Option<&crate::config::models::ModelsConfig>) -> Self {
+        models.map_or_else(Self::default, |models| Self {
+            first_secs: models.health_rest_secs,
+            step_wait_secs: models.step_rest_wait_secs,
+        })
+    }
+}
+
+impl Default for HealthRestSettings {
+    fn default() -> Self {
+        Self {
+            first_secs: HEALTH_REST_SECS,
+            step_wait_secs: None,
+        }
+    }
+}
+
 /// Answers in a row a recovering offer gives before its recovery is stable.
 const STABLE_SUCCESSES: u32 = 3;
 /// How long, in seconds, those answers span at least, from the first.
@@ -295,9 +326,9 @@ pub struct OfferCooldowns {
     /// The vault's model byte budgets its ladders' chat replies are read on
     /// (FIX 10626), the rows' defaults without a server.
     budgets: super::ModelHostBudgets,
-    /// A down provider's first health rest, in seconds: the host's
-    /// `[models] health_rest_secs`, else [`HEALTH_REST_SECS`].
-    health_rest_secs: u64,
+    /// The host's health rest settings: its first rest, and how long a
+    /// durable step waits for one before it parks.
+    health: HealthRestSettings,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -316,7 +347,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
-            health_rest_secs: HEALTH_REST_SECS,
+            health: HealthRestSettings::default(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -326,7 +357,11 @@ impl OfferCooldowns {
     /// world settings.
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
-        Self::in_vault_with(vault, super::ModelHostBudgets::unhosted(), HEALTH_REST_SECS)
+        Self::in_vault_with(
+            vault,
+            super::ModelHostBudgets::unhosted(),
+            HealthRestSettings::default(),
+        )
     }
 
     /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
@@ -345,7 +380,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
-            health_rest_secs: HEALTH_REST_SECS,
+            health: HealthRestSettings::default(),
             waits_move: Some(clock),
         })
     }

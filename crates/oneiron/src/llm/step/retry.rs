@@ -21,10 +21,12 @@
 //! 11226): the declared schedule counts sends. The call waits for the offer
 //! back, within its rest wait, and asks again; the rest still holds every
 //! other call off the offer. A rest past what is left of that wait returns at
-//! once, unsent.
+//! once, unsent, and the step parks with the retries its sends spent
+//! ([`TransportRetries::spent`]); its resume starts from them.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
@@ -50,22 +52,43 @@ pub(super) fn retry_delay_ms(retry: usize) -> u64 {
 const HEALTH_REST_POLL_MS: u64 = 250;
 
 /// One durable call's transport retries: the retries its schedule makes
-/// after the first send (FIX 9930), and how long it waits in all, unsent, for
-/// its offer back from a health rest (FIX 11226).
-#[derive(Debug, Clone, Copy)]
+/// after the first send (FIX 9930), how long it waits in all, unsent, for its
+/// offer back from a health rest, and the retries its failed sends have
+/// spent, which a step that parked keeps for its resume (FIX 11226).
+#[derive(Debug)]
 pub(super) struct TransportRetries {
     pub(super) max: usize,
     pub(super) rest_wait: Duration,
+    spent: AtomicUsize,
 }
 
 impl TransportRetries {
     /// `max` retries on the schedule, and no wait for a health rest: a
     /// backend that walks its own ladder waits for its offers itself.
-    pub(super) const fn schedule(max: usize) -> Self {
+    pub(super) fn schedule(max: usize) -> Self {
+        Self::resumed(max, Duration::ZERO, 0)
+    }
+
+    /// `max` retries, `spent` of them by the sends of an earlier pass that
+    /// parked, and `rest_wait` for its offer back.
+    pub(super) fn resumed(max: usize, rest_wait: Duration, spent: usize) -> Self {
         Self {
             max,
-            rest_wait: Duration::ZERO,
+            rest_wait,
+            spent: AtomicUsize::new(spent),
         }
+    }
+
+    /// The retries spent so far: once the call parks unsent, the sends it
+    /// made, an earlier pass's included.
+    pub(super) fn spent(&self) -> usize {
+        self.spent.load(Ordering::Acquire)
+    }
+
+    /// The same plan for another call of the step, a correction: its own
+    /// count, from none.
+    pub(super) fn for_another_call(&self) -> Self {
+        Self::resumed(self.max, self.rest_wait, 0)
     }
 }
 
@@ -73,10 +96,10 @@ pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
-    plan: TransportRetries,
+    plan: &TransportRetries,
 ) -> LlmResult<LlmResponse> {
     let max_retries = plan.max;
-    let mut retries = 0_usize;
+    let mut retries = plan.spent();
     let mut rested = Duration::ZERO;
     loop {
         match backend.generate(request.clone(), lease).await {
@@ -96,6 +119,7 @@ pub(super) async fn generate_with_retry(
                 }
                 sleep_ms(retry_delay_ms(retries)).await;
                 retries += 1;
+                plan.spent.store(retries, Ordering::Release);
             }
             Err(error) => return Err(error),
         }

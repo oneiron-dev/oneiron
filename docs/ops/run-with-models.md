@@ -2871,6 +2871,16 @@ within the same wait budget as for limits, then tries the chain again. A call
 that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
 
+A durable model step (`ai.steps.submit`) names one exact model, so it waits
+for that offer instead of the next rung. A send it would make while the offer
+rests for its health, or while its probation request is out, is not sent and
+spends none of the step's `retry.max_attempts`: those count sends. The step
+waits for the offer back within the vault's longest wait, or within
+`[models] step_rest_wait_secs` when that is shorter. Past it, the receipt says
+`{"status": "parked", "until": <when the offer is back>, "sends": <sends made>}`
+and the step resumes on its own then, with the rest of its declared attempts.
+A restart drops that wait; a submission of the same `step_key` resumes the step.
+
 When an offer's rest ends it is on probation: a failure rests it again with
 one more strike. On probation it takes one request at a time. The call that
 sends it holds the offer's probation slot until the request ends: a stream's
