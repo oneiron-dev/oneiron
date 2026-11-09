@@ -34708,8 +34708,12 @@ pub struct ApproveOnceRequest {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentActReceipt {
-    #[serde(rename = "decision_ref")]
-    pub decision_ref: String,
+    #[serde(
+        rename = "decision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_ref: Option<String>,
     #[serde(rename = "outcome")]
     pub outcome: String,
     #[serde(rename = "reason_code")]
@@ -34718,6 +34722,18 @@ pub struct ConsentActReceipt {
     pub grant_ref: Option<String>,
     #[serde(rename = "diff_handle")]
     pub diff_handle: Vec<u8>,
+    #[serde(
+        rename = "already_revoked",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub already_revoked: Option<bool>,
+    #[serde(
+        rename = "revoked_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub revoked_by: Option<String>,
 }
 
 /// `oneiron::campaign::enrollment::held::CampaignEnrollmentHeldCall`.

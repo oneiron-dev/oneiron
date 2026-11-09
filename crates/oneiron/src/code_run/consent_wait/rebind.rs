@@ -156,7 +156,12 @@ impl Vault {
             };
             // An unconfirmed proposal is not authority and cannot lock out a newer request.
             row.rebind_proposal = Some(proposal);
-            put_code_consent_wait_in_txn(self, txn, &mut row)?;
+            put_code_consent_wait_in_txn(
+                self,
+                txn,
+                &mut row,
+                crate::consent::CodeWaitCommand::PrepareRebind,
+            )?;
             Ok(prepared)
         })
     }
@@ -283,7 +288,12 @@ impl Vault {
             };
             row.rebind_proposal = None;
             row.rebinds.push(rebind.clone());
-            put_code_consent_wait_in_txn(self, txn, &mut row)?;
+            put_code_consent_wait_in_txn(
+                self,
+                txn,
+                &mut row,
+                crate::consent::CodeWaitCommand::ConfirmRebind,
+            )?;
             Ok((rebind, false))
         })?;
         if !result.1 {

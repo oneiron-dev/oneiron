@@ -120,7 +120,16 @@ pub(super) fn put_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &mut CodeConsentWaitRow,
+    command: crate::consent::CodeWaitCommand,
 ) -> Result<()> {
+    // The code-wait table (ConsentLifecycle) judges every write of the control row: the edge from the
+    // stored state to the new row's state must be one the writer's command holds.
+    let from = WAITS
+        .get(&vault.store, &*txn, &row.binding.wait_id)?
+        .map(|stored| stored.state());
+    crate::consent::ConsentLifecycle::code_wait(from, command, row.state()).map_err(|_| {
+        Error::InvariantViolation("a code consent wait write outside the lifecycle table")
+    })?;
     row.revision = row
         .revision
         .checked_add(1)
@@ -240,7 +249,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         rebind_proposal: None,
         rebinds: Vec::new(),
     };
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(vault, txn, &mut row, crate::consent::CodeWaitCommand::Mint)?;
     Ok(Some(wait_id))
 }
 
@@ -465,7 +474,12 @@ pub(crate) fn attach_code_consent_ask_in_txn(
         return Ok(());
     }
     row.ask = Some(group);
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::AttachAsk,
+    )
 }
 
 /// Records the effect gate's admission of wait `wait_id`'s effect, in the
@@ -490,7 +504,12 @@ pub(crate) fn record_code_consent_admission_in_txn(
         gate_decision,
         admitted_at_ms: super::settle::now_ms(),
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::RecordAdmission,
+    )
 }
 
 /// Seals a provisional wait with its parked step, in the executor's replay
@@ -515,5 +534,5 @@ pub(super) fn seal_code_consent_wait_in_txn(
         None => {}
     }
     row.checkpoint = Some(checkpoint);
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(vault, txn, &mut row, crate::consent::CodeWaitCommand::Seal)
 }

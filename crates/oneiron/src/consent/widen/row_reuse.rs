@@ -109,7 +109,14 @@ impl Vault {
             // reused row's too (FIX 9741).
             self.refuse_opener_answer_in_txn(&*txn, owner, credential, &*row)?;
             let proposal = &row.proposal;
-            if row.resolved
+            let settles = matches!(
+                crate::consent::ConsentLifecycle::widen(
+                    Some(super::widen_state(row)),
+                    crate::consent::WidenCommand::Accept
+                ),
+                crate::consent::WidenStep::Write(crate::consent::WidenState::Settled)
+            );
+            if !settles
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
                 || !matches_delta(&proposal.canonical_delta)
                 || !frozen_matches

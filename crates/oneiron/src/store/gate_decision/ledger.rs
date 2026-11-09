@@ -384,15 +384,25 @@ impl Store {
                 callback();
             }
         });
+        self.gate_decisions_for_grant_ref_in_txn(&rtxn, grant_ref)
+    }
+
+    /// [`Self::gate_decisions_for_grant_ref`] in the caller's snapshot, which holds the custody read guard
+    /// (`custody_snapshot`) so claim-bound rows decrypt.
+    pub(crate) fn gate_decisions_for_grant_ref_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<Vec<GateDecisionRecord>> {
         let scan_prefix = suffix_of(
             gate_decision_grant_ref_index_prefix(grant_ref),
             GATE_DECISION_GRANT_REF_INDEX_PREFIX,
         );
         let mut records = Vec::new();
-        for key in GRANT_REF_INDEX.scan_keys(self, &rtxn, &scan_prefix)? {
+        for key in GRANT_REF_INDEX.scan_keys(self, rtxn, &scan_prefix)? {
             let decision_id =
                 GateDecisionId::from_bytes(tail_id(&key, "gate decision grant ref index")?);
-            let Some(record) = self.gate_decision_in_txn(&rtxn, decision_id)? else {
+            let Some(record) = self.gate_decision_in_txn(rtxn, decision_id)? else {
                 return Err(Error::CorruptedIndex("gate decision grant ref index"));
             };
             if record.grant_ref.as_deref() != Some(grant_ref) {
