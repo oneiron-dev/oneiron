@@ -82,15 +82,15 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
-PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
-RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
-the Observed producer (FIX 21842). These cases remain registered with their reasons
+relayed by the Engine at 10:35, instead defers BOOT-06, PRIVACY-03, PRIVACY-06 and PRIVACY-07
+as SKIPPED until their doors exist.
+RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). These cases remain registered with their reasons
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
 passing feature coverage. A case whose door is still missing is a **pending door**
 (Engine CORE-FOUR-SKIPS = A): `suite.pendingDoor(test, ID, "waits on <door>", {fix: "FIX <line>",
 deadline: "YYYY-MM-DD"})` keeps it registered, reports it SKIPPED with its door, FIX row and deadline,
-and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors.
+and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors. MEMORY-03 is a
+pending door on the Observed producer (FIX 21842), and MEMORY-06 on the pinned productivity pack fixture (FIX 22509).
 
 ## EngineFixture
 

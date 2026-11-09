@@ -19,7 +19,7 @@ afterAll(suite.flush);
  * 0040/0043/0055, not handlers or runtime OpenAPI. Canonical fixture values
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
- * MEMORY-03, MEMORY-04 and MEMORY-06 retain their full journeys as TODOs.
+ * MEMORY-03 and MEMORY-06 are pending doors (Engine CORE-FOUR-SKIPS = A) and keep their full journeys.
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -55,7 +55,9 @@ interface Cases {
       value: unknown; confidence: number; source: string;
       evidenceTurnIds?: string[]; note: string; canon: string[] } };
   "MEMORY-04": { id: "MEMORY-04"; neutral: CanonicalClaim;
-    takes: { actor: string; markdown: string }[]; expected: { labels: string[] } };
+    takes: { actor: string; markdown: string }[];
+    expected: { labels: string[]; noteKind: string; distinctTakeRecords: number; eachTakeLinksToNeutralBy: string;
+      neutralSource: string; neutralLifecycle: string } };
   "MEMORY-05": { id: "MEMORY-05"; statements: (CanonicalClaim & { ref: string;
       occurredAt: number; learnedAt: number })[];
     windows: { axis: "occurred" | "learned"; start: number; end: number; expected: string[] }[];
@@ -900,27 +902,103 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
  * attempt with refusal/held-proposal receipt and unchanged stated source,
  * evidence and lifecycle. Never directly upsert an observed result instead.
  */
-suite.skip(test, "MEMORY-03",
-  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API [FIX 3958]");
+suite.pendingDoor(test, "MEMORY-03",
+  "waits on the production Observed/language producer (PR #6666, open) and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists. Observed and stated disagreement should work",
+  { fix: "FIX 21842", deadline: "2026-12-01" });
 
 /* MEMORY-04: ARCH-0032 writers, ARCH-0002 NOTE beside CLAIM, OF-330.
- * author_take NOW EXISTS as AuthorTakeRequest -> EntityRefReceipt, and real
- * AGENT_DEF principals can be created and paired without forging an author.
- * Keep the full journey: owner writes the neutral Morgan Vale claim; two
- * separately paired Reviewer North/South agents author opposite takes; recall
- * labels both asides; neutral value/source/evidence/confidence/clocks/history
- * stay unchanged; both notes link to their actual authors and neutral claim;
- * every link's provenance retains its author and original source revision.
- * Complete read binding is still missing: NeighborHit exposes only target,
- * kind, direction and weight. NoteReadView exposes text/frontier, EntityView
- * leaves body opaque and redacts binary values, and ExplainMemoryReply is
- * rank evidence, not edge provenance. No named typed edge-provenance read is
- * in this catalog. A NOTE's birth revision or retrieval frontier is NOT the
- * edge's source revision. Raw entity/export byte comparison would not prove
- * that link-level invariant, so do not arm an attribution-only partial test.
+ * The owner writes the neutral Morgan Vale claim; two separately paired reviewer agents
+ * (real AGENT_DEF principals) author opposite takes with vault.notes.author_take, each pinned to
+ * the claim's matched revision. vault.edges.provenance audits each take's two authored links
+ * (authored_by to its own reviewer, claim_of to the neutral claim): author, actor class and the
+ * original source revision. Recall carries both NOTEs as opinion/take with their author refs,
+ * bound to the reviewers' created names. The neutral claim's value, source, evidence, confidence,
+ * lifecycle and history stay unchanged. This case declares the neutral claim in the owner's base
+ * scope (default project), so it needs no project minting: the fixture's @project-north scope
+ * is the project lane's, not this attribution promise's.
  */
-suite.skip(test, "MEMORY-04",
-  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist [FIX 3959]");
+suite.test(test, "MEMORY-04", "Opinion notes stay attributed should work", async () => {
+  const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
+  const providers = await ScriptedProviders.start({ id: "memory-attribution-MEMORY-04", steps: [] });
+  const engine = await EngineFixture.start({ id: "MEMORY-04", profile });
+  const occurred = 1769947200; // Public setup input, never an engine clock override.
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred });
+  const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const w: World = { engine, providers, data, refs: new Map(), conversation: conversation.id, scope: base, occurred };
+  const c = scenario(w, "MEMORY-04");
+  const subject = await person(w, c.neutral.subjectId, c.neutral.value.value);
+  const evidence = await witnessed(w, "@name-statement", `The name is ${c.neutral.value.value}.`);
+  const neutral = await engine.client.call("vault.claims.upsert", {
+    subject_ref: subject, predicate: c.neutral.predicate, value: c.neutral.value.value,
+    confidence: c.neutral.confidence, source: c.neutral.source, scope: base,
+    evidence_turn_refs: [evidence], occurred_at: occurred, learned_at: occurred,
+  });
+  expect(neutral.approval).toBe("auto");
+  const neutralId = (await entity(engine.client, neutral.claim_short_id)).id_hex;
+  const before = await claim(w, neutral.claim_short_id);
+  const historyBefore = (await engine.client.call("vault.claims.history", { claim_ref: neutral.claim_short_id })).value;
+  // The claim's matched revision, as the lexical index pins it: the source the takes cite.
+  const hits = await engine.client.call("vault.search.bm25", { query: c.neutral.value.value, limit: 100 });
+  let pinned: string | undefined;
+  for (const hit of hits.value) {
+    if (!/@[0-9a-f]{32}$/.test(hit.short_id)) continue;
+    if ((await engine.client.call("vault.get", { entity_ref: hit.short_id })).value?.id_hex === neutralId) pinned = hit.short_id;
+  }
+  if (!pinned) throw new Error("The neutral claim has no revision-pinned lexical hit");
+  const revision = pinned.slice(pinned.lastIndexOf("@") + 1);
+  const reviewers = new Map<string, Awaited<ReturnType<typeof agent>>>();
+  for (const take of c.takes) reviewers.set(take.actor, await agent(w, take.actor));
+  const notes: { actor: string; note: string; reviewer: string }[] = [];
+  for (const take of c.takes) {
+    const reviewer = reviewers.get(take.actor)!;
+    const written = await reviewer.client.call("vault.notes.author_take", {
+      target: { claim: neutralId }, markdown: take.markdown, source_ref: pinned });
+    const note = (await entity(engine.client, written.entity_ref)).id_hex;
+    expect((await entity(engine.client, note)).kind).toBe("NOTE");
+    const read = await engine.client.call("vault.notes.read", { note_ref: note });
+    expect(read.value?.markdown).toContain(take.markdown);
+    notes.push({ actor: take.actor, note, reviewer: reviewer.principalRef });
+  }
+  expect(new Set(notes.map(row => row.note)).size).toBe(c.expected.distinctTakeRecords);
+  // Each take's two authored links keep their author and the original source revision.
+  const audits: unknown[] = [];
+  for (const row of notes) {
+    for (const [edge_kind, target_ref] of [["authored_by", row.reviewer], [c.expected.eachTakeLinksToNeutralBy, neutralId]] as const) {
+      const audit = await engine.client.call("vault.edges.provenance", { source_ref: row.note, edge_kind, target_ref });
+      audits.push({ note: row.note, edge_kind, audit });
+      expect(audit.value).toHaveLength(1);
+      expect(audit.value[0]).toMatchObject({ source_ref: row.note, edge_kind, target_ref,
+        actor_entity_ref: row.reviewer, actor_class: "agent", source_revision_ref: revision,
+        supersession_status: "confirmed", lifecycle: "active", stale: false, valid_to: null });
+      expect(audit.value[0]!.confidence).toBe(1);
+    }
+  }
+  await engine.artifacts.json("memory04-edge-provenance.json", audits);
+  // Recall labels both asides by kind and their bound authors; neither changes the neutral value.
+  const pack = await engine.client.call("vault.recall", {
+    query: `${c.neutral.value.value} full name given name observatory report reports`, effort: "light",
+    limit: 100, token_budget: 8192, format: "json", scope: { kinds: ["CLAIM", "NOTE"] } });
+  await engine.artifacts.json("memory04-recall.json", pack);
+  const recalled = new Set(pack.items.map(item => item.short_id));
+  for (const id of [neutral.claim_short_id, ...notes.map(row => row.note)]) {
+    const short = (await entity(engine.client, id)).short_ref ?? id;
+    expect(recalled.has(short) || recalled.has(id)).toBe(true);
+  }
+  for (const [index, row] of notes.entries()) {
+    const name = data.fixture.agents.find(item => item.ref === row.actor)!.name;
+    expect(c.expected.labels[index]).toBe(`${name} take`);
+    expect(pack.rendered).toContain(row.reviewer);
+  }
+  expect(pack.rendered).toContain(c.expected.noteKind);
+  // The neutral claim is untouched: same value, source, evidence, confidence, lifecycle, history.
+  const after = await claim(w, neutral.claim_short_id);
+  expect(after).toEqual(before);
+  expect(after.lifecycle).toBe(c.expected.neutralLifecycle);
+  expect(after.source).toBe(c.expected.neutralSource);
+  expect((await engine.client.call("vault.claims.history", { claim_ref: neutral.claim_short_id })).value).toEqual(historyBefore);
+  await closeWorld(w);
+});
 
 interface TimedPackRequest {
   query: string; limit: number; edge_hop: number; view: "full";
@@ -1001,8 +1079,9 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
  * and immutable payload; refuse changed payload; one HabitCheckin child,
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
-suite.skip(test, "MEMORY-06",
-  "waits on merged engine pin PR #6668 and qualification of the complete authored oneiron.productivity fixture: canonical projects, stable check-in id and valid routedTask spec; real hub pack commit 5407656fbe1e94241bf3e4b15defbfb9ff259166 is merged, and install/role/tree/check-in calls exist [FIX 3961; qualif 17747]");
+suite.pendingDoor(test, "MEMORY-06",
+  "waits on a pinned offline copy of the released oneiron.productivity pack with its authored install, routedTask and check-in data; #6668 is merged and every native install/role/tree/check-in door exists. Productivity pack journey should work",
+  { fix: "FIX 22509", deadline: "2026-12-01" });
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
