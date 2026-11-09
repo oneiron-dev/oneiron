@@ -435,16 +435,17 @@ pub fn read_branches_as(
 /// `vault.runs.branches.get` for a caller other than the owner (slice 6.5a,
 /// primitive D): the branches of `input.task_ref` the caller is the actor of
 /// (its agent dispatch target, resident, turn-program waker or the Dreamer on
-/// its own stamp). A Steward of this shared vault also reads the TASK's other
-/// branches when the TASK reads on its own lane, each without its text: its
-/// last error, asks and signals are withheld, since a run's words carry no
-/// label for another reader's lane.
+/// its own stamp). A Steward of this shared vault reads the TASK's other
+/// branches by its role, as it reads a run's steps (slice 6.4f), each without
+/// its text: its last error, asks and signals are withheld, since a run's
+/// words carry no label for another reader's lane. The view names no TASK
+/// content.
 ///
 /// # Errors
 ///
 /// `FORBIDDEN` when the caller reads no branch of the ref: a ref that names
-/// no TASK, a TASK nothing has run, or one whose branches are neither the
-/// caller's nor readable to it as a Steward; storage errors.
+/// no TASK, a TASK nothing has run, or one whose branches are not the
+/// caller's while it is no Steward; storage errors.
 pub fn read_branches_as_reader(
     memory: &Memory<'_>,
     input: RunBranchesRequest,
@@ -452,18 +453,8 @@ pub fn read_branches_as_reader(
     const VERB: &str = "vault.runs.branches.get";
     let vault = memory.vault();
     let caller = WriteActor::new(memory.actor(), memory.actor_class());
-    let steward = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)?
-    };
-    // Read before the branch snapshot opens: LMDB allows one read snapshot per
-    // thread.
-    let others = steward
-        && memory
-            .peek_entity(&input.task_ref.to_hex())?
-            .value
-            .is_some();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let steward = crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)?;
     let records = match task_in(vault, &txn, input.task_ref) {
         Ok(task) => AttemptQueue::new(vault).list_task_in_txn(&txn, &task)?,
         Err(refusal)
@@ -476,7 +467,7 @@ pub fn read_branches_as_reader(
     let mut read = Vec::with_capacity(records.len());
     for record in records {
         let own = crate::snapshot_read::is_attempt_actor_in_txn(vault, &txn, caller, record.id)?;
-        if own || others {
+        if own || steward {
             read.push((own, record));
         }
     }
