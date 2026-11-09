@@ -528,22 +528,23 @@ suite.test(test, "BOOT-06", "MCP execute-mode session should work", async () => 
   expect(providers.seenFixtureCalls).toHaveLength(2);
 
   // 4. Neither tier exceeds its grant inside a run: the reader cannot propose, and neither
-  // agent can make an immediate claim write. Each run completes; its write step is denied.
+  // agent can make an immediate claim write. A refused verb rejects its promise in the guest,
+  // so each program catches it and finishes; the run completes and its write step is denied.
   const deniedProposal = { ...proposal, value: { seat: "aisle", marker: "cobalt-execute-denied-upsert" } };
   scriptProgram(providers, "boot06-reader-upsert", "reader cannot propose a claim",
-    `const answer = await vault.claims.upsert(${JSON.stringify(deniedProposal)});\nfinish("refused");`);
+    `let outcome = "written";\ntry { await vault.claims.upsert(${JSON.stringify(deniedProposal)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
   deniedWrite(await executeCode(readerMcp, tools, "boot-reader-upsert",
     "Attempt cobalt-execute-denied-upsert with vault.claims.upsert and report the refusal."), reader!);
   const immediate = (id: string, marker: string) => ({ id, predicate: journey.predicate, subject: journey.turnId,
     value: { seat: "aisle", marker }, confidence: 1 });
   const readerPut = immediate("06424242424242424242424242424242", "cobalt-execute-denied-automatic-reader");
   scriptProgram(providers, "boot06-reader-put", "reader cannot write a claim at once",
-    `const answer = await vault.claims.put(${JSON.stringify(readerPut)});\nfinish("refused");`);
+    `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(readerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
   deniedWrite(await executeCode(readerMcp, tools, "boot-reader-put",
     "Attempt cobalt-execute-denied-automatic-reader using vault.claims.put and report the refusal."), reader!);
   const proposerPut = immediate("06434343434343434343434343434343", "cobalt-execute-denied-automatic-proposer");
   scriptProgram(providers, "boot06-proposer-put", "proposer cannot write a claim at once",
-    `const answer = await vault.claims.put(${JSON.stringify(proposerPut)});\nfinish("refused");`);
+    `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(proposerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
   deniedWrite(await executeCode(proposerMcp, tools, "boot-proposer-put",
     "Attempt cobalt-execute-denied-automatic-proposer using vault.claims.put and report the refusal."), proposer!);
 
