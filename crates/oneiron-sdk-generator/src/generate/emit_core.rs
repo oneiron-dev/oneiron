@@ -828,3 +828,78 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
     core += "_ => {}\n}\nOk(())\n}\n";
     Ok(core)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::{check_core_verb_names, core_name_const};
+    use crate::generate::row_access::variant_name;
+    use crate::generate::{CORE_VERB_NAMES, Generator};
+
+    /// A scratch tree whose only verb files are `rows` (name, extra JSON members), each a minimal callable row.
+    fn tree(label: &str, rows: &[(&str, &str)]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oneiron-sdk-generator-emit-core-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let verbs = root.join("scripts/sdk/verbs");
+        fs::create_dir_all(&verbs).expect("a scratch tree");
+        fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
+        for (name, extra) in rows {
+            let text = format!(
+                r#"{{"name": "{name}", "input": "In", "output": "Out", "call": "call(memory, &input)?", "scope": "Read", "section": false{extra}}}"#
+            );
+            fs::write(verbs.join(format!("{name}.json")), text).expect("a verb file");
+        }
+        root
+    }
+
+    #[test]
+    fn variant_name_matches_python() {
+        // python3 -c "print([''.join(p.title() for p in n.replace('.', '_').split('_')) for n in ['vault.recall',
+        //   'v2beta.html5parser_x', 'self.inbox.concern.move', 'a__b', 'x.']])"   (nelly, Python 3.14.7)
+        let cases = [
+            ("vault.recall", "VaultRecall"),
+            ("v2beta.html5parser_x", "V2BetaHtml5ParserX"),
+            ("self.inbox.concern.move", "SelfInboxConcernMove"),
+            ("a__b", "AB"),
+            ("x.", "X"),
+        ];
+        for (name, variant) in cases {
+            assert_eq!(variant_name(name), variant, "{name}");
+        }
+        assert_eq!(
+            core_name_const("vault.channel_identities.route_inbound"),
+            "VAULT_CHANNEL_IDENTITIES_ROUTE_INBOUND"
+        );
+    }
+
+    #[test]
+    fn check_core_verb_names_refuses_what_the_table_lacks() {
+        // generate.py:1668 and 1672, Python's `SystemExit` texts (a list prints its `repr`).
+        let root = tree("missing-rows", &[("cancel", ""), ("tasks.create", "")]);
+        let generator = Generator::rows_only(&root).expect("the module level");
+        let error = check_core_verb_names(&generator).expect_err("a refusal");
+        assert_eq!(
+            error.to_string(),
+            "CORE_VERB_NAMES names rows the verb table does not have: ['describe', 'tasks.update', 'reveal.wait', \
+             'self.use', 'vault.calendar.check_in.answer', 'vault.calendar.transcript.ingest', \
+             'vault.channel_identities.provision', 'vault.channel_identities.bind', 'vault.channel_identities.rotate', \
+             'vault.channel_identities.release', 'vault.channel_identities.route_inbound']"
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
+        let rows: Vec<(&str, &str)> = CORE_VERB_NAMES.iter().map(|name| (*name, "")).collect();
+        let root = tree("missing-defaults", &rows);
+        let generator = Generator::rows_only(&root).expect("the module level");
+        let error = check_core_verb_names(&generator).expect_err("a refusal");
+        assert_eq!(
+            error.to_string(),
+            "CORE_COUNT_DEFAULTS names defaults the verb table does not state: ['VAULT_RECALL_LIMIT_DEFAULT', \
+             'VAULT_RECEIPTS_LIMIT_DEFAULT']"
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+}
