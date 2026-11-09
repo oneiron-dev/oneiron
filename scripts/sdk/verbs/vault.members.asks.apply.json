@@ -1,0 +1,15 @@
+{
+  "name": "vault.members.asks.apply",
+  "description": "An Owner or Admin applies a Steward's open member ask through the membership door it names; the receipt names the Steward as proposer.",
+  "input": "crate::task_verb::sdk::SharedMemberAskIdRequest",
+  "output": "crate::federation::SharedActExecutionReceipt",
+  "call": "crate::task_verb::sdk::apply_shared_member_ask_as(memory.vault(), &memory.embedded_owner(\"vault.members.asks.apply\")?, None, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}
