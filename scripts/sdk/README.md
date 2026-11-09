@@ -42,6 +42,15 @@ snapshot it reads and writes, so a world-, facet- or record-scoped credential re
 propose-only). Every other write takes effect at once and needs `core:write`.
 `lands_turn` marks a `Write` row that lands a conversation turn: its generated HTTP
 facade handler wakes the Dreamer's turn producer after the write (ARCH-0026 RD-26).
+A verb's roles are fields on its own row, never names in a handwritten list (VERB-METADATA):
+`custody` names the input member that holds a secret's value or its sealed input (the server wipes it
+and the hook boundary lifts it; the action registry offers no such row); `overlay_write` marks a write a
+run bound to a session stages in its room; `session_read` names the room read (a `SessionRead`
+variant) a session-bound run serves through the room's view, an explicit field, never "every verb that
+writes nothing"; `run_surface` marks a run row the action registry serves, `memory` (no live run) or
+`live` (under the caller's live run's lease); and `host_door_proof` names the proof `door_admits` runs
+before a checked host door's hooks (in `host` for a host projection). The generator refuses a checked
+host door without one, and a new proof kind needs its arm in `door_admits`.
 `refs` (OF-063) lists a row's typed record-ref slots as JSON pointers into its input,
 `*` taking every item of an array (`"refs": ["/edges/*/target_ref"]`). The row's
 generated engine fn calls `gate::record_references::admit_row_references` before the
