@@ -22535,7 +22535,7 @@ class ProgramHoldReleaseView(TypedDict):
     effected: bool
 class ReleaseParkedAttemptRequest(TypedDict):
     attempt: str
-    reason: str
+    cause: DreamerParkCauseView
     parked_at: int
     note: NotRequired[str | None]
 class ParkReleaseView(TypedDict):

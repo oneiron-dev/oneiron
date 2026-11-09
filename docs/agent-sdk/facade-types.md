@@ -8574,7 +8574,7 @@ export type ReleaseTurnProgramHoldRequest = { attempt: string; reason: string; p
 /** `oneiron::dreamer_runner::program::release::ProgramHoldReleaseView` */
 export type ProgramHoldReleaseView = { attempt: string; action: ProgramHoldReleaseAction; released: string; state: string; effected: boolean }
 /** `oneiron::dreamer_runner::park_release::ReleaseParkedAttemptRequest` */
-export type ReleaseParkedAttemptRequest = { attempt: string; reason: string; parked_at: number; note?: string | null }
+export type ReleaseParkedAttemptRequest = { attempt: string; cause: DreamerParkCauseView; parked_at: number; note?: string | null }
 /** `oneiron::dreamer_runner::park_release::ParkReleaseView` */
 export type ParkReleaseView = { attempt: string; released: string; cause: string; state: string }
 /** `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode` */
