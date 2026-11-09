@@ -542,7 +542,10 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
             script: prepared.executed(),
             ..step
         };
-        let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
+        let outcome = match super::microvm::select_backend_for_tier(
+            &super::SANDBOX_BACKENDS,
+            step.boundary.tier(),
+        )? {
             Some(backend) => isolated::run(self, step, prepared, backend, cancel, host),
             None => self.execute_cancellable(step, prepared, host, cancel),
         };
