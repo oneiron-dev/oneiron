@@ -319,6 +319,7 @@ pub fn consolidate_unbound_turn(
                     model: ModelId::new("test/model@r1")
                         .map_err(|_| Error::InvalidConfig("model id".into()))?,
                     locality: ModelLocality::OwnServer,
+                    keyless: false,
                 },
                 extraction_egress: Some(&allow_fixture_extraction),
             },
