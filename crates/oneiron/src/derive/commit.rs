@@ -99,6 +99,7 @@ impl Vault {
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
         batch.validate()?;
+        super::sources::recheck_in_txn(self, txn, stamp, batch)?;
         let mut context = ItemContext {
             batch: EntityId::now(),
             stamp,

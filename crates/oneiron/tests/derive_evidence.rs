@@ -97,12 +97,23 @@ fn the_dreamer_attaches_a_turn_it_reads_to_its_claim() {
 fn evidence_from_a_row_the_actor_does_not_read_is_refused() {
     let fixture = fixture();
     let missing = EntityId::now();
-    assert_eq!(
-        attach(&fixture, fixture.claim, missing),
-        (
-            false,
-            vec!["gate.deny.derive.evidence_unverified".to_owned()]
-        )
+    // The actor never read the row, so the version it cites does not
+    // stand: the commit's source recheck refuses the whole batch.
+    let refused = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-evidence",
+        &[Derived::Evidence(Evidence {
+            local: "evidence",
+            head: Named::Stored(fixture.claim),
+            sources: vec![Named::Stored(missing)],
+        })],
+    )
+    .expect_err("a source the actor does not read aborts the batch");
+    assert!(
+        format!("{refused:?}").contains("gate.deny.derive.source_withheld"),
+        "{refused:?}"
     );
     assert!(!supports(&fixture.vault, missing, fixture.claim).expect("read"));
 }

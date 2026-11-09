@@ -243,6 +243,16 @@ impl DerivationItem {
         }
     }
 
+    /// The rows the item cites as its sources: a claim's evidence and an
+    /// evidence item's sources. A stored one needs its version in the batch.
+    fn cited(&self) -> &[ItemRef] {
+        match self {
+            Self::Claim(claim) => &claim.evidence,
+            Self::Evidence(evidence) => &evidence.sources,
+            _ => &[],
+        }
+    }
+
     /// Every row the item names.
     pub(super) fn refs(&self) -> Vec<&ItemRef> {
         match self {
@@ -272,6 +282,11 @@ impl DerivationItem {
 pub struct DerivationBatch {
     /// The items, in the order they stage.
     pub items: Vec<DerivationItem>,
+    /// The version of every stored source the items cite (a claim's evidence,
+    /// an evidence item's sources), as the caller's read served it
+    /// ([`crate::snapshot_read`]). The commit rechecks each in its write: a
+    /// source that moved or is withheld since aborts the whole batch.
+    pub sources: Vec<crate::snapshot_read::SourceVersion>,
 }
 
 /// The most items one batch holds.
@@ -311,6 +326,15 @@ impl DerivationBatch {
                 return Err(malformed(
                     "each derivation item's local name is unique in its batch",
                 ));
+            }
+            for cited in item.cited() {
+                if let ItemRef::Stored(id) = cited
+                    && !self.sources.iter().any(|version| version.entity == *id)
+                {
+                    return Err(malformed(
+                        "every stored source a derivation item cites names its version",
+                    ));
+                }
             }
         }
         Ok(())
