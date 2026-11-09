@@ -31336,7 +31336,7 @@
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -47704,7 +47704,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 212,
+      "mod": 213,
       "re-export": 105
      }
     },
@@ -77552,6 +77552,51 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EvidenceMessageSlice",
+      "EvidenceRange",
+      "EvidenceSourceStatus",
+      "EvidenceSpan",
+      "EvidenceSpans",
+      "EvidenceSpansRequest"
+     ],
+     "path": "src/snapshot_read/evidence_spans.rs",
+     "purpose": "`vault.evidence.spans`: exact byte spans of one TURN's text, or one source's version, through the caller's…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/snapshot_read/mod.rs",
+     "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SourceVersion",
+      "SourceVersionCheck"
+     ],
+     "path": "src/snapshot_read/source_version.rs",
+     "purpose": "The version of one source row as a scoped read served it, and its recheck in a later transaction",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/source_audience/carried.rs",
      "purpose": "The carried form of a binding and a policy revision (Engine A, 6 Nov 03:46): the keys and the bytes a…",
@@ -91864,6 +91909,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/vault_live_rows/tests.rs",
+     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -98873,6 +98926,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/primitive_a_evidence_spans.rs",
+     "purpose": "Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs",
      "purpose": "—",
      "surface": {}
@@ -100408,6 +100469,13 @@
      "layout": "file+dir",
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
+    "snapshot_read": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…"
+    },
     "source_audience": {
      "files": 8,
      "impl_vault": false,
@@ -100584,10 +100652,10 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_live_rows": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]…"
     },
     "vault_shape": {
@@ -100677,8 +100745,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7235,
-   "test_files": 901
+   "source_files": 7238,
+   "test_files": 903
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -102505,14 +102573,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/live_rows/tests.rs",
-     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "Destination",
@@ -102796,10 +102856,10 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "live_rows": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "machine_destination": {
@@ -102897,7 +102957,7 @@
    "over_bar": 1,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
    "source_files": 35,
-   "test_files": 2
+   "test_files": 1
   },
   "oneiron-bench": {
    "files": [
@@ -118257,7 +118317,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/sessions.rs",
-     "purpose": "The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`): a session speaks the lower…",
+     "purpose": "The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`)",
      "surface": {}
     }
    ],
@@ -119010,14 +119070,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/analyzer/japanese/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "DictLoadError",
@@ -119110,22 +119162,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/analyzer/script/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/analyzer/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnalyzerChannel",
@@ -119189,18 +119225,9 @@
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
       "fn": 7,
       "struct": 2
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/fusion/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -119245,7 +119272,7 @@
    ],
    "modules": {
     "analyzer": {
-     "files": 17,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -119259,10 +119286,10 @@
      "purpose": "Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a…"
     },
     "fusion": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…"
     },
     "hnsw_entry_point": {
@@ -119283,7 +119310,7 @@
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 21,
-   "test_files": 5
+   "test_files": 1
   },
   "oneiron-run-budget": {
    "files": [
@@ -147311,14 +147338,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/overlay_db/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "OwnRate",
@@ -149501,14 +149520,6 @@
       "fn": 4,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/store_clock/tests.rs",
-     "purpose": "The store clock's reads, observed through what a caller gets back",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -151902,7 +151913,7 @@
      "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages"
     },
     "overlay_db": {
-     "files": 5,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -152441,7 +152452,7 @@
      "purpose": "The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack…"
     },
     "store_clock": {
-     "files": 3,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -152612,7 +152623,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 643,
-   "test_files": 4
+   "test_files": 2
   },
   "oneiron-uniffi": {
    "files": [

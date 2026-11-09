@@ -14,11 +14,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7235 | 901 | 240 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7238 | 903 | 240 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 6 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 67 | 1 | 0 |
-| [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 35 | 2 | 1 |
+| [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 35 | 1 | 1 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness drivers | 159 | 18 | 1 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 34 | 5 | 2 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 88 | 0 | 0 |
@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-policy-vocabulary](codemap/oneiron-policy-vocabulary.md) | Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the… | 5 | 0 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 25 | 8 | 0 |
-| [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 21 | 5 | 0 |
+| [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 21 | 1 | 0 |
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
@@ -63,7 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1826 | 183 | 60 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 643 | 4 | 1 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 643 | 2 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 58 | 1 | 1 |
 | [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 39 | 0 | 0 |
@@ -267,6 +267,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill_reliability` | dir | 21 | L | yes | Bayesian skill retrieval over the shared learning.reliability projection |
 | `skill_scan` | file+dir | 3 | m | — | Deterministic static skill scanning and the activation risk consult |
 | `slim` | file+dir | 6 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
+| `snapshot_read` | dir | 3 | s | — | Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of… |
 | `source_audience` | dir | 8 | L | — | Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A… |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `store` | dir | 394 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
@@ -292,7 +293,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `typed_body` | file+dir | 13 | L | yes | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `vault` | dir | 59 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 29 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
-| `vault_live_rows` | file | 1 | s | yes | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
+| `vault_live_rows` | file+dir | 2 | s | yes | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
 | `vault_shape` | dir | 28 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `verb_names` | file | 1 | s | — | The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core… |
 | `verb_table` | file | 1 | s | — | Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's… |
@@ -352,7 +353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `learning_estimate` | file | 1 | m | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
 | `learning_ranking` | file | 1 | s | The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus… |
 | `limits` | file | 1 | s | Traversal safety caps, defined in `oneiron-contracts` |
-| `live_rows` | file+dir | 2 | m | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
+| `live_rows` | file | 1 | m | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
 | `machine_destination` | file | 1 | s | Machine destinations and folded read-location values |
 | `message_body_fields` | file | 1 | s | An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no… |
 | `msgpack_shape` | file | 1 | s | A budget check of untrusted MessagePack before it is decoded |
@@ -814,9 +815,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `analyzer` | dir | 17 | m | Multilingual analyzer subsystem |
+| `analyzer` | dir | 14 | m | Multilingual analyzer subsystem |
 | `distance` | file+dir | 2 | m | Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a… |
-| `fusion` | file+dir | 2 | m | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
+| `fusion` | file | 1 | m | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
 | `hnsw_entry_point` | file | 1 | m | Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it) |
 | `pipeline` | file | 1 | s | Value types the retrieval pipeline's kernels share |
 
@@ -1076,7 +1077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `outbound_outcome` | file | 1 | s | Stable outcome vocabulary for outbound dispatch observations |
 | `outbound_trigger` | file | 1 | s | Source tags and trigger envelopes for outbound intent records |
 | `overlay_bookkeeping` | file | 1 | s | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
-| `overlay_db` | dir | 5 | m | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
+| `overlay_db` | dir | 4 | m | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `own_rate_record` | file | 1 | s | Own-rate advisory thresholds and first-crossing check records |
 | `pack_hook_actor_class` | file | 1 | s | The actor classes a pack hook's selector may name |
 | `pad_object_membership` | file | 1 | s | Generation membership policy named by a pad-object install |
@@ -1153,7 +1154,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `snapshot_lifecycle` | file | 1 | s | A vault's inference snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the admission generation and… |
 | `snapshot_lock_result` | file | 1 | s | Results of releasing inference snapshot state before a vault lock |
 | `source_audience_obligation` | file | 1 | s | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
-| `store_clock` | file+dir | 3 | m | Per-store clock and id source |
+| `store_clock` | file+dir | 2 | m | Per-store clock and id source |
 | `structural_kind_registry` | file+dir | 2 | s | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
 | `task_body_checks` | file | 1 | s | Lenient raw TASK terminal and deadline checks used at storage admission |
 | `text_index` | dir | 3 | s | Persisted text-index rows, codecs, analysis and integrity diagnostics |
