@@ -272,6 +272,44 @@ fn a_revoked_credential_reaches_no_subscription() {
     );
 }
 
+/// A physical delete still reaches the owner as a withdrawal: the change log's delete names no
+/// type and removes the row, so the feed keeps the type while it follows the log (review #6897
+/// round 2).
+#[test]
+fn a_physical_delete_reaches_the_owner_as_a_withdrawal() {
+    let (_dir, vault) = open();
+    let key = owner_key(&vault);
+    let lane = vault.scoped_read(key.clone());
+    let subscription = vault
+        .feed_subscribe(&lane, &changes_from(FeedStart::Head))
+        .expect("subscribe")
+        .subscription;
+    let person = put_person(&vault);
+    let through = read(&vault, &key, subscription).through;
+    vault
+        .feed_ack(
+            &lane,
+            &FeedAckRequest {
+                subscription,
+                through,
+            },
+        )
+        .expect("ack the edit");
+
+    vault
+        .batch()
+        .delete(&person)
+        .commit()
+        .expect("delete the person");
+    let page = read(&vault, &key, subscription);
+    assert!(
+        page.entries
+            .iter()
+            .any(|entry| entry.entity == person && entry.kind == FeedEntryKind::Withdrawal),
+        "{page:?}"
+    );
+}
+
 /// A selector follows at least one source, each once.
 #[test]
 fn a_selector_names_each_source_once() {

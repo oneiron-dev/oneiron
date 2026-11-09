@@ -34,6 +34,7 @@ use crate::error::ClaimError;
 use crate::ports::{ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::runtime_hooks::{ClaimChangelogPosition, FactPosition, FactSource, SettlementPosition};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -44,6 +45,10 @@ const SUBSCRIPTIONS: SideTable<(EntityId, EntityId), SubscriptionRow, Named> =
 /// One cursor row per subscription and source.
 const CURSORS: SideTable<(EntityId, [u8; 1]), CursorRow, Named> =
     SideTable::new(&side_table::FEED_CURSOR);
+
+/// The type of each entity a physical delete removed while the change log was followed.
+const WITHDRAWN_TYPES: SideTable<EntityId, WithdrawnType, Named> =
+    SideTable::new(&side_table::FEED_WITHDRAWN_TYPE);
 
 /// Entries one read returns from each source when the request names no limit.
 pub const FEED_READ_DEFAULT_LIMIT: usize = 64;
@@ -328,6 +333,12 @@ struct SubscriptionRow {
     created_at: u64,
 }
 
+/// The type a physical delete's row had, kept for the withdrawal's judgment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct WithdrawnType {
+    entity_type: u8,
+}
+
 /// The stored cursor: the last position acknowledged, `None` at the source's start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CursorRow {
@@ -509,6 +520,7 @@ impl Vault {
                 return Ok(false);
             }
             CURSORS.delete_from(&self.store, txn, subscription.as_bytes())?;
+            forget_withdrawn_types_unless_followed_in_txn(&self.store, txn)?;
             Ok(true)
         })
     }
@@ -567,6 +579,33 @@ pub(crate) fn ack_feed_in_txn(
     Ok(())
 }
 
+/// Keeps, in a physical delete's own write, the type of entity `id` whose row it removes, while a
+/// subscription follows the change log (review #6897 round 2): the change log's delete names no
+/// type, and a withdrawal is judged by it. Without a follower it writes nothing.
+///
+/// # Errors
+///
+/// The follower read or the write.
+pub(crate) fn remember_withdrawn_type_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<()> {
+    if !changes_followed_in_txn(store, txn)? {
+        return Ok(());
+    }
+    WITHDRAWN_TYPES.put(store, txn, id, &WithdrawnType { entity_type })
+}
+
+/// Whether any subscription follows the change log in `txn`.
+fn changes_followed_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(CURSORS
+        .scan_keys(store, txn, &[])?
+        .iter()
+        .any(|(_, tag)| *tag == [FeedSource::Changes.tag()]))
+}
+
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
 /// fact of it, hooks on or off.
 pub(crate) fn followed_in_txn(
@@ -623,10 +662,33 @@ pub(crate) fn erase_feed_actor_in_txn(
         CURSORS.delete_from(&vault.store, txn, subscription.as_bytes())?;
     }
     SUBSCRIPTIONS.delete_from(&vault.store, txn, actor.as_bytes())?;
+    forget_withdrawn_types_unless_followed_in_txn(&vault.store, txn)
+}
+
+/// Drops every kept withdrawn type once no subscription follows the change log: nothing judges
+/// a withdrawal any more.
+fn forget_withdrawn_types_unless_followed_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    if changes_followed_in_txn(store, txn)? {
+        return Ok(());
+    }
+    WITHDRAWN_TYPES.delete_from(store, txn, &[]).map(drop)
+}
+
+/// Erases `ids`' kept withdrawn types in the erase's own write, as the hook feeds scrub theirs.
+pub(crate) fn scrub_withdrawn_types_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    for id in ids {
+        WITHDRAWN_TYPES.delete(store, txn, id)?;
+    }
     Ok(())
 }
 
-/// The subscriber: the actor `reader` reads as.
 /// `reader`'s actor, once its credential and owner binding still hold in `txn` (review #6897):
 /// every feed door checks it in the transaction that touches the subscription, so a key revoked
 /// or lapsed since it was made neither reads, lists, moves nor ends one.
@@ -744,9 +806,18 @@ fn changes_after_in_txn(
         let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(id));
         scanned.through = Some(position);
         let op = FeedOp::of_change(change.op);
-        let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
+        let entity_type = match vault.store.port_entity_record(txn, &change.entity)? {
+            Some(record) => record.entity_type,
+            // A physical delete removed the row and kept its type while the change log was
+            // followed (review #6897 round 2): the withdrawal is judged by that type.
+            None if op.kind() == FeedEntryKind::Withdrawal => {
+                match WITHDRAWN_TYPES.get(&vault.store, txn, &change.entity)? {
+                    Some(kept) => kept.entity_type,
+                    None => continue,
+                }
+            }
             // No record names the entity's type any more: nothing a lane can judge.
-            continue;
+            None => continue,
         };
         let (revision, judge) = if op.kind() == FeedEntryKind::Edit {
             let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
@@ -769,7 +840,7 @@ fn changes_after_in_txn(
                 kind: op.kind(),
                 op,
                 entity: change.entity,
-                entity_type: record.entity_type,
+                entity_type,
                 actor: change.actor_principal,
                 recorded_at: change.recorded_at,
                 revision,
