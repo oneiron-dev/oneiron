@@ -75,6 +75,7 @@ impl LlmBackend for ReplyBackend {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
                     text: self.reply.clone(),
+                    signature: None,
                 }],
             },
             usage: LlmUsage {
@@ -89,8 +90,11 @@ impl LlmBackend for ReplyBackend {
                     reasoning: 0,
                 },
                 raw_provider: serde_json::Value::Null,
+                call_metadata: None,
             },
             finish_reason: FinishReason::Stop,
+            reply_assertions: Default::default(),
+            token_scores: None,
         };
         Box::pin(async move { Ok(response) })
     }
@@ -252,6 +256,7 @@ pub fn consolidate_unbound_turn(
                 revoked_at: None,
                 expires_at: None,
                 authority_scope: crate::federation::scope_codec::read_preset(),
+                companion_bounds: None,
             },
         )?;
     }
