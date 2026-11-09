@@ -267,6 +267,7 @@ fn set_format_font_produces_direct_font() {
         .apply(&txn(vec![EditStep::SetRunFormatting {
             block_id: first_block_id(&doc),
             expect: "Inherited".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet::default(),
             style: RunStyleEdit {
