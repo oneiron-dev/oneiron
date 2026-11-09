@@ -9,6 +9,7 @@ use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::hold_override::override_note;
+use crate::attempt_queue::hold_override_receipt::record_hold_override_receipt_in_txn;
 use crate::attempt_queue::lifecycle::{HoldSignal, RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
@@ -351,6 +352,15 @@ impl AttemptQueue<'_> {
             && let Some((pause, before)) = &overridden
         {
             self.follow_hold_override_in_txn(wtxn, *pause, before, &actor, now)?;
+            // Engine call S65-B-R3: the attested record of the override.
+            let sequence = outcome
+                .record
+                .events
+                .last()
+                .map_or(0, |event| event.sequence);
+            record_hold_override_receipt_in_txn(
+                self.store, wtxn, *pause, before, &actor, sequence, now,
+            )?;
         }
         // FIX 900: a cancelled child settles its spend lease in the same
         // write (OF-532), as `kill_spawn` does; idempotent, unmetered no-op.

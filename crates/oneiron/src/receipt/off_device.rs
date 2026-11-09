@@ -95,6 +95,12 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
             "page_ref",
         ],
     ),
+    // A hold override: the fan-out launch, or the comment's artifact and
+    // thread, the released hold named. (Engine call S65-B-R3)
+    (
+        ReceiptKind::RunHoldOverride,
+        &["launch_ref", "artifact_ref", "thread_ref"],
+    ),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
     (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
