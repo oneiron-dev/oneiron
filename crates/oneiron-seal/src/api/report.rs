@@ -254,14 +254,17 @@ impl VerifyReport {
     }
     #[must_use]
     pub fn reasons(&self) -> Vec<VerifyFindingCode> {
+        // Failed checks' findings, and a possible-tampering sub-indication
+        // though its check is NotRun: the user sees it (lead ruling F).
         let mut reasons: Vec<_> = self
             .checks()
-            .filter_map(|c| {
-                if c.status == VerifyCheckStatus::Fail {
-                    c.finding
-                } else {
-                    None
-                }
+            .filter_map(|c| match (c.status, c.finding) {
+                (VerifyCheckStatus::Fail, finding) => finding,
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                ) => Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                _ => None,
             })
             .collect();
         if self
