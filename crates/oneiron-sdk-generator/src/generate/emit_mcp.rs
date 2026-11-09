@@ -147,9 +147,7 @@ pub(crate) const TASK_PRODUCER_BRANCHES: &[(&str, &str)] = &[(
 pub(crate) fn task_producer_branch_turns(args: &str) -> String {
     let turns: Vec<String> = TASK_PRODUCER_BRANCHES
         .iter()
-        .map(|(name, predicate)| {
-            format!("(tool == {} && {predicate}(&{args}))", dumps_str(name))
-        })
+        .map(|(name, predicate)| format!("(tool == {} && {predicate}(&{args}))", dumps_str(name)))
         .collect();
     if turns.is_empty() {
         "false".to_owned()
@@ -162,7 +160,10 @@ pub(crate) fn task_producer_branch_turns(args: &str) -> String {
 /// and bind it.
 pub(crate) fn takes_task_work_turn(row: &Dict) -> Result<bool, GenerateError> {
     let name = item(row, "name")?;
-    if !TASK_PRODUCER_ROWS.iter().any(|producer| name.is_str(producer)) {
+    if !TASK_PRODUCER_ROWS
+        .iter()
+        .any(|producer| name.is_str(producer))
+    {
         return Ok(flag(row, "task_work"));
     }
     if flag(row, "host_door")
@@ -320,7 +321,8 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         );
     } else {
         body += &decode;
-        if name_value.is_str("vault.artifacts.view") || name_value.is_str("vault.artifacts.export") {
+        if name_value.is_str("vault.artifacts.view") || name_value.is_str("vault.artifacts.export")
+        {
             body += OWNER_AUTHORSHIP;
         }
         if name_value.is_str("describe") {
@@ -366,7 +368,8 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         if name_value.is_str("self.inbox.concern.move") {
             body += CONCERN_MOVE_LANDED;
         } else {
-            body += "server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n";
+            body +=
+                "server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n";
         }
     }
     if row.contains_key("mcp_result") {
@@ -529,7 +532,10 @@ pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateErro
             .ok_or_else(|| {
                 GenerateError::assertion(format!("{}: an MCP arm is not one block", name.str()))
             })?;
-        result += &format!("{} => boxed_mcp_verb_row_{method}(row).await,\n", json(name));
+        result += &format!(
+            "{} => boxed_mcp_verb_row_{method}(row).await,\n",
+            json(name)
+        );
         // The row's body is unchanged; it runs in its own function on the same arguments, the ones it does not
         // read named once (FIX 19837).
         let uses_invalid = search_bare_invalid(body);
@@ -900,4 +906,3 @@ fn execute_held_content_row(
 
 /// generate.py:1140-1140.
 const HELD_MEASURED: &str = "let measured = || oneiron::blob_artifact::BlobBodyFile::measure(held.file()).map_err(|error| mcp_facade_error(error.into()));\n";
-

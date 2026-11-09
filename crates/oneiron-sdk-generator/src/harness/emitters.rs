@@ -83,7 +83,13 @@ pub(crate) const EMITTERS: &[Emitter] = &[
                 Value::List(positions),
             ]))
         },
-        files: |value| item_file("crates/oneiron/src/verbs/generated/verb_catalog.rs", value, 0),
+        files: |value| {
+            item_file(
+                "crates/oneiron/src/verbs/generated/verb_catalog.rs",
+                value,
+                0,
+            )
+        },
     },
     Emitter {
         name: "host_door_rows",
@@ -164,7 +170,10 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         run: |generator, _| {
             let facade_rows = generator.facade_rows.clone();
             let texts = crate::generate::emit_native::napi_py(generator, &facade_rows)?;
-            Ok(Value::List(vec![Value::Str(texts.napi), Value::Str(texts.py)]))
+            Ok(Value::List(vec![
+                Value::Str(texts.napi),
+                Value::Str(texts.py),
+            ]))
         },
         files: |value| {
             let mut files = item_file(
@@ -173,7 +182,11 @@ pub(crate) const EMITTERS: &[Emitter] = &[
                 0,
             );
             // generate.py:2531: the PyO3 file wraps the methods.
-            if let Some(py) = value.as_list().and_then(|items| items.get(1)).and_then(Value::as_str) {
+            if let Some(py) = value
+                .as_list()
+                .and_then(|items| items.get(1))
+                .and_then(Value::as_str)
+            {
                 files.push((
                     "crates/oneiron-py/src/generated/agent_verbs.rs",
                     format!(

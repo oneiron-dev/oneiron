@@ -31,9 +31,9 @@ pub(crate) fn remote_boundary(row: &Dict) -> Result<RemoteBoundary, GenerateErro
         Some(binding) => binding.dict_get("args")?,
     };
     let typed = match (binding, args) {
-        (Some(binding), Some(args)) if args.truthy() => {
-            !binding.dict_get("wire")?.is_some_and(|wire| wire.is_str("json"))
-        }
+        (Some(binding), Some(args)) if args.truthy() => !binding
+            .dict_get("wire")?
+            .is_some_and(|wire| wire.is_str("json")),
         _ => false,
     };
     let (Some(binding), Some(args), true) = (binding, args, typed) else {
@@ -58,7 +58,10 @@ pub(crate) fn remote_boundary(row: &Dict) -> Result<RemoteBoundary, GenerateErro
         for arg in &args {
             let name = arg.getitem("name")?;
             let template = argument_kind(arg.getitem("kind")?)?.text("field")?;
-            values.push((name.clone(), str_format(template, &[("name", &name.str())])?));
+            values.push((
+                name.clone(),
+                str_format(template, &[("name", &name.str())])?,
+            ));
         }
         let mut fields = Vec::new();
         for (name, value) in &values {
@@ -95,7 +98,10 @@ pub(crate) fn remote_boundary(row: &Dict) -> Result<RemoteBoundary, GenerateErro
 
 /// Port of generate.py:2387-2449 (outputs: the `remote` segment): the remote client's `agent_verb` door and one
 /// typed method per facade row.
-pub(crate) fn remote(generator: &Generator, facade_rows: &[RowId]) -> Result<String, GenerateError> {
+pub(crate) fn remote(
+    generator: &Generator,
+    facade_rows: &[RowId],
+) -> Result<String, GenerateError> {
     let rows = generator.rows.select(facade_rows);
     let mut remote = HEADER.to_owned() + "use super::*;\n";
     remote += REMOTE_AGENT_VERB_OUTPUT;
@@ -130,10 +136,10 @@ pub(crate) fn remote(generator: &Generator, facade_rows: &[RowId]) -> Result<Str
             checks = sub_input_word(&checks, value_input)?;
         }
         // `r.get('binding', {}).get('docs', {}).get('remote', '')`
-        if let Some(docs) = get_in(row, "binding", "docs")? {
-            if let Some(doc) = docs.dict_get("remote")? {
-                remote += concat(doc)?;
-            }
+        if let Some(docs) = get_in(row, "binding", "docs")?
+            && let Some(doc) = docs.dict_get("remote")?
+        {
+            remote += concat(doc)?;
         }
         let params = 1 + match binding(row) {
             Some(binding)
@@ -164,7 +170,8 @@ pub(crate) fn remote(generator: &Generator, facade_rows: &[RowId]) -> Result<Str
 }
 
 /// generate.py:2388-2396.
-const REMOTE_AGENT_VERB_OUTPUT: &str = "fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
+const REMOTE_AGENT_VERB_OUTPUT: &str =
+    "fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
         client: &RemoteClient, verb: &str, input: &serde_json::Value,
     ) -> Result<serde_json::Value, MemoryError> {
         let output: R = client.call(verb, input)?;
