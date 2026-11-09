@@ -9,7 +9,9 @@
 //!
 //! The digest covers every file the generator reads and the generator's identity: its source
 //! ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests that decide its build, and the compiler. A change to
-//! any of them makes a new run.
+//! any of them makes a new run. When those cannot name the generator (a path package among its dependencies, or a
+//! compiler that does not answer), the calling build script's own executable stands for it, and that crate's run is
+//! not shared.
 //!
 //! Each run also leaves the agent-SDK reference (`types.md`, `facade-types.md`, `verbs.md`) in
 //! `<target dir>/<profile>/sdk-generated/agent-sdk/`, the local copy of what CI publishes.
@@ -154,17 +156,29 @@ const GENERATOR_BUILD_FILES: &[&str] = &[
     "crates/oneiron-sdk-generator/Cargo.toml",
 ];
 
-/// A digest of the generator's identity and every input file's path and bytes. The identity is the generator's own
-/// source (`GENERATOR_SOURCE_DIGEST`), the files that decide its build (`GENERATOR_BUILD_FILES`) and the compiler
-/// that built it, so a run directory an older generator wrote is never reused.
+/// A digest of the generator's identity and every input file's path and bytes, so a run directory an older generator
+/// wrote is not reused. The identity is the generator's own source (`GENERATOR_SOURCE_DIGEST`), the files that decide
+/// its build (`GENERATOR_BUILD_FILES`) and the compiler that built it. Those name the generator only when every
+/// package it depends on is pinned in `Cargo.lock` (`dependencies_are_pinned`) and the compiler answers; otherwise
+/// this build script's own executable, which links the generator, stands for it, and the run is this crate's alone.
 fn digest(root: &Path, files: &[PathBuf]) -> u64 {
     let mut hasher = DefaultHasher::new();
     GENERATOR_SOURCE_DIGEST.hash(&mut hasher);
     for file in GENERATOR_BUILD_FILES {
         file.hash(&mut hasher);
-        fs::read(root.join(file)).unwrap_or_default().hash(&mut hasher);
+        fs::read(root.join(file))
+            .unwrap_or_default()
+            .hash(&mut hasher);
     }
-    compiler_version().hash(&mut hasher);
+    let compiler = compiler_version();
+    compiler.hash(&mut hasher);
+    let lock = fs::read_to_string(root.join("Cargo.lock")).unwrap_or_default();
+    if compiler.is_none() || !dependencies_are_pinned(&lock) {
+        let executable = env::current_exe()
+            .and_then(fs::read)
+            .unwrap_or_else(|error| panic!("read this build script's executable ({error})"));
+        executable.hash(&mut hasher);
+    }
     for file in files {
         file.strip_prefix(root).unwrap_or(file).hash(&mut hasher);
         fs::read(file).unwrap_or_default().hash(&mut hasher);
@@ -173,22 +187,133 @@ fn digest(root: &Path, files: &[PathBuf]) -> u64 {
 }
 
 /// `$RUSTC -vV`: the release, commit and host of the compiler cargo builds with (and so built the generator), or
-/// nothing when it cannot be asked. A new compiler rebuilds every build script, so this is asked again then.
+/// `None` when it cannot be asked. A new compiler rebuilds every build script, so this is asked again then.
 #[allow(
     clippy::disallowed_methods,
     reason = "a build script asks the compiler cargo names for its version; oneiron_spawn is the engine's spawn path"
 )]
-fn compiler_version() -> Vec<u8> {
-    let Some(rustc) = env::var_os("RUSTC") else {
-        return Vec::new();
-    };
+fn compiler_version() -> Option<Vec<u8>> {
+    let rustc = env::var_os("RUSTC")?;
     std::process::Command::new(rustc)
         .arg("-vV")
         .output()
         .ok()
         .filter(|output| output.status.success())
         .map(|output| output.stdout)
-        .unwrap_or_default()
+}
+
+/// Whether every package in the generator's dependency closure in `lock` (a `Cargo.lock`) comes from a registry or a
+/// git commit, whose bytes the lock file names by version and source. A path package (a workspace crate, or a
+/// `[patch]` to a local copy) has no `source` line: its files can change while the lock file stays the same. A
+/// closure that cannot be read (no generator entry, a dependency with no entry) counts as not pinned.
+fn dependencies_are_pinned(lock: &str) -> bool {
+    let packages = lock_packages(lock);
+    let Some(generator) = packages
+        .iter()
+        .position(|package| package.name == "oneiron-sdk-generator")
+    else {
+        return false;
+    };
+    let mut seen = vec![false; packages.len()];
+    let mut pending = vec![generator];
+    while let Some(index) = pending.pop() {
+        if std::mem::replace(&mut seen[index], true) {
+            continue;
+        }
+        let package = &packages[index];
+        if index != generator && package.source.is_none() {
+            return false;
+        }
+        for dependency in &package.dependencies {
+            // `name`, `name version` or `name version (source)`, as Cargo writes them.
+            let mut parts = dependency.splitn(3, ' ');
+            let name = parts.next().unwrap_or_default();
+            let version = parts.next();
+            let source = parts
+                .next()
+                .map(|source| source.trim_start_matches('(').trim_end_matches(')'));
+            let before = pending.len();
+            pending.extend(
+                packages
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        candidate.name == name
+                            && version.is_none_or(|version| candidate.version == version)
+                            && source.is_none_or(|source| candidate.source == Some(source))
+                    })
+                    .map(|(candidate, _)| candidate),
+            );
+            if pending.len() == before {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// One `[[package]]` entry of a `Cargo.lock`.
+#[derive(Default)]
+struct LockPackage<'a> {
+    name: &'a str,
+    version: &'a str,
+    source: Option<&'a str>,
+    dependencies: Vec<&'a str>,
+}
+
+/// The `[[package]]` entries of a `Cargo.lock`, as Cargo writes it: one `key = "value"` per line, and the
+/// `dependencies = [` list one quoted entry per line up to `]`. Other tables end an entry.
+fn lock_packages(lock: &str) -> Vec<LockPackage<'_>> {
+    let mut packages: Vec<LockPackage<'_>> = Vec::new();
+    let (mut in_package, mut in_dependencies) = (false, false);
+    for line in lock.lines() {
+        if line == "[[package]]" {
+            packages.push(LockPackage::default());
+            (in_package, in_dependencies) = (true, false);
+            continue;
+        }
+        if line.starts_with('[') {
+            (in_package, in_dependencies) = (false, false);
+            continue;
+        }
+        let Some(package) = packages.last_mut().filter(|_| in_package) else {
+            continue;
+        };
+        if in_dependencies {
+            if line.trim() == "]" {
+                in_dependencies = false;
+            } else {
+                package
+                    .dependencies
+                    .push(line.trim().trim_end_matches(',').trim_matches('"'));
+            }
+        } else if let Some(items) = line.strip_prefix("dependencies = [") {
+            match items.strip_suffix(']') {
+                // A list on one line.
+                Some(items) => package.dependencies.extend(
+                    items
+                        .split(',')
+                        .map(|item| item.trim().trim_matches('"'))
+                        .filter(|item| !item.is_empty()),
+                ),
+                None => in_dependencies = true,
+            }
+        } else if let Some(value) = lock_value(line, "name") {
+            package.name = value;
+        } else if let Some(value) = lock_value(line, "version") {
+            package.version = value;
+        } else if let Some(value) = lock_value(line, "source") {
+            package.source = Some(value);
+        }
+    }
+    packages
+}
+
+/// The value of a `key = "value"` line.
+fn lock_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.strip_prefix(key)?
+        .strip_prefix(" = \"")?
+        .strip_suffix('"')
 }
 
 fn collect(path: &Path, generated: &[PathBuf], files: &mut Vec<PathBuf>) {
@@ -232,5 +357,94 @@ fn run_generator(root: &Path, shared: &Path, run: &Path) {
     fs::write(staging.join(".complete"), b"").expect("mark the SDK run complete");
     if fs::rename(&staging, run).is_err() {
         let _ = fs::remove_dir_all(&staging);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dependencies_are_pinned;
+
+    const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+    /// A lock file with the generator depending on `regex`, and `regex` on the given entry, followed by `extra`.
+    fn lock(regex_dependency: &str, extra: &str) -> String {
+        format!(
+            "version = 4\n\n[[package]]\nname = \"oneiron-sdk-generator\"\nversion = \"0.1.0\"\ndependencies = [\n \
+             \"regex\",\n]\n\n[[package]]\nname = \"regex\"\nversion = \"1.13.1\"\nsource = \"{REGISTRY}\"\n\
+             checksum = \"00\"\ndependencies = [\n \"{regex_dependency}\",\n]\n{extra}"
+        )
+    }
+
+    #[test]
+    fn the_workspace_lock_pins_the_generator() {
+        let text =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+                .expect("the workspace's Cargo.lock");
+        assert!(dependencies_are_pinned(&text));
+    }
+
+    #[test]
+    fn registry_and_git_packages_are_pinned() {
+        let text = lock(
+            "memchr",
+            "\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\nsource = \"git+https://example.com/memchr#abc\"\n",
+        );
+        assert!(dependencies_are_pinned(&text));
+    }
+
+    #[test]
+    fn a_path_package_in_the_closure_is_not_pinned() {
+        let text = lock(
+            "memchr",
+            "\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\n",
+        );
+        assert!(!dependencies_are_pinned(&text));
+    }
+
+    #[test]
+    fn a_path_package_outside_the_closure_does_not_count() {
+        let text = lock(
+            "memchr",
+            &format!(
+                "\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\nsource = \"{REGISTRY}\"\n\n[[package]]\n\
+                 name = \"oneiron\"\nversion = \"0.1.0\"\ndependencies = [\n \"memchr\",\n]\n"
+            ),
+        );
+        assert!(dependencies_are_pinned(&text));
+    }
+
+    #[test]
+    fn a_versioned_entry_picks_its_version() {
+        let two = |path_version: &str| {
+            format!(
+                "\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\nsource = \"{REGISTRY}\"\n\n[[package]]\n\
+                 name = \"memchr\"\nversion = \"{path_version}\"\n"
+            )
+        };
+        assert!(dependencies_are_pinned(&lock(
+            "memchr 2.8.3",
+            &two("1.0.0")
+        )));
+        assert!(!dependencies_are_pinned(&lock(
+            "memchr 1.0.0",
+            &two("1.0.0")
+        )));
+        assert!(dependencies_are_pinned(&lock(
+            &format!("memchr 2.8.3 ({REGISTRY})"),
+            &two("1.0.0")
+        )));
+    }
+
+    #[test]
+    fn a_one_line_dependency_list_is_read() {
+        let text = "[[package]]\nname = \"oneiron-sdk-generator\"\nversion = \"0.1.0\"\ndependencies = [\"memchr\"]\n\n\
+                    [[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\n";
+        assert!(!dependencies_are_pinned(text));
+    }
+
+    #[test]
+    fn an_unreadable_closure_is_not_pinned() {
+        assert!(!dependencies_are_pinned(""));
+        assert!(!dependencies_are_pinned(&lock("memchr", "")));
     }
 }
