@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1353 facade rows, 4860 declarations.
-Inputs: 1273 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1167 of 1353 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 20.
+Census: 1354 facade rows, 4862 declarations.
+Inputs: 1273 of 1354 fully typed, 74 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1168 of 1354 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Opaque serde_json::Value leaves: 123; unread shapes: 20.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -25218,12 +25218,23 @@ class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]
 BrowserSwitchEngineOutput = BrowserAnswer
+class MemoryTimeRange(TypedDict):
+    start: int
+    end: int
+class MemoryClaimInput(TypedDict):
+    id: str
+    predicate: str
+    subject: str
+    value: Any
+    confidence: NotRequired[float | None]
+    occurred: NotRequired[MemoryTimeRange | None]
+    learnedAt: NotRequired[int | None]
+class MemoryWriteOutput(TypedDict):
+    id: EntityId
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str
     now: int
-class MemoryWriteOutput(TypedDict):
-    id: EntityId
 FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool, "kind": NotRequired[FoldKind | None]})
 class FoldCompactRequest(TypedDict):

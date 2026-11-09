@@ -189,6 +189,7 @@
 //! - `self.browser.library.run`
 //! - `self.browser.handover`
 //! - `self.browser.switch_engine`
+//! - `vault.claims.put`
 //! - `vault.claims.supersede`
 //! - `self.fold`
 //! - `self.compact`
@@ -1966,6 +1967,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.browser.library.run"
                 | "self.browser.handover"
                 | "self.browser.switch_engine"
+                | "vault.claims.put"
                 | "vault.claims.supersede"
                 | "self.fold"
                 | "self.compact"
