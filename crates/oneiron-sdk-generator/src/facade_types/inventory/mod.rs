@@ -260,11 +260,12 @@ impl Inventory {
         if let Some(pin) = self.type_names.get(&path) {
             return match pin {
                 Value::Str(name) => Ok(name.clone()),
-                // Python returns the pin and fails where a string operation first meets it (best effort: the
-                // `prefix + name` of the first type spelling).
+                // Documented divergence: Python returns the pin as the declaration's name and fails later, with
+                // whatever string operation first meets it (on main, `uniffi_types.py:290`'s `name + ...` for a
+                // reached pin); the port refuses it here, as a `TypeError` that names the pin.
                 other => Err(GenerateError::type_error(format!(
-                    "can only concatenate str (not \"{}\") to str",
-                    other.type_name()
+                    "scripts/sdk/type_names.json pins {path} to {}, which is not a str",
+                    other.repr()
                 ))),
             };
         }
