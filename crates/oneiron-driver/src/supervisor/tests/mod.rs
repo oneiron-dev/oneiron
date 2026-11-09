@@ -189,24 +189,6 @@ pub(super) fn seed_actor(vault: &Vault, seed: u8, entity_type: u8) -> oneiron::E
     id
 }
 
-pub(super) fn enqueue_input(vault: &Vault, input: rmpv::Value, tag: &str, now: u64) -> AttemptId {
-    match DreamerRunnerStore::new(vault)
-        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-            scope: DreamerConsolidationScope::Micro,
-            input,
-            parent_attempt: None,
-            dedupe_key: Some(tag.to_owned()),
-            run_id: Some(tag.to_owned()),
-            now,
-        })
-        .expect("enqueue")
-    {
-        EnqueueDreamerAttemptOutcome::Enqueued(status)
-        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
-        other => panic!("unexpected enqueue outcome: {other:?}"),
-    }
-}
-
 pub(super) fn admit(vault: &Vault, now: u64) -> DreamerAdmittedAttempt {
     let store = DreamerRunnerStore::new(vault);
     let node_id = store

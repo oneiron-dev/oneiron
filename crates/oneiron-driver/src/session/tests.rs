@@ -122,34 +122,6 @@ fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> E
     turn
 }
 
-/// Dirty TURN without its structural ChildOf edge, as can happen when the
-/// entity arrives before the corresponding conversation edge during sync.
-fn seed_dirty_turn_without_edge(vault: &Vault, learned_at: u64) -> EntityId {
-    let turn = EntityId::now();
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![
-            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
-            (rmpv::Value::from("txt"), rmpv::Value::from("orphan turn")),
-        ]),
-    )
-    .expect("turn body encode");
-    vault
-        .put_entity(
-            &turn,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &body,
-        )
-        .expect("seed turn without edge");
-    turn
-}
-
 /// Claims and completes every claimable Meso row: the one pending SessionEnd
 /// partition attempt (asserted) plus any ED-04 mine passenger, leaving the
 /// Meso deadline surface exactly as it was before ONE-1760 made every close
