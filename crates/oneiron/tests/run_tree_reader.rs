@@ -17,11 +17,11 @@ use oneiron::agent_dispatch::budget_doors::{OpenSpendLeaseRequest, SpendScopeReq
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID, SpendScopeId,
 };
-use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt};
+use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, RetryAttempt};
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::federation::FederationGrantRole;
 use oneiron::store::GateDecisionId;
-use oneiron::task_verb::run_doors::RunBranchesRequest;
+use oneiron::task_verb::run_doors::{RunBranchView, RunBranchesRequest, RunBranchesView};
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, TaskRouteOutcome};
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::test_doors::spend::reserve_child_scope;
@@ -62,6 +62,17 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn branch_of<'v>(
+    view: &'v RunBranchesView,
+    branch: &str,
+) -> Result<&'v RunBranchView, Box<dyn std::error::Error>> {
+    Ok(view
+        .branches
+        .iter()
+        .find(|read| read.branch == branch)
+        .ok_or("the read holds the failed try")?)
+}
+
 #[test]
 fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestResult {
     let (_dir, vault) = open_vault()?;
@@ -86,8 +97,11 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         return Err("an agent-definition assignee routes to an agent dispatch".into());
     };
 
-    // The branch fails with the agent's own words. The dispatch rides the
-    // runner's queue kind; other rows the fresh vault queued are claimed past.
+    // The try fails with the agent's own words and is retried: the TASK has
+    // two branches, the failed try and its scheduled retry. The dispatch
+    // rides the runner's queue kind; other rows the fresh vault queued are
+    // claimed past. (An agent dispatch's terminal failure takes the typed
+    // failure ladder; a retry records the try's last error the same way.)
     let queue = AttemptQueue::new(&vault);
     let mut claimed = None;
     for _ in 0..32 {
@@ -107,12 +121,14 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         }
     }
     let claimed = claimed.ok_or("the TASK's attempt is ready to claim")?;
-    queue.fail(FailAttempt {
+    let claimed_at = claimed.claimed_at.ok_or("a claim records its time")?;
+    queue.retry(RetryAttempt {
         id: claimed.id,
         lease_owner: "run-tree-reader".to_owned(),
         attempt_count: claimed.attempt_count,
-        reason: AGENT_ERROR.to_owned(),
-        now: claimed.claimed_at.ok_or("a claim records its time")?,
+        backoff_until: claimed_at + 3_600_000,
+        last_error: Some(AGENT_ERROR.to_owned()),
+        now: claimed_at,
     })?;
     let request = RunBranchesRequest { task_ref };
     let branch = hex(attempt_ref.as_bytes());
@@ -131,9 +147,9 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         &vault.memory(agent, EdgeActorClass::Agent),
         request.clone(),
     )?;
-    assert_eq!(own.branches.len(), 1);
-    assert_eq!(own.branches[0].branch, branch);
-    assert_eq!(own.branches[0].last_error.as_deref(), Some(AGENT_ERROR));
+    assert_eq!(own.branches.len(), 2);
+    let own_try = branch_of(&own, &branch)?;
+    assert_eq!(own_try.last_error.as_deref(), Some(AGENT_ERROR));
 
     // A Steward, no actor of the run, reads the branch without its text.
     let as_steward = vault.memory(steward, EdgeActorClass::Human);
@@ -142,12 +158,13 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         "the TASK reads on the Steward's lane"
     );
     let stewarded = oneiron::verbs::vault_runs_branches_get(&as_steward, request.clone())?;
-    assert_eq!(stewarded.branches.len(), 1);
-    assert_eq!(stewarded.branches[0].branch, branch);
-    assert_eq!(stewarded.branches[0].state, own.branches[0].state);
-    assert_eq!(stewarded.branches[0].last_error, None);
-    assert!(stewarded.branches[0].asks.is_empty());
-    assert!(stewarded.branches[0].signals.is_empty());
+    assert_eq!(stewarded.branches.len(), 2);
+    let stewarded_try = branch_of(&stewarded, &branch)?;
+    assert_eq!(stewarded_try.state, own_try.state);
+    assert_eq!(stewarded_try.attempt_count, own_try.attempt_count);
+    assert_eq!(stewarded_try.last_error, None);
+    assert!(stewarded_try.asks.is_empty());
+    assert!(stewarded_try.signals.is_empty());
 
     // A member without the role, and another agent, stay refused.
     assert!(
@@ -170,9 +187,9 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
         &vault.memory(owner, EdgeActorClass::Human),
         request,
     )?;
-    assert_eq!(as_owner.branches.len(), 1);
+    assert_eq!(as_owner.branches.len(), 2);
     assert_eq!(
-        as_owner.branches[0].last_error.as_deref(),
+        branch_of(&as_owner, &branch)?.last_error.as_deref(),
         Some(AGENT_ERROR)
     );
     Ok(())
