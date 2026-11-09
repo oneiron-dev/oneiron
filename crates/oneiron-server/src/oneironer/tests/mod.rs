@@ -15,8 +15,8 @@ use std::time::Duration;
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
 use serde_json::json;
 
-use super::endpoint::{HttpTagger, ProbeError, ProbeOutcome};
 use super::build_slot;
+use super::endpoint::{HttpTagger, ProbeError, ProbeOutcome};
 use crate::config::{
     EnvConfig, OneironerConfig, OneironerMode, OneironerProvider, ServeArgs,
     resolve_serve_config_with_sources,
