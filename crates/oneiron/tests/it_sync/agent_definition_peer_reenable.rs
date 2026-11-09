@@ -73,6 +73,7 @@ fn replay(
             entity_type: ENTITY_TYPE_AGENT_DEF,
             occurred: time_range(T0),
             learned_at: T0,
+            row_version: 0,
             body: &body,
         },
         tier,
@@ -84,7 +85,7 @@ fn admit(
     id: &EntityId,
     definition: &AgentDefinition,
     role: FederationAdmissionRole,
-) -> oneiron::Result<Vec<u8>> {
+) -> oneiron::Result<Vec<(WindowKey, Vec<u8>)>> {
     let key = WindowKey::new(WINDOW);
     let peer = create_window_doc("federation-peer", &key);
     let body = encode_agent_definition(definition).unwrap();
@@ -95,7 +96,7 @@ fn admit(
     );
     peer.commit();
     let update = peer.export(ExportMode::all_updates()).unwrap();
-    admit_federated_window_update(vault, &key, &update, role)
+    admit_federated_window_update(vault, &key, &update, role, None)
 }
 
 /// A fresh definition seeded running, then turned off by a federation

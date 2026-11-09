@@ -6,8 +6,8 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget,
+    ConsultPayloadRef, TaskAskDecision, TaskAskOption, TaskAskOptionId, TaskAskQuestion,
+    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskTarget,
 };
 use oneiron::{EntityId, TimeRange, VaultConfig};
 
@@ -59,7 +59,7 @@ fn genuine_link_answer_replicates_without_a_bearer_on_the_reader() {
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
     what.options.insert(
         TaskAskOptionId::new("yes").expect("replication fixture"),
-        "Yes".into(),
+        TaskAskOption::new("Yes"),
     );
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
@@ -159,8 +159,10 @@ fn voided_link_forgery_is_quarantined_by_real_loro_replay() {
         )
         .expect("turn");
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
-    what.options
-        .insert(TaskAskOptionId::new("yes").expect("option"), "Yes".into());
+    what.options.insert(
+        TaskAskOptionId::new("yes").expect("option"),
+        TaskAskOption::new("Yes"),
+    );
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         what,
@@ -294,8 +296,10 @@ fn link_answer_waits_for_a_late_group_or_person_and_lands_on_recovery() {
             )
             .expect("turn");
         let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
-        what.options
-            .insert(TaskAskOptionId::new("yes").expect("option"), "Yes".into());
+        what.options.insert(
+            TaskAskOptionId::new("yes").expect("option"),
+            TaskAskOption::new("Yes"),
+        );
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People([friend].into())),
             what,

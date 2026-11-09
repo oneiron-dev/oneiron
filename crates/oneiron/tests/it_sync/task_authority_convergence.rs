@@ -38,6 +38,7 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
 use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::task_verb::{TaskCancelTarget, TaskCreateSpec};
@@ -265,17 +266,21 @@ impl TaskPair {
         a.vault
             .put_entity(&owner, ENTITY_TYPE_PERSON, time_range(now), now, b"owner")
             .expect("store the owner actor");
+        converge(&a, &b, &window);
         // Each device holds the owner's standing cancel grant: the authority to
         // stop one's own work is not something a second machine borrows over
-        // the wire. It PREDATES the task ([`T0`], outside the window under
-        // test), which is both what a standing authorization looks like and
-        // what keeps it out of this suite's subject: a grant carries a
-        // node-local usage stamp, so the two devices' copies legitimately
-        // differ once one of them spends it, and nothing here converges on it.
+        // the wire. The owner, whose row node B now holds, mints it on each
+        // device before the task exists. A grant is a row of its device's own
+        // consent table, never of the window, so nothing here converges on it.
         for node in [&a, &b] {
+            let proof = node
+                .vault
+                .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+                .expect("the owner authenticates on each device");
             node.vault
                 .mint_standing_outbound_grant(
-                    &EntityId::from_bytes([0xD1; 16]).unwrap(),
+                    &proof,
+                    EntityId::from_bytes([0xD1; 16]).unwrap(),
                     &GrantMintIntent {
                         principal_ref: owner.to_hex(),
                         origin_component_id: "tasks".to_owned(),
@@ -287,7 +292,6 @@ impl TaskPair {
                                 .to_owned(),
                         },
                     },
-                    T0,
                 )
                 .expect("mint the owner's standing cancel grant");
         }

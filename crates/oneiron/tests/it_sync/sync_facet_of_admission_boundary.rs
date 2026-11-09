@@ -94,6 +94,15 @@ fn facet_of_value(created_at: u64) -> Vec<u8> {
     encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, created_at, None, None).unwrap()
 }
 
+/// Imports every admitted update into `doc`. With no source vault named,
+/// admission keeps each update in the window it was sent for.
+fn import_admitted(doc: &loro::LoroDoc, key: &WindowKey, admitted: &[(WindowKey, Vec<u8>)]) {
+    for (window, bytes) in admitted {
+        assert_eq!(window, key, "admission with no source keeps the window");
+        doc.import(bytes).unwrap();
+    }
+}
+
 /// Imports `update` into the admitted doc and returns the edge keys the
 /// admission door let through.
 fn admitted_edge_keys(
@@ -102,10 +111,10 @@ fn admitted_edge_keys(
     update: &[u8],
     role: FederationAdmissionRole,
 ) -> Vec<String> {
-    let admitted = admit_federated_window_update(vault, key, update, role)
+    let admitted = admit_federated_window_update(vault, key, update, role, None)
         .unwrap_or_else(|e| panic!("{role:?}: admission must not fail closed: {e}"));
     let receiver = create_window_doc("receiver", key);
-    receiver.import(&admitted).unwrap();
+    import_admitted(&receiver, key, &admitted);
     let mut keys = Vec::new();
     receiver
         .get_map("edges")
@@ -349,6 +358,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
             &window_key,
             &update,
             FederationAdmissionRole::Member,
+            None,
         )
         .expect("an unknowable-type row must not fail the admission door")
     };
@@ -363,7 +373,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
 
     let first = create_window_doc("federation-peer", &window_key);
     map_insert_bytes(&first.get_map("edges"), &stamp_key, &facet_of_value(T0));
-    local.import(&admit(&first)).unwrap();
+    import_admitted(&local, &window_key, &admit(&first));
     assert!(
         !edge_keys().contains(&stamp_key),
         "a stamp ahead of its row is not copied"
@@ -382,7 +392,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
         &entity_blob(ENTITY_TYPE_FACET, b"facet"),
     );
     map_insert_bytes(&second.get_map("edges"), &stamp_key, &facet_of_value(T0));
-    local.import(&admit(&second)).unwrap();
+    import_admitted(&local, &window_key, &admit(&second));
     assert!(
         !edge_keys().contains(&stamp_key),
         "a stamp onto a row the update brings waits for that birth to apply"
