@@ -123,6 +123,17 @@ impl Run {
         self.generator.write_tree(check)
     }
 
+    /// `print(text, end='')` and the flush before the next step: Python's `OSError` (`[Errno 28] No space left on
+    /// device`, `BrokenPipeError: [Errno 32] Broken pipe`) when standard output cannot take it.
+    pub fn print(&self, text: &str) -> Result<(), GenerateError> {
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(text.as_bytes())
+            .and_then(|()| stdout.flush())
+            .map_err(|error| generate::outputs::stream_error(&error))
+    }
+
     /// `subprocess.run([python, 'packages/oneiron/scripts/agent-docs.py', *flags], check=True)`.
     pub fn agent_docs(&self, flags: &[&str]) -> Result<(), GenerateError> {
         generate::outputs::agent_docs(&self.generator.root, flags)
@@ -144,6 +155,12 @@ pub fn py_repr(text: &str) -> String {
 #[doc(hidden)]
 pub fn py_is_decimal(c: char) -> bool {
     py::text::is_decimal(c)
+}
+
+/// Python's `str.isspace()`, for the binary's reading of `COLUMNS` (`int()` strips white space).
+#[doc(hidden)]
+pub fn py_is_space(c: char) -> bool {
+    py::text::is_space(c)
 }
 
 /// The `port-harness` subcommand (DESIGN 6): dumps the port's state for comparison with
