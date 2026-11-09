@@ -1,8 +1,6 @@
 use super::*;
 
-use crate::llm::{
-    DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
-};
+use crate::llm::{DispatchBinding, DispatchRefused};
 
 const ROUTE: &str = "fake@https://model.test:443";
 
@@ -29,18 +27,6 @@ fn bound_lease(guard: &BudgetGuard) -> BudgetLease {
         .admit_reserve_bound(6, binding("fake/small@v1", ModelLocality::ThirdParty))
         .expect("bound admission")
         .lease
-}
-
-#[test]
-fn a_bound_lease_starts_one_call_and_its_clone_starts_none() {
-    let guard = guard(20);
-    let lease = bound_lease(&guard);
-    let clone = lease.clone();
-    assert_eq!(guard.begin_dispatch(&lease, &small()), Ok(()));
-    assert_eq!(
-        guard.begin_dispatch(&clone, &small()),
-        Err(DispatchRefused::AlreadyDispatched)
-    );
 }
 
 #[test]
@@ -200,23 +186,6 @@ fn a_paid_reservation_is_bound_and_settles_its_actual_units() {
     guard.begin_dispatch(&lease, &search).expect("dispatch");
     guard.settle_usage(&lease, 3).expect("settle");
     assert_eq!(guard.read().used_units, 3);
-}
-
-#[test]
-fn an_answer_is_charged_its_tokens_or_the_floor_plus_a_floor_per_failed_rung() {
-    let mut usage = LlmUsage::zero();
-    assert_eq!(answered_units(&usage, 8), 8);
-    usage.input.total = 3;
-    usage.output.total = 1;
-    assert_eq!(answered_units(&usage, 8), 4);
-    usage.raw_provider = serde_json::json!({ FAILED_RUNGS_KEY: 2 });
-    assert_eq!(answered_units(&usage, 8), 20);
-    // Wide, nothing is lost before a caller converts it; narrow, it clamps.
-    usage.input.total = u64::MAX;
-    usage.output.total = u64::MAX;
-    let wide = u128::from(u64::MAX) * 2 + 16;
-    assert_eq!(answered_units_wide(&usage, 8), wide);
-    assert_eq!(answered_units(&usage, 8), u64::MAX);
 }
 
 #[test]

@@ -180,9 +180,9 @@ pub(super) fn facade_admit_receipted(
                 call,
             );
             let receipted = memory.map(|memory| match room {
-                Some(room) => memory
-                    .for_room_turn(room)
-                    .and_then(|turn| turn.receipt_declared_refs(verb, value.clone())),
+                Some(room) => memory.for_room_turn(room).and_then(|turn| {
+                    turn.receipt_declared_refs(&oneiron::verbs::VERB_TABLE, verb, value.clone())
+                }),
                 None => {
                     oneiron::task_verb::sdk::receipt_declared_refs(&memory, verb, value.clone())
                 }

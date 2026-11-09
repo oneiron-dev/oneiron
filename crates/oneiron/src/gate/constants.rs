@@ -197,6 +197,11 @@ pub(super) const DREAMER_PROVENANCE_RUN_ID_KEY: &str = "run_id";
 pub(super) const DREAMER_PROVENANCE_RUN_KEY: &str = "run";
 pub(super) const DREAMER_PROVENANCE_RUNNER_KEY: &str = "runner";
 pub(super) const DREAMER_PROVENANCE_SURFACE_KEY: &str = "surface";
+/// Provenance key naming a Generated producer that the host's auto checker reviews besides the Dreamer
+/// (FIX 3983, review 6881 P1).
+pub(crate) const CHECKED_PRODUCER_PROVENANCE_KEY: &str = "checked_producer";
+/// [`CHECKED_PRODUCER_PROVENANCE_KEY`]'s value on a caller's live-run claim put that asks Auto.
+pub(crate) const LIVE_RUN_CLAIM_PUT_PRODUCER: &str = "live_run_claim_put";
 /// Dreamer-provenance key naming the import review a claim from imported
 /// evidence waits in (`ingest::history::history_import_review_id`).
 pub(crate) const DREAMER_PROVENANCE_IMPORT_REVIEW_KEY: &str = "import_review";

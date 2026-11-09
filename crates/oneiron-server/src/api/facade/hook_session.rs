@@ -60,6 +60,7 @@ pub(super) fn facade_hook_session(
     );
     Ok(verb_hook_boundary::hook_session_for_call(
         memory.as_ref(),
+        &oneiron::verbs::VERB_TABLE,
         verb,
         input,
         held.as_ref(),
