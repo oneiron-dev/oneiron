@@ -35,6 +35,12 @@ pub(crate) struct Submission {
     pub(crate) input: ModelStepSubmit,
     pub(crate) step_hash: [u8; 32],
     pub(crate) result: Option<ModelStepResult>,
+    /// The sends the step made in its passes before this one (FIX 11226): a
+    /// pass that parks or traps keeps them, and the next pass spends only the
+    /// rest of the declared attempts. Kept apart from `result`, which a
+    /// resume clears, so a pass stopped before it parks again loses none.
+    #[serde(default)]
+    pub(crate) sends: u8,
 }
 
 /// Whether a masked copy of a `MODEL_STEP_SUBMISSION` row still decodes as its typed value,

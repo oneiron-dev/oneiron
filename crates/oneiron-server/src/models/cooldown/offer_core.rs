@@ -232,7 +232,7 @@ impl OfferCooldowns {
         let held = health.entry(key.to_owned()).or_default();
         let strikes = held.strikes.saturating_add(1);
         let backoff = self
-            .health
+            .rest_settings
             .first_secs
             .saturating_mul(1u64 << (strikes - 1).min(16))
             .min(HEALTH_REST_MAX_SECS);
@@ -520,7 +520,7 @@ impl OfferCooldowns {
     /// `[models] step_rest_wait_secs`, under the vault's longest wait.
     pub(in crate::models) fn step_rest_wait_secs(&self) -> u64 {
         let longest = self.max_wait_secs();
-        self.health
+        self.rest_settings
             .step_wait_secs
             .map_or(longest, |secs| secs.min(longest))
     }

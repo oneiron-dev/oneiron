@@ -328,7 +328,7 @@ pub struct OfferCooldowns {
     budgets: super::ModelHostBudgets,
     /// The host's health rest settings: its first rest, and how long a
     /// durable step waits for one before it parks.
-    health: HealthRestSettings,
+    rest_settings: HealthRestSettings,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -347,7 +347,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
-            health: HealthRestSettings::default(),
+            rest_settings: HealthRestSettings::default(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -380,7 +380,7 @@ impl OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             budgets: super::ModelHostBudgets::unhosted(),
-            health: HealthRestSettings::default(),
+            rest_settings: HealthRestSettings::default(),
             waits_move: Some(clock),
         })
     }

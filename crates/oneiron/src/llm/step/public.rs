@@ -179,6 +179,7 @@ async fn submit(
                     input: input.clone(),
                     step_hash: digest,
                     result: None,
+                    sends: 0,
                 };
                 let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
                     attempt_type: MODEL_STEP_ATTEMPT_KIND.into(),
@@ -216,12 +217,9 @@ async fn submit(
         } else {
             None
         };
-        // A parked step resumes with the sends it made: its declared attempts
-        // count every send, across parks (FIX 11226).
-        let sent = match &row.result {
-            Some(ModelStepResult::Parked { sends, .. }) => usize::from(*sends),
-            _ => 0,
-        };
+        // A step resumes with the sends its earlier passes made: its declared
+        // attempts count every send, across parks and traps (FIX 11226).
+        let sent = usize::from(row.sends);
         // A consumed budget trap's suspension, or a park, answers no longer:
         // the SAME attempt and step hash resume (FIX 9928).
         if row.result.take().is_some() {
@@ -288,6 +286,10 @@ async fn submit(
         })?;
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
+    // The sends this step has made, its earlier passes' included, stay on
+    // its row for the next pass (FIX 11226).
+    let spent = u8::try_from(retries.spent()).unwrap_or(u8::MAX);
+    row.sends = spent;
     row.result = Some(match outcome {
         Ok(StepOutcome::Finished {
             response, memoized, ..
@@ -335,7 +337,7 @@ async fn submit(
             ..
         }))) => ModelStepResult::Parked {
             until: resets_at.first().copied(),
-            sends: u8::try_from(retries.spent()).unwrap_or(u8::MAX),
+            sends: spent,
         },
         // Persistence faults leave the engine's recoverable payload intact;
         // a later submission must be allowed to finish that write path.
