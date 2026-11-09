@@ -800,8 +800,9 @@ function runs07Child(child_ref: string, bucket_hash: number[], value: string,
  *   four-child [2,0,3,1] order (two children here), out-of-bounds byte ranges (needs a pinnable TURN).
  * Project axis: a public TASK stands in for amber because the default project id has no entity row
  *   and pin requires a readable project selector (root_evidence.rs:319-326, visibility.rs:139-141).
- * DEFECT expected today: the bucket names the claim's own facet; pin reads a facade claim's facet
- *   from scope key "facet_ref" only, so this pin is refused as crossing its axes (see report).
+ * Guards a fixed defect: the bucket names the claim's own facet. Before bc240f4f5bf the pin read
+ *   a facade claim's facet only from scope key "facet_ref" (the facade writes "facet" as hex), so
+ *   this pin was refused as crossing its bucket axes. Red on main e79eb76df3e, green on the fix.
  */
 suite.test(test, "RUNS-07", "Consolidation root trusts only its own pin and counts duplicate citations once should work", async () => {
   const engine = await EngineFixture.start({ id: "RUNS-07", profile, serverConfig: "[models.dreamer]\nenabled = false\n" });
