@@ -15,18 +15,3 @@ pub use self::accessors::{OverlayDb, OverlayStrDb};
 // (`oneiron::overlay_db::OverlayDb` in store/vault/pipeline callers); the merge
 // engine and iterator enums are constructed and matched inside it. Their
 // modules are public because the accessors' public signatures name them.
-
-// The flat overlay_db.rs module used to provide these names to the sibling test
-// module through `use super::*`: its own private crate/std import header, and
-// every overlay-internal item the tests name bare. After the directory split
-// the seam re-imports both so `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use crate::session_overlay::{OverlayKeyspace, SessionOverlay};
-#[cfg(test)]
-use heed::Database;
-#[cfg(test)]
-use heed::types::Bytes;
-#[cfg(test)]
-use oneiron_contracts::error::Result;
-#[cfg(test)]
-use std::sync::Arc;
