@@ -28,7 +28,12 @@ async fn ledger_push_sends_pinned_token_string_to_independent_peer() {
     let ledger =
         oneiron_server::managed::WakeLedger::load(vault, "wire-peer".into(), socket, &credentials)
             .unwrap();
-    ledger.push_once(7, &[]).await.unwrap();
+    let snapshot = oneiron_server::managed::LedgerSnapshot {
+        entries: Vec::new(),
+        training: ledger.training().unwrap(),
+        artifact_origins: Vec::new(),
+    };
+    ledger.push_once(7, &snapshot).await.unwrap();
     receiving.await.unwrap();
     // Independent ingress frame, not a serialize-then-deserialize round trip.
     let received: oneiron_vault_contract::LedgerUpdate = serde_json::from_slice(WIRE).unwrap();
