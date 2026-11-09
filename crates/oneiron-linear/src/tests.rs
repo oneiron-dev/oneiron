@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use oneiron::{EntityId, LinearEgress, LinearSyncError, MirroredTaskFields};
+use oneiron::{EntityId, LinearChangeSource, LinearEgress, LinearSyncError, MirroredTaskFields};
 use serde_json::{Value, json};
 
 use crate::{
-    GraphQlCall, GraphQlExecutor, GraphQlTransportError, GraphQlValue, LinearHostEgress,
-    LinearTrackerConfig,
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, GraphQlValue, LinearHostChangeSource,
+    LinearHostEgress, LinearTrackerConfig,
 };
 
 fn config() -> LinearTrackerConfig {
@@ -30,6 +30,25 @@ fn fields() -> MirroredTaskFields {
         priority: Some(2),
         assignee_ref: Some("owner".into()),
         status: "queued".into(),
+    }
+}
+
+impl<T: GraphQlExecutor + ?Sized> GraphQlExecutor for &mut T {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<GraphQlValue, GraphQlTransportError> {
+        (**self).execute(call)
+    }
+}
+struct StubReader {
+    replies: Vec<Value>,
+    calls: Rc<RefCell<Vec<GraphQlCall>>>,
+}
+impl GraphQlExecutor for StubReader {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<GraphQlValue, GraphQlTransportError> {
+        self.calls.borrow_mut().push(call.clone());
+        if self.replies.is_empty() {
+            return Err(GraphQlTransportError::Uncertain);
+        }
+        Ok(self.replies.remove(0).into())
     }
 }
 
