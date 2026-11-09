@@ -266,6 +266,9 @@ fn names_word(text: &str, param: &str) -> bool {
         if word_start(text, at) && word_end(text, at + param.len()) {
             return true;
         }
+        if at >= text.len() {
+            return false;
+        }
         from = next_char(text, at);
     }
     false
