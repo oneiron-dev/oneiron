@@ -230,9 +230,9 @@ pub(crate) mod tables;
 mod value_projection;
 
 /// The side doors' TURN read (gap scan, owner intent, retrieval shadow), for
-/// the integration regression doors (`test_support::untangle_regressions`,
+/// the integration regression doors (`test_doors::untangle_regressions`,
 /// X01). Not API.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(oneiron_test_support)]
 pub(crate) fn side_door_turn_text_for_test(
     vault: &crate::Vault,
     turn: &crate::EntityId,
@@ -242,7 +242,7 @@ pub(crate) fn side_door_turn_text_for_test(
 
 /// The writer's re-check of a side door's TURN record, read as the Dreamer in
 /// a fresh snapshot, for the integration regression doors (X01). Not API.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(oneiron_test_support)]
 pub(crate) fn side_door_recheck_for_test(
     record: &TurnText,
     vault: &crate::Vault,
