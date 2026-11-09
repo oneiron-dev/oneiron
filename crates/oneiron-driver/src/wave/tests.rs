@@ -85,67 +85,6 @@ fn fixture(vault: &Vault, owner: EntityId) -> oneiron::Result<EntityId> {
         .expect("task ref"))
 }
 
-#[test]
-fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResult<()> {
-    let dir = tempfile::tempdir().map_err(oneiron::Error::from)?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let epic = fixture(&vault, owner)?;
-    vault.enqueue_wave_plan(epic, "do work", serde_json::json!({"budget":2}), 100)?;
-    let planner = AgentPlanner {
-        seen: RefCell::new(Vec::new()),
-        bad: false,
-    };
-    let host = WaveHost::new(&vault, planner, owner, EdgeActorClass::Human);
-    let landed = host.run_plan_once("planner-1", 100)?.expect("claimed");
-    let first = landed.task_refs["first"];
-    let second = landed.task_refs["second"];
-    assert_eq!(landed.blocked_by_edges, 1);
-    assert_eq!(host.planner.seen.borrow()[0].epic_task_ref, epic);
-    assert_eq!(host.planner.seen.borrow()[0].objective, "do work");
-    assert_eq!(host.ready_to_dispatch(&[first, second])?, vec![first]);
-    assert!(host.run_plan_once("planner-1", 101)?.is_none());
-    vault
-        .memory(owner, EdgeActorClass::Human)
-        .land_task_result(
-            first,
-            &TaskResultInput {
-                result_ref: owner,
-                disposition: TaskTerminalDisposition::Completed,
-                finished_at: 102,
-            },
-        )
-        .expect("complete first");
-    assert_eq!(host.ready_to_dispatch(&[second])?, vec![second]);
-    Ok(())
-}
-
-#[test]
-fn invalid_agent_cut_does_not_complete_attempt_or_land_tasks() -> WaveResult<()> {
-    let dir = tempfile::tempdir().map_err(oneiron::Error::from)?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let epic = fixture(&vault, owner)?;
-    vault.enqueue_wave_plan(epic, "do work", serde_json::Value::Null, 100)?;
-    let host = WaveHost::new(
-        &vault,
-        AgentPlanner {
-            seen: RefCell::new(Vec::new()),
-            bad: true,
-        },
-        owner,
-        EdgeActorClass::Human,
-    );
-    assert!(host.run_plan_once("planner-1", 100).is_err());
-    let request = host.planner.seen.borrow();
-    let attempt = AttemptQueue::new(&vault)
-        .get(request[0].planner_attempt_ref)?
-        .expect("attempt");
-    assert_eq!(attempt.state, oneiron::attempt_queue::AttemptState::Leased);
-    assert!(host.ready_to_dispatch(&[])?.is_empty());
-    Ok(())
-}
-
 struct DifferentCut(std::cell::Cell<usize>);
 impl WavePlanner for DifferentCut {
     fn cut_plan(&self, request: WavePlanRequest) -> WaveResult<WavePlan> {

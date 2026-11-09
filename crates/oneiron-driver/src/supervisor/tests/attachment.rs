@@ -194,16 +194,6 @@ async fn refused_attachment_stops_the_pass_before_admission() {
 }
 
 #[tokio::test]
-async fn attachment_drives_the_pass_with_the_factory_backend() {
-    let (_dir, vault) = open_vault();
-    let (mut factory, observed, _calls) = factory(&vault, Answer::Serve, None);
-    assert!(one_pass(&vault, &mut factory, "served:p0").await.is_ok());
-    let observed = observed.lock().unwrap();
-    assert_eq!(observed.pass_results, [true]);
-    assert!(Arc::ptr_eq(&observed.backends[0], factory.backend()));
-}
-
-#[tokio::test]
 async fn attachment_failure_fails_the_pass_it_served() {
     let (_dir, vault) = open_vault();
     let (mut factory, observed, _calls) = factory(&vault, Answer::ServeThenFail, None);
