@@ -366,10 +366,11 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 }
 
 /// An authenticated OCSP response: only `good` targets supply revocation
-/// coverage; an authenticated `unknown` remains unresolved, not invalid.
+/// coverage; an authenticated `unknown` remains unresolved, not invalid, for
+/// the certificate it names (`unknown_targets`).
 pub(crate) struct OcspEvidence<'a> {
     pub(crate) good_targets: Vec<&'a [u8]>,
-    pub(crate) unknown: bool,
+    pub(crate) unknown_targets: Vec<&'a [u8]>,
 }
 
 /// One DSS OCSP entry: successful basic response whose signature verifies
@@ -458,7 +459,7 @@ fn ocsp_basic_valid<'a>(
         return Ok(None);
     };
     let mut targets: Vec<&[u8]> = Vec::with_capacity(basic.tbs_response_data.responses.len());
-    let mut unknown = false;
+    let mut unknown_targets: Vec<&[u8]> = Vec::new();
     for single in &basic.tbs_response_data.responses {
         let Some((target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors, memory)?
         else {
@@ -479,7 +480,7 @@ fn ocsp_basic_valid<'a>(
         if matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
             targets.push(target.der.as_slice());
         } else if matches!(single.cert_status, x509_ocsp::CertStatus::Unknown(_)) {
-            unknown = true;
+            unknown_targets.push(target.der.as_slice());
         } else {
             return Ok(None);
         }
@@ -508,7 +509,7 @@ fn ocsp_basic_valid<'a>(
             .is_ok()
             .then_some(OcspEvidence {
                 good_targets: targets,
-                unknown,
+                unknown_targets,
             }),
     )
 }
