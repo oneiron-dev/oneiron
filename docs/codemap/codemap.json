@@ -70317,7 +70317,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/paced.rs",
@@ -91369,7 +91369,7 @@
      "surface": {
       "crate-vis": 19,
       "fn": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1
      }
     },
@@ -91521,6 +91521,20 @@
      "purpose": "The per-vault key over every stored retrieval-trace fork hash",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RuntimeHandle"
+     ],
+     "path": "src/vault/runtime_handle.rs",
+     "purpose": "The agent runtime's one read path to the vault state it needs that is not public (slice 5.0b, S5-4 = A)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -100553,7 +100567,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100644,9 +100658,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 238,
+   "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7240,
+   "source_files": 7241,
    "test_files": 896
   },
   "oneiron-android": {
