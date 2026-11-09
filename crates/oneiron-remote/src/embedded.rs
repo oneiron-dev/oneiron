@@ -608,7 +608,11 @@ impl EmbeddedClient {
             None => memory,
         };
         match self.room_turn {
-            Some(room) => memory.for_room_turn(room)?.invoke(verb, input),
+            Some(room) => {
+                memory
+                    .for_room_turn(room)?
+                    .invoke(&oneiron::verbs::VERB_TABLE, verb, input)
+            }
             None => oneiron::task_verb::sdk::invoke(&memory, verb, input),
         }
     }

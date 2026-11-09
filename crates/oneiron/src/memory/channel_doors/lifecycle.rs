@@ -9,7 +9,6 @@ use super::*;
 use std::collections::BTreeSet;
 
 use crate::runtime_hooks::verb::{hold_paced_verb_call, paced_turn_again, runs_paced_turn};
-use crate::task_verb::sdk::AgentVerb;
 
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
@@ -712,13 +711,15 @@ fn recorded_receipt(
 const fn lifecycle_agent_verb(verb: ChannelIdentityLifecycleVerb) -> &'static str {
     match verb {
         ChannelIdentityLifecycleVerb::Provision => {
-            AgentVerb::VaultChannelIdentitiesProvision.as_str()
+            crate::verb_names::VAULT_CHANNEL_IDENTITIES_PROVISION
         }
-        ChannelIdentityLifecycleVerb::Bind => AgentVerb::VaultChannelIdentitiesBind.as_str(),
-        ChannelIdentityLifecycleVerb::Rotate => AgentVerb::VaultChannelIdentitiesRotate.as_str(),
-        ChannelIdentityLifecycleVerb::Release => AgentVerb::VaultChannelIdentitiesRelease.as_str(),
+        ChannelIdentityLifecycleVerb::Bind => crate::verb_names::VAULT_CHANNEL_IDENTITIES_BIND,
+        ChannelIdentityLifecycleVerb::Rotate => crate::verb_names::VAULT_CHANNEL_IDENTITIES_ROTATE,
+        ChannelIdentityLifecycleVerb::Release => {
+            crate::verb_names::VAULT_CHANNEL_IDENTITIES_RELEASE
+        }
         ChannelIdentityLifecycleVerb::RouteInbound => {
-            AgentVerb::VaultChannelIdentitiesRouteInbound.as_str()
+            crate::verb_names::VAULT_CHANNEL_IDENTITIES_ROUTE_INBOUND
         }
     }
 }

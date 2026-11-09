@@ -1,7 +1,6 @@
 //! TASK creation door with admission, hooks, and rate limiting.
 //! Entry [`Memory::tasks_create`]; dispatched from the `verbs` agent-verb surface.
 //! Owned by `task_verb`; validation lives in `create_validation`, specs in `create_spec`.
-use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 mod hook_effect;
@@ -37,7 +36,7 @@ use super::create_validation::{
     ValidatedTaskCreate, admit_task_parent, human_route_refusal, task_create_proposal_value,
     task_route_dedupe_key, validate_task_create,
 };
-use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TaskKind};
@@ -106,7 +105,7 @@ impl Memory<'_> {
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
     ) -> MemoryResult<TaskCreateReceipt> {
-        let verb = task_verb_contract(AgentVerb::TasksCreate);
+        let verb = crate::verb_names::TASKS_CREATE;
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let rate_now = self.vault().store.clock.now_recorded_at();

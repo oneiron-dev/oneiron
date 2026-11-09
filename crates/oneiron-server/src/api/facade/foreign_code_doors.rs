@@ -103,6 +103,7 @@ pub(crate) async fn execute_code(
                 .map_err(|_| super::host_doors::support::internal("execute_code"))?;
         }
         memory.execute_foreign_code(
+            &oneiron::code_sandbox::SANDBOX_BACKENDS,
             input,
             ForeignCodeArtifact {
                 component: FOREIGN_COMPONENT,
