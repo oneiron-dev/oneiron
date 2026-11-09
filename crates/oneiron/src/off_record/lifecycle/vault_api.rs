@@ -36,7 +36,7 @@ impl Vault {
         self.enter_off_record_session_with_budget(
             session_ref,
             backend,
-            self.config.off_record_overlay_budget_bytes,
+            self.runtime().off_record_overlay_budget_bytes(),
         )
     }
 
@@ -60,7 +60,7 @@ impl Vault {
         budget_bytes: usize,
         room: Option<(crate::EntityId, crate::EntityId)>,
     ) -> Result<Arc<OffRecordSessionEntry>> {
-        if !self.config.off_record_enabled {
+        if !self.runtime().off_record_enabled() {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
@@ -118,7 +118,7 @@ impl Vault {
         backend: OffRecordBackendClass,
         entered_by: Option<crate::EntityId>,
     ) -> Result<Arc<OffRecordSessionEntry>> {
-        if !self.config.off_record_enabled {
+        if !self.runtime().off_record_enabled() {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
@@ -144,13 +144,13 @@ impl Vault {
         mode: OffRecordMode,
         creator: OffRecordCreator,
     ) -> Result<Arc<OffRecordSessionEntry>> {
-        if !self.config.off_record_enabled {
+        if !self.runtime().off_record_enabled() {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
         vet_roomless_session_ref(session_ref)?;
         let budget_bytes = match mode {
-            OffRecordMode::OffRecord => self.config.off_record_overlay_budget_bytes,
+            OffRecordMode::OffRecord => self.runtime().off_record_overlay_budget_bytes(),
             OffRecordMode::Anonymous => 0,
             OffRecordMode::OnRecord => {
                 return Err(Error::InvalidConfig(
@@ -479,7 +479,7 @@ impl Vault {
         // The hook records and paused calls the in-memory keep holds for
         // this stretch go with it, once `closing` is published, so a late
         // writer never keeps them again (L13 PR-D, FIX 4283).
-        self.verb_hook_state.session.drop_session(
+        self.runtime().verb_hook_state().session.drop_session(
             &crate::runtime_hooks::verb::SessionHookKey::Session {
                 key: session_ref.to_owned(),
                 entered_at: record.entered_at,

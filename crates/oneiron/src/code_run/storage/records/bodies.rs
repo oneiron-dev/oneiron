@@ -270,7 +270,9 @@ impl Vault {
                         wtxn,
                         &output.raw_blake3,
                         output.raw_len,
-                        self.result_body_pins.promoted(&output.raw_blake3),
+                        self.runtime()
+                            .result_body_pins()
+                            .promoted(&output.raw_blake3),
                     )?
                 {
                     return Err(Error::CorruptedIndex("message result body file missing"));
