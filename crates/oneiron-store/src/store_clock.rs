@@ -320,4 +320,3 @@ impl Drop for LeaseRenewal {
         self.clock.renewal.store(false, Ordering::Release);
     }
 }
-

@@ -145,4 +145,3 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
     }
     &text[..end]
 }
-

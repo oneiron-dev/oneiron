@@ -225,7 +225,10 @@ fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
     let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0, 0.0)
         .normalized()
         .unwrap();
-    assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0, 0.0));
+    assert_eq!(
+        normalized,
+        RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0, 0.0)
+    );
 }
 
 #[test]
