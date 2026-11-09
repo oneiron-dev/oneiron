@@ -6,3 +6,4 @@
 //! `--all-features` release build reaches them; never API.
 
 pub mod membership;
+pub mod spend;
