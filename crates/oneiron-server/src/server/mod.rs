@@ -81,7 +81,7 @@ pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
 pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats};
 pub(crate) use self::recall::blocking;
-pub(crate) use self::resident_pump::{LEASE_OWNER as RUN_LEASE_OWNER, seated_planner};
+pub(crate) use self::resident_pump::seated_planner;
 pub(crate) use self::run_host_door::{RunHostDoor, answer_as_agent};
 pub(crate) use self::trained_embedding::TrainedEmbedding;
 pub(crate) use self::wave_door::{wave_plan, wave_receipt};

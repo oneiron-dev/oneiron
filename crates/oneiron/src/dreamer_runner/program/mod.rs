@@ -115,7 +115,7 @@ const WAKE: SideTable<(EntityId, EntityId), TurnProgramWake, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE);
 
 /// Who parks a program attempt the program runtime holds.
-pub(crate) const PROGRAM_PARK_OWNER: &str = "dreamer.turn_program";
+pub(crate) const PROGRAM_PARK_OWNER: &str = crate::dreamer_runner::TURN_PROGRAM_PARK_OWNER;
 /// The park DOOR-141 PR1 left on each admitted attempt, exactly: the runtime
 /// resumes these (`lease`), and no other park.
 const PR1_PARK_REASON: &str = "admitted; the turn program runtime lands with DOOR-141 PR2";

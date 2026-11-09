@@ -100,6 +100,12 @@ pub use self::recipe::*;
 pub use self::store::*;
 pub use self::types::*;
 pub use self::wake_park::DreamerCheckpointDue;
+// The park resume table (the wake lifecycle owner).
+pub use oneiron_wake_contract::dreamer_runner::park_resume::{
+    AGENT_RUNS_PARK_OWNER, DRAFTER_RETRAIN_PARK_OWNER, DREAMER_SERVER_PARK_OWNER,
+    FEEDBACK_TRIAGE_PARK_OWNER, ParkOwnerClass, ParkResume, ParkResumer, TRAP_PARK_OWNER_PREFIX,
+    TURN_PROGRAM_PARK_OWNER, WORKFLOWS_PARK_OWNER,
+};
 
 // The flat dreamer_runner.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

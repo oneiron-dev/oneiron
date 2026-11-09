@@ -108,7 +108,7 @@ use crate::mcp::{
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
-pub(crate) const LEASE_OWNER: &str = "oneiron-server-agent-runs";
+pub(crate) const LEASE_OWNER: &str = oneiron::dreamer_runner::AGENT_RUNS_PARK_OWNER;
 /// The park a run waiting on a durable signal holds its lease under, owned
 /// by the trap its wait's reply wakes; a restart is not that signal, so
 /// recovery keeps the lease.
@@ -723,10 +723,13 @@ fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
             clear_stale_outage_marker(&runner, due_at, attempt);
             continue;
         };
-        if park.park_owner != LEASE_OWNER {
+        if !oneiron::dreamer_runner::ParkResume::owner_may_resume(
+            oneiron::dreamer_runner::ParkOwnerClass::of(&park.park_owner),
+            oneiron::dreamer_runner::ParkResumer::OutageSweep,
+        ) {
             continue;
         }
-        if park.cause != DreamerParkCause::ProviderUnavailable {
+        if !park.resumable_by(oneiron::dreamer_runner::ParkResumer::OutageSweep) {
             clear_stale_outage_marker(&runner, due_at, attempt);
             continue;
         }

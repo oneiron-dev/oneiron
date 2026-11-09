@@ -26,7 +26,7 @@ use crate::attempt_queue::{
     ForceCancelAuthority, ForceCancelOutcome, InterveneAttempt,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -153,7 +153,7 @@ fn release_in_txn(
     let Some((status, Some(park))) = store.status_with_park_in_txn(&*wtxn, attempt)? else {
         return Err(Error::EntityNotFound);
     };
-    if park.park_owner != PROGRAM_PARK_OWNER || park.cause != DreamerParkCause::Other {
+    if !park.resumable_by(crate::dreamer_runner::ParkResumer::ProgramOwnerRelease) {
         return Err(Error::EntityNotFound);
     }
     if park.reason != input.reason || park.parked_at != input.parked_at {

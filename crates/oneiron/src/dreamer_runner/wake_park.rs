@@ -57,7 +57,7 @@ impl DreamerRunnerStore<'_> {
         let mut parks = Vec::new();
         for row in PARKED.iter_from(&self.vault.store, txn, &[])? {
             let (_, park) = row?;
-            if park.cause.resumes_on_later_pass() {
+            if park.resumable_by(super::ParkResumer::LaterPass) {
                 parks.push(park);
             }
         }
