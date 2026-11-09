@@ -553,26 +553,13 @@ impl ScopedRead<'_> {
         // Erased relationship/private bodies cannot prove a scope.
         let reveals = |filter: &crate::gate::ResolvedRetrievalFilter| -> Result<bool> {
             Ok(hydrated.deletion.is_some()
-                && self.audience_readable_in(txn, &hydrated.id)?
-                && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-                && !(self.relationship_gated_in(txn)?
-                    && matches!(
-                        hydrated.entity_type,
-                        crate::registry::ENTITY_TYPE_CLAIM
-                            | crate::registry::ENTITY_TYPE_MESSAGE
-                            | crate::registry::ENTITY_TYPE_SUMMARY
-                    ))
-                && !filter.deny_all
-                && filter.read_scope().bands.contains(&hydrated.entity_type)
-                // Only authority covering every possible old position may reveal
-                // deletion metadata, never a narrow grant.
-                && self.credential_allows_id(&hydrated.id)
-                && self.facets_allow_shell_in(txn, &hydrated.id)?
-                && crate::gate::scoped_read_record_allowed(
+                && self.deletion_revealed_in(
+                    txn,
                     policy,
-                    &self.actor_key,
-                    &oneiron_authority::federation::scope_codec::read_preset(),
-                ))
+                    filter,
+                    &hydrated.id,
+                    hydrated.entity_type,
+                )?)
         };
         if !reveals(filter)? {
             // A withheld private NOTE shell counts exactly like a missing row.
@@ -606,5 +593,56 @@ impl ScopedRead<'_> {
             }),
             0,
         ))
+    }
+
+    /// Whether this reader may learn that `id`, an entity of `entity_type`
+    /// that is deleted or withdrawn, is gone: the one rule a short reference
+    /// to an erased row and a change feed's withdrawal entry share. Only
+    /// authority covering every position the row could have held may reveal
+    /// deletion metadata, never a narrow grant.
+    fn deletion_revealed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        Ok(self.audience_readable_in(txn, id)?
+            && entity_type != crate::registry::ENTITY_TYPE_NOTE
+            && !(self.relationship_gated_in(txn)?
+                && matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_CLAIM
+                        | crate::registry::ENTITY_TYPE_MESSAGE
+                        | crate::registry::ENTITY_TYPE_SUMMARY
+                ))
+            && !filter.deny_all
+            && filter.read_scope().bands.contains(&entity_type)
+            && self.credential_allows_id(id)
+            && self.facets_allow_shell_in(txn, id)?
+            && crate::gate::scoped_read_record_allowed(
+                policy,
+                &self.actor_key,
+                &oneiron_authority::federation::scope_codec::read_preset(),
+            ))
+    }
+
+    /// For each withdrawn entity `(id, entity_type)`, whether this reader may
+    /// learn it is gone ([`Self::deletion_revealed_in`]), judged under this
+    /// lane's own policy and filter in `txn`. A change feed delivers a
+    /// withdrawal entry only where this answers `true` (untangle slice 6.8).
+    pub(crate) fn withdrawals_revealed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        withdrawn: &[(EntityId, u8)],
+    ) -> Result<Vec<bool>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        withdrawn
+            .iter()
+            .map(|(id, entity_type)| {
+                self.deletion_revealed_in(txn, &policy, &filter, id, *entity_type)
+            })
+            .collect()
     }
 }
