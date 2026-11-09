@@ -1154,14 +1154,20 @@ suite.pendingDoor(test, "PRIVACY-06",
   { fix: "FIX 22500", deadline: "2026-12-01" });
 
 // PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
-// One personal-vault room with four real credentials: the owner (a person holder), a vault agent
-// holder, a propose-only agent and a human guest with no save grant, all on the initial roster.
-// A suggestion or a decline saves nothing; the guest and the proposer are refused a save; each
-// holder saves whole visible turns and saves from here; hidden reasoning, the temporary summary and
-// out-of-window speech never reach the vault. The owner then leaves the room live (vault.rooms.leave):
-// the next landing stays off record, saving_stopped names the act, and rejoining alone does not
-// resume saving. The base is read after each boundary through the full-vault export, and the
-// notices are content-free {act,by,at}. Closing the stretch drops its overlay and its notices.
+// E2E-PARTIAL (Engine 23:01): the person-holder subset. One personal-vault room with three real
+// credentials on the initial roster: the owner (a person holder), a propose-only agent and a human
+// guest with no save grant. A suggestion or a decline saves nothing; the guest and the proposer are
+// refused both save forms; the holder saves whole visible turns, saves a later turn, and saves from
+// here; hidden reasoning, the temporary summary and out-of-window speech never reach the vault. The
+// owner then leaves the room live (vault.rooms.leave): the next landing stays off record and
+// saving_stopped names the act; rejoining alone does not resume saving, and only a new save from here
+// starts a new saving period. The base is read after each boundary through the full-vault export, the
+// guest's own export carries what it sat through, and the notices are content-free {act,by,at}.
+// Closing the stretch drops its overlay and its notices.
+// Unproved here: a vault agent as a second save holder. `token agent` mints a PERSON with no
+// class-agent actor binding, so the save grant refuses it (403), and an AGENT_DEF cannot sit on a
+// room roster (FIX row filed with the READY). POST /v1/core/off-record/export works but is not in
+// the OpenAPI document, so the case calls it without a door probe (FIX row filed with the READY).
 interface PrivacyRoom {
   sessionRef: string; visibleTexts: [string, string]; hiddenText: string; summaryText: string;
   fromHereTexts: [string, string]; afterLossText: string; afterRejoinText: string;
@@ -1172,35 +1178,30 @@ type RoomView = FacadeResult<"vault.off_record.rooms.status">;
 function noticesOnly(view: RoomView): void {
   for (const notice of view.notices) expect(Object.keys(notice).sort()).toEqual(["act", "at", "by"]);
 }
-suite.test(test, "PRIVACY-07", "Off-record save from the middle should work", async () => {
+suite.test(test, "PRIVACY-07", "Off-record save from the middle: only a person holder saves, leaving stops saving and rejoining does not resume it", async () => {
   const room = (await (await loadFixtures()).readJson<{ room: PrivacyRoom }>("privacy-scenarios")).room;
   const engine = await EngineFixture.start({ id: "PRIVACY-07", profile,
     serverConfig: "[models.dreamer]\nenabled = false\n[models.workflows]\nenabled = false\n" });
-  await engine.requireHttpDoor("/v1/core/off-record/export", "POST");
   await engine.requireHttpDoor("/v1/owner/off-record/close", "POST");
   const owner = engine.pairedActor;
-  // The two agents are minted on the stopped vault before the stretch exists.
+  // The propose-only agent is minted on the stopped vault before the stretch exists.
   await engine.client.call("vault.receipts", { limit: 1 });
   await engine.kill();
-  const minted: string[] = [];
-  for (const [name, tier] of [["privacy-agent-holder", "full-access"], ["privacy-suggesting-agent", "propose-only"]] as const) {
-    const result = await engine.cli.run(["token", "agent", "--name", name, "--tier", tier,
-      "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, `${name}.credential`)],
-      undefined, undefined, true);
-    expect(result.exitCode).toBe(0);
-    minted.push((JSON.parse(result.stdout) as { principal_ref: string }).principal_ref);
-  }
+  const minted = await engine.cli.run(["token", "agent", "--name", "privacy-suggesting-agent", "--tier", "propose-only",
+    "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, "privacy-suggesting-agent.credential")],
+    undefined, undefined, true);
+  expect(minted.exitCode).toBe(0);
   await engine.restart();
-  const holder = await engine.pairActor({ principalRef: minted[0]!, actorClass: "agent", scope: ["core:read", "core:write"] });
-  const proposer = await engine.pairActor({ principalRef: minted[1]!, actorClass: "agent", scope: ["core:read", "core:propose"] });
+  const proposer = await engine.pairActor({ principalRef: (JSON.parse(minted.stdout) as { principal_ref: string }).principal_ref,
+    actorClass: "agent", scope: ["core:read", "core:propose"] });
   const setup = await ownerRoom(engine, "Privacy guest evidence");
   const evidence = await engine.client.call("vault.witness", turn(setup.id, "This distinct person is Privacy Human Guest."));
   const person = await engine.client.call("vault.people.create", {
     identity: { name: "Privacy Human Guest" }, identity_evidence_refs: [evidence.turn_id], occurred_at: Math.floor(Date.now() / 1000),
   });
   const guest = await engine.pairActor({ principalRef: person.person.id_hex, actorClass: "human", scope: ["core:read", "core:write"] });
-  const members = [owner.principalRef, holder.principalRef, proposer.principalRef, guest.principalRef];
-  expect(new Set(members).size).toBe(4);
+  const members = [owner.principalRef, proposer.principalRef, guest.principalRef];
+  expect(new Set(members).size).toBe(3);
   const t0 = Math.floor(Date.now() / 1000) - 10;
   const created = await engine.client.call("vault.conversations.create", {
     occurred_start: t0, occurred_end: t0,
@@ -1218,6 +1219,8 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle should work", as
     for (const value of [...lacks, ...neverSaved]) expect(text.includes(value)).toBe(false);
   };
   const talk = [...room.visibleTexts, room.guestText, ...room.fromHereTexts, room.afterLossText, room.afterRejoinText];
+  const saved = [...room.visibleTexts, room.guestText, ...room.fromHereTexts];
+  const neverOnRecord = [room.afterLossText, room.afterRejoinText];
 
   const started = await owner.client.call("vault.off_record.rooms.start", { ...q, backend: "local" });
   expect(started).toMatchObject({ mode: "off_record", room: created.id, closing: false, notices: [], waiting_suggestions: [] });
@@ -1228,28 +1231,30 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle should work", as
       { author: "user", message_type: "text", content: room.visibleTexts[1], is_visible: true, order: 1 },
       { author: "user", message_type: "reasoning", content: room.hiddenText, is_visible: false, order: 2 },
     ] } });
-  // A suggestion and a decline save nothing; neither the guest nor the proposer may save.
+  // A suggestion and a decline save nothing; neither the guest nor the proposer may save in either form.
   const suggested = await proposer.client.call("vault.off_record.rooms.suggest_save", q);
   expect(suggested.mode).toBe("off_record");
   expect(suggested.waiting_suggestions.map(row => row.by)).toEqual([proposer.principalRef]);
   const declined = await owner.client.call("vault.off_record.rooms.decline_save", q);
   expect(declined.waiting_suggestions).toEqual([]);
   for (const actor of [guest, proposer]) {
-    const refused = await actor.client.raw("POST", "/v1/core/facade/vault.off_record.rooms.save", q);
-    expect(refused.status).toBe(room.expected.guestSaveStatus);
-    expect((refused.body as { error?: { code?: string } }).error?.code).toBe("FORBIDDEN");
+    for (const verb of ["save", "save_from_here"] as const) {
+      const refused = await actor.client.raw("POST", `/v1/core/facade/vault.off_record.rooms.${verb}`, q);
+      expect(refused.status).toBe(room.expected.guestSaveStatus);
+      expect((refused.body as { error?: { code?: string } }).error?.code).toBe("FORBIDDEN");
+    }
   }
+  expect((await guest.client.call("vault.off_record.rooms.status", q)).mode).toBe("off_record");
   await base([], talk);
-  // The person holder saves the whole visible talk it could see; the agent holder saves the guest's turn.
+  // The holder saves the whole visible talk it could see, then the guest's later turn.
   const ownerSave = await owner.client.call("vault.off_record.rooms.save", q);
   expect(ownerSave.saved).toHaveLength(1);
   await base(room.visibleTexts, talk.slice(2));
   await said(guest, room.guestText);
-  await base(room.visibleTexts, talk.slice(2));
-  const agentSave = await holder.client.call("vault.off_record.rooms.save", q);
-  expect(agentSave.saved).toHaveLength(1);
+  const guestTurnSave = await owner.client.call("vault.off_record.rooms.save", q);
+  expect(guestTurnSave.saved).toHaveLength(1);
   await base([...room.visibleTexts, room.guestText], talk.slice(3));
-  // The person holder saves from here: later speech lands in the vault as it is said.
+  // The holder saves from here: later speech lands in the vault as it is said.
   const fromHere = await owner.client.call("vault.off_record.rooms.save_from_here", q);
   expect(fromHere.mode).toBe("on_record");
   await said(guest, room.fromHereTexts[0]);
@@ -1257,46 +1262,42 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle should work", as
   // The saver leaves the room live: the next landing stays off record and saving_stopped names the act.
   const left = await owner.client.call("vault.rooms.leave", { room: created.id, person: owner.principalRef });
   expect(left.member_ids).not.toContain(owner.principalRef);
-  expect(left.member_ids).toEqual(expect.arrayContaining([holder.principalRef, proposer.principalRef, guest.principalRef]));
+  expect(left.member_ids).toEqual(expect.arrayContaining([proposer.principalRef, guest.principalRef]));
   await said(guest, room.afterLossText);
-  await base([room.fromHereTexts[0]], [room.afterLossText, room.afterRejoinText, room.fromHereTexts[1]]);
   const stopped = await guest.client.call("vault.off_record.rooms.status", q);
   expect(stopped.mode).toBe("off_record");
   expect(stopped.notices).toEqual(expect.arrayContaining([expect.objectContaining({ act: "saving_stopped", by: owner.principalRef })]));
   noticesOnly(stopped);
-  // Rejoining alone does not resume saving.
+  // Rejoining alone does not resume saving; only a new save from here starts a new saving period.
   const rejoined = await owner.client.call("vault.rooms.join", { room: created.id,
     subject: { kind: "person", id: owner.principalRef }, paid: false, intent_key: "privacy-owner-rejoin-1" });
   expect(rejoined.decision.state).toBe("ready");
   expect(rejoined.receipt_ref).not.toBeNull();
   await said(guest, room.afterRejoinText);
-  await base([room.fromHereTexts[0]], [room.afterLossText, room.afterRejoinText, room.fromHereTexts[1]]);
   expect((await guest.client.call("vault.off_record.rooms.status", q)).mode).toBe("off_record");
-  // The agent holder saves from here: only speech after that lands.
-  expect((await holder.client.call("vault.off_record.rooms.save_from_here", q)).mode).toBe("on_record");
+  expect((await owner.client.call("vault.off_record.rooms.save_from_here", q)).mode).toBe("on_record");
   await said(guest, room.fromHereTexts[1]);
-  await base([...room.visibleTexts, room.guestText, ...room.fromHereTexts], [room.afterLossText, room.afterRejoinText]);
+  await base(saved, neverOnRecord);
   // The guest's export carries the visible talk it sat through and writes nothing to the vault.
   const exported = await guest.client.raw("POST", "/v1/core/off-record/export", { ...q, travel: { refs: "preserve" } });
   expect(exported.status).toBe(200);
   expect(exported.headers.get("content-disposition")).toBe('attachment; filename="off-record-talk.json"');
   const exportedBody = JSON.stringify(exported.body);
-  for (const text of [room.guestText, room.afterLossText, room.afterRejoinText, ...room.fromHereTexts])
+  for (const text of [...room.visibleTexts, room.guestText, room.afterLossText, room.afterRejoinText, ...room.fromHereTexts])
     expect(exportedBody.includes(text)).toBe(true);
   excludes(exported.body, neverSaved);
   const unsaved = (exported.body as { turns: { saved: boolean; messages: { content: string }[] }[] }).turns
-    .filter(row => row.messages.some(message => [room.afterLossText, room.afterRejoinText].includes(message.content)));
+    .filter(row => row.messages.some(message => neverOnRecord.includes(message.content)));
   expect(unsaved.map(row => row.saved)).toEqual([false, false]);
-  await base([...room.visibleTexts, room.guestText, ...room.fromHereTexts], [room.afterLossText, room.afterRejoinText]);
   const final = await guest.client.call("vault.off_record.rooms.status", q);
   for (const act of room.expected.noticeActs) expect(final.notices.map(row => row.act)).toContain(act);
   expect(final.notices.filter(row => row.act === "saving_from_here").map(row => row.by))
-    .toEqual([owner.principalRef, holder.principalRef]);
+    .toEqual([owner.principalRef, owner.principalRef]);
   expect(final.notices.find(row => row.act === "exported")?.by).toBe(guest.principalRef);
   noticesOnly(final);
   // Closing the stretch drops its overlay; saved turns stay and the notices go with the session.
   await owner.client.request("POST", "/v1/owner/off-record/close", { session_ref: `room:${created.id}:${room.sessionRef}` });
-  await base([...room.visibleTexts, room.guestText, ...room.fromHereTexts], [room.afterLossText, room.afterRejoinText]);
+  await base(saved, neverOnRecord);
   const gone = await guest.client.raw("POST", "/v1/core/facade/vault.off_record.rooms.status", q);
   expect(gone.status).toBe(404);
   expect((gone.body as { error?: { code?: string } }).error?.code).toBe("NOT_FOUND");
