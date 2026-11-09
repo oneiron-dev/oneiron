@@ -44,6 +44,23 @@ pub fn dreamer(vault: &Vault) -> Result<EntityId> {
     Ok(vault.dreamer_authority()?.entity_ref())
 }
 
+/// The embedded owner's proof.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
+    vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )
+}
+
 /// Stands `agent`'s Steward grant with `verbs` and marks it, as a first mint
 /// leaves it; a later call stands a fresh grant that replaces it.
 ///
