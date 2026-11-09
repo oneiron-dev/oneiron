@@ -215,17 +215,22 @@ suite.test(test, "GATE-01", "Actor ceiling, source and criticality each decide a
   // Source axis: the agent that lands user_stated is held for tool_output.
   expect(writes.toolOutput.approval).toBe("proposed");
   expect(receipt(writes.toolOutput.receipt_ref)).toMatchObject({ outcome: "pending", actor_ref: free!.principalRef });
-  expect(receipt(writes.toolOutput.receipt_ref).reason_codes).not.toContain("gate.pending.actor_ceiling");
+  expect(receipt(writes.toolOutput.receipt_ref).reason_codes).toEqual(["gate.pending.source_trust"]);
   // Criticality axis: a critical predicate lands only with a confirmation attached; the owner's carries its own.
+  // The critical markers are receipt reasons beside the allow code, read through the gate explanation.
+  const explained = async (receipt: string) => (await engine.client.call("vault.explain.gate", { receipt }))?.receipt_reasons;
   expect(writes.critical.approval).toBe("auto");
-  expect(receipt(writes.critical.receipt_ref).reason_codes).toContain("gate.allow.critical_confirm_attached");
+  expect(await explained(writes.critical.receipt_ref)).toContain("gate.allow.critical_confirm_attached");
   expect(writes.ownerCritical.approval).toBe("auto");
-  expect(receipt(writes.ownerCritical.receipt_ref).reason_codes).toContain("gate.allow.critical_owner_authored");
-  // Pending holds exactly the two held writes among these, each by its own decision.
+  expect(await explained(writes.ownerCritical.receipt_ref)).toContain("gate.allow.critical_owner_authored");
+  // Pending holds the two proposed writes and the agent's Auto critical write awaiting its confirmation;
+  // neither the free write nor the owner's own critical write waits.
   const heldDecisions = new Set(pending.map(row => `gate:${row.decision_ref.replace(/^gate:/, "")}`));
   expect(heldDecisions.has(writes.held.receipt_ref)).toBe(true);
   expect(heldDecisions.has(writes.toolOutput.receipt_ref)).toBe(true);
+  expect(heldDecisions.has(writes.critical.receipt_ref)).toBe(true);
   expect(heldDecisions.has(writes.free.receipt_ref)).toBe(false);
+  expect(heldDecisions.has(writes.ownerCritical.receipt_ref)).toBe(false);
   // Stored provenance is the writer's, as the credential stamped it.
   const stored = await engine.client.call("vault.claims.list", { subject_ref: owner, limit: 1000 });
   const claim = (predicate: string) => stored.value.find(row => row.predicate === predicate);
@@ -573,10 +578,8 @@ suite.test(test, "GATE-07", "The owner accepts an agent's proposed claims as one
   expect(settled.answered_by).toEqual({ word_ref: settled.receipt });
   expect(await engine.client.call("vault.runs.settlement", { run_id: settled.revert_handle })).toEqual(settled);
   // A second settle of the same run is refused: one owner act settles it once.
-  const twice = await engine.client.call("vault.runs.settle", { review, review_id: reviewed.review_id, decision: "approve" })
-    .then(() => null, (error: unknown) => error);
-  expect(twice).toBeInstanceOf(PublicHttpError);
-  expect([400, 409]).toContain((twice as PublicHttpError).reply.status);
+  await refused(engine.client.call("vault.runs.settle", { review, review_id: reviewed.review_id, decision: "approve" }),
+    400, "BAD_REQUEST");
   const lifecycle = async () => {
     const rows = (await engine.client.call("vault.claims.list", { subject_ref: owner, limit: 1000 })).value;
     return (claim: string) => rows.find(item => item.claim_ref === claim)?.lifecycle;
@@ -596,7 +599,8 @@ suite.test(test, "GATE-07", "The owner accepts an agent's proposed claims as one
   const afterAll = await lifecycle();
   expect([afterAll(x), afterAll(y)]).toEqual(["retracted", "retracted"]);
   expect((await gateReceipt(engine, settled.receipt)).actor_ref).toBe(owner);
-  for (const receipt of compensation.values()) expect((await gateReceipt(engine, receipt)).outcome).toBe("allow");
+  // Each compensating write is the owner's authored decision, recorded as approved.
+  for (const receipt of compensation.values()) expect((await gateReceipt(engine, receipt)).outcome).toBe("approved");
 });
 
 // GATE-08 — Critical confirmation and read floors should work.
