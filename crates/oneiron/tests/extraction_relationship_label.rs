@@ -65,7 +65,7 @@ fn a_claim_from_a_relationship_limited_message_stays_inside_the_relationship() {
         &vault,
         WORDS,
         Some(serde_json::json!({"rel": relationship.to_hex()})),
-        relationship,
+        Some(relationship),
         &reply(),
     )
     .expect("one unbound consolidation pass");
