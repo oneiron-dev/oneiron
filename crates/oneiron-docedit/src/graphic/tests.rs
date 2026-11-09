@@ -662,18 +662,13 @@ fn document_bounds_and_limits_are_checked() {
         refused("<?php x ?>"),
         Refused::Malformed("processing instruction")
     );
+    // Rule 5 (#3932, #4288; Engine call T0H-RULE5-COUNT-ASSERTS = A): a path's
+    // segments and an SVG's nodes are observations, never a refusal, so the
+    // 3-segment path and the two-rect SVG compile.
     let three = svg(r##"<path d="M10 10 L20 20 L30 10 L40 20" fill="none" stroke="#000"/>"##);
-    let tight = GraphicLimits {
-        segments: 2,
-        ..limits
-    };
-    assert_eq!(refusal(document(&three, tight)), Refused::Limit);
-    let nodes = GraphicLimits {
-        svg_nodes: 2,
-        ..limits
-    };
+    document(&three, limits).expect("a segment count is an observation");
     let many = svg(r#"<rect width="5" height="5"/><rect width="5" height="5"/>"#);
-    assert_eq!(refusal(document(&many, nodes)), Refused::Limit);
+    document(&many, limits).expect("a node count is an observation");
     let bytes = GraphicLimits {
         svg_bytes: 64,
         ..limits
