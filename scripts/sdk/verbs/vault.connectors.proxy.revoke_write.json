@@ -1,0 +1,16 @@
+{
+  "name": "vault.connectors.proxy.revoke_write",
+  "description": "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact.",
+  "input": "ProxyConnectorRevokeWriteRequest",
+  "output": "crate::task_verb::sdk::ProxyConnectorRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.proxy.revoke_write\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

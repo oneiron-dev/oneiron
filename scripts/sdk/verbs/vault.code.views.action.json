@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.views.action",
+  "description": "Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest.",
+  "input": "crate::memory::code_view_doors::CodeViewActionRequest",
+  "output": "crate::memory::code_view_doors::CodeViewAction",
+  "call": "memory.code_view_action_as(&memory.embedded_owner(\"vault.code.views.action\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

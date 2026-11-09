@@ -1,0 +1,15 @@
+{
+  "name": "vault.rooms.speak",
+  "description": "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove.",
+  "input": "crate::memory::WitnessTurn",
+  "output": "crate::memory::WitnessReceipt",
+  "call": "memory.rooms_speak(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "mcp_fields": {
+    "spec": "$",
+    "room_ref": "=conversation_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

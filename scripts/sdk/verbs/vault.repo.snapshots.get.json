@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.snapshots.get",
+  "description": "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSnapshotsGetInput>",
+  "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.snapshots.get\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

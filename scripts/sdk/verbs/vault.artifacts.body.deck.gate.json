@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.body.deck.gate",
+  "description": "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.",
+  "input": "crate::office_body::DeckGateRequest",
+  "output": "crate::office_body::DeckGateView",
+  "call": "memory.artifacts_body_deck_gate(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// The deck export gate for a profile.\n",
+      "ts": "/** The deck export gate for a profile. */",
+      "py": "The deck export gate for a profile."
+    }
+  }
+}

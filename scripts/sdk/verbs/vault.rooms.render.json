@@ -1,0 +1,25 @@
+{
+  "name": "vault.rooms.render",
+  "description": "The standalone rendered view of a room's threads.",
+  "input": "RoomRefRequest",
+  "output": "Vec<String>",
+  "call": "memory.rooms_render_threads(crate::EntityId::from_hex(&input.room_ref)?, crate::workspace_roster::RoomThreadPolicy::default())?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "room_ref": "room_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "room_ref",
+        "type": "String"
+      }
+    ]
+  }
+}

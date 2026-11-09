@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.wellness.policy.configure",
+  "description": "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine.",
+  "input": "crate::memory::wellness_doors::WellnessPolicyConfigureRequest",
+  "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+  "call": "memory.wellness_policy_configure_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.configure\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

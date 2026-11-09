@@ -1,0 +1,10 @@
+{
+  "name": "self.consent.graduation.demote",
+  "description": "The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt.",
+  "input": "crate::consent_graduation::api::GraduationScopeRequest",
+  "output": "crate::consent_graduation::api::GraduationChanged",
+  "call": "crate::consent_graduation::api::demote_own(memory, input)?",
+  "scope": "Write",
+  "section": false,
+  "openapi": true
+}

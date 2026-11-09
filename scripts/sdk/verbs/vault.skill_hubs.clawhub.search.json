@@ -1,0 +1,16 @@
+{
+  "name": "vault.skill_hubs.clawhub.search",
+  "description": "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages.",
+  "input": "ClawHubSearchRequest",
+  "output": "crate::skill_hub::ClawHubSearchReply",
+  "call": "crate::task_verb::sdk::skill_hub_clawhub_search_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.search\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_precheck": false,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

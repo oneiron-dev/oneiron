@@ -1,0 +1,17 @@
+{
+  "name": "host.budget.hit",
+  "description": "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work.",
+  "input": "crate::runtime_hooks::host_doors::HostBudgetHitRequest",
+  "output": "crate::runtime_hooks::host_doors::HostBudgetHitResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"host.budget.hit\", &input)?",
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

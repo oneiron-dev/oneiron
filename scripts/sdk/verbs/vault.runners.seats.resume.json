@@ -1,0 +1,16 @@
+{
+  "name": "vault.runners.seats.resume",
+  "description": "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write.",
+  "input": "crate::dispatch_byoa::RunnerWorkResumeRequest",
+  "output": "crate::dispatch_byoa::RunnerWorkResumeView",
+  "call": "memory.vault().resume_runner_work_as_owner(&memory.embedded_owner(\"vault.runners.seats.resume\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

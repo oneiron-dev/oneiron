@@ -1,0 +1,17 @@
+{
+  "name": "vault.weave.owner.digest.render",
+  "description": "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.",
+  "input": "EmptyRequest",
+  "output": "Option<crate::claim::WeaveDigestRendered>",
+  "call": "memory.weave_digest_render(Some(&memory.embedded_owner(\"vault.weave.owner.digest.render\")?))?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

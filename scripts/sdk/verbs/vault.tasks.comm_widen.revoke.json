@@ -1,0 +1,17 @@
+{
+  "name": "vault.tasks.comm_widen.revoke",
+  "description": "The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended.",
+  "input": "crate::task_verb::sdk::CommWidenRevokeRequest",
+  "output": "crate::task_verb::CommWidenRevokeReceipt",
+  "call": "crate::task_verb::sdk::revoke_comm_widen_as(memory, &memory.embedded_owner(\"vault.tasks.comm_widen.revoke\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

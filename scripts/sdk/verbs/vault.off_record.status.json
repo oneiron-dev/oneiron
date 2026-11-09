@@ -1,0 +1,17 @@
+{
+  "name": "vault.off_record.status",
+  "description": "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows.",
+  "input": "crate::task_verb::sdk::OffRecordSessionRequest",
+  "output": "crate::task_verb::sdk::OffRecordSessionView",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.status\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

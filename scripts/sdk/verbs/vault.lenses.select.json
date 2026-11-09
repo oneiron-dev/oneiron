@@ -1,0 +1,17 @@
+{
+  "name": "vault.lenses.select",
+  "description": "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card.",
+  "input": "crate::lens::LensSelectRequest",
+  "output": "crate::lens::LensSelection",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.select\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "projection_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_lists": true
+}

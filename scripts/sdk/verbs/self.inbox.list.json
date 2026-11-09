@@ -1,0 +1,23 @@
+{
+  "name": "self.inbox.list",
+  "description": "Lists one page of notifications delivered to the bound actor, without marking them.",
+  "input": "InboxListRequest",
+  "output": "crate::inbox::NotificationPage",
+  "call": "memory.inbox_list(input.after.as_deref(), input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT))?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "page": {
+    "rows": "rows",
+    "cursor": "next_after",
+    "resume": "spec",
+    "within": "after"
+  },
+  "mcp_scope": "filtered",
+  "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
+  "section": false
+}

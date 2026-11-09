@@ -1,0 +1,16 @@
+{
+  "name": "vault.consent.create_standing_grant",
+  "description": "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision.",
+  "input": "crate::consent::lifecycle::CreateStandingGrantRequest",
+  "output": "crate::consent::lifecycle::ConsentActReceipt",
+  "call": "crate::consent::lifecycle::create_standing_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_standing_grant\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

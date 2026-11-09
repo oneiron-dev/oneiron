@@ -1,0 +1,16 @@
+{
+  "name": "vault.guests.export_envelope",
+  "description": "The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket.",
+  "input": "crate::task_verb::sdk::GuestDocumentShareRequest",
+  "output": "crate::task_verb::sdk::GuestDocumentEnvelope",
+  "call": "crate::task_verb::sdk::guest_document_host_only(memory, \"vault.guests.export_envelope\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "guest_document_reader"
+}

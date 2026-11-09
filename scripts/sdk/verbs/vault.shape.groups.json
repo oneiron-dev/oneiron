@@ -1,0 +1,17 @@
+{
+  "name": "vault.shape.groups",
+  "description": "Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::vault_shape::ShapeInboxGroup>",
+  "call": "memory.shape_inbox_groups(&memory.embedded_owner(\"vault.shape.groups\")?)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}
