@@ -153,10 +153,15 @@ pub(crate) mod tests {
         // The span-crafted timestamp attests the DSS bytes, but ends before
         // its own revision EOF. It cannot own a structural revision, so the
         // modification classifier must not claim Clean. The first signer's
-        // signature timestamp still supports its B-T profile independently.
+        // signature timestamp still supports its own rung independently,
+        // never an archival one. Engine call Q-C = A (10 Nov 07:23; Engine
+        // 08:32 on SEAL-QC-PROBE-A-PROFILE): every covered certificate is a
+        // trust anchor, so the stale CRL their own key signed claims nothing
+        // about the chains (ETSI EN 319 102-1 §5.2.6 checks no trust anchor's
+        // revocation status); the material passes, and that rung is B-LT.
         assert_eq!(report.modifications, crate::api::Modifications::NotRun);
         assert!(!report.valid());
-        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineLt));
     }
 
     #[test]
