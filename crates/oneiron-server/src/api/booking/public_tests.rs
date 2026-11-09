@@ -477,8 +477,9 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
             .code,
         oneiron::memory::MEMORY_CODE_FORBIDDEN
     );
-    // The rejected element answers its typed refusal, never a success-shaped
-    // "rejected" receipt (OF-063, FIX 1221).
+    // A batch element answers CommitOutcome since OF-063 (aa8ed36cfb1, FIX
+    // 1221): no receipt carries approval "rejected"; the refused arm is the
+    // rejected element (rule D).
     let outcomes = agent
         .commit(std::slice::from_ref(&input))
         .expect("per-claim outcome");
