@@ -30,6 +30,11 @@ const STEP_TOKENS: u64 = WINDOW_TOKENS / 10;
 const SUMMARY_FACT: &str = "the deploy checklist has four items";
 /// The model context the compaction seat shares with the run.
 const CONTEXT_TOKENS: u64 = 200_000;
+/// NUL characters each step's console prints in the escape-heavy run.
+const NULS: usize = 12_000;
+/// The escape-heavy run's model context: past the reply and the prompt it
+/// holds one step's rendered input, not two.
+const NUL_CONTEXT_TOKENS: u64 = 100_000;
 const FILLER: &str = "alpha beta gamma delta ";
 const CONSOLE_FRAME: &str = "Console after durable step";
 
@@ -85,6 +90,11 @@ fn content(message: &Value) -> String {
 /// request carries a compacted epoch, the program finishes the run.
 fn answer(body: &Value) -> String {
     reply(body, "")
+}
+
+/// [`answer`], each step's console also printing [`NULS`] NUL characters.
+fn nul_answer(body: &Value) -> String {
+    reply(body, &format!(" + '\\0'.repeat({NULS})"))
 }
 
 /// The model's reply: a compaction pass's summary, `finish` once a request
