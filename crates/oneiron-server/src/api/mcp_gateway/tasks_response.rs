@@ -995,8 +995,9 @@ fn mcp_direct_authorship<'a>(
 }
 
 use super::{board_setup, memory_response, skill_execution, verb_hooks};
-#[path = "generated/agent_verb_dispatch.rs"]
-mod agent_verb_dispatch;
+mod agent_verb_dispatch {
+    include!(concat!(env!("OUT_DIR"), "/agent_verb_dispatch.rs"));
+}
 pub(super) mod native_read;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{

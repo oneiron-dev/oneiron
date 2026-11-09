@@ -15,7 +15,7 @@ const DECLARATIONS: [Declaration<'static>; 3] = [
     },
     Declaration {
         name: "code-mode.d.ts",
-        text: include_str!("../../oneiron/src/verbs/generated/code-mode.d.ts"),
+        text: include_str!(concat!(env!("OUT_DIR"), "/code-mode.d.ts")),
     },
     Declaration {
         name: "runtime.d.ts",
