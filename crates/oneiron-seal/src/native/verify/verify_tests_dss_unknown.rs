@@ -176,8 +176,101 @@ mod tests {
         checks
             .not_run(VerifyCheckKind::TimestampCertificatePath)
             .unwrap();
-        classify_missing_material_root(&doc, &covered, AT_UNIX, &memory, limits, &mut checks)
+        classify_missing_material_root(
+            &doc,
+            &anchors,
+            &covered,
+            AT_UNIX,
+            &memory,
+            limits,
+            &mut checks,
+        )
+        .unwrap();
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_ocsp_unknown_counts_for_a_covered_certificate_sharing_its_serial() {
+        // The anchor issued two certificates with one serial number (RFC 5280
+        // forbids it, but both verify): an unrelated one first in /Certs,
+        // then the leaf. An `unknown` for that issuer and serial binds to the
+        // first, and still names the leaf, whose issuer and serial it
+        // carries: NotRun with RevocationStatusUnknown.
+        let anchor = test_ca("issuer-a");
+        let other_der = leaf_with_serial(&anchor, "other", 7);
+        let leaf_der = leaf_with_serial(&anchor, "leaf", 7);
+        let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let unknown = unknown_for(&anchor, &leaf_der);
+        let doc = dss_doc(&[other_der, leaf_der.clone()], &[crl], &[unknown]);
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
+    }
+
+    #[test]
+    fn dss_shadow_behind_a_stale_crl_survives_the_missing_root_probe() {
+        // At the verification time the shadow's CRL is stale, so the
+        // material fails early, before the shadow scan. The missing-root
+        // probe re-reads it at the earlier provisional time, when that CRL is
+        // fresh, with every covered certificate as a provisional root, which
+        // exempts the leaf from its `unknown` and from the shadow scan. Under
+        // the real anchors at that time the shadow is found, so the failure
+        // stays Fail / ValidationMaterialInvalid.
+        let verified_at = AT_UNIX + 7200;
+        let later = Some(AT_UNIX + 10_800);
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let shadow = test_ca("issuer");
+        let genuine = build_crl(&anchor, THIS_UPDATE, later, None, vec![]);
+        let stale_forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let unknown = build_ocsp_full(
+            &anchor,
+            leaf.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            later,
+            x509_ocsp::CertStatus::unknown(),
+            AT_UNIX - 60,
+            &anchor,
+            true,
+        );
+        let doc = dss_doc(
+            &[
+                leaf_der.clone(),
+                shadow.cert_der.clone(),
+                anchor.cert_der.clone(),
+            ],
+            &[genuine, stale_forged],
+            &[unknown],
+        );
+        let limits = process_operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
+        let covered = covered_of(&[&leaf_der]);
+        let mut checks = Checks::new(limits);
+        verify_dss(
+            &doc,
+            &anchors,
+            &covered,
+            verified_at,
+            &memory,
+            &mut checks,
+            limits,
+        )
+        .unwrap();
+        assert_material_fails(&checks);
+        checks
+            .not_run(VerifyCheckKind::TimestampCertificatePath)
             .unwrap();
+        classify_missing_material_root(
+            &doc,
+            &anchors,
+            &covered,
+            AT_UNIX,
+            &memory,
+            limits,
+            &mut checks,
+        )
+        .unwrap();
         assert_material_fails(&checks);
     }
 }

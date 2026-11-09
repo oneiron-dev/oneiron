@@ -204,6 +204,7 @@ pub(super) fn anchors(
 /// very check that found the forgery.
 pub(super) fn classify_missing_material_root(
     doc: &Document,
+    anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at: u64,
     memory: &MemoryLedger,
@@ -370,6 +371,7 @@ pub(crate) fn verify_document(
             .map_err(memory_refused)?;
         classify_missing_material_root(
             &doc,
+            &anchor_certs,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
             &memory,
@@ -455,6 +457,7 @@ pub(crate) fn verify_document(
                 .map_err(memory_refused)?;
             classify_missing_material_root(
                 &doc,
+                &anchor_certs,
                 &material,
                 provisional_material_time(
                     &envelopes,
