@@ -186,6 +186,8 @@
     ],
     "afterLossText": "privacyroomlostgrant: must stay off record.",
     "afterRejoinText": "privacyroomrejoined: rejoin must not restart saving.",
+    "guestText": "privacyroomguestturn: the guest adds a brass lens.",
+    "outOfWindowText": "privacyroomoutofwindow: said before anyone joined the room.",
     "expected": {
       "suggestionSaves": 0,
       "declineSaves": 0,
