@@ -118,6 +118,8 @@ These typed findings appear in `checks`; the existing `reasons` list still holds
 failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
 never a passed B-LT/B-LTA validation-material check.
 
+The rule: forged or unverifiable presented material is invalid (`fail`, `validation_material_invalid`), and so is a CRL signed by a same-subject, different-key shadow of a covered certificate's issuer; missing or authenticated-unknown material is unavailable (`not_run`).
+
 Malformed material, bad signatures, bad binding, unauthorized or stale responses,
 and proven revocation remain failures. Unknown status is reported only after the
 whole response's binding, authorization, freshness and signature checks pass;
