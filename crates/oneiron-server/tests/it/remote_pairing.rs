@@ -256,36 +256,42 @@ async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paired_client_exports_full_vault_in_five_formats() {
+    // OF-222 (owner ruling 10-17, fe8d9318937): the five-format writer is
+    // gone; the whole vault exports as one re-importable archive. The
+    // evidence-ledger check reads the archive back into its document.
+    use oneiron::memory::{EXPORT_TARGET_ARCHIVE, ExportAnswer};
     let fixture = Fixture::serve().await;
     let person = fixture.person.clone();
+    let vault = fixture.vault.clone();
     let link = fixture.full_vault_link();
     blocking(move || {
         let client = paired(&link);
-        for format in ["toon", "md", "json", "yaml", "txt"] {
-            let value = client
-                .agent_verb("export", serde_json::json!({"format":format}))
-                .unwrap();
-            assert_eq!(value["format"], format);
+        let generic: ExportAnswer = serde_json::from_value(
+            client
+                .agent_verb(
+                    "vault.export",
+                    serde_json::json!({"format": EXPORT_TARGET_ARCHIVE}),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let typed = client.vault_export(Some(EXPORT_TARGET_ARCHIVE)).unwrap();
+        for answer in [generic, typed] {
+            let ExportAnswer::Inline(export) = answer else {
+                panic!("an export with no delivery asked answers inline");
+            };
+            let document =
+                serde_json::to_value(vault.read_whole_vault_archive(&export.archive).unwrap())
+                    .unwrap();
             assert!(
-                value["rendered"]
-                    .as_str()
+                document["evidence_ledger"]["entities"]
+                    .as_array()
                     .unwrap()
-                    .contains("evidence_ledger")
+                    .iter()
+                    .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
             );
-            if format == "json" {
-                let document: serde_json::Value =
-                    serde_json::from_str(value["rendered"].as_str().unwrap()).unwrap();
-                assert!(
-                    document["evidence_ledger"]["entities"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
-                );
-            }
         }
-        assert_eq!(client.export(Some("json")).unwrap().format, "json");
-        assert_eq!(code(client.export(Some("gemini"))), "BAD_REQUEST");
+        assert_eq!(code(client.vault_export(Some("gemini"))), "BAD_REQUEST");
     })
     .await;
 }
@@ -321,8 +327,11 @@ async fn read_only_paired_client_cannot_export_another_actors_private_note() {
     let (generic, typed) = blocking(move || {
         let client = paired(&link);
         (
-            client.agent_verb("vault.export", serde_json::json!({"format":"json"})),
-            client.vault_export(Some("json")),
+            client.agent_verb(
+                "vault.export",
+                serde_json::json!({"format": oneiron::memory::EXPORT_TARGET_ARCHIVE}),
+            ),
+            client.vault_export(Some(oneiron::memory::EXPORT_TARGET_ARCHIVE)),
         )
     })
     .await;
