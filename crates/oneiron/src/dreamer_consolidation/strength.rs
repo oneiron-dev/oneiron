@@ -90,6 +90,28 @@ impl Vault {
         policy.validate()?;
         self.with_write_txn_grouped(|txn| POLICY.put(&self.store, txn, &(), policy))
     }
+
+    /// A holder of `engine.controls` sets the consolidation strength policy (untangle 6.6b; maintenance cadence),
+    /// through the one check, with a receipt naming it. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
+    /// row's own validation; store failures.
+    pub fn set_consolidation_strength_policy_as_holder(
+        &self,
+        holder: EntityId,
+        policy: &ConsolidationStrengthPolicy,
+    ) -> Result<EntityId> {
+        policy.validate()?;
+        self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_CONSOLIDATION_STRENGTH_POLICY",
+            &crate::federation::rendered_change(policy)?,
+            |txn| POLICY.put(&self.store, txn, &(), policy),
+        )
+    }
     pub fn consolidation_strength_policy(&self) -> Result<ConsolidationStrengthPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)

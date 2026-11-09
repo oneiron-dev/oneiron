@@ -216,6 +216,7 @@ pub(crate) use system_agent_grant::{
     steward_grant_of_in, steward_rows_rewrite,
 };
 mod engine_controls;
+pub(crate) use engine_controls::rendered_change;
 pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
