@@ -24457,18 +24457,19 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthenticatedOwner",
-      "ConsentEvaluation"
+      "ConsentEvaluation",
+      "ConsentRevocation"
      ],
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "fn": 11,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -24499,7 +24500,7 @@
      "purpose": "The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts; and the…",
      "surface": {
       "crate-vis": 14,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -24640,9 +24641,9 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 8,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -24950,7 +24951,7 @@
      "path": "src/consent_graduation/receipts.rs",
      "purpose": "Gate-family receipt projection, discriminators, and receipt record builders",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -79609,7 +79610,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 1
      }
     },
@@ -99518,7 +99519,7 @@
     "consent": {
      "files": 50,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
@@ -100748,7 +100749,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 238,
+   "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7244,
    "test_files": 895
@@ -106941,13 +106942,37 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeWaitCommand",
+      "CodeWaitEdgeRefused",
+      "ConsentLifecycle",
+      "GrantCommand",
+      "GrantStep",
+      "MarkerCommand",
+      "MarkerRefusal",
+      "MarkerState",
+      "WidenCommand",
+      "WidenState",
+      "WidenStep"
+     ],
+     "path": "src/consent/lifecycle_table.rs",
+     "purpose": "The consent lifecycle owner (core split slice 2, ruled 9 Nov): one transition table per consent axis",
+     "surface": {
+      "enum": 9,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/consent/mod.rs",
      "purpose": "—",
      "surface": {
-      "mod": 7
+      "mod": 8
      }
     },
     {
@@ -107170,7 +107195,7 @@
      "purpose": "—"
     },
     "consent": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -107214,7 +107239,7 @@
    },
    "over_bar": 0,
    "purpose": "Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope…",
-   "source_files": 28,
+   "source_files": 29,
    "test_files": 0
   },
   "oneiron-container": {

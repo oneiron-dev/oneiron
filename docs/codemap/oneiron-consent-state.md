@@ -22,7 +22,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/codec.rs` | src | m | 8 fn · 15 const | — | Moved from `crates/oneiron/src/consent/codec.rs` (core split slice 2: consent state below core) |
 | `src/consent/effect.rs` | src | s | 1 struct · 2 enum · 10 fn | CatastropheClass, EffectFacts, UndoFidelity | Moved from `crates/oneiron/src/consent/effect.rs` (core split slice 2: consent state below core) |
 | `src/consent/grant.rs` | src | m | 6 struct · 4 enum · 1 trait · 14 fn · 11 const | ActionGrant, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal +3 | Moved from `crates/oneiron/src/consent/grant.rs` (core split slice 2: consent state below core) |
-| `src/consent/mod.rs` | src | s | 7 mod | — | — |
+| `src/consent/lifecycle_table.rs` | src | m | 2 struct · 9 enum · 4 fn | CodeWaitCommand, CodeWaitEdgeRefused, ConsentLifecycle, GrantCommand, GrantStep, MarkerCommand, MarkerRefusal, MarkerState +3 | The consent lifecycle owner (core split slice 2, ruled 9 Nov): one transition table per consent axis |
+| `src/consent/mod.rs` | src | s | 8 mod | — | — |
 | `src/consent/support.rs` | src | s | 1 struct · 5 fn · 2 const | ApproveOnceMarker | Moved from `crates/oneiron/src/consent/support.rs` (core split slice 2: consent state below core) |
 | `src/consent/tool_scope.rs` | src | s | 1 enum · 3 fn | DataClass | Moved from `crates/oneiron/src/consent/tool_scope.rs` (core split slice 2: consent state below core) |
 | `src/gate/code_consent_settlement.rs` | src | s | 2 struct · 2 enum · 3 fn | CodeConsentSettlementEligibility, CodeConsentSettlementOrigin, CodeConsentSettlementSource, ResolvedCodeConsentSettlement | Moved from `crates/oneiron/src/gate/code_consent_settlement.rs` (core split slice 2: consent state below core) |
