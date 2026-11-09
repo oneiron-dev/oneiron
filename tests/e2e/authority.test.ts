@@ -214,7 +214,10 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const { bearer, seed } = credentialParts(owner.credential);
   const address = { namespace: ["authority-01"], key: "slip-proof" };
   const seeded = { text: "vault-bound" };
-  await engine.client.call("vault.kv.put", { ...address, value: seeded, request_id: "authority-01-seed" });
+  // The owner states each value, so the gate admits it without review; an
+  // unsourced keyed write would wait on review and never land.
+  const stated = { source: "user_stated" };
+  await engine.client.call("vault.kv.put", { ...address, value: seeded, request_id: "authority-01-seed", ...stated });
   const unauthorized = { status: 401, code: "UNAUTHORIZED" };
 
   // One holder proof admits one request. The identical replay, header for
@@ -260,7 +263,7 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const childClient = new PublicHttpClient(engine.url, { credential: childCredential, artifacts: engine.artifacts });
   expect((await childClient.call("vault.kv.get", address))?.value).toEqual(seeded);
   expect((await childClient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
-  const childWrite = { ...address, value: { text: "child-widened" }, request_id: "authority-01-child-write" };
+  const childWrite = { ...address, value: { text: "child-widened" }, request_id: "authority-01-child-write", ...stated };
   expect(await refusal(childClient, "vault.kv.put", childWrite)).toEqual({ status: 403, code: "FORBIDDEN" });
 
   // The child asks for every verb back. The meet keeps it read-only.
@@ -293,7 +296,7 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   expect(after.map(row => row.entry_hash).sort()).toEqual(before.map(row => row.entry_hash).sort());
   // The parent credential keeps its own authority.
   const ownerWrite = { text: "owner-writes" };
-  await engine.client.call("vault.kv.put", { ...address, value: ownerWrite, request_id: "authority-01-owner-write" });
+  await engine.client.call("vault.kv.put", { ...address, value: ownerWrite, request_id: "authority-01-owner-write", ...stated });
   expect((await recipient.call("vault.kv.get", address))?.value).toEqual(ownerWrite);
 
   // A slip is bound to the vault that minted it. One server at a time, as
