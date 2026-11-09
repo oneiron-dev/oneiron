@@ -668,7 +668,7 @@ mod tests {
             crl[2] = cms::tlv(0x03, &[&[0u8][..], &sign(&crl[0], pss)].concat());
             let crl = cms::tlv(0x30, &crl.concat());
             assert_eq!(
-                crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX).is_some(),
+                crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX).is_ok(),
                 !pss
             );
 
@@ -687,7 +687,7 @@ mod tests {
             bytes.response = der::asn1::OctetString::new(cms::tlv(0x30, &basic.concat())).unwrap();
             let ocsp = response.to_der().unwrap();
             assert_eq!(
-                ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX).is_some(),
+                ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX).is_ok(),
                 !pss
             );
         }

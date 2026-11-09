@@ -22,6 +22,8 @@ mod verify_tests_dss_b;
 #[cfg(test)]
 mod verify_tests_dss_shadow;
 #[cfg(test)]
+mod verify_tests_dss_tampering;
+#[cfg(test)]
 mod verify_tests_dss_unknown;
 #[cfg(test)]
 mod verify_tests_fixtures_dss_a;

@@ -29,7 +29,13 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&issuer.cert_der), &[crl], &[]);
         let covered = covered_of(&[&issuer.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
         // Control: the same shape with cRLSign asserted is accepted.
         let ok_issuer = ca_with_kus(
             "with-crlsign",
