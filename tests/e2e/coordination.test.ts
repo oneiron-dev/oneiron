@@ -592,11 +592,13 @@ suite.test(test, "COORDINATION-02", "A thread reply never moves the trunk HEAD a
 interface Coordination03Scenario {
   id: "COORDINATION-03";
   inputs: { offer: { what: string; artifact: string } };
-  expected: { offerTurnsBeforeAcceptance: number; cardsPerAgentPerBranch: number; unrelatedActorSatisfiesConsent: boolean;
-    missingRequiredConsentAdmits: boolean; acceptedTurns: number; replayAddsTurns: number };
+  expected: { offerTurnsBeforeAcceptance: number; cardsPerAgentPerBranch: number; acceptedTurns: number; replayAddsTurns: number };
 }
+type Coordination03Participant = FacadeResult<"vault.rooms.participants">["rows"][number];
+interface Coordination03Room { turns: string[]; participants: Coordination03Participant[] }
 const COORDINATION03_AT = 1769947200; // Public setup input, never an engine clock override.
 const COORDINATION03_ADMISSION = "only the room's owner, a delegated host or its nearest project leader answers its admission";
+const COORDINATION03_EDGE_LIMIT = 200;
 
 async function coordination03Scenario(): Promise<Coordination03Scenario> {
   const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
@@ -618,15 +620,44 @@ async function coordination03Refused(call: Promise<unknown>, status: number, cod
   expect(refusal.error?.code).toBe(code);
   expect(refusal.error?.message ?? "").toContain(reason);
 }
+/** The records of `kind` that point at `entity` by an `edge_kind` edge, through the public neighbourhood
+ * read (for an in-edge the hit's record is the peer, claim/scoped_read/edge_admission.rs:186-199). */
+async function coordination03Pointing(client: PublicHttpClient, entity: string, edge_kind: string, kind: string): Promise<string[]> {
+  const hits = (await client.call("vault.neighbors", { entity_ref: entity, opts: { edge_kind, limit: COORDINATION03_EDGE_LIMIT } })).value;
+  expect(hits.length).toBeLessThan(COORDINATION03_EDGE_LIMIT); // The read is complete, not a truncated window.
+  return hits.filter(hit => hit.direction === "in" && hit.kind === kind).map(hit => {
+    if (!hit.record) throw new Error(`${kind} neighbour of ${entity} has no record ref`);
+    return hit.record.id;
+  }).sort();
+}
+/** What the room holds, read through public doors: every TURN witnessed into it (each TURN's one
+ * ChildOf edge, memory/witness/base.rs:526), and every participant page, drained. A plain room keeps
+ * no RoomTurn row (rooms/witness.rs:195-263), so vault.rooms.messages lists none of its turns. */
+async function coordination03Room(client: PublicHttpClient, room: string): Promise<Coordination03Room> {
+  const turns = await coordination03Pointing(client, room, "child_of", "TURN");
+  const participants: Coordination03Participant[] = [];
+  let after: string | null = null;
+  for (let pages = 0; pages < 50; pages++) {
+    const page: FacadeResult<"vault.rooms.participants"> =
+      await client.call("vault.rooms.participants", { room, branch: null, after });
+    participants.push(...page.rows);
+    after = page.next_after ?? null;
+    if (after === null) return { turns, participants };
+  }
+  throw new Error("COORDINATION-03 participants did not end within 50 pages");
+}
 
 /* COORDINATION-03 promise: an agent asks to join a room by an offer card, never a turn; only the room's
  *   host admits it, the agent itself and an unrelated agent cannot, and the accepted join lands once.
  * Doors: typed HTTP facade vault.conversations.create / vault.agents.create / vault.rooms.offer /
- *   vault.rooms.offers / vault.rooms.consent / vault.rooms.offer.answer / vault.get; pairActor for both agents.
- * DEFECT (expected FAIL today, at the first offer): vault.agents.create anchors every custom AGENT_DEF to a
- *   model PERSON (agent_def/doors.rs:313-334, context_board/people.rs:491-521), the join subject then reads it
- *   as a person's pen (join_consent.rs:439-453, rooms/participation.rs:268-275), and the mint refuses it:
- *   400 "a person's pen joins by writing as its person, not by an offer card" (rooms/offers.rs:434-442).
+ *   vault.rooms.offers / vault.rooms.consent / vault.rooms.offer.answer / vault.rooms.participants /
+ *   vault.neighbors / vault.get; pairActor for both agents.
+ * DEFECT (expected FAIL today, at the first offer; FIX [AGENT-PERSON-ANCHOR-ROOM-OFFER]): vault.agents.create
+ *   anchors every custom AGENT_DEF to a model PERSON (agent_def/doors.rs:313-334, context_board/people.rs:491-521),
+ *   the join subject then reads it as a person's pen (join_consent.rs:439-453, rooms/participation.rs:268-275),
+ *   and the mint refuses it: 400 "a person's pen joins by writing as its person, not by an offer card"
+ *   (rooms/offers.rs:434-442). The fix also gives the agent vault-owned-agent standing, so the host's
+ *   admission alone settles the card (no membership need).
  * Unproved: thread cards and the human "wrote" cause (vault.rooms.speak threads need a project home room,
  *   rooms/mod.rs:185-201); mention and TASK causes (no public bind door); paid offers and payer consent;
  *   companion membership; nearest-leader hosting and Dreamer never hosting; not_now's diary record.
@@ -652,6 +683,8 @@ suite.test(test, "COORDINATION-03", "An agent joins a room only through an offer
     const companion = await engine.pairActor({ principalRef: companionRef, actorClass: "agent" });
     const unrelated = await engine.pairActor({ principalRef: agents.get("worker-a")!, actorClass: "agent" });
     expect(await client.call("vault.rooms.offers", { room })).toMatchObject({ rows: [] });
+    const before = await coordination03Room(client, room);
+    expect(before.participants.some(row => row.subject.id === companionRef)).toBe(false);
 
     // The agent's ask is a card: it waits on the host's admission and carries no turn.
     const draft: FacadeInput<"vault.rooms.offer"> = { room, branch: null, agent: companionRef,
@@ -663,40 +696,63 @@ suite.test(test, "COORDINATION-03", "An agent joins a room only through an offer
     const listed = await client.call("vault.rooms.offers", { room });
     expect(listed.rows.filter(row => row.agent === companionRef)).toHaveLength(scenario.expected.cardsPerAgentPerBranch);
     expect(listed.rows[0]?.offer_id).toBe(card.offer_id);
-    expect(scenario.expected.offerTurnsBeforeAcceptance).toBe(0);
+    const offered = await coordination03Room(client, room);
+    expect(offered.turns.length - before.turns.length).toBe(scenario.expected.offerTurnsBeforeAcceptance);
+    expect(offered).toEqual(before);
 
     // Refused: the agent cannot admit itself, and an unrelated agent cannot answer the host's part.
-    expect(scenario.expected.unrelatedActorSatisfiesConsent).toBe(false);
     await coordination03Refused(companion.client.call("vault.rooms.offer.answer",
       { offer_id: card.offer_id, action: "join", intent_key: "coordination03-self-admit" }), 403, "FORBIDDEN", COORDINATION03_ADMISSION);
     await coordination03Refused(unrelated.client.call("vault.rooms.consent",
       { join_ref: card.join_ref, part: "admission", grant: true }), 403, "FORBIDDEN", COORDINATION03_ADMISSION);
-    // Missing the required consent still admits nothing.
-    expect(scenario.expected.missingRequiredConsentAdmits).toBe(false);
+    // With the host's consent still missing nothing is admitted: the card is open, no turn, no participant.
     const stillOpen = await client.call("vault.rooms.offers", { room });
     expect(stillOpen.rows.find(row => row.offer_id === card.offer_id)?.state).toEqual(card.state);
+    expect(await coordination03Room(client, room)).toEqual(before);
 
-    // The room's host accepts: exactly one turn, bylined to the agent, with the join's receipt.
+    // The room's host accepts: exactly one turn, bylined to the agent, carrying the offer and its join receipt.
     const accepted = await client.call("vault.rooms.offer.answer",
       { offer_id: card.offer_id, action: "join", intent_key: "coordination03-answer-1" });
     expect(accepted.offer_id).toBe(card.offer_id);
     if (accepted.state.kind !== "joined") throw new Error(`Offer not joined: ${JSON.stringify(accepted.state)}`);
-    expect(accepted.turn_ref).toBe(accepted.state.turn);
-    expect(accepted.state.receipt_ref.length).toBeGreaterThan(0);
+    const turnRef = accepted.state.turn;
+    const receiptRef = accepted.state.receipt_ref;
+    expect(accepted.turn_ref).toBe(turnRef);
+    expect(receiptRef.length).toBeGreaterThan(0);
     expect(accepted.join?.decision.state).toBe("ready");
-    const turn = await client.call("vault.get", { entity_ref: accepted.state.turn });
-    expect(turn.value?.kind).toBe("TURN");
-    expect(scenario.expected.acceptedTurns).toBe(1);
+    const joined = await coordination03Room(client, room);
+    expect(joined.turns.length - before.turns.length).toBe(scenario.expected.acceptedTurns);
+    expect(joined.turns).toEqual([...before.turns, turnRef].sort());
+    const turn = (await client.call("vault.get", { entity_ref: turnRef })).value;
+    expect(turn?.kind).toBe("TURN");
+    expect(turn?.body).toMatchObject({ actor: companionRef }); // The author stamp of an agent writer (witness/codec.rs:141-149).
+    const messages = await coordination03Pointing(client, turnRef, "part_of", "MESSAGE");
+    expect(messages).toHaveLength(1);
+    const message = (await client.call("vault.get", { entity_ref: messages[0]! })).value;
+    expect(message?.body).toMatchObject({ metadata: { room_offer: card.offer_id, room_join_receipt: receiptRef } });
+    // The one new participant is the agent, by its offer, eligible now on the same join receipt.
+    const newcomers = joined.participants.filter(row => !before.participants.some(old => old.subject.id === row.subject.id));
+    expect(newcomers).toHaveLength(1);
+    expect(newcomers[0]?.subject).toEqual({ kind: "agent", id: companionRef });
+    expect(newcomers[0]?.causes).toContainEqual({ kind: "offer", offer_id: card.offer_id });
+    expect(newcomers[0]?.currently_eligible).toBe(true);
+    expect(newcomers[0]?.receipt_ref).toBe(receiptRef);
+    expect(joined.participants.filter(row => row.subject.id !== companionRef)).toEqual(before.participants);
 
     // Exact replays land nothing new: the same answer and the same card.
     expect(await client.call("vault.rooms.offer.answer",
       { offer_id: card.offer_id, action: "join", intent_key: "coordination03-answer-1" })).toEqual(accepted);
+    const answerReplay = await coordination03Room(client, room);
+    expect(answerReplay.turns.length - joined.turns.length).toBe(scenario.expected.replayAddsTurns);
+    expect(answerReplay).toEqual(joined);
     const replayed = await companion.client.call("vault.rooms.offer", draft);
     expect(replayed.offer_id).toBe(card.offer_id);
     expect(replayed.state).toEqual(accepted.state);
-    expect(scenario.expected.replayAddsTurns).toBe(0);
+    const offerReplay = await coordination03Room(client, room);
+    expect(offerReplay.turns.length - joined.turns.length).toBe(scenario.expected.replayAddsTurns);
+    expect(offerReplay).toEqual(joined);
     const after = await client.call("vault.rooms.offers", { room });
-    expect(after.rows.filter(row => row.agent === companionRef)).toHaveLength(1);
+    expect(after.rows.filter(row => row.agent === companionRef)).toHaveLength(scenario.expected.cardsPerAgentPerBranch);
     expect(after.rows.find(row => row.offer_id === card.offer_id)?.state).toEqual(accepted.state);
   } finally {
     await engine.close();
