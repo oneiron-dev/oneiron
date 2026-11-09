@@ -937,10 +937,11 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
 // vault.sync.outbox, not a test-only capture endpoint. Source and every fork
 // must stay absent on both peers before and after restart. No raw WS
 // counterfeit, independent-vault substitute, or private storage edits.
-// Keep this whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
-// empty-vault enrolment merge. This file's one slot remains unchanged.
-suite.skip(test, "PRIVACY-03",
-  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for genuine machine-link/device-enrol receiver B, pre-erase backup/restore/sync replay and ACK observation. Erasure resists offline replay should work [FIX 3966; qualif 17866]");
+// Pending door (Engine CORE-FOUR-SKIPS = A): vault.sync.outbox is missing. Empty-vault enrolment
+// exists now (device enrol; EngineFixture.startDevicePeer). This file's one slot remains unchanged.
+suite.pendingDoor(test, "PRIVACY-03",
+  "waits on vault.sync.outbox, a typed public read of the rows a device still owes its home with their Durable/Held ACK state. Erasure resists offline replay should work",
+  { fix: "FIX 22500", deadline: "2026-12-01" });
 
 suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should work", async () => {
   const catalog = await loadFixtures();
@@ -1146,10 +1147,11 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
 // Close without saving, restart, then prove session-not-found, absent overlay
 // bodies/receipts/spill handles and unchanged durable memory. No floor event
 // is provoked, so no floor-receipt exception applies here.
-// Keep the whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
-// empty-vault enrolment merge; no weakening of the privacy oracle.
-suite.skip(test, "PRIVACY-06",
-  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for real receiver B backup/restore/sync replay and LIVE overlay/spill-id exclusion reads FROM B; session write/read/execute doors exist. Off-record session discard should work [FIX 3967; qualif 17866]");
+// Pending door (Engine CORE-FOUR-SKIPS = A): vault.sync.outbox is missing; empty-vault enrolment
+// exists now. No weakening of the privacy oracle.
+suite.pendingDoor(test, "PRIVACY-06",
+  "waits on vault.sync.outbox, a typed public read of the rows a device still owes its home with their Durable/Held ACK state; the session write/read/execute doors and device enrolment exist. Off-record session discard should work",
+  { fix: "FIX 22500", deadline: "2026-12-01" });
 
 // PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
 // One personal-vault room with four real credentials: the owner (a person holder), a vault agent
