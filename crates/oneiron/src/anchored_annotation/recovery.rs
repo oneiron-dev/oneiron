@@ -859,6 +859,19 @@ impl Vault {
             .is_some_and(|thread| thread.is_drifted()))
     }
 
+    /// A thread's drift marker, read in the caller's transaction; `None` for
+    /// a thread that is attached or missing.
+    pub(crate) fn annotation_thread_drift_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        thread_id: &EntityId,
+    ) -> Result<Option<super::model::DriftMarker>> {
+        Ok(self
+            .annotation_thread_in_txn(txn, artifact_id, thread_id, true)?
+            .and_then(|thread| thread.drift))
+    }
+
     fn prior_locator_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
