@@ -14,7 +14,7 @@ const GUEST_ERROR_CHARS: usize = 2048;
 /// TypeScript program's error ends with where it threw in the TypeScript
 /// source, past the text's cut, and a JavaScript program's is as it was.
 #[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
+pub fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
     let (message, at) = split_guest_error(message);
     step_failure(message, prepared.failure_position(at))
 }
@@ -68,7 +68,7 @@ fn swept(mut sweep: KnownSweep, body: &str) -> Result<String> {
 /// A failed isolated program's own error text, as its guest sent it, header
 /// included (FIX 9209). It is not masked: it has no `Debug` and leaves only
 /// through [`Self::into_error`].
-pub(crate) struct GuestProgramError(String);
+pub struct GuestProgramError(String);
 
 impl GuestProgramError {
     pub(crate) fn new(message: String) -> Self {
@@ -81,7 +81,7 @@ impl GuestProgramError {
     /// each known value, and the release shape sanitizer redacts a
     /// credential-shaped body. The existing cut and the TypeScript position
     /// come last. A mask that fails returns its own error, never the text.
-    pub(crate) fn into_error(
+    pub fn into_error(
         self,
         prepared: &PreparedSource<'_>,
         prefix_lines: u32,
