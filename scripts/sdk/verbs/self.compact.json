@@ -1,0 +1,17 @@
+{
+  "name": "self.compact",
+  "input": "crate::compaction::FoldCompactInput",
+  "output": "crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Fold",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::code_run::fold_api::FoldCompactRequest",
+    "description": "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs.",
+    "host_door_caller": true,
+    "host_door_session": false,
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

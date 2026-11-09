@@ -1,0 +1,24 @@
+{
+  "name": "self.focus.refresh",
+  "description": "Re-renders the run's context board as one frame, at the frame epoch the caller last saw.",
+  "input": "BoardRefreshRequest",
+  "output": "crate::board_verb::BoardVerbOutput",
+  "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
+  "scope": "Read",
+  "context": "board",
+  "mcp_fields": {
+    "frame_epoch": "frame_epoch"
+  },
+  "mcp_required_fields": [],
+  "mcp_scope": "filtered",
+  "section": true,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>",
+    "output": "crate::task_verb::sdk::BoardFrameReply",
+    "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
+    "host_door_caller": true,
+    "host_door_session": true,
+    "openapi": true
+  }
+}

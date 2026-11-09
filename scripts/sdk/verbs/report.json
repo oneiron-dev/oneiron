@@ -1,0 +1,15 @@
+{
+  "name": "report",
+  "description": "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor.",
+  "input": "crate::feedback::ReportRequest",
+  "output": "crate::feedback::ReportReceipt",
+  "call": "memory.report(input)?",
+  "scope": "Read",
+  "mcp_scope": "filtered",
+  "section": false,
+  "admission": {
+    "validate": "input.validate().map_err(MemoryError::from)?;",
+    "lane_record_scope": true
+  },
+  "server_door": "report_off_runtime"
+}

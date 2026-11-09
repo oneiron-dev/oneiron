@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.policy.train",
+  "description": "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it.",
+  "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+  "output": "crate::store::RetrievalPolicyCandidate",
+  "call": "crate::task_verb::sdk::retrieval_policy_train_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.train\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

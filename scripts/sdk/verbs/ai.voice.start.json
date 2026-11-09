@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.start",
+  "description": "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates.",
+  "input": "crate::task_verb::sdk::LiveVoiceStartRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceSession",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.start\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

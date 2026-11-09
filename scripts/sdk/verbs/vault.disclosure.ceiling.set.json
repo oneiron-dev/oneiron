@@ -1,0 +1,16 @@
+{
+  "name": "vault.disclosure.ceiling.set",
+  "description": "The owner sets one connection or class disclosure ceiling; no read authority changes.",
+  "input": "crate::disclosure::DisclosureCeilingSet",
+  "output": "crate::disclosure::DisclosureCeilingView",
+  "call": "memory.vault().set_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

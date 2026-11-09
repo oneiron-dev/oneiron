@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.labels.blocked",
+  "description": "Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session.",
+  "input": "crate::skill_optimize::eval_doors::EvalBlockedLabelsRequest",
+  "output": "Vec<crate::skill_optimize::EvalLabelAsk>",
+  "call": "crate::skill_optimize::eval_doors::blocked_labels(memory.vault(), &memory.embedded_owner(\"vault.evals.labels.blocked\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

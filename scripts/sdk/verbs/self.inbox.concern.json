@@ -1,0 +1,11 @@
+{
+  "name": "self.inbox.concern",
+  "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
+  "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
+  "call": "memory.concern_card(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.goal.intake",
+  "description": "What a project's goal-intake interview starts from, for a member of its home room.",
+  "input": "ProjectRefRequest",
+  "output": "crate::workspace_roster::ProjectGoalInterviewContext",
+  "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

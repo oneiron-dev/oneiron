@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.handover",
+  "description": "Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft.",
+  "input": "crate::task_verb::sdk::BrowserHandoverInput",
+  "output": "crate::task_verb::sdk::BrowserHandoverOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.handover(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>",
+    "description": "Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

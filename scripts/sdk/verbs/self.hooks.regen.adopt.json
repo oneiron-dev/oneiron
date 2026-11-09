@@ -1,0 +1,13 @@
+{
+  "name": "self.hooks.regen.adopt",
+  "description": "Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner.",
+  "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
+  "output": "crate::task_verb::sdk::PackPutReceipt",
+  "call": "memory.own_hook_regen_adopt(input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

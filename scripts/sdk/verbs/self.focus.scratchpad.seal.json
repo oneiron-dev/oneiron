@@ -1,0 +1,12 @@
+{
+  "name": "self.focus.scratchpad.seal",
+  "description": "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad.",
+  "input": "crate::task_verb::sdk::ScratchpadSealRequest",
+  "output": "crate::task_verb::sdk::ScratchpadWriteReply",
+  "call": "crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

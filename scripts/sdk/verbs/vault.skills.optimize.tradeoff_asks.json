@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.tradeoff_asks",
+  "description": "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>",
+  "call": "crate::task_verb::sdk::skill_optimize_tradeoff_asks_for(memory.vault(), &memory.actor())?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "tradeoff_picker"
+}

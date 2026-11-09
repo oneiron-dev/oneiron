@@ -1,0 +1,27 @@
+{
+  "name": "peek",
+  "description": "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask.",
+  "input": "crate::task_verb::TaskAskHandle",
+  "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
+  "mcp_served": "[input.group_ref]",
+  "call": "memory.tasks_ask_peek(input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
+      "ts": "/** Read-only ask routing or attributed partial answers. */",
+      "py": "Read-only ask routing or attributed partial answers."
+    }
+  }
+}

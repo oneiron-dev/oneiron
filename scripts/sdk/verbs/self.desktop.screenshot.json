@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.screenshot",
+  "description": "Takes a screenshot of the window the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.",
+  "input": "oneiron_browser::ScreenshotInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ScreenshotOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.screenshot(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

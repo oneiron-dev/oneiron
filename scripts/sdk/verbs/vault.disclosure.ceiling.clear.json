@@ -1,0 +1,16 @@
+{
+  "name": "vault.disclosure.ceiling.clear",
+  "description": "The owner clears one dial, restoring connection or actor-class inference.",
+  "input": "crate::disclosure::DisclosureCeilingRequest",
+  "output": "crate::disclosure::DisclosureCeilingView",
+  "call": "memory.vault().clear_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.archive.delete.preview",
+  "description": "Previews explicit archived records under the caller's delete authority.",
+  "input": "crate::memory::ArchiveDeletePreviewRequest",
+  "output": "crate::memory::ArchiveDeletePreviewView",
+  "call": "crate::memory::preview_archive_delete_wire(memory, &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "section": false,
+  "openapi": true
+}

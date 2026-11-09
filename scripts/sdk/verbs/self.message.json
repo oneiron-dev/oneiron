@@ -1,0 +1,13 @@
+{
+  "name": "self.message",
+  "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
+  "input": "crate::memory::MessagePersonRequest",
+  "output": "crate::memory::MessagePersonReceipt",
+  "call": "memory.message_person(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

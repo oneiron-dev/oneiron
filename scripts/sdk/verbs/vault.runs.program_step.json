@@ -1,0 +1,17 @@
+{
+  "name": "vault.runs.program_step",
+  "description": "Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body.",
+  "input": "crate::dreamer_runner::SettledProgramStepRequest",
+  "output": "Option<crate::dreamer_runner::SettledProgramStepView>",
+  "call": "crate::dreamer_runner::settled_program_step(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

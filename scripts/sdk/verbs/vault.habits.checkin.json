@@ -1,0 +1,25 @@
+{
+  "name": "vault.habits.checkin",
+  "description": "Appends one immutable check-in under a Habit TASK.",
+  "refs": [
+    "/habit_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "input": "HabitCheckinInput"
+    },
+    "output": "EntityRefReceipt"
+  },
+  "input": "crate::memory::HabitCheckinInput",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.put_habit_checkin(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

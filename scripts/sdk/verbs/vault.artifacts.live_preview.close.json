@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.live_preview.close",
+  "description": "Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactPreviewClosed",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.close\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

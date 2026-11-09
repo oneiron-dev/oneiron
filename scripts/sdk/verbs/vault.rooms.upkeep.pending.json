@@ -1,0 +1,16 @@
+{
+  "name": "vault.rooms.upkeep.pending",
+  "description": "The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet.",
+  "input": "crate::workspace_roster::RoomUpkeepPendingRequest",
+  "output": "Vec<crate::workspace_roster::RoomUpkeepNudge>",
+  "call": "memory.rooms_upkeep_pending(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,14 @@
+{
+  "name": "vault.cancel_stream",
+  "description": "Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason.",
+  "input": "crate::memory::CancelStreamRequest",
+  "output": "crate::memory::MessageStreamReceipt",
+  "call": "memory.messages_cancel_stream(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "lands_turn": true
+}
