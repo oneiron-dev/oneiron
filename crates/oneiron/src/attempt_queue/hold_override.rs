@@ -76,6 +76,16 @@ pub(super) fn annotation_hold_released_in_txn(
     }))
 }
 
+/// The actor of `id`'s override record; `None` when it has none.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hold_override_actor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: AttemptId,
+) -> Result<Option<String>> {
+    Ok(HOLD_OVERRIDE.get(store, txn, &id)?.map(|row| row.actor))
+}
+
 /// Deletes `id`'s override record with its row; an id with none is left as it is.
 pub(super) fn delete_hold_override_in_txn(
     store: &Store,
