@@ -14,16 +14,23 @@ export interface WireError { readonly code: string; readonly message: string; re
 export interface WireReply<T = unknown> {
   readonly status: number; readonly headers: Headers; readonly body: T; readonly raw: string; readonly bytes:Uint8Array;
 }
-/** Keeps the original status, headers and full error envelope, including unknown typed fields. */
+/** The wire error a reply body carries, enveloped or bare, when it has a string code and message. */
+function wireError(body: unknown): WireError | undefined {
+  const payload=(body as {error?:unknown} | null)?.error ?? body;
+  if (!payload || typeof payload!=="object") return undefined;
+  const fields=payload as Record<string,unknown>;
+  return typeof fields.code==="string"&&typeof fields.message==="string" ? payload as WireError : undefined;
+}
+/** Keeps the original status, headers and full error envelope, including unknown typed fields. Its message
+ * is `HTTP <status> <code>: <message>` when the body carries a wire error, so a case's redReason can tell
+ * two refusals of one door apart; it fits the fleet log's 400-character reason. */
 export class PublicHttpError extends Error {
   override name = "PublicHttpError";
-  constructor(readonly reply: WireReply<unknown>) { super(`HTTP ${reply.status}`) }
-  get error(): WireError | undefined {
-    const payload=(this.reply.body as {error?:unknown} | null)?.error ?? this.reply.body;
-    if (!payload || typeof payload!=="object") return undefined;
-    const fields=payload as Record<string,unknown>;
-    return typeof fields.code==="string"&&typeof fields.message==="string" ? payload as WireError : undefined;
+  constructor(readonly reply: WireReply<unknown>) {
+    const wire=wireError(reply.body);
+    super((wire ? `HTTP ${reply.status} ${wire.code}: ${wire.message}` : `HTTP ${reply.status}`).slice(0,400));
   }
+  get error(): WireError | undefined { return wireError(this.reply.body) }
 }
 export function credentialParts(credential: string): { bearer: string; seed: string } {
   const match = /^v2\.cred\.([a-f0-9]+)\.([a-f0-9]{64})$/.exec(credential);
