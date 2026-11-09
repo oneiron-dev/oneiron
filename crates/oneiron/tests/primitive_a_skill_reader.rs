@@ -24,7 +24,7 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
     config.map_size = 64 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open_owned(dir.path(), config)?;
     Ok((dir, vault))
 }
 
