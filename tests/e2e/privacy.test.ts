@@ -1290,7 +1290,8 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle: only a person h
     .filter(row => row.messages.some(message => neverOnRecord.includes(message.content)));
   expect(unsaved.map(row => row.saved)).toEqual([false, false]);
   const final = await guest.client.call("vault.off_record.rooms.status", q);
-  for (const act of room.expected.noticeActs) expect(final.notices.map(row => row.act)).toContain(act);
+  const finalActs: string[] = final.notices.map(row => row.act);
+  for (const act of room.expected.noticeActs) expect(finalActs).toContain(act);
   expect(final.notices.filter(row => row.act === "saving_from_here").map(row => row.by))
     .toEqual([owner.principalRef, owner.principalRef]);
   expect(final.notices.find(row => row.act === "exported")?.by).toBe(guest.principalRef);
