@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::ooxml::{Node, XmlTree};
+use crate::resource::{Dimension, wide};
 
 const PX: i64 = EMU_PER_PX;
 const BOUNDS: Rect = Rect {
@@ -677,7 +678,14 @@ fn document_bounds_and_limits_are_checked() {
         svg_bytes: 64,
         ..limits
     };
-    assert_eq!(document(&many, bytes), Err(GraphicError::ResourceLimit));
+    assert_eq!(
+        document(&many, bytes),
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::SvgBytes,
+            wide(many.len()),
+            64
+        )))
+    );
 }
 
 #[test]
@@ -1067,7 +1075,11 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
     let huge_record = record(MediaType::Png, &huge, Origin::Held);
     assert_eq!(
         check(&huge_record, Some(&huge), illustration),
-        Err(GraphicError::ResourceLimit)
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::RasterPixels,
+            10_000 * 10_000,
+            limits.raster_pixels
+        )))
     );
     // A header alone, or an image cut short, is not a verified payload.
     let header = png_header(4, 3);
@@ -1088,6 +1100,10 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
     };
     assert_eq!(
         run(&held, Some(&bytes), illustration, BOUNDS, small).map(|_| ()),
-        Err(GraphicError::ResourceLimit)
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::RasterBytes,
+            wide(bytes.len()),
+            8
+        )))
     );
 }
