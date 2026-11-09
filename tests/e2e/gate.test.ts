@@ -556,7 +556,9 @@ suite.test(test, "GATE-07", "The owner accepts an agent's proposed claims as one
   const owner = engine.pairedActor.principalRef;
   const scope = await ownerBaseClaimScope(engine.client, owner);
   const evidence = await evidenceTurn(engine, "Gate review evidence: two preferences to review.");
-  const [agent] = await enrolAgents(engine, [{ name: "gate07-proposer", tier: "propose-only" }]);
+  // The HTTP facade's claim upsert needs core:write (a propose-only agent proposes through /v1/core/propose
+  // or MCP), so the agent is full-access; its tool_output source still holds each claim as Proposed.
+  const [agent] = await enrolAgents(engine, [{ name: "gate07-proposer", tier: "full-access" }]);
   const propose = (predicate: string, value: string) => agent!.client.call("vault.claims.upsert", {
     predicate, subject_ref: owner, value, confidence: 1, source: "tool_output", scope,
     evidence_turn_refs: [evidence], occurred_at: GATE_T,
