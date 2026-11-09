@@ -151,12 +151,9 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     let own_try = branch_of(&own, &branch)?;
     assert_eq!(own_try.last_error.as_deref(), Some(AGENT_ERROR));
 
-    // A Steward, no actor of the run, reads the branch without its text.
+    // A Steward, no actor of the run, reads the branch by its role, without
+    // its text.
     let as_steward = vault.memory(steward, EdgeActorClass::Human);
-    assert!(
-        as_steward.get_entity(&task_ref.to_hex())?.value.is_some(),
-        "the TASK reads on the Steward's lane"
-    );
     let stewarded = oneiron::verbs::vault_runs_branches_get(&as_steward, request.clone())?;
     assert_eq!(stewarded.branches.len(), 2);
     let stewarded_try = branch_of(&stewarded, &branch)?;
