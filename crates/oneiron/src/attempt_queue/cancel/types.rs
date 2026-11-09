@@ -147,6 +147,9 @@ impl ForceCancelAuthority {
             wtxn,
             &std::collections::BTreeSet::from([actor]),
         )?;
+        // RUN-HOLD: an override this actor made keeps its release and loses
+        // the actor.
+        crate::attempt_queue::scrub_hold_override_actor_in_txn(&vault.store, wtxn, &actor)?;
         let mut effects = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
         let (vault, wtxn, _) = erase.parts();
         effects
