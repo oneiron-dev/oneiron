@@ -287,8 +287,21 @@ pub(super) fn handle_app_message(
     else {
         return Ok(());
     };
-    let reply = crate::livequery::bound_rpc_reply(server, &call.auth, call.request, call.context)?;
-    for frame in reply.queued(call.conn) {
+    // A residence bundle commit (FIX 9254) or an option-link call runs only
+    // through the async `VerbCall::answer`; this door answers verbs.
+    let VerbCall::Verb {
+        auth,
+        request,
+        context,
+        conn,
+    } = call
+    else {
+        return Err(ProtocolError::InvalidPayload(
+            "the synchronous test door answers verb calls only",
+        ));
+    };
+    let reply = crate::livequery::bound_rpc_reply(server, &auth, request, context)?;
+    for frame in reply.queued(conn) {
         direct_tx
             .send(frame)
             .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
