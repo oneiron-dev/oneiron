@@ -1,7 +1,6 @@
 //! Production execute_code uses real JS through the vault-owned host and wire.
 use super::*;
 use oneiron::code_run::CodeRunDeterminism;
-use oneiron::code_sandbox::{quickjs::QuickJsRuntimeFactory, wasmtime_runtime::ComponentBudget};
 use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
 use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
@@ -13,6 +12,9 @@ use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality,
     ModelTierRef,
+};
+use oneiron_agent_runtime::code_sandbox::{
+    quickjs::QuickJsRuntimeFactory, wasmtime_runtime::ComponentBudget,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;

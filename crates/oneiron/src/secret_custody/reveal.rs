@@ -610,7 +610,7 @@ fn checked_text(text: &str, empty: &'static str, long: &'static str) -> Result<S
 /// text form `[secret sc12]`. Returns the bare short id, and the content-hash
 /// byte when one is written. Text that is no handle is refused without being
 /// echoed, as an agent may have pasted a value there.
-pub(crate) fn parse_secret_handle(text: &str) -> Result<(&str, Option<u8>)> {
+pub fn parse_secret_handle(text: &str) -> Result<(&str, Option<u8>)> {
     let not_a_handle = || {
         Error::Gate(GateError::InvalidConsentBound(
             "a secret is named by its handle, such as sc12",

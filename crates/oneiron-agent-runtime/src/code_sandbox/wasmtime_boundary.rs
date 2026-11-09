@@ -9,10 +9,10 @@ use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsB
 
 /// Types and host traits generated from the same WIT used by the guest SDK.
 pub mod bindings {
-    wasmtime::component::bindgen!({ path: "wit", world: "guest" });
+    wasmtime::component::bindgen!({ path: "../oneiron/wit", world: "guest" });
 }
 
-const IMPORTS: &[(&str, &str)] = include!("../../wit/generated/imports.rs");
+const IMPORTS: &[(&str, &str)] = include!("../../../oneiron/wit/generated/imports.rs");
 
 /// Compiled component cache owner; no guest memory or request state is shared.
 pub struct WasmtimeBoundary {

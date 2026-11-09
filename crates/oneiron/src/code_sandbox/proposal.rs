@@ -129,7 +129,7 @@ pub struct SandboxFileEditProposal {
 impl SandboxFileWriteProposal {
     /// Lowers against the exact spooled boot snapshot without reading the base
     /// file whole. Both changed spans retain immutable views of their spools.
-    pub(in crate::code_sandbox) fn lower_to_edit_spooled(
+    pub fn lower_to_edit_spooled(
         &self,
         base: &SandboxProposalBody,
         cancel: &crate::engine_executor::StepCancellation,
@@ -146,7 +146,7 @@ impl SandboxFileWriteProposal {
         self.lower_to_edit_checked(base, || Ok(()))
     }
 
-    pub(in crate::code_sandbox) fn lower_to_edit_cancellable(
+    pub fn lower_to_edit_cancellable(
         &self,
         base: &[u8],
         cancel: &crate::engine_executor::StepCancellation,

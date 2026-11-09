@@ -21,8 +21,8 @@ pub mod bindings {
 use super::{
     HookBodyRun, HookBodyRuntime, HookBodyUsage, HookPreparation, HookRunContext, HookVerdictCall,
 };
+use crate::code_sandbox::ComponentBudget;
 use crate::code_sandbox::source::{PreparedSource, prepare_source, split_guest_error};
-use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
 use crate::receipt::hex_lower;
 use crate::{Error, Result};
 use std::sync::mpsc;

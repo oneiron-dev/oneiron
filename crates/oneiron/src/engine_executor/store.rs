@@ -149,7 +149,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -211,7 +211,7 @@ pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<En
 }
 
 /// Where the guest reads stored result bodies.
-pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
+pub const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, where to read it, and the ref that
