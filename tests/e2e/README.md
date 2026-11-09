@@ -240,6 +240,11 @@ IDs, exact bytes and optional barriers. Scripted HTTP errors use real vendor
 error bodies and statuses. The helpers `openaiText`, `openaiStream`,
 `anthropicText`, `anthropicStream` and `embeddingReply` require declared usage;
 they do not estimate tokens or derive answers from requests.
+A request whose body names a boolean `stream` matches only a step of the same
+kind: `stream: true` needs a `{kind:"stream"}` reply, `stream: false` a buffered
+one, so a buffered reply to a streamed request fails at send time. A code-mode
+executor call is streamed when its local-openai-compat provider keeps the default
+capabilities (they include streaming); a decision call is buffered.
 
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
