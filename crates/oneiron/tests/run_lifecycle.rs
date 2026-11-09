@@ -129,13 +129,31 @@ fn interventions_and_the_budget_hold_follow_the_table() {
     let id = row.id;
 
     // Queued: a note is recorded, a resume is already done.
-    assert_eq!(effect(&queue, id, K::Interrupt, now + 1), (E::Interrupted, S::Queued));
-    assert_eq!(effect(&queue, id, K::Resume, now + 2), (E::AlreadyResumed, S::Queued));
+    assert_eq!(
+        effect(&queue, id, K::Interrupt, now + 1),
+        (E::Interrupted, S::Queued)
+    );
+    assert_eq!(
+        effect(&queue, id, K::Resume, now + 2),
+        (E::AlreadyResumed, S::Queued)
+    );
     // A person's pause takes the row out of the ready index.
-    assert_eq!(effect(&queue, id, K::Pause, now + 3), (E::Paused, S::Paused));
-    assert_eq!(effect(&queue, id, K::Pause, now + 4), (E::AlreadyPaused, S::Paused));
-    assert!(claims_nothing(&queue, now + 5), "a paused row is not claimable");
-    assert_eq!(effect(&queue, id, K::Resume, now + 6), (E::Resumed, S::Queued));
+    assert_eq!(
+        effect(&queue, id, K::Pause, now + 3),
+        (E::Paused, S::Paused)
+    );
+    assert_eq!(
+        effect(&queue, id, K::Pause, now + 4),
+        (E::AlreadyPaused, S::Paused)
+    );
+    assert!(
+        claims_nothing(&queue, now + 5),
+        "a paused row is not claimable"
+    );
+    assert_eq!(
+        effect(&queue, id, K::Resume, now + 6),
+        (E::Resumed, S::Queued)
+    );
 
     // Leased: no pause and no cancel; a resume is already done; a note is
     // recorded.
@@ -143,8 +161,14 @@ fn interventions_and_the_budget_hold_follow_the_table() {
     assert_eq!(leased.state, S::Leased);
     assert!(intervene(&queue, id, K::Pause, PERSON, now + 8).is_err());
     assert!(intervene(&queue, id, K::Cancel, PERSON, now + 8).is_err());
-    assert_eq!(effect(&queue, id, K::Resume, now + 9), (E::AlreadyResumed, S::Leased));
-    assert_eq!(effect(&queue, id, K::Interrupt, now + 10), (E::Interrupted, S::Leased));
+    assert_eq!(
+        effect(&queue, id, K::Resume, now + 9),
+        (E::AlreadyResumed, S::Leased)
+    );
+    assert_eq!(
+        effect(&queue, id, K::Interrupt, now + 10),
+        (E::Interrupted, S::Leased)
+    );
 
     // The budget hold: the lease holder parks its row Paused and releases the
     // lease; the same hold again changes nothing.
@@ -157,7 +181,10 @@ fn interventions_and_the_budget_hold_follow_the_table() {
     let again = queue
         .hold_for_budget(budget_hold(&leased, now + 12))
         .expect("the same hold again is admitted");
-    assert_eq!(again.updated_at, held.updated_at, "a repeated hold writes nothing");
+    assert_eq!(
+        again.updated_at, held.updated_at,
+        "a repeated hold writes nothing"
+    );
     assert!(intervene(&queue, id, K::Pause, BUDGET_HOLD_ACTOR, now + 13).is_err());
 
     // A person's pause takes over the hold (FIX 9579).
@@ -165,16 +192,29 @@ fn interventions_and_the_budget_hold_follow_the_table() {
     assert_eq!(taken.effect, E::Paused);
     assert_eq!(taken.record.state, S::Paused);
     assert!(!taken.record.budget_hold());
-    assert_eq!(effect(&queue, id, K::Resume, now + 15), (E::Resumed, S::Queued));
+    assert_eq!(
+        effect(&queue, id, K::Resume, now + 15),
+        (E::Resumed, S::Queued)
+    );
 
     // Cancelled: terminal; a second cancel is already done, everything else is
     // refused, and the hold no longer applies.
-    assert_eq!(effect(&queue, id, K::Cancel, now + 16), (E::Cancelled, S::Cancelled));
-    assert_eq!(effect(&queue, id, K::Cancel, now + 17), (E::AlreadyCancelled, S::Cancelled));
+    assert_eq!(
+        effect(&queue, id, K::Cancel, now + 16),
+        (E::Cancelled, S::Cancelled)
+    );
+    assert_eq!(
+        effect(&queue, id, K::Cancel, now + 17),
+        (E::AlreadyCancelled, S::Cancelled)
+    );
     for kind in [K::Resume, K::Pause, K::Interrupt] {
         assert!(intervene(&queue, id, kind, PERSON, now + 18).is_err());
     }
-    assert!(queue.hold_for_budget(budget_hold(&leased, now + 19)).is_err());
+    assert!(
+        queue
+            .hold_for_budget(budget_hold(&leased, now + 19))
+            .is_err()
+    );
 }
 
 #[test]
@@ -202,10 +242,17 @@ fn a_deferred_row_resumes_deferred() {
         panic!("the retry schedules a new try");
     };
     assert_eq!(next.state, S::Scheduled);
-    assert_eq!(effect(&queue, next.id, K::Pause, now + 3), (E::Paused, S::Paused));
+    assert_eq!(
+        effect(&queue, next.id, K::Pause, now + 3),
+        (E::Paused, S::Paused)
+    );
     let resumed = intervene(&queue, next.id, K::Resume, PERSON, now + 4).expect("resume");
     assert_eq!(resumed.effect, E::Resumed);
-    assert_eq!(resumed.record.state, S::Scheduled, "a resume restores the schedule");
+    assert_eq!(
+        resumed.record.state,
+        S::Scheduled,
+        "a resume restores the schedule"
+    );
     assert_eq!(resumed.record.scheduled_at, Some(due));
     assert!(intervene(&queue, leased.id, K::Resume, PERSON, now + 5).is_err());
 }

@@ -176,7 +176,9 @@ impl RunLifecycle {
             } => match row.state {
                 // A person's pause takes over any engine hold (FIX 9579), so
                 // no hold's release resumes the row: only a resume does.
-                S::Paused if !by_hold_actor && row.pause.is_some_and(AttemptPause::is_engine_hold) => {
+                S::Paused
+                    if !by_hold_actor && row.pause.is_some_and(AttemptPause::is_engine_hold) =>
+                {
                     RunStep::Move {
                         to: S::Paused,
                         pause: Some(AttemptPause::Person),
@@ -187,12 +189,9 @@ impl RunLifecycle {
                     to: S::Paused,
                     pause: Some(pause),
                 },
-                S::Leased
-                | S::Landing
-                | S::Completed
-                | S::Failed
-                | S::Cancelled
-                | S::Abandoned => RunStep::Refuse,
+                S::Leased | S::Landing | S::Completed | S::Failed | S::Cancelled | S::Abandoned => {
+                    RunStep::Refuse
+                }
             },
             RunEvent::Resume => match row.state {
                 // Restoring a still-deferred row as Queued would render it as
@@ -302,7 +301,8 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition(action, "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        let (to, pause) = match RunLifecycle::step(RunRow::of(&record), RunEvent::Hold(input.hold)) {
+        let (to, pause) = match RunLifecycle::step(RunRow::of(&record), RunEvent::Hold(input.hold))
+        {
             RunStep::Replay => return Ok(record),
             RunStep::Move { to, pause } => (to, pause),
             RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
