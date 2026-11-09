@@ -68,6 +68,33 @@ pub(crate) fn holds_system_agent_grant(actor: EntityId) -> bool {
     crate::dreamer_runner::authority::dreamer_actor_id().is_ok_and(|dreamer| dreamer == actor)
 }
 
+/// The grant row `grant` while it stands in `txn` as a Steward grant naming
+/// `agent` (role and preset Steward, an access grant with no expiry), else
+/// `None`: revoked, withdrawn, rewritten or never there. Its authority scope
+/// bounds the records the agent's verbs reach (untangle 6.7a).
+pub(crate) fn standing_steward_grant_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    agent: EntityId,
+) -> Result<Option<FederationGrant>> {
+    let Some(raw) = store.port_entity_record(txn, &grant)? else {
+        return Ok(None);
+    };
+    if raw.entity_type != ENTITY_TYPE_FEDERATION_GRANT || raw.body.is_empty() {
+        return Ok(None);
+    }
+    let Ok(row) = decode_federation_grant_body(&raw.body) else {
+        return Ok(None);
+    };
+    Ok((row.role == FederationGrantRole::Steward
+        && row.preset == FederationGrantPreset::Steward
+        && row.member_ref == agent
+        && row.kind == FederationGrantKind::Access
+        && row.expires_at.is_none())
+    .then_some(row))
+}
+
 /// The Steward verbs the grant `grant` gives `agent` in `txn`: its explicit
 /// verb set while the row stands as a Steward grant naming `agent`, else
 /// none (revoked, withdrawn, rewritten or never there). A Steward grant has
@@ -78,23 +105,9 @@ pub(crate) fn standing_steward_verbs_in(
     grant: EntityId,
     agent: EntityId,
 ) -> Result<BTreeSet<String>> {
-    let Some(raw) = store.port_entity_record(txn, &grant)? else {
+    let Some(row) = standing_steward_grant_in(store, txn, grant, agent)? else {
         return Ok(BTreeSet::new());
     };
-    if raw.entity_type != ENTITY_TYPE_FEDERATION_GRANT || raw.body.is_empty() {
-        return Ok(BTreeSet::new());
-    }
-    let Ok(row) = decode_federation_grant_body(&raw.body) else {
-        return Ok(BTreeSet::new());
-    };
-    if row.role != FederationGrantRole::Steward
-        || row.preset != FederationGrantPreset::Steward
-        || row.member_ref != agent
-        || row.kind != FederationGrantKind::Access
-        || row.expires_at.is_some()
-    {
-        return Ok(BTreeSet::new());
-    }
     Ok(match &row.authority_scope.verbs {
         ScopeAxis::Some(verbs) => verbs
             .iter()
