@@ -15,8 +15,8 @@ use std::task::{Context, Poll, Waker};
 
 use oneiron::dreamer_runner::{
     DREAMER_SERVER_PARK_OWNER, DreamerAttemptStatus, DreamerParkedAttemptRecord,
-    EnqueueDreamerConsolidationAttempt, ParkDreamerAttempt, ParkResumer,
-    ReleaseParkedAttemptRequest, release_parked_attempt_as_owner,
+    EnqueueDreamerConsolidationAttempt, ParkResumer, ReleaseParkedAttemptRequest,
+    release_parked_attempt_as_owner,
 };
 use oneiron::memory::DreamerParkCauseView;
 use oneiron::test_doors::wake_d1_park_release as doors;
@@ -179,20 +179,47 @@ fn a_cancelled_park_resumes_on_the_next_pass() -> Result<()> {
     Ok(())
 }
 
+/// Parks every admitted attempt as an executor error does (a lapsed seat login).
+struct ExecutorErrorParkExecutor;
+
+impl DreamerAttemptExecutor for ExecutorErrorParkExecutor {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        Ok(DreamerAttemptExecution::Park {
+            reason: "the seat login lapsed".to_owned(),
+            cause: DreamerParkCause::ExecutorError,
+        })
+    }
+}
+
 /// Parks `queued` as an executor error of the server's Dreamer pass, and returns the park.
+/// The pass leases the try under the server's lease owner and parks it under that owner,
+/// so the parked try keeps its lease, as on a running server.
 fn park_executor_error(
+    vault: &Vault,
     store: &DreamerRunnerStore<'_>,
     queued: &DreamerAttemptStatus,
     now: u64,
 ) -> Result<DreamerParkedAttemptRecord> {
-    store.park_attempt(ParkDreamerAttempt {
-        attempt_id: queued.attempt.id,
-        reason: "the seat login lapsed".to_owned(),
-        cause: DreamerParkCause::ExecutorError,
-        park_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
-        carried_spend: None,
-        now,
-    })
+    let node_id = doors::load_or_mint_client_id(vault)?;
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, now);
+    input.lease_owner = DREAMER_SERVER_PARK_OWNER.to_owned();
+    let mut driver = DreamerWakeDriver::new(vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        input,
+        &mut ExecutorErrorParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1, "the pass parks the try");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_eq!(parked.cause, DreamerParkCause::ExecutorError);
+    assert_eq!(parked.park_owner, DREAMER_SERVER_PARK_OWNER);
+    Ok(parked)
 }
 
 /// The vault's embedded owner, authenticated: what an owner door takes.
@@ -226,7 +253,7 @@ fn an_executor_error_park_raises_the_notice_and_resumes_only_at_release() -> Res
     let (_dir, vault) = open_vault()?;
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "owner act", 10)?;
-    let parked = park_executor_error(&store, &queued, 20)?;
+    let parked = park_executor_error(&vault, &store, &queued, 20)?;
     assert_eq!(
         doors::park_notice_seen(&vault, &parked)?,
         Some(false),
@@ -278,7 +305,7 @@ fn after_a_restart_an_executor_error_park_stays_parked_with_its_notice() -> Resu
     let (dir, vault) = open_vault()?;
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "owner act", 10)?;
-    park_executor_error(&store, &queued, 20)?;
+    park_executor_error(&vault, &store, &queued, 20)?;
     let queued_id = queued.attempt.id;
     drop(store);
     drop(vault);
