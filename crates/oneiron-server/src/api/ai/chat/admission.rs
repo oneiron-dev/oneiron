@@ -289,6 +289,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     }
     let generate_session = verb_hook_boundary::hook_session_for_call(
         Some(&hooked_call()),
+        &oneiron::verbs::VERB_TABLE,
         HOST_TURN_GENERATE,
         &super::hooks::turn_generate_args(&request.conversation_ref),
         None,
@@ -297,6 +298,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let witness_args = serde_json::to_value(&user_turn).map_err(|error| engine(&error))?;
     let witness_session = verb_hook_boundary::hook_session_for_call(
         Some(&hooked_call()),
+        &oneiron::verbs::VERB_TABLE,
         WITNESS_ROW,
         &witness_args,
         None,

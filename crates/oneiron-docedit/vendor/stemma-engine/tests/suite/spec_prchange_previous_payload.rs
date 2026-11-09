@@ -77,6 +77,7 @@ fn unrelated_edit(doc: &Document) -> Document {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target,
             expect: "Unrelated edit target".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 italic: true,

@@ -12,7 +12,8 @@ use super::create_origin::{
 use super::create_validation::ValidatedTaskCreate;
 use super::fanout_launch::{
     WaveCheck, WaveLaunchAdmission, WaveLaunchGate, WaveLaunchInput, admit_wave_launch_in,
-    hold_planning_attempt_in, mark_launched_in, record_wave_check_in, wave_check_keys,
+    complete_overridden_planner_in, hold_planning_attempt_in, mark_launched_in,
+    record_wave_check_in, wave_check_keys,
 };
 use super::{TaskAssignee, TaskKind};
 use crate::agent_dispatch::{
@@ -680,7 +681,19 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     // with the exact cut and creator frozen on the launch.
                     WaveLaunchAdmission::Held(mut launch) => {
                         if let Some(attempt) = &self.attempt {
-                            hold_planning_attempt_in(self.vault, txn, &mut launch, attempt, now)?;
+                            // RUN-HOLD: a planner a generic Resume released
+                            // from this hold completes; its cut still waits.
+                            if launch.released_by_override(attempt.id) {
+                                complete_overridden_planner_in(self.vault, txn, attempt, now)?;
+                            } else {
+                                hold_planning_attempt_in(
+                                    self.vault,
+                                    txn,
+                                    &mut launch,
+                                    attempt,
+                                    now,
+                                )?;
+                            }
                         }
                         Ok(WaveTaskApplyOutcome::Paused(launch.receipt()))
                     }

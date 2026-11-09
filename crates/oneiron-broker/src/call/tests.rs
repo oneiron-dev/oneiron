@@ -14,6 +14,7 @@ fn call(origin: &str) -> CallHeader {
         "/v1/chat/completions".to_owned(),
         vec![("content-type".to_owned(), "application/json".to_owned())],
         "gpt-x".to_owned(),
+        false,
         BODY,
     )
 }
