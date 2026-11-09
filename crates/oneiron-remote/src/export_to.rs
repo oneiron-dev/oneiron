@@ -75,6 +75,7 @@ impl OneironClient {
                 let memory = embedded.memory();
                 oneiron::task_verb::verb_hook_boundary::typed_row(
                     &memory,
+                    &oneiron::verbs::VERB_TABLE,
                     "vault.export",
                     input,
                     |input| memory.export_to(&input, &mut sink),

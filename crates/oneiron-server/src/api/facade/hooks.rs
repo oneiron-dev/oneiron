@@ -94,7 +94,7 @@ async fn row_hooks_pre_decided(
             scope: None,
             board_epoch: None,
             turn: None,
-            domain: verb_hook_boundary::row_domain(&verb),
+            domain: verb_hook_boundary::row_domain(&oneiron::verbs::VERB_TABLE, &verb),
             reader,
         };
         oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
