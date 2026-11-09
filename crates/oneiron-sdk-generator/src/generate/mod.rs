@@ -4,7 +4,7 @@
 //! `Generator::new` (rows.rs) keeps that order; the emitters of later PRs read and mutate the one `Generator` in
 //! `outputs()`'s call order.
 
-mod common;
+pub(crate) mod common;
 mod docs;
 pub(crate) mod emit_core;
 mod emit_http;
@@ -17,7 +17,7 @@ mod emit_ts;
 mod outputs;
 mod row_access;
 mod rows;
-mod uniffi;
+pub(crate) mod uniffi;
 
 use std::ops::Index;
 use std::path::PathBuf;
