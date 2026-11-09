@@ -3,8 +3,10 @@
 //! crate-private item, or a port of a seed helper of the `#[cfg(test)]`
 //! fixtures, so the ruled behaviour tests of X01, X02, CONSENT-RAMP and the
 //! repeat revoke (#6874) run from an integration target while the lib test
-//! target does not compile. Hidden; never API. Every assertion stays in the
-//! test file: these return plain values.
+//! target does not compile. Compiled only under `--cfg oneiron_test_support`
+//! (`test_doors`); the existing `test_support` doors they call are on in every
+//! test build through the crate's self dev-dependency. Hidden; never API.
+//! Every assertion stays in the test file: these return plain values.
 
 use std::sync::Arc;
 
