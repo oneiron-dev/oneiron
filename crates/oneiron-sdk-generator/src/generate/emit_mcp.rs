@@ -906,3 +906,40 @@ fn execute_held_content_row(
 
 /// generate.py:1140-1140.
 const HELD_MEASURED: &str = "let measured = || oneiron::blob_artifact::BlobBodyFile::measure(held.file()).map_err(|error| mcp_facade_error(error.into()));\n";
+
+#[cfg(test)]
+mod tests {
+    use super::takes_task_work_turn;
+    use crate::py::json::loads;
+    use crate::py::value::Value;
+
+    #[test]
+    fn a_task_work_producer_row_is_a_plain_memory_row() {
+        // generate.py:931, Python's `ValueError` text.
+        let refused = [
+            r#"{"name": "tasks.accept", "task_decisions": true}"#,
+            r#"{"name": "tasks.accept", "server_door": "accept"}"#,
+            r#"{"name": "tasks.accept", "context": "board"}"#,
+            r#"{"name": "tasks.accept", "admission": {"readable": ["rows"]}}"#,
+        ];
+        for text in refused {
+            let Ok(Value::Dict(row)) = loads(text) else {
+                panic!("a row")
+            };
+            assert_eq!(
+                takes_task_work_turn(&row)
+                    .err()
+                    .map(|error| error.to_string()),
+                Some(
+                    "ValueError: tasks.accept: a task-work producer row is a plain memory row"
+                        .to_owned()
+                ),
+                "{text}"
+            );
+        }
+        let Ok(Value::Dict(plain)) = loads(r#"{"name": "describe", "task_work": 1}"#) else {
+            panic!("a row")
+        };
+        assert_eq!(takes_task_work_turn(&plain).ok(), Some(true));
+    }
+}
