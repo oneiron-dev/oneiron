@@ -4,7 +4,8 @@
 //! [`Vault::tagged_mentions`]. Every door acts through the caller's own
 //! credential: the named turn must read on the bound actor's recorded lane,
 //! exactly as the sibling scoped reads admit theirs, and a mention is
-//! served only while its turn reads. Every answer, and a point read's
+//! served only while its turn and its MESSAGE read, naming only the entities
+//! the lane reads (OPUS-LEAKS). Every answer, and a point read's
 //! NOT_FOUND, carries the lane's scope receipt, which names no hidden world
 //! and counts no hidden row (FIX 10170). Saved tags read from text the turn
 //! no longer shows stay readable, said to be stale and pending their retag
@@ -25,7 +26,7 @@ use super::tags::{
 use super::trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
-use crate::claim::{ClaimReadStatus, ScopedReadReceipt, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::extraction::{EncoderExecution, SpeakerTarget};
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref};
@@ -586,13 +587,94 @@ fn outcome_retry_at(outcome: &TaggingOutcome) -> Option<u64> {
     }
 }
 
+/// A tag set as a lane reads it (OPUS-LEAKS), and which of its mentions
+/// show.
+struct LaneTags {
+    tags: TurnTags,
+    /// By stored index: whether the mention shows.
+    kept: Vec<bool>,
+}
+
+impl LaneTags {
+    fn kept(&self, index: usize) -> bool {
+        self.kept.get(index).copied().unwrap_or(false)
+    }
+}
+
+/// `tags` as the lane whose point read is `reads` sees them: a mention shows
+/// only while the lane reads its MESSAGE, and its link names only the
+/// entities the lane reads (a provisional entity, local to this vault,
+/// shows with its mention). A coreference or merge evidence naming a
+/// mention left out goes with it. The mood, its parts and the surprise are
+/// measured over every MESSAGE of the set, so they show only while the lane
+/// reads them all. Every mention keeps its stored index.
+fn lane_tags(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    tags: &TurnTags,
+    mut reads: impl FnMut(&EntityId) -> crate::Result<bool>,
+) -> crate::Result<LaneTags> {
+    let mut shown = tags.clone();
+    let mut messages = std::collections::BTreeSet::new();
+    for message in &tags.messages {
+        if reads(message)? {
+            messages.insert(*message);
+        }
+    }
+    let kept: Vec<bool> = tags
+        .mentions
+        .iter()
+        .map(|mention| messages.contains(&mention.message))
+        .collect();
+    let mut entities = std::collections::BTreeMap::new();
+    for (mention, keep) in shown.mentions.iter_mut().zip(&kept) {
+        if !keep {
+            continue;
+        }
+        for entity in mention.link.entities().to_vec() {
+            let readable = match entities.get(&entity) {
+                Some(readable) => *readable,
+                None => {
+                    let readable = super::provisional::exists_in_txn(store, txn, &entity)?
+                        || reads(&entity)?;
+                    entities.insert(entity, readable);
+                    readable
+                }
+            };
+            if !readable {
+                mention.link = mention.link.without(&entity);
+            }
+        }
+        if let Some(antecedent) = mention.antecedent
+            && !kept.get(antecedent).copied().unwrap_or(false)
+        {
+            mention.antecedent = None;
+        }
+    }
+    let is_kept = |index: usize| kept.get(index).copied().unwrap_or(false);
+    shown
+        .merge_evidence
+        .retain(|evidence| is_kept(evidence.span) && is_kept(evidence.antecedent));
+    if messages.len() != tags.messages.len() {
+        shown.mood = None;
+        shown.mood_carried = false;
+        shown.mood_parts.clear();
+        shown.surprise = None;
+    }
+    shown.messages.retain(|message| messages.contains(message));
+    Ok(LaneTags { tags: shown, kept })
+}
+
 impl Memory<'_> {
     /// Resolves a turn ref and admits it on the bound actor's recorded
     /// lane, listing it as the answer's producer, with the lane's receipt
     /// for the answer. An absent turn, and one the lane does not read, get
     /// one NOT_FOUND that carries the receipt (FIX 10170). A denial at the
     /// lane's own floor adds no omission count.
-    fn tagging_turn(&self, reference: &str) -> MemoryResult<(EntityId, ScopedReadReceipt)> {
+    fn tagging_turn(
+        &self,
+        reference: &str,
+    ) -> MemoryResult<(EntityId, ScopedRead<'_>, ScopedReadReceipt)> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let turn = match resolve_entity_ref(self.vault(), reference) {
             Ok(turn) => turn,
@@ -606,7 +688,8 @@ impl Memory<'_> {
             let receipt = lane.read_receipt(None, 0)?;
             return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
-        Ok((turn, lane.read_receipt(None, 0)?))
+        let receipt = lane.read_receipt(None, 0)?;
+        Ok((turn, lane, receipt))
     }
 
     /// `vault.tagging.status`: pending, retrying or settled, with the
@@ -615,7 +698,7 @@ impl Memory<'_> {
         &self,
         input: &TaggingTurnRequest,
     ) -> MemoryResult<ScopedReadResult<TaggingStatusView>> {
-        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
+        let (turn, _, receipt) = self.tagging_turn(&input.turn_ref)?;
         let vault = self.vault();
         let tagging = vault.tagging_marker_config();
         let config = tagging.as_ref();
@@ -694,19 +777,24 @@ impl Memory<'_> {
         &self,
         input: &TaggingTurnRequest,
     ) -> MemoryResult<ScopedReadResult<TaggingTagsView>> {
-        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
+        let (turn, lane, receipt) = self.tagging_turn(&input.turn_ref)?;
         let vault = self.vault();
-        // The set and how current it is, read in one snapshot.
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        let view = match super::tags::readable_view_in_txn(&vault.store, &txn, &turn)? {
-            Some(tags) => {
-                let freshness = tagging_freshness_in_txn(vault, &txn, &turn, &tags)?;
-                self.produced_from(tags.messages.iter().copied());
-                Some(tags_view(&tags, freshness))
-            }
-            None => None,
-        };
-        drop(txn);
+        // The set, how current it is and what of it the lane reads, in one
+        // snapshot.
+        let view = lane.with_grant_read_snapshot(|txn| -> MemoryResult<_> {
+            let Some(tags) = super::tags::readable_view_in_txn(&vault.store, txn, &turn)? else {
+                return Ok(None);
+            };
+            let freshness = tagging_freshness_in_txn(vault, txn, &turn, &tags)?;
+            let policy = lane.live_policy_manifest_in(txn)?;
+            let shown = lane_tags(&vault.store, txn, &tags, |id| {
+                lane.is_entity_readable_with_policy_in(txn, &policy, id)
+            })?;
+            self.produced_from(shown.tags.messages.iter().copied());
+            let mut view = tags_view(&shown.tags, freshness);
+            view.mentions.retain(|mention| shown.kept(mention.index));
+            Ok(Some(view))
+        })?;
         let value = TaggingTagsView {
             turn_ref: turn.to_hex(),
             tags: view,
@@ -720,7 +808,7 @@ impl Memory<'_> {
         &self,
         input: &TaggingTurnRequest,
     ) -> MemoryResult<ScopedReadResult<TaggingHistoryView>> {
-        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
+        let (turn, _, receipt) = self.tagging_turn(&input.turn_ref)?;
         let traces = self.vault().tagging_trace_history(Some(&turn))?;
         let value = TaggingHistoryView {
             turn_ref: turn.to_hex(),
@@ -750,14 +838,28 @@ impl Memory<'_> {
             }
             Err(error) => return Err(error),
         };
+        // An entity the lane does not read has no mentions it may see.
+        if !lane.is_entity_readable(&entity)? {
+            let receipt = lane.read_receipt(None, 0)?;
+            return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
+        }
         let mut mentions = Vec::new();
         let mut current = std::collections::BTreeMap::new();
-        for hit in self.vault().tagged_mentions(&entity)? {
+        for mut hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
             }
-            if !lane.is_entity_readable(&hit.turn)? {
+            if !lane.is_entity_readable(&hit.turn)?
+                || !lane.is_entity_readable(&hit.mention.message)?
+            {
                 continue;
+            }
+            for linked in hit.mention.link.entities().to_vec() {
+                if self.vault().provisional_entity(&linked)?.is_none()
+                    && !lane.is_entity_readable(&linked)?
+                {
+                    hit.mention.link = hit.mention.link.without(&linked);
+                }
             }
             let freshness = match current.get(&hit.turn) {
                 Some(freshness) => *freshness,
