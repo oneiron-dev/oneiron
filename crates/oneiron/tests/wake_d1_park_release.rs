@@ -1,6 +1,7 @@
-//! WAKE-D1 (#6877): a Cancelled park resumes on the next pass; an
-//! ExecutorError park raises the owner's notice and resumes only at the
-//! owner's release, and after a restart it stays parked with its notice.
+//! WAKE-D1 (#6877): a Cancelled park resumes on the next pass, and a run
+//! its owner cancelled never does; an ExecutorError park raises the owner's
+//! notice and resumes only at the owner's release, and after a restart it
+//! stays parked with its notice.
 //! Moved from `dreamer_wake/tests.rs` (the oneiron lib test target does not
 //! compile); the node id and the notice read go through
 //! `oneiron::test_doors::wake_d1_park_release`, built only under
@@ -17,13 +18,16 @@ use oneiron::dreamer_runner::{
     DREAMER_SERVER_PARK_OWNER, DreamerAttemptStatus, DreamerParkedAttemptRecord,
     EnqueueDreamerConsolidationAttempt, ParkResumer,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::memory::DreamerParkCauseView;
+use oneiron::task_verb::run_cancel::RunCancelOutcome;
 use oneiron::test_doors::wake_d1_park_release as doors;
 use oneiron::{
-    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
-    DreamerConsolidationScope, DreamerParkCause, DreamerRunnerStore, DreamerWakeDriver,
-    EnqueueDreamerAttemptOutcome, Result, RunWakePass, Vault, VaultConfig, WakeAttemptContext,
-    WakeCancellation, WakePassDeadline, WakeTrigger,
+    AttemptInterventionEffect, AttemptInterventionKind, DreamerAdmittedAttempt,
+    DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerParkCause,
+    DreamerRunnerStore, DreamerWakeDriver, EnqueueDreamerAttemptOutcome, InterveneAttempt, Result,
+    RunWakePass, Vault, VaultConfig, WakeAttemptContext, WakeCancellation, WakePassDeadline,
+    WakeTrigger,
 };
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -177,6 +181,93 @@ fn a_cancelled_park_resumes_on_the_next_pass() -> Result<()> {
         "the next pass resumes the cancelled park"
     );
     assert_eq!(report.completed, 1);
+    Ok(())
+}
+
+/// Engine 06:50 (D): the owner's cancel is not the drain's or the stop's. A drain or a stop parks an admitted try
+/// as Cancelled, and the next pass resumes it (WAKE-D1). The owner's cancel settles the run as Cancelled with no
+/// park, so no pass resumes it.
+#[test]
+fn a_run_cancelled_by_its_owner_never_resumes() -> Result<()> {
+    let store_clock = oneiron_store::ports::manual_clock::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = open_vault_with(config)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let node_id = doors::load_or_mint_client_id(&vault)?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+
+    // The drain's cancel: the pass parks the try it admitted as Cancelled.
+    let drained = enqueue_micro(&store, "drained", 10)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(20);
+            20
+        }),
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1);
+    let parked = store
+        .parked_attempt(drained.attempt.id)?
+        .expect("the drain's park");
+    assert_eq!(parked.cause, DreamerParkCause::Cancelled);
+
+    // The owner's cancel, through the run tree's cancel door.
+    let stopped = enqueue_micro(&store, "owner-cancelled", 20)?;
+    store_clock.set(25);
+    let outcome = vault
+        .memory(owner, EdgeActorClass::Human)
+        .cancel_run_branch(InterveneAttempt {
+            id: stopped.attempt.id,
+            kind: AttemptInterventionKind::Cancel,
+            actor: owner.to_hex(),
+            note: Some("the owner stops this run".to_owned()),
+            now: 25,
+        })
+        .expect("the owner's cancel");
+    assert!(
+        matches!(
+            &outcome,
+            RunCancelOutcome::Applied(applied)
+                if matches!(applied.effect, AttemptInterventionEffect::Cancelled)
+        ),
+        "the owner's cancel applies at once: {outcome:?}"
+    );
+    assert!(
+        store.parked_attempt(stopped.attempt.id)?.is_none(),
+        "the owner's cancel parks nothing"
+    );
+
+    // Two later passes: the first resumes the drain's park and runs it; neither runs the owner's cancelled run.
+    let mut completer = CompletingExecutor {
+        completed_units: 25,
+        executed: 0,
+    };
+    for now in [30, 40] {
+        let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+        block_on_ready(driver.run_wake_pass(
+            run_input(DreamerConsolidationScope::Micro, node_id, {
+                store_clock.set(now);
+                now
+            }),
+            &mut completer,
+            &WakeCancellation::new(),
+        ))?;
+    }
+    assert_eq!(
+        completer.executed, 1,
+        "the later passes run the drained try once and the owner's cancelled run never"
+    );
+    assert!(store.parked_attempt(drained.attempt.id)?.is_none());
+    let after = store.status(stopped.attempt.id)?.expect("the owner's run");
+    assert_eq!(
+        after.attempt.state.as_str(),
+        "cancelled",
+        "the owner's cancelled run stays cancelled"
+    );
+    assert!(store.parked_attempt(stopped.attempt.id)?.is_none());
     Ok(())
 }
 
