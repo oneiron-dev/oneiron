@@ -534,6 +534,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const readA = await engine.client.call("vault.artifacts.read", {
       artifact_ref: putA.id_hex, version: appendA.landed.version,
     });
+    if (readA === null) throw new Error("Owner A's pinned artifact version is absent");
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
     expect(codeCustody06Sha256(bytesA)).toBe(oid);
@@ -634,8 +635,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       throw new Error("Scope refusal wrote no call receipt");
     const refusalRecord = await engine.client.call("vault.receipts.get", { receipt_ref: refusalReceipt });
     if (!refusalRecord) throw new Error("Scope refusal receipt unreadable");
+    expect(refusedAppend.headers.get("x-oneiron-receipt-ref")).toBe(refusalReceipt);
     expect(refusalRecord.verb).toBe("vault.artifacts.append");
     expect(refusalRecord.actor_ref).toBe(agentId);
+    expect(refusalRecord.actor_class).toBe("agent");
     expect(refusalRecord.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
     const refusedLfs = await agent.client.raw("POST", paths.batch, {
       operation: "upload", transfers: ["basic"], objects: [{ oid, size }],
@@ -648,7 +651,8 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const refusedDetails = refusedLfsBody.details as Record<string, unknown> | undefined;
     expect(refusedDetails?.code).toBe("FORBIDDEN");
     expect(refusedDetails?.requiredScope).toBe("core:write");
-    const refusedRegister = await agent.client.raw("POST", "/v1/core/facade/vault.code.origin.register", {
+    // The full-scope (still live) agent passes the Write grant, so the refusal comes from the owner-only door.
+    const refusedRegister = await full.client.raw("POST", "/v1/core/facade/vault.code.origin.register", {
       repo: "custody06-guest", default_branch: "main",
     });
     expect(refusedRegister.status).toBe(403);
@@ -660,7 +664,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       throw new Error("Owner-door refusal wrote no call receipt");
     const registerRecord = await engine.client.call("vault.receipts.get", { receipt_ref: registerReceipt });
     if (!registerRecord) throw new Error("Owner-door refusal receipt unreadable");
+    expect(refusedRegister.headers.get("x-oneiron-receipt-ref")).toBe(registerReceipt);
     expect(registerRecord.verb).toBe("vault.code.origin.register");
+    expect(registerRecord.actor_ref).toBe(agentId);
+    expect(registerRecord.actor_class).toBe("agent");
     expect(registerRecord.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
     const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
       slip_id: codeCustody06SlipId(full.credential),
@@ -714,6 +721,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(goneA.status).toBe(404);
     expect(codeCustody06ErrorBody(goneA).code).toBe("NOT_FOUND");
     const readB = await engine.client.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB });
+    if (readB === null) throw new Error("Owner B's pinned artifact version is absent after erasing A");
     const bytesB = Buffer.from(readB.content_base64, "base64");
     expect(bytesB.length).toBe(size);
     expect(codeCustody06Sha256(bytesB)).toBe(oid);
@@ -727,6 +735,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(goneAAfter.status).toBe(404);
     expect(codeCustody06ErrorBody(goneAAfter).code).toBe("NOT_FOUND");
     const readBAfter = await engine.client.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB });
+    if (readBAfter === null) throw new Error("Owner B's pinned artifact version is absent after restart");
     expect(codeCustody06Sha256(Buffer.from(readBAfter.content_base64, "base64"))).toBe(oid);
     const downloadRestart = await engine.client.request<unknown>("GET", paths.object);
     expect(downloadRestart.bytes.length).toBe(size);
