@@ -216,6 +216,7 @@ fn sent_request() -> (
             expires_at: now + 3600,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: vec![EsignField {
             id: field.clone(),
@@ -233,6 +234,8 @@ fn sent_request() -> (
         }],
         full_trail_appendix: false,
         lifecycle: None,
+        token_expires_at: None,
+        project: None,
     };
     vault
         .create_esign_document(
@@ -298,6 +301,7 @@ fn sent_request() -> (
                 content_ref: None,
                 idempotency_key: Some("public-sign".into()),
                 dedupe_key: Some("public-sign".into()),
+                mention: None,
             },
             OutboundIntentTrigger {
                 source: OutboundIntentSource::AgentImmediate,

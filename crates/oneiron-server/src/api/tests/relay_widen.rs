@@ -141,16 +141,17 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
 
     // The encoder itself refuses out-of-model requests; the route accepts
     // every delta that this existing structural model can produce.
+    // Ruled refusal removed (FIX 10198, #6224; Rule 5, counted not capped):
+    // an envelope names as many selectors as its grantor states, so one past
+    // the old 256-selector cap is admitted.
+    const REMOVED_SELECTOR_CAP: usize = 256;
     assert!(
-        ActionEnvelope::new(
-            (0..=oneiron::consent::MAX_ENVELOPE_SELECTORS).map(|i| format!("world:{i:03}"))
-        )
-        .is_err()
+        ActionEnvelope::new((0..=REMOVED_SELECTOR_CAP).map(|i| format!("world:{i:03}"))).is_ok()
     );
     assert!(ActionEnvelope::new(["x".repeat(oneiron::consent::MAX_CONSENT_REF_LEN + 1)]).is_err());
     // Every structurally valid frozen delta can land, not just deltas below
     // the old 4 KiB decoded route limit. Exercise the selector ceiling too.
-    for count in [9, oneiron::consent::MAX_ENVELOPE_SELECTORS] {
+    for count in [9, REMOVED_SELECTOR_CAP] {
         let selectors = (0..count).map(|index| format!("world:{index:03}:{}", "x".repeat(502)));
         let large = GrantBound::action(
             ActorBound::new(agent.to_hex()).unwrap(),
