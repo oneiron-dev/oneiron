@@ -53,6 +53,8 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+# The sandbox backends (core split 5b.1): the QuickJS runtime, Firecracker and the OCI container.
+oneiron-agent-runtime = { version = "0.1.0", path = "../oneiron-agent-runtime", features = ["microvm-firecracker"] }
 oneiron-mail-pack = { version = "0.1.0", path = "../oneiron-mail-pack" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 # `[models.code_mode.check]`: the type checkers shadow mode runs.
@@ -266,7 +268,7 @@ workspace = true
 # The shipped server serves MCP `execute_code` over the checked-in QuickJS
 # component once `[models.code_mode]` asks for it.
 default = ["code-sandbox-wasmtime"]
-code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
+code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime", "oneiron-agent-runtime/code-sandbox-wasmtime"]
 # The paired-machine mesh listener (OF-535); off by default, and on only when
 # the host also names a bind address.
 mesh = [
