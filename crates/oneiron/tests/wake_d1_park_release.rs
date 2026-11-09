@@ -71,6 +71,8 @@ fn enqueue_micro(
     })? {
         EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status),
+        // The outcome enum is `#[non_exhaustive]` outside the crate.
+        other => panic!("unexpected enqueue outcome {other:?}"),
     }
 }
 
