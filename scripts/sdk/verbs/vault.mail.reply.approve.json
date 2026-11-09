@@ -1,0 +1,14 @@
+{
+  "name": "vault.mail.reply.approve",
+  "description": "The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice.",
+  "input": "crate::mail_pack::MailReplyApproveRequest",
+  "output": "crate::mail_pack::MailReplyDraftView",
+  "call": "memory.mail_reply_approve(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_proof": "owner"
+}

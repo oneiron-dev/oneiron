@@ -1,0 +1,16 @@
+{
+  "name": "vault.embedding_spaces.retire",
+  "description": "Drops a declared space that no slot binds and no open move names, with its vector rows.",
+  "input": "crate::task_verb::sdk::EmbeddingSpaceRequest",
+  "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+  "call": "crate::task_verb::sdk::retire_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.retire\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

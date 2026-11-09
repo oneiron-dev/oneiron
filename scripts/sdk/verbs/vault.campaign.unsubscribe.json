@@ -1,0 +1,13 @@
+{
+  "name": "vault.campaign.unsubscribe",
+  "description": "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction.",
+  "input": "crate::campaign::surface::CampaignUnsubscribeRequest",
+  "output": "crate::campaign::surface::CampaignUnsubscribeReceipt",
+  "call": "memory.campaign_unsubscribe(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "openapi": true,
+  "section": false
+}

@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.switch_engine",
+  "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
+  "input": "crate::task_verb::sdk::BrowserSwitchEngineInput",
+  "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
+    "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

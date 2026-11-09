@@ -1,0 +1,23 @@
+{
+  "name": "tasks.redo",
+  "description": "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written.",
+  "input": "crate::task_verb::TaskRedo",
+  "output": "crate::task_verb::TaskCallReceipt",
+  "mcp_served": "[input.task_ref]",
+  "call": "memory.tasks_redo(input)?",
+  "scope": "Write",
+  "task_decisions": true,
+  "proposes": true,
+  "admission": {
+    "born_record_scope": true,
+    "readable": [
+      "task_ref"
+    ]
+  },
+  "mcp_scope": "born",
+  "mcp_fields": {
+    "spec": "$",
+    "task_ref": "=task_ref"
+  },
+  "section": true
+}

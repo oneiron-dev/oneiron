@@ -1,0 +1,16 @@
+{
+  "name": "vault.slim.resume",
+  "description": "Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::slim::public::SlimResumeReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.resume\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

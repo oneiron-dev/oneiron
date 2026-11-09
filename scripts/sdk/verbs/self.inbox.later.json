@@ -1,0 +1,12 @@
+{
+  "name": "self.inbox.later",
+  "description": "Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it.",
+  "input": "crate::agent_inbox_lens::InboxItemLaterRequest",
+  "output": "crate::agent_inbox_lens::InboxItemMarked",
+  "call": "memory.inbox_item_later(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

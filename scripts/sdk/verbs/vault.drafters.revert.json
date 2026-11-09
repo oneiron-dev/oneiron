@@ -1,0 +1,16 @@
+{
+  "name": "vault.drafters.revert",
+  "description": "The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back.",
+  "input": "crate::drafter::DrafterRevertRequest",
+  "output": "crate::drafter::DrafterRevertReceipt",
+  "call": "crate::drafter::revert_drafter_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.revert\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

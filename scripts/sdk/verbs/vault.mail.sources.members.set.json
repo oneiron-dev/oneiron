@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.sources.members.set",
+  "description": "Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on.",
+  "input": "crate::mail_pack::MailSourceMembersRequest",
+  "output": "crate::mail_pack::MailSourceView",
+  "call": "memory.mail_sources_members_set(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

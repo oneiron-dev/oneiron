@@ -195,6 +195,8 @@ pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
+pub mod verb_names;
+pub mod verb_table;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
@@ -638,7 +640,7 @@ pub use crate::memory::web_acquisition::{
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, IdScanPage, OpenOptions, RawEntityPut, ReaderTableShortfall,
-    TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
+    RuntimeHandle, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
     VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
     VaultDoctorReport, VaultStorageId, VaultWriterLease,
 };
@@ -696,12 +698,12 @@ mod m8_forward_oracle;
 #[cfg(test)]
 pub(crate) mod test_util;
 
-/// Doors for tests that drive the engine from another crate. Not API.
-#[cfg(any(test, feature = "test-support"))]
-#[doc(hidden)]
-pub mod test_support;
 /// Doors from the integration tests to crate-private items. Compiled only under
 /// `--cfg oneiron_test_support`, which only the test command sets. Not API.
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
 pub mod test_doors;
+/// Doors for tests that drive the engine from another crate. Not API.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;

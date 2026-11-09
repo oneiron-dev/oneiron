@@ -1,0 +1,19 @@
+{
+  "name": "ai.chat.completions",
+  "description": "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling.",
+  "input": "ChatCompletionRequest",
+  "output": "crate::task_verb::sdk::ChatCompletionResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.chat.completions\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "credential_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_session": true,
+  "proposes": true,
+  "mcp_scope": "filtered"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "self.budget.land",
+  "description": "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later.",
+  "input": "crate::agent_dispatch::budget_doors::BudgetLandRequest",
+  "output": "crate::agent_dispatch::PartialResultHold",
+  "call": "crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.embedding_spaces.move_approve",
+  "description": "The owner says yes to a full candidate over a check that did not read not worse; it swaps in.",
+  "input": "crate::task_verb::sdk::EmbeddingSpaceCandidateRequest",
+  "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+  "call": "crate::task_verb::sdk::approve_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_approve\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

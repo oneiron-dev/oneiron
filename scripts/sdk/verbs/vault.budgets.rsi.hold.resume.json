@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.rsi.hold.resume",
+  "description": "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt.",
+  "input": "crate::llm::rsi_doors::RsiLineRequest",
+  "output": "crate::llm::rsi_doors::RsiLineView",
+  "call": "crate::llm::rsi_doors::resume_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold.resume\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

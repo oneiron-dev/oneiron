@@ -1,0 +1,17 @@
+{
+  "name": "vault.projects.confirm",
+  "description": "The owner's tap that confirms a host-held project card; only the host's own door can complete it.",
+  "input": "crate::workspace_roster::ProjectCardConfirmRequest",
+  "output": "crate::workspace_roster::ProjectMintReceipt",
+  "call": "memory.projects_confirm(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_session": true,
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "host_door_proof": "owner"
+}

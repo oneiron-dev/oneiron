@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.rules.set",
+  "description": "The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose.",
+  "input": "SkillHashRuleRequest",
+  "output": "crate::task_verb::sdk::HubConsentReceipt",
+  "call": "crate::task_verb::sdk::skill_hash_rule_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.rules.set\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "vault.shape.read",
+  "description": "The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read.",
+  "input": "EmptyRequest",
+  "output": "crate::vault_shape::ShapeRead",
+  "call": "memory.shape_read()?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.hooks.regen.revert",
+  "description": "Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt.",
+  "input": "crate::memory::hook_regen_doors::HookRegenRevertRequest",
+  "output": "crate::task_verb::sdk::PackPutReceipt",
+  "call": "memory.hooks_regen_revert_as(&memory.embedded_owner(\"vault.hooks.regen.revert\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.standing_blocks.configure",
+  "description": "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle.",
+  "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",
+  "output": "crate::task_verb::sdk::StandingBlockView",
+  "call": "crate::task_verb::sdk::configure_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.configure\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

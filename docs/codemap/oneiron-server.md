@@ -406,9 +406,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/foreign_code_doors.rs` | src | s | 2 crate-vis | — | The foreign `execute_code` projection |
 | `src/api/facade/free_time_doors.rs` | src | s | 6 crate-vis | — | The free-time host doors (FIX 4453): the owner's `vault.free_time.policy.get`, `.policy.set`, `.cycles` and… |
 | `src/api/facade/gate_policy_doors.rs` | src | s | 5 crate-vis | — | Owner policy and checker host doors |
-| `src/api/facade/generated/agent_verbs.rs` | src | generated | 2 crate-vis | — | — |
-| `src/api/facade/generated/dispatch.rs` | src | generated | 2 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
-| `src/api/facade/generated/host_door_rows.rs` | src | generated | 5 crate-vis | — | The host-door rows whose door checks its caller before the row's verb hooks run (FIX 1763), one variant… |
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 15 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
@@ -450,7 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/legal_hold_doors.rs` | src | s | 9 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`… |
 | `src/api/facade/lens_selection_doors.rs` | src | s | 3 crate-vis | — | Frame-bound selections and result-set actions on a held card |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
-| `src/api/facade/live_run_doors.rs` | src | s | 7 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/live_run_doors.rs` | src | s | 8 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/live_voice_settlement.rs` | src | s | 2 crate-vis | — | Observes an already admitted connector call; never resends or answers it |
 | `src/api/facade/mail_pack_doors.rs` | src | s | 4 crate-vis | — | `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and… |
@@ -629,7 +626,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 12 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/exec_board_verbs/execute_code.rs` | src | m | 4 crate-vis | — | The execute-code executor: one durable REPL run entered under its connector actor, and the answer that entry… |
 | `src/api/mcp_gateway/facade_refusals.rs` | src | s | 1 crate-vis | — | A typed engine facade error on the gateway's JSON-RPC vocabulary: its code and its stable kind |
-| `src/api/mcp_gateway/generated/agent_verb_dispatch.rs` | src | generated | 4 crate-vis | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | m | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 19 crate-vis | — | The MCP gateway: its module registrations and the names its children share |
 | `src/api/mcp_gateway/oauth_call.rs` | src | s | 5 crate-vis | — | A stock cloud client's `/mcp` call on its OAuth access token (FIX 4902 slice C; owner CLOUD AGENTS CONNECT =… |
@@ -689,6 +685,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/facade_paths.rs` | src | s | 1 crate-vis | — | The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST… |
 | `src/api/openapi/left_slip_paths.rs` | src | s | 1 crate-vis | — | A removed device's own routes in the OpenAPI document (OF-150, OF-158, FIX 1300), moved whole out of… |
 | `src/api/openapi/mod.rs` | src | s | 3 crate-vis | — | OpenAPI document assembly for the HTTP API |
+| `src/api/openapi/off_record_room_paths.rs` | src | s | 1 crate-vis | — | The participants' off-record room routes (`/v1/core/off-record`, ARCH-0052 D5): each route takes its verb… |
 | `src/api/openapi/openai_proxy_paths.rs` | src | s | 1 crate-vis | — | The OpenAI-compatible memory proxy publishes the verb table's exact DTOs |
 | `src/api/openapi/owner_paths.rs` | src | s | 10 crate-vis | — | The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input… |
 | `src/api/openapi/pairing_paths.rs` | src | m | 1 crate-vis | — | Pairing and slip-revocation operations for the routes in `api/pairing.rs` |
@@ -2020,5 +2017,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
+| `tests/openapi_off_record_rooms.rs` | test | s | — | — | The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with… |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

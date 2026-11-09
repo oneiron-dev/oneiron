@@ -1,0 +1,16 @@
+{
+  "name": "vault.packs.connector.grants.put",
+  "description": "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.",
+  "input": "ConnectorPackGrantsPutRequest",
+  "output": "crate::task_verb::sdk::ConnectorPackGrants",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.grants.put\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

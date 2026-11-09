@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 /// Substrate invariant (ARCH-0028, one table): the checked-in code-mode
 /// declarations are exactly what the verb table renders. A row added, dropped
-/// or retyped in `scripts/sdk/agent-verbs.json` fails here until the file is
+/// or retyped in `scripts/sdk/verbs/` fails here until the file is
 /// regenerated with `ONEIRON_UPDATE_TEST_FIXTURES=1`.
 #[test]
 fn code_mode_declarations_file_is_the_verb_table() {

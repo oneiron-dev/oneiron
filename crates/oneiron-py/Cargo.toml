@@ -28,7 +28,9 @@ oneiron-server = { path = "../oneiron-server", optional = true }
 # abi3-py310 matches the 3.10 floor and produces ONE wheel for every later
 # CPython, so the release matrix is a platform list rather than a
 # platform-by-interpreter grid.
-pyo3 = { version = "0.29", features = ["abi3-py310", "extension-module"] }
+# multiple-pymethods: the verb methods are a second `#[pymethods]` block, generated at build time (untangle
+# slice 4.3; SLICE4.3-DEFAULTS D1).
+pyo3 = { version = "0.29", features = ["abi3-py310", "extension-module", "multiple-pymethods"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -42,4 +44,5 @@ engine = ["dep:oneiron-server"]
 workspace = true
 
 [build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
 pyo3-build-config = "0.29"

@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.recipe_policy",
+  "description": "The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings.",
+  "input": "crate::dreamer_wake::sieve_doors::SievePolicyRequest",
+  "output": "crate::dreamer_wake::WakeRecipePolicy",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_recipe_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.recipe_policy\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
