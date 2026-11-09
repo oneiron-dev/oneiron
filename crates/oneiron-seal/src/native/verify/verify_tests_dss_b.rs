@@ -123,7 +123,13 @@ pub(crate) mod tests {
             usize::MAX,
             &mut checks,
         );
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     #[test]
@@ -199,7 +205,13 @@ pub(crate) mod tests {
         catalog.set("DSS", Object::Dictionary(dss));
         doc.trailer.set("Root", Object::Dictionary(catalog));
         let checks = dss_check(&doc, &[]);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     // --- botfix3a gates: signer-leaf KU, CRL scope, OCSP delegate/producedAt,
@@ -384,7 +396,13 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     #[test]
@@ -416,7 +434,13 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     #[test]
