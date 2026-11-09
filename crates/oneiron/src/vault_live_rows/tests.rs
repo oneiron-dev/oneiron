@@ -5,13 +5,16 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::live_rows::LiveRow;
 use crate::memory::{
     MessageStreamError, MessageStreamHandle, StreamCancelReason, WitnessAuthor, WitnessMessage,
     WitnessTurn,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// One vault with the live work of every row at hand.
 struct Fixture {
