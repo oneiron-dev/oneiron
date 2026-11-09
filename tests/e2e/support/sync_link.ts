@@ -175,7 +175,7 @@ export class SyncLinkProxy {
   private relayFrames(from: Socket, to: Socket, direction: SyncLinkDirection, first: Buffer, pair: { device: Socket; home: Socket }): void {
     const d = this.directions[direction];
     const send = (bytes: Buffer): void => { if (!to.destroyed) to.write(bytes) };
-    let pending = Buffer.alloc(0);
+    let pending: Buffer = Buffer.alloc(0);
     let message: Buffer[] = [];
     const consume = (chunk: Buffer): void => {
       pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
