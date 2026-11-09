@@ -474,9 +474,18 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
         )
         .unwrap();
     // The owner mints it, as the owner's own act; the vault stamps its time.
+    let owner_actor = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            owner_actor,
+            &owner_actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
     vault
         .mint_standing_outbound_grant(
-            &crate::test_credentials::embedded_owner(&vault),
+            &owner,
             oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
             &GrantMintIntent {
                 principal_ref: actor_id.to_hex(),
