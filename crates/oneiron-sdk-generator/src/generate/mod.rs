@@ -25,7 +25,6 @@ use std::path::PathBuf;
 use crate::facade_types::Inventory;
 use crate::py::value::{Dict, Value};
 
-
 /// Port of generate.py:66 (SESSION_READS).
 pub(crate) const SESSION_READS: &[&str] =
     &["Get", "Hydrate", "RefsResolve", "SearchBm25", "Receipts"];

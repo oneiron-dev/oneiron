@@ -116,7 +116,10 @@ pub(crate) fn capitalized_words(text: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let mut at = 0;
     while let Some(c) = text[at..].chars().next() {
-        let free = text[..at].chars().next_back().is_none_or(|before| !is_word(before));
+        let free = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !is_word(before));
         if c.is_ascii_uppercase() && free {
             let end = text[at..]
                 .find(|next: char| !is_word(next))
@@ -396,10 +399,7 @@ fn ts_wire_body(
         let mut destructure = Vec::new();
         for name in fields.iterate()? {
             let default = if contains(defaults, &name)? {
-                format!(
-                    " = {}",
-                    json(defaults.getitem(concat_left(&name)?)?)
-                )
+                format!(" = {}", json(defaults.getitem(concat_left(&name)?)?))
             } else {
                 String::new()
             };
@@ -629,10 +629,7 @@ pub(crate) fn ts_facade_module(
         "{HEADER}{FACADE_VERBS_TS_DOC}import type * as Facade from \"./facade-types.js\"\nimport type {{ NativeClient }} from \"./native.js\"\n"
     );
     for (module, names) in &sources {
-        out += &format!(
-            "import type {{ {} }} from \"{module}\"\n",
-            names.join(", ")
-        );
+        out += &format!("import type {{ {} }} from \"{module}\"\n", names.join(", "));
     }
     let called: BTreeSet<&str> = findall_called_words(&body).into_iter().collect();
     let exported = group_set(
@@ -680,10 +677,7 @@ pub(crate) fn ts_native_module(
         };
         let names = take_sorted(&mut used, &group_set(&EXPORTED_TYPE, &text));
         if !names.is_empty() {
-            out += &format!(
-                "import type {{ {} }} from \"{module}\"\n",
-                names.join(", ")
-            );
+            out += &format!("import type {{ {} }} from \"{module}\"\n", names.join(", "));
         }
     }
     out += "\n/** The native client's generated verb methods, as napi-rs exposes them. */\nexport interface NativeAgentVerbs {\n";

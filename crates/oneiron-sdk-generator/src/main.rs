@@ -105,10 +105,7 @@ fn get_option_tuples(text: &str) -> Vec<OptionTuple> {
         }
     } else if first == Some('-') {
         let (prefix, explicit) = partition(text);
-        let short_end = text
-            .char_indices()
-            .nth(2)
-            .map_or(text.len(), |(at, _)| at);
+        let short_end = text.char_indices().nth(2).map_or(text.len(), |(at, _)| at);
         let (short_prefix, short_explicit) = text.split_at(short_end);
         for (string, opt) in OPTION_STRINGS {
             if string == short_prefix {
@@ -220,7 +217,8 @@ impl Namespace {
             Opt::Package => {
                 let value = values.first().cloned().unwrap_or_default();
                 if !CHOICES.contains(&value.as_str()) {
-                    let choices: Vec<String> = CHOICES.iter().map(|choice| py_repr(choice)).collect();
+                    let choices: Vec<String> =
+                        CHOICES.iter().map(|choice| py_repr(choice)).collect();
                     return Err(Parsed::Error(argument_error(
                         Some(action),
                         &format!(
@@ -247,7 +245,10 @@ fn consume_optional(
     extras: &mut Vec<String>,
 ) -> Result<usize, Parsed> {
     if tuples.len() > 1 {
-        let matches: Vec<&str> = tuples.iter().map(|tuple| tuple.option_string.as_str()).collect();
+        let matches: Vec<&str> = tuples
+            .iter()
+            .map(|tuple| tuple.option_string.as_str())
+            .collect();
         return Err(Parsed::Error(format!(
             "ambiguous option: {} could match {}",
             args[start],
@@ -546,7 +547,8 @@ fn format_help(prog: &str, width: i64) -> String {
 
 /// The repository root: the nearest ancestor of the current directory holding `scripts/sdk/verbs`.
 fn find_root() -> Result<PathBuf, String> {
-    let here = std::env::current_dir().map_err(|error| format!("the current directory: {error}"))?;
+    let here =
+        std::env::current_dir().map_err(|error| format!("the current directory: {error}"))?;
     here.ancestors()
         .find(|dir| dir.join("scripts/sdk/verbs").is_dir())
         .map(Path::to_path_buf)
@@ -769,13 +771,22 @@ mod tests {
             args(false, None, &["docs", "oneiron"])
         );
         assert_eq!(parse(&strings(&["--out-dir="])), args(false, Some(""), &[]));
-        assert_eq!(parse(&strings(&["--out-dir", "-1"])), args(false, Some("-1"), &[]));
+        assert_eq!(
+            parse(&strings(&["--out-dir", "-1"])),
+            args(false, Some("-1"), &[])
+        );
         assert_eq!(
             parse(&strings(&["--out-dir", "a", "--out-dir", "b"])),
             args(false, Some("b"), &[])
         );
         assert_eq!(parse(&strings(&[])), args(false, None, &[]));
-        for help in [&["-h"][..], &["--h"], &["--help", "--foo"], &["--foo", "--help"], &["-hx"]] {
+        for help in [
+            &["-h"][..],
+            &["--h"],
+            &["--help", "--foo"],
+            &["--foo", "--help"],
+            &["-hx"],
+        ] {
             assert_eq!(parse(&strings(help)), Parsed::Help, "{help:?}");
         }
     }
