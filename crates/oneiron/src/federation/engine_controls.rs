@@ -217,7 +217,15 @@ impl Vault {
             Ok(id)
         })
     }
+}
 
+/// A holder's change, rendered for its receipt.
+pub(crate) fn rendered_change(value: &impl Serialize) -> Result<String> {
+    serde_json::to_string(value)
+        .map_err(|_| Error::InvalidConfig("an engine-control value that does not render".into()))
+}
+
+impl Vault {
     /// Every engine-control change, oldest first, for the owner to read.
     ///
     /// # Errors
