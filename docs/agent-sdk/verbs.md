@@ -181,6 +181,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.export_pack`
 - `vault.agents.get`
 - `vault.agents.grants.mint`
+- `vault.agents.grants.narrow`
 - `vault.agents.grants.revoke`
 - `vault.agents.spawn.get`
 - `vault.agents.spawn`
@@ -588,6 +589,7 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.retire`
+- `vault.engine.controls.changes`
 - `vault.entities.look_before_mint`
 - `vault.entities.mention`
 - `vault.esign.create`
@@ -763,6 +765,10 @@ both bindings and their export-census tests in one change.
 - `vault.members.accept`
 - `vault.members.accept_with_credential`
 - `vault.members.add`
+- `vault.members.ask`
+- `vault.members.asks.apply`
+- `vault.members.asks.decline`
+- `vault.members.asks`
 - `vault.members.change`
 - `vault.members.decline`
 - `vault.members.delegate`

@@ -1725,6 +1725,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def engine(self) -> "Oneiron._VaultEngineVerbs": ...
+        @property
         def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
@@ -1994,6 +1996,8 @@ class Oneiron:
     class _VaultAgentsGrantsVerbs:
         def mint(self, spec: Facade.AgentGrantMintRequest) -> Facade.AgentGrantMinted:
             """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
+        def narrow(self, spec: Facade.SystemAgentGrantNarrowRequest) -> Facade.SystemAgentGrantNarrowed:
+            """The owner narrows or revokes the Dreamer's or the Coach's Steward grant; a narrowing that breaks a vault function answers what breaks and applies only with the confirm it gave."""
         def revoke(self, spec: Facade.AgentGrantRevokeRequest) -> Facade.AgentGrantRevoked:
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
     class _VaultAgentsSpawnVerbs:
@@ -3043,6 +3047,12 @@ class Oneiron:
             """Every stored embedding space probe with its id."""
         def put(self, spec: Facade.EmbeddingSpaceProbePutRequest) -> Facade.EmbeddingSpaceProbe:
             """Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author."""
+    class _VaultEngineVerbs:
+        @property
+        def controls(self) -> "Oneiron._VaultEngineControlsVerbs": ...
+    class _VaultEngineControlsVerbs:
+        def changes(self, spec: Facade.EngineControlChangesRequest) -> list[Facade.EngineControlChangeEntry]:
+            """The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first."""
     class _VaultEntitiesVerbs:
         def look_before_mint(self, spec: Facade.IdentityLookupRequest) -> Facade.IdentityLookup:
             """The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."""
@@ -3510,6 +3520,10 @@ class Oneiron:
             """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
+        def ask(self, spec: Facade.SharedMemberAskRequest) -> Facade.SharedMemberAsk:
+            """A Steward suggests adding, removing or moving one member of a shared vault; it writes one ask for the vault's Owners and Admins and changes no membership."""
+        @property
+        def asks(self) -> "Oneiron._VaultMembersAsksVerbs": ...
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def decline(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
@@ -3532,6 +3546,13 @@ class Oneiron:
             """An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin with the add_member power takes back a pending invitation."""
+    class _VaultMembersAsksVerbs:
+        def __call__(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedMemberAsk]:
+            """The member asks the caller may see in a shared vault: every ask for an Owner or Admin, a Steward's own asks."""
+        def apply(self, spec: Facade.SharedMemberAskIdRequest) -> Facade.SharedActExecutionReceipt:
+            """An Owner or Admin applies a Steward's open member ask through the membership door it names; the receipt names the Steward as proposer."""
+        def decline(self, spec: Facade.SharedMemberAskIdRequest) -> Facade.SharedMemberAsk:
+            """An Owner or Admin declines a Steward's open member ask; no membership changes."""
     class _VaultMemoryVerbs:
         @property
         def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...
