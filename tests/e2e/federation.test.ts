@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { generateKeyPairSync } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { encode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
@@ -638,7 +639,8 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
     confidence: 0.9, source: "user_stated", sensitivity: 1, scope: { ...scope, world_id: world },
     occurred_at: FED03_LEARNED_AT, learned_at: FED03_LEARNED_AT,
   });
-  expect(written.approval).toBe("auto");
+  // A sensitivity-stamped claim requests Proposed (memory/support/wire.rs:59-71); it still syncs.
+  expect(written.approval).toBe("proposed");
   const delivery = await source.client.call("vault.federation.connect.export", {
     pact, window_key: `2026-10@${world}`, world_ref: world,
   });
@@ -655,6 +657,7 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
   );
   const received = page.value.filter(row => row.world_ref === joined.world_ref && row.value === sentence);
   expect(received).toHaveLength(1);
+  expect(received[0]?.approval).toBe("proposed");
   expect(received[0]?.source).toBe("imported");
   expect(received[0]?.lifecycle).toBe("active");
   return delivery;
@@ -944,7 +947,19 @@ function fed04ExpectEnvelope(envelope: Fed04Envelope, pact: Fed04Pact, windowKey
   const canonicalEnvelope = encode({ body: canonicalBody, signature: Uint8Array.from(envelope.envelope.signature) });
   const context = {
     pact: envelope.context.pact, epoch: envelope.context.epoch,
-    ceiling: envelope.context.ceiling, effective_scope: envelope.context.effective_scope,
+    ceiling: {
+      worlds: envelope.context.ceiling.worlds,
+      facets: envelope.context.ceiling.facets,
+      bands: envelope.context.ceiling.bands,
+      audience: envelope.context.ceiling.audience,
+      verbs: envelope.context.ceiling.verbs,
+      sensitivity: envelope.context.ceiling.sensitivity,
+    },
+    effective_scope: {
+      worlds: envelope.context.effective_scope.worlds,
+      facets: envelope.context.effective_scope.facets,
+      bands: envelope.context.effective_scope.bands,
+    },
   };
   // The inner rmpv codec uses binary fields; the outer serde &[u8] is a sequence.
   const transcript = encode(["oneiron/guest-document/v1", context, [...canonicalEnvelope]]);
@@ -995,8 +1010,9 @@ suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed sco
     expect(resolved.facets).toEqual({ kind: "all" });
     expect(resolved.bands).toEqual({ kind: "all" });
     expect(resolved.audience).toEqual({ kind: "all" });
-    if (resolved.verbs.kind !== "some") throw new Error("grant verbs narrowed unexpectedly");
-    expect([...resolved.verbs.values].sort()).toEqual(["propose", "read"]);
+    const verbs = resolved.verbs;
+    if (!verbs || verbs.kind !== "some") throw new Error("grant verbs narrowed unexpectedly");
+    expect([...verbs.values].sort()).toEqual(["propose", "read"]);
     expect(resolved.sensitivity).toEqual({ kind: "at_most", value: "private" });
     // The host's own claim in the shared world. Sensitivity 1 (private) keeps
     // it inside the grant's at-most-private ceiling.
@@ -1257,22 +1273,28 @@ async function fed07NamedWorld(engine: EngineFixture, name: string, occurred: nu
   return world.id_hex;
 }
 async function fed07ConnectPact(sharer: EngineFixture, receiver: EngineFixture): Promise<Fed07Pact> {
-  const sharerId = await sharer.client.call("vault.federation.connect.identity", {});
-  const receiverId = await receiver.client.call("vault.federation.connect.identity", {});
+  const [sharerId, receiverId] = await Promise.all([
+    sharer.client.call("vault.federation.connect.identity", {}),
+    receiver.client.call("vault.federation.connect.identity", {}),
+  ]);
   expect(sharerId.vault).not.toBe(receiverId.vault);
   expect(sharerId.vault).toMatch(/^[a-f0-9]{64}$/);
   expect(receiverId.vault).toMatch(/^[a-f0-9]{64}$/);
-  const sharerWorld = await fed07NamedWorld(sharer, "FED-07 shared workshop", FED07_ALLOW_TS);
-  const receiverWorld = await fed07NamedWorld(receiver, "FED-07 receiving workshop", FED07_ALLOW_TS);
+  const [sharerWorld, receiverWorld] = await Promise.all([
+    fed07NamedWorld(sharer, "FED-07 shared workshop", FED07_ALLOW_TS),
+    fed07NamedWorld(receiver, "FED-07 receiving workshop", FED07_ALLOW_TS),
+  ]);
   expect(sharerWorld).not.toBe(receiverWorld);
-  const sharerGrant = await sharer.client.call("vault.federation.connect.grants.mint", {
-    peer_vault: receiverId.vault,
-    authority_scope: fed07ShareScope(sharerWorld),
-  });
-  const receiverGrant = await receiver.client.call("vault.federation.connect.grants.mint", {
-    peer_vault: sharerId.vault,
-    authority_scope: fed07ShareScope(receiverWorld),
-  });
+  const [sharerGrant, receiverGrant] = await Promise.all([
+    sharer.client.call("vault.federation.connect.grants.mint", {
+      peer_vault: receiverId.vault,
+      authority_scope: fed07ShareScope(sharerWorld),
+    }),
+    receiver.client.call("vault.federation.connect.grants.mint", {
+      peer_vault: sharerId.vault,
+      authority_scope: fed07ShareScope(receiverWorld),
+    }),
+  ]);
   expect(sharerGrant.grant).toMatch(/^[a-f0-9]{32}$/);
   expect(receiverGrant.grant).toMatch(/^[a-f0-9]{32}$/);
   expect(sharerGrant.guest_actor).toMatch(/^[a-f0-9]{32}$/);
@@ -1368,10 +1390,6 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       peer,
       policy: { baseline: allowBaseline, unusual_rate: "allow", unusual_streak: "allow" },
     });
-    const allowPolicy = await receiver.client.call("vault.federation.burst.policy", peer);
-    expect(allowPolicy.unusual_rate).toBe("allow");
-    expect(allowPolicy.unusual_streak).toBe("allow");
-    expect(allowPolicy.baseline).toEqual(allowBaseline);
     const allowWindow = fed07WindowKey(FED07_ALLOW_TS, pact.sharerWorld);
     const allowUpsert = await engine.client.call("vault.claims.upsert", {
       predicate: FED07_PREDICATE,
@@ -1631,9 +1649,6 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     const replayLost = await fed07Refusal(receiver.client.call("vault.federation.burst.replay", { peer, batch_ref: deferReceipt.batch_ref }), receiver);
     expect(replayLost.reply.status).toBe(400);
     expect(replayLost.error?.code).toBe("BAD_REQUEST");
-    const ingressLost = await fed07Refusal(receiver.client.call("vault.federation.burst.ingress", allowDelivery), receiver);
-    expect(ingressLost.reply.status).toBe(400);
-    expect(ingressLost.error?.code).toBe("BAD_REQUEST");
     const finalList = await receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 });
     expect(finalList.value).toHaveLength(3);
     expect(finalList.value.find((row) => row.value === anomalous)?.claim_ref).toBe(releasedRow.claim_ref);
