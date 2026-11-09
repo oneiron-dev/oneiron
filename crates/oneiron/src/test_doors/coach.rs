@@ -49,7 +49,11 @@ pub fn write_root_goal(vault: &Vault, owner: &AuthenticatedOwner) -> Result<Enti
             "held-out unsafe answer count",
             "= 0",
         )],
-        cost_axes: vec![axis("tokens", "token spend per week", "<= 10000")],
+        // A goal's cost axes name the human's minutes (GoalRecord::validate).
+        cost_axes: vec![
+            axis("tokens", "token spend per week", "<= 10000"),
+            axis("human_minutes", "owner minutes per week", "<= 20"),
+        ],
         preferences: vec![GoalPreference {
             prefer: "lower cost".into(),
             over: "faster response".into(),
