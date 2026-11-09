@@ -13,9 +13,6 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
-/// Doors for the untangle regression tests (`tests/untangle_regressions.rs`).
-pub mod untangle_regressions;
-
 /// Raw stored-entity record: the 33-byte metadata header (type byte,
 /// occurred start/end, learned_at, row_version — all big-endian u64s, per
 /// the `batch::ENTITY_*_OFFSET` layout) followed by `body`.
