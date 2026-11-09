@@ -3641,6 +3641,9 @@ impl OneironClient {
                 "vault.runs.program_hold.release" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ProgramHoldReleaseView,
                 >(client, verb, &input),
+                "vault.runs.parks.release" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::ParkReleaseView,
+                >(client, verb, &input),
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
                 >(client, verb, &input),
@@ -18656,6 +18659,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.program_hold.release", value)
+    }
+    pub fn vault_runs_parks_release(
+        &self,
+        input: &oneiron::dreamer_runner::ReleaseParkedAttemptRequest,
+    ) -> Result<oneiron::dreamer_runner::ParkReleaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.parks.release", value)
     }
     pub fn vault_consolidation_home_get(
         &self,

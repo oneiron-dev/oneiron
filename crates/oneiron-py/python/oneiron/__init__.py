@@ -5133,6 +5133,9 @@ class Oneiron:
         @property
         def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs":
             return Oneiron._VaultRunsProgramHoldVerbs(self._client)
+        @property
+        def parks(self) -> "Oneiron._VaultRunsParksVerbs":
+            return Oneiron._VaultRunsParksVerbs(self._client)
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
@@ -5154,6 +5157,12 @@ class Oneiron:
         def release(self, spec):
             """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
             return json.loads(_translate(lambda: self._client.vault_runs_program_hold_release(json.dumps(spec))))
+    class _VaultRunsParksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def release(self, spec):
+            """The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release."""
+            return json.loads(_translate(lambda: self._client.vault_runs_parks_release(json.dumps(spec))))
     class _VaultConsultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -10793,6 +10793,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_runs_parks_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.parks.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.parks.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consolidation_home_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.home.get")?;
         let output = py
