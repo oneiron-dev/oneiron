@@ -1,4 +1,4 @@
-//! Port of generate.py: the Rust core outputs (G4a): `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs`
+//! The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs`
 //! (untangle slice 5.0a: `core_verb_names` and its checks), and the inline segments of `outputs()` that build
 //! `sdk_generated.rs` (`core`) and `verb_catalog.rs` (`catalog`), with the row helpers they call.
 //!
@@ -14,7 +14,7 @@ use crate::py::json::dumps_str;
 use crate::py::text::upper;
 use crate::py::value::{Dict, Value, set_add};
 
-/// Port of generate.py:1587-1607 (run_catalog): `RunVerb`, the rows code mode serves that the run answers itself.
+/// `RunVerb`, the rows code mode serves that the run answers itself.
 pub(crate) fn run_catalog(generator: &Generator) -> Result<String, GenerateError> {
     let rows = generator.rows.select(&generator.run_rows);
     let variants = variants(&rows)?;
@@ -95,8 +95,7 @@ pub(crate) fn run_catalog(generator: &Generator) -> Result<String, GenerateError
     Ok(out + "}\n")
 }
 
-/// Port of generate.py:1629-1631 (default_const): the engine constant that carries one binding default the manifest
-/// states.
+/// The engine constant that carries one binding default the manifest states.
 pub(crate) fn default_const(row: &Dict, arg: &Value) -> Result<String, GenerateError> {
     let name = text(row, "name", "replace")?.replace('.', "_");
     Ok(upper(&format!(
@@ -105,20 +104,19 @@ pub(crate) fn default_const(row: &Dict, arg: &Value) -> Result<String, GenerateE
     )))
 }
 
-/// generate.py:1661 and 2249: `'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize'`, the binding argument
-/// that states a count default.
+/// `'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize'`, the binding argument that states a count default.
 pub(crate) fn states_usize_default(arg: &Value) -> Result<bool, GenerateError> {
     Ok(arg.contains_str("default")?
         && super::common::argument_kind(arg.getitem("kind")?)?.text("rust")? == "usize")
 }
 
-/// Port of generate.py:1654-1656 (core_name_const): the core constant that holds one row name.
+/// The core constant that holds one row name.
 pub(crate) fn core_name_const(name: &str) -> String {
     upper(&name.replace('.', "_"))
 }
 
-/// Port of generate.py:1658-1661 (count_defaults): every usize binding default the verb table states, by its engine
-/// constant (a dict: a constant stated twice keeps its first place and its last row).
+/// Every usize binding default the verb table states, by its engine constant (a dict: a constant stated twice keeps
+/// its first place and its last row).
 pub(crate) fn count_defaults(
     generator: &Generator,
 ) -> Result<ByName<(RowId, Value)>, GenerateError> {
@@ -134,8 +132,7 @@ pub(crate) fn count_defaults(
     Ok(defaults)
 }
 
-/// Port of generate.py:1663-1673 (check_core_verb_names): fails the run when core's table lists a row or a default
-/// the verb table does not have.
+/// Fails the run when core's table lists a row or a default the verb table does not have.
 pub(crate) fn check_core_verb_names(
     generator: &Generator,
 ) -> Result<ByName<(RowId, Value)>, GenerateError> {
@@ -171,7 +168,7 @@ pub(crate) fn check_core_verb_names(
     Ok(defaults)
 }
 
-/// generate.py:2497 `custody = [r for r in ROWS if 'custody' in r]`.
+/// `custody = [r for r in ROWS if 'custody' in r]`.
 pub(crate) fn custody_rows(generator: &Generator) -> Vec<RowId> {
     generator
         .callable_rows
@@ -181,7 +178,7 @@ pub(crate) fn custody_rows(generator: &Generator) -> Vec<RowId> {
         .collect()
 }
 
-/// generate.py:1684 and 1699: the rows of `ROWS` whose `section` is true (`r['section']`, a `KeyError` without one).
+/// The rows of `ROWS` whose `section` is true (`r['section']`, a `KeyError` without one).
 fn section_rows(generator: &Generator) -> Result<Vec<&Dict>, GenerateError> {
     let mut section = Vec::new();
     for &id in &generator.callable_rows {
@@ -193,7 +190,7 @@ fn section_rows(generator: &Generator) -> Result<Vec<&Dict>, GenerateError> {
     Ok(section)
 }
 
-/// Port of generate.py:1675-1694 (core_verb_names): core's table, `crate::verb_names`, included from OUT_DIR.
+/// Core's table, `crate::verb_names`, included from OUT_DIR.
 pub(crate) fn core_verb_names(
     generator: &Generator,
     custody: &[RowId],
@@ -253,8 +250,7 @@ pub(crate) fn core_verb_names(
     Ok(text)
 }
 
-/// Port of generate.py:1696-1720 (core_verb_names_check): the catalog's compile-time check that core's table
-/// (`crate::verb_names`) holds its own rows.
+/// The catalog's compile-time check that core's table (`crate::verb_names`) holds its own rows.
 pub(crate) fn core_verb_names_check(
     generator: &Generator,
     variants: &ByName<String>,
@@ -298,15 +294,14 @@ pub(crate) fn core_verb_names_check(
     Ok(text)
 }
 
-/// The `catalog` segment's result: `verb_catalog.rs`'s text and the custody rows, which `core_verb_names` reads later
-/// (generate.py:2518).
+/// The `catalog` segment's result: `verb_catalog.rs`'s text and the custody rows, which `core_verb_names` reads later.
 pub(crate) struct Catalog {
     pub(crate) text: String,
     pub(crate) custody: Vec<RowId>,
 }
 
-/// Port of generate.py:2462-2508 (outputs: the `catalog` segment): `verb_catalog.rs`, the `AgentVerb` enum over
-/// `ROWS` with each role a row states, and its compile-time check of core's table.
+/// The `catalog` segment of `outputs()`: `verb_catalog.rs`, the `AgentVerb` enum over `ROWS` with each role a row
+/// states, and its compile-time check of core's table.
 pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
     let rows = generator.rows.select(&generator.callable_rows);
     let variants = variants(&rows)?;
@@ -406,10 +401,10 @@ pub(crate) fn catalog(generator: &Generator) -> Result<Catalog, GenerateError> {
     })
 }
 
-/// A role predicate of generate.py:2469-2483, over one row of `ROWS`.
+/// A role predicate of `CATALOG_ROLES`, over one row of `ROWS`.
 type CatalogRole = fn(&Generator, &Dict) -> Result<bool, GenerateError>;
 
-/// generate.py:2469-2483: each `AgentVerb` role method and the rows it selects, in the list's order.
+/// Each `AgentVerb` role method and the rows it selects, in the list's order.
 const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("is_facade", |generator, row| {
         // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`
@@ -457,8 +452,7 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("overlay_write", |_, row| Ok(flag(row, "overlay_write"))),
 ];
 
-/// Port of generate.py:2186-2189 (core_cfg): the cfg attribute gating one CORE Rust typed emission of this row, or
-/// empty (FIX 10471: `rust_feature`).
+/// The cfg attribute gating one CORE Rust typed emission of this row, or empty (FIX 10471: `rust_feature`).
 pub(crate) fn core_cfg(row: &Dict) -> String {
     match row.get("rust_feature") {
         Some(feature) if feature.truthy() => {
@@ -478,8 +472,7 @@ fn pointers(row: &Dict, key: &str) -> Result<String, GenerateError> {
         .join(", "))
 }
 
-/// Port of generate.py:1609-1614 (record_refs_check): OF-063, the record-ref check a row with `refs` runs before its
-/// engine call.
+/// OF-063: the record-ref check a row with `refs` runs before its engine call.
 pub(crate) fn record_refs_check(row: &Dict) -> Result<String, GenerateError> {
     if !row.contains_key("refs") {
         return Ok(String::new());
@@ -495,8 +488,7 @@ pub(crate) fn record_refs_check(row: &Dict) -> Result<String, GenerateError> {
     ))
 }
 
-/// Port of generate.py:1616-1620 (prose_links_check): OF-063 prose links, the receipt-only link read a row with
-/// `prose_links` runs before its engine call.
+/// OF-063 prose links: the receipt-only link read a row with `prose_links` runs before its engine call.
 pub(crate) fn prose_links_check(row: &Dict) -> Result<String, GenerateError> {
     if !row.contains_key("prose_links") {
         return Ok(String::new());
@@ -508,8 +500,8 @@ pub(crate) fn prose_links_check(row: &Dict) -> Result<String, GenerateError> {
     ))
 }
 
-/// Port of generate.py:1622-1627 (prose_links_landed): Engine ruling 10-18, a row with `prose_links` receipts what
-/// its read found only once its engine call has returned success.
+/// Engine ruling 10-18: a row with `prose_links` receipts what its read found only once its engine call has returned
+/// success.
 pub(crate) fn prose_links_landed(row: &Dict, call: &str) -> Option<String> {
     row.contains_key("prose_links").then(|| {
         format!(
@@ -526,7 +518,7 @@ fn call_result(call: &str) -> String {
     }
 }
 
-/// Port of generate.py:2243-2385 (outputs: the `core` segment): `sdk_generated.rs`, the engine's typed verb surface:
+/// The `core` segment of `outputs()`: `sdk_generated.rs`, the engine's typed verb surface:
 /// the count defaults, the input and answer schemas, the MCP argument schemas, the validators, the facade and browser
 /// invocations, one typed fn per row and the declared-ref receipts.
 pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<String, GenerateError> {
@@ -879,7 +871,7 @@ mod tests {
 
     #[test]
     fn check_core_verb_names_refuses_what_the_table_lacks() {
-        // generate.py:1668 and 1672, Python's `SystemExit` texts (a list prints its `repr`).
+        // The Python generator's `SystemExit` texts (a list prints its `repr`).
         let root = tree("missing-rows", &[("cancel", ""), ("tasks.create", "")]);
         let generator = Generator::rows_only(&root).expect("the module level");
         let error = check_core_verb_names(&generator).expect_err("a refusal");

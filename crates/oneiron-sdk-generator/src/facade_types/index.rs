@@ -1,5 +1,5 @@
-//! Port of facade_types.py:374-614 (`Item`, `Index`): every struct, enum and alias of the engine crates, with each
-//! file's imports, and the heuristic resolver that finds the item a path names from a file.
+//! Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that
+//! finds the item a path names from a file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,16 +29,6 @@ pub(crate) enum Kind {
     Type,
 }
 
-impl Kind {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Struct => "struct",
-            Self::Enum => "enum",
-            Self::Type => "type",
-        }
-    }
-}
-
 /// An item's body shape: Python's `'alias'`, `'unit'`, `'named'` or `'tuple'`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -48,18 +38,7 @@ pub(crate) enum Shape {
     Tuple,
 }
 
-impl Shape {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Alias => "alias",
-            Self::Unit => "unit",
-            Self::Named => "named",
-            Self::Tuple => "tuple",
-        }
-    }
-}
-
-/// Port of facade_types.py:374-378 (`Item`): one `struct`, `enum` or `type` header and what follows it.
+/// One `struct`, `enum` or `type` header and what follows it.
 #[derive(Debug)]
 pub(crate) struct Item {
     pub(crate) crate_name: String,
@@ -101,12 +80,11 @@ pub(crate) type FileKey = (String, String);
 /// A module's place, `(crate, module path)`.
 pub(crate) type ModuleKey = (String, Vec<String>);
 
-/// facade_types.py:384 (`HEADER`):
-/// `(?m)^([ \t]*)(pub(?:\s*\([^)]*\))?\s+)?(struct|enum|type)\s+([A-Za-z_]\w*)`
+/// Python: `(?m)^([ \t]*)(pub(?:\s*\([^)]*\))?\s+)?(struct|enum|type)\s+([A-Za-z_]\w*)`
 static HEADER: LazyLock<Regex> = LazyLock::new(|| {
     compile(r"(?m)^([ \t]*)(pub(?:\s*\([^)]*\))?\s+)?(struct|enum|type)\s+([A-Za-z_]\w*)")
 });
-/// facade_types.py:385 (`IMPL`): `(?m)^[ \t]*impl\b[^{;]*?\b(?:serde::)?Serialize\s+for\s+([A-Za-z_]\w*)`. The
+/// Python: `(?m)^[ \t]*impl\b[^{;]*?\b(?:serde::)?Serialize\s+for\s+([A-Za-z_]\w*)`. The
 /// two `\b`s are Python's: the part between `impl` and `Serialize` cannot be empty there, so it is one
 /// non-word character, or a non-word character, any run, and a non-word character, tried shortest first.
 static IMPL: LazyLock<Regex> = LazyLock::new(|| {
@@ -114,30 +92,29 @@ static IMPL: LazyLock<Regex> = LazyLock::new(|| {
         r"(?m)^[ \t]*impl(?:[^{;\w]|[^{;\w][^{;]*?[^{;\w])(?:serde::)?Serialize\s+for\s+([A-Za-z_]\w*)",
     )
 });
-/// facade_types.py:386 (`DE_IMPL`): `(?m)^[ \t]*impl\b[^{;]*?\b(?:serde::)?Deserialize<'de>\s+for\s+([A-Za-z_]\w*)`,
+/// Python: `(?m)^[ \t]*impl\b[^{;]*?\b(?:serde::)?Deserialize<'de>\s+for\s+([A-Za-z_]\w*)`,
 /// with `\b` as in [`IMPL`].
 static DE_IMPL: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"(?m)^[ \t]*impl(?:[^{;\w]|[^{;\w][^{;]*?[^{;\w])(?:serde::)?Deserialize<'de>\s+for\s+([A-Za-z_]\w*)",
     )
 });
-/// facade_types.py:388 (`MACRO_USE`):
-/// `(?m)^[ \t]*(?:pub\s+)?(\w+)!\s*[({]\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct\s+)?([A-Z]\w*)\b`. The final `\b`
-/// always holds after a greedy run of word characters, so it is dropped.
+/// Python: `(?m)^[ \t]*(?:pub\s+)?(\w+)!\s*[({]\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct\s+)?([A-Z]\w*)\b`. The
+/// final `\b` always holds after a greedy run of word characters, so it is dropped.
 static MACRO_USE: LazyLock<Regex> = LazyLock::new(|| {
     compile(
         r"(?m)^[ \t]*(?:pub\s+)?(\w+)!\s*[({]\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct\s+)?([A-Z]\w*)",
     )
 });
-/// facade_types.py:430: `macro_rules!\s*(\w+)\s*\{`
+/// Python: `macro_rules!\s*(\w+)\s*\{`
 static MACRO_RULES: LazyLock<Regex> = LazyLock::new(|| compile(r"macro_rules!\s*(\w+)\s*\{"));
-/// facade_types.py:494: `(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);`
+/// Python: `(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);`
 static USE: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);"));
-/// facade_types.py:597: `serialize_str|collect_str`
+/// Python: `serialize_str|collect_str`
 static SERIALIZE_STR: LazyLock<Regex> = LazyLock::new(|| compile("serialize_str|collect_str"));
 
-/// Port of facade_types.py:381-614 (`Index`).
+/// The items, files, modules, serde impls and macros of the crates read so far, and the resolver over them.
 #[derive(Debug)]
 pub(crate) struct Index {
     root: PathBuf,
@@ -163,7 +140,7 @@ pub(crate) struct Index {
 }
 
 impl Index {
-    /// Port of facade_types.py:390-402 (`Index.__init__`): reads the `EAGER` crates.
+    /// Reads the `EAGER` crates.
     pub(crate) fn new(root: &Path) -> Result<Self, GenerateError> {
         let mut index = Self {
             root: root.to_path_buf(),
@@ -184,8 +161,8 @@ impl Index {
         Ok(index)
     }
 
-    /// Port of facade_types.py:404-431 (`Index.load`): every `*.rs` file under the crate's source directory but the
-    /// test-like ones, in `sorted(base.rglob('*.rs'))` order.
+    /// Every `*.rs` file under the crate's source directory but the test-like ones, in `sorted(base.rglob('*.rs'))`
+    /// order.
     pub(crate) fn load(&mut self, crate_name: &str) -> Result<(), GenerateError> {
         if self.loaded.contains(crate_name) {
             return Ok(());
@@ -275,7 +252,7 @@ impl Index {
 
     // ---- resolution
 
-    /// Port of facade_types.py:488-499 (`Index.uses`): the file's imports, alias -> path, and its glob paths.
+    /// The file's imports, alias -> path, and its glob paths.
     pub(crate) fn uses(&mut self, crate_name: &str, file: &str) -> Result<Rc<Uses>, GenerateError> {
         let key = (crate_name.to_owned(), file.to_owned());
         if let Some(found) = self.use_cache.get(&key) {
@@ -298,8 +275,8 @@ impl Index {
         Ok(uses)
     }
 
-    /// Port of facade_types.py:520-533 (`Index.absolute`): a path's crate and module segments, from a file in
-    /// (crate, module); `None` for an external crate. A path that names a `CRATES` crate reads it.
+    /// A path's crate and module segments, from a file in (crate, module); `None` for an external crate. A path that
+    /// names a `CRATES` crate reads it.
     pub(crate) fn absolute(
         &mut self,
         segments: &[String],
@@ -330,8 +307,7 @@ impl Index {
         }))
     }
 
-    /// Port of facade_types.py:535-547 (`Index.resolve`): the item a path names from a file, an external name, or
-    /// `None`; the search stops past depth 12.
+    /// The item a path names from a file, an external name, or `None`; the search stops past depth 12.
     pub(crate) fn resolve(
         &mut self,
         segments: &[String],
@@ -361,8 +337,8 @@ impl Index {
         self.resolve_in(&target, parent, name, depth + 1)
     }
 
-    /// Port of facade_types.py:549-559 (`Index.module_place`): a module path as its file sits, through a parent's
-    /// `use <module> as <name>;` (FIX 8907: `task_verb::sdk` is `crate::verbs`).
+    /// A module path as its file sits, through a parent's `use <module> as <name>;` (FIX 8907: `task_verb::sdk` is
+    /// `crate::verbs`).
     pub(crate) fn module_place(
         &mut self,
         crate_name: &str,
@@ -396,7 +372,8 @@ impl Index {
         Ok((crate_name, place))
     }
 
-    /// Port of facade_types.py:561-577 (`Index.resolve_in`).
+    /// The item `name` names in a module: the module file's own item, its import of that name, a glob's item, else
+    /// the best candidate by name under the module.
     pub(crate) fn resolve_in(
         &mut self,
         crate_name: &str,
@@ -436,7 +413,8 @@ impl Index {
             .map(Found::Item))
     }
 
-    /// Port of facade_types.py:579-591 (`Index.resolve_name`).
+    /// The item a bare name names from a file: the file's own item, its import of that name, a glob's item, else the
+    /// best candidate by name.
     pub(crate) fn resolve_name(
         &mut self,
         name: &str,
@@ -479,8 +457,7 @@ impl Index {
         Some(Rc::clone(local.find(|item| item.top).unwrap_or(first)))
     }
 
-    /// Port of facade_types.py:593-598 (`Index.macro_token`): a type a macro defines, a string when the macro writes
-    /// it with `serialize_str`.
+    /// A type a macro defines, a string when the macro writes it with `serialize_str`.
     pub(crate) fn macro_token(&self, name: &str) -> Option<Ir> {
         let uses = self.macro_uses.get(name)?;
         uses.iter()
@@ -490,8 +467,7 @@ impl Index {
             .then_some(STRING)
     }
 
-    /// Port of facade_types.py:600-614 (`Index.by_name`): the best candidate of that name, same crate, under
-    /// `within`, nearest module; ties keep the first.
+    /// The best candidate of that name, same crate, under `within`, nearest module; ties keep the first.
     pub(crate) fn by_name(
         &mut self,
         name: &str,
@@ -541,7 +517,7 @@ impl Index {
     }
 }
 
-/// Port of facade_types.py:501-518 (`Index.expand_use`): a `use` tree as (alias, path) pairs; `*` for a glob.
+/// A `use` tree as (alias, path) pairs; `*` for a glob.
 /// `depth` counts the braces open around `tree`: Python recurses once per brace, so a tree nested as deep as its
 /// recursion limit is Python's `RecursionError`, not an exhausted native stack.
 fn expand_use(
@@ -617,7 +593,7 @@ fn relative_posix(path: &Path, base: &Path) -> String {
         .join("/")
 }
 
-/// facade_types.py:463: `re.match(r'\w+', param).group(0)`; no word character is Python's `AttributeError`.
+/// `re.match(r'\w+', param).group(0)`; no word character is Python's `AttributeError`.
 fn leading_word(param: &str) -> Result<String, GenerateError> {
     let end = param
         .find(|c: char| !crate::py::text::is_word(c))
@@ -628,9 +604,9 @@ fn leading_word(param: &str) -> Result<String, GenerateError> {
     Ok(param[..end].to_owned())
 }
 
-/// Port of facade_types.py:433-484 (`Index.read_item`): an item from its header match, with the attribute lines
-/// above it, its generics (looked for only within four characters of the name) and its body (from the first
-/// `{`, `(` or `;` past any where clause); `None` when no body opens.
+/// An item from its header match, with the attribute lines above it, its generics (looked for only within four
+/// characters of the name) and its body (from the first `{`, `(` or `;` past any where clause); `None` when no body
+/// opens.
 fn read_item(
     crate_name: &str,
     file: &str,
@@ -739,7 +715,7 @@ fn read_item(
     }))
 }
 
-/// facade_types.py:802: `re.findall(r'\b(?:struct|enum)\s+([A-Za-z_]\w*)', text)`.
+/// `re.findall(r'\b(?:struct|enum)\s+([A-Za-z_]\w*)', text)`.
 pub(crate) fn declared_names(text: &str) -> Vec<String> {
     static DECLARED: LazyLock<Regex> =
         LazyLock::new(|| compile(r"(?:struct|enum)\s+([A-Za-z_]\w*)"));
@@ -749,8 +725,7 @@ pub(crate) fn declared_names(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// `re.search(...)` with the fn-local pattern of facade_types.py:808: `\bfn\s+deserialize\b`; the offset past
-/// `deserialize`.
+/// `re.search(...)` with the fn-local pattern `\bfn\s+deserialize\b`; the offset past `deserialize`.
 pub(crate) fn deserialize_fn_end(text: &str) -> Option<usize> {
     static FN: LazyLock<Regex> = LazyLock::new(|| compile(r"fn\s+deserialize"));
     search_bounded(&FN, text, 0, true, true)

@@ -1,4 +1,4 @@
-//! Port of facade_types.py:1053-1099 (the `TypeScript` section of `Inventory`): IR as TypeScript, and the
+//! The `TypeScript` section of `Inventory`: IR as TypeScript, and the
 //! declarations module (`facade-types.ts`).
 
 use super::super::{Ir, compound, dumps, ts_key};
@@ -6,7 +6,7 @@ use super::Inventory;
 use crate::error::GenerateError;
 
 impl Inventory {
-    /// Port of facade_types.py:1055-1087 (`Inventory.ts`): an IR value as TypeScript, references spelled with
+    /// An IR value as TypeScript, references spelled with
     /// `prefix` (Python's default is `''`).
     pub(crate) fn ts(&self, node: &Ir, prefix: &str) -> Result<String, GenerateError> {
         Ok(match node {
@@ -114,7 +114,7 @@ impl Inventory {
         })
     }
 
-    /// Port of facade_types.py:1089-1099 (`Inventory.typescript`): the declarations module, one `export type` per
+    /// The declarations module, one `export type` per
     /// declaration in `order`, under the census lines.
     pub(crate) fn typescript(&self, census_lines: &[String]) -> Result<String, GenerateError> {
         let mut out = String::from(

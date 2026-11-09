@@ -140,25 +140,12 @@ impl Value {
         self.as_str() == Some(text)
     }
 
-    /// The items of a `list`.
-    pub(crate) fn as_list(&self) -> Option<&[Value]> {
-        match self {
-            Self::List(l) => Some(l),
-            _ => None,
-        }
-    }
-
     /// The entries of a `dict`.
     pub(crate) fn as_dict(&self) -> Option<&Dict> {
         match self {
             Self::Dict(d) => Some(d),
             _ => None,
         }
-    }
-
-    /// A dict's value at `key`; `None` when the key is absent or the value is no dict.
-    pub(crate) fn get(&self, key: &str) -> Option<&Value> {
-        self.as_dict().and_then(|d| d.get(key))
     }
 
     /// `str(value)`, as an f-string interpolates it.

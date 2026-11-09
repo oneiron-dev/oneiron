@@ -1,12 +1,11 @@
-//! Python's `str` methods with Python's Unicode rules (DESIGN 3, brief H2-H4): only the ones the generator calls.
+//! Python's `str` methods with Python's Unicode rules: only the ones the generator calls.
 //!
 //! The character classes are Unicode properties read through `regex` (whose tables, like CPython 3.14.7's, are
 //! Unicode 16.0.0). The case mappings are Rust's `char::to_uppercase`/`to_lowercase` (the same full mappings,
 //! UnicodeData plus SpecialCasing's unconditional rows), held to Unicode 16.0.0: Rust 1.96's tables are Unicode 17,
 //! which maps 28 characters 16.0 leaves unassigned, so a mapping that starts or ends at a character `regex` (16.0)
 //! calls unassigned is no mapping. Python's title-case table and its final-sigma rule are written out here.
-//! `port-harness unicode` dumps every property and mapping for every code point from both sides; the G1a PR body
-//! gives the diff.
+//! When the port was made, every property and mapping was checked against CPython 3.14.7's for every code point.
 
 use std::ffi::OsStr;
 use std::sync::LazyLock;
@@ -96,39 +95,6 @@ pub(crate) fn is_decimal(c: char) -> bool {
     }
 }
 
-/// The characters `str.isdigit()` takes beyond the decimals (Numeric_Type=Digit), printed on nelly (Python 3.14.7) by
-/// `python3 -c "print([hex(c) for c in range(0x110000) if chr(c).isdigit() and not chr(c).isdecimal()])"`, as ranges.
-const DIGIT_NOT_DECIMAL: &[(char, char)] = &[
-    ('\u{B2}', '\u{B3}'),
-    ('\u{B9}', '\u{B9}'),
-    ('\u{1369}', '\u{1371}'),
-    ('\u{19DA}', '\u{19DA}'),
-    ('\u{2070}', '\u{2070}'),
-    ('\u{2074}', '\u{2079}'),
-    ('\u{2080}', '\u{2089}'),
-    ('\u{2460}', '\u{2468}'),
-    ('\u{2474}', '\u{247C}'),
-    ('\u{2488}', '\u{2490}'),
-    ('\u{24EA}', '\u{24EA}'),
-    ('\u{24F5}', '\u{24FD}'),
-    ('\u{24FF}', '\u{24FF}'),
-    ('\u{2776}', '\u{277E}'),
-    ('\u{2780}', '\u{2788}'),
-    ('\u{278A}', '\u{2792}'),
-    ('\u{10A40}', '\u{10A43}'),
-    ('\u{10E60}', '\u{10E68}'),
-    ('\u{11052}', '\u{1105A}'),
-    ('\u{1F100}', '\u{1F10A}'),
-];
-
-/// `c.isdigit()`: the decimals and the Numeric_Type=Digit characters (`²`, `①`).
-pub(crate) fn is_digit(c: char) -> bool {
-    is_decimal(c)
-        || DIGIT_NOT_DECIMAL
-            .iter()
-            .any(|&(low, high)| (low..=high).contains(&c))
-}
-
 /// `c.isprintable()`: everything but categories C and Z, the ASCII space excepted.
 pub(crate) fn is_printable(c: char) -> bool {
     if c.is_ascii() {
@@ -163,11 +129,6 @@ pub(crate) fn isidentifier(s: &str) -> bool {
         return false;
     };
     (first == '_' || class_has(&XID_START, first)) && chars.all(|c| class_has(&XID_CONTINUE, c))
-}
-
-/// `s.isdigit()`: not empty, and every character a digit.
-pub(crate) fn isdigit(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(is_digit)
 }
 
 /// The characters whose full title-case mapping is not their uppercase one, printed on nelly (Python 3.14.7) by
@@ -381,11 +342,6 @@ pub(crate) fn strip(s: &str) -> &str {
 /// `s.lstrip()`.
 pub(crate) fn lstrip(s: &str) -> &str {
     s.trim_start_matches(is_space)
-}
-
-/// `s.rstrip()`.
-pub(crate) fn rstrip(s: &str) -> &str {
-    s.trim_end_matches(is_space)
 }
 
 fn is_line_break(c: char) -> bool {
@@ -629,7 +585,6 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(lstrip(input), *expected, "{input:?}");
         }
-        assert_eq!(rstrip(" x \u{1c}"), " x");
     }
 
     #[test]
@@ -677,26 +632,6 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(isidentifier(input), *expected, "{input:?}");
-        }
-    }
-
-    #[test]
-    fn isdigit_matches_python() {
-        let cases: &[(&str, bool)] = &[
-            ("1", true),
-            ("\u{b2}", true),
-            ("\u{2460}", true),
-            ("\u{661}", true),
-            ("\u{bd}", false),
-            ("a", false),
-            ("", false),
-            ("12", true),
-            ("1a", false),
-            ("\u{1f100}", true),
-            ("\u{19da}", true),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(isdigit(input), *expected, "{input:?}");
         }
     }
 

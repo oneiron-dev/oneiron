@@ -1,6 +1,6 @@
-//! The Python-behaviour helpers (DESIGN 3): Python's values, `json`, `str` methods, builtins and the regular
-//! expressions `regex` cannot spell, each with the semantics of the reference interpreter, CPython 3.14.7 as nelly
-//! runs it. Later PRs of the port use them and add to them only through their own PR.
+//! The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions
+//! `regex` cannot spell, each with the semantics of the reference interpreter the port was proved against, CPython
+//! 3.14.7 as nelly runs it. The outputs depend on these semantics, so each helper keeps its table test.
 
 pub(crate) mod builtins;
 pub(crate) mod json;
@@ -35,7 +35,7 @@ pub(crate) fn read_text(path: &Path) -> Result<String, GenerateError> {
     }
 }
 
-/// `path.read_text(errors='replace')` (`facade_types.py:412`, the Rust sources): each invalid UTF-8 sequence (its
+/// `path.read_text(errors='replace')` (the Rust sources): each invalid UTF-8 sequence (its
 /// maximal prefix of a valid sequence, as CPython's decoder reports it) becomes one U+FFFD.
 pub(crate) fn read_text_replacing(path: &Path) -> Result<String, GenerateError> {
     let bytes = fs::read(path).map_err(|error| GenerateError::os(&error, path))?;

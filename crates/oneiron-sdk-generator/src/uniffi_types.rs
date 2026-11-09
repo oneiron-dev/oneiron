@@ -1,14 +1,14 @@
-//! Port of uniffi_types.py (main `e79eb76df3e`): the UniFFI records and enums for the facade rows' wire types
-//! (OF-237), projected from the one facade type inventory into `facade_types_generated.rs`.
+//! The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type
+//! inventory into `facade_types_generated.rs`.
 //!
 //! Each generated type derives serde with the engine type's wire shape. What UniFFI cannot express stays the
 //! crate's `WireJson` leaf inside the record (a `serde_json::Value`, a type on a by-value cycle, a bare unit, an
 //! untyped union, a 128-bit integer); a tuple of two or three is a generated record with positional fields (FIX
-//! 3298). Two orders live side by side, as in Python (brief H10): a mirror's name is taken when it is first reached
-//! (before its fields are rendered), and its item is appended after its body is built, so a child's item comes first.
+//! 3298). Two orders live side by side, as in Python: a mirror's name is taken when it is first reached (before its
+//! fields are rendered), and its item is appended after its body is built, so a child's item comes first.
 //!
 //! The fixed name lists (`WIDTHS`, `RESERVED`, `RAW_FORBIDDEN`, `KEYWORDS`) are copied from the Python literals as
-//! they are (brief H5); they are no Rust keyword list.
+//! they are; they are no Rust keyword list.
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -21,11 +21,10 @@ use crate::py::re::sub_underscore_at_case_rise;
 use crate::py::text::{lower, title, upper};
 use crate::py::value::Value;
 
-/// Port of uniffi_types.py:35 (WIRE).
 pub(crate) const WIRE: &str = "crate::WireJson";
 
-/// Port of uniffi_types.py:36-51 (WIRE_LEAVES): the shapes a generated record carries as a `WireJson` field rather
-/// than a typed one, each with the reason the census states (`str.format` templates with a `{name}` field).
+/// The shapes a generated record carries as a `WireJson` field rather than a typed one, each with the reason the
+/// census states (`str.format` templates with a `{name}` field).
 pub(crate) const WIRE_LEAVES: &[(&str, &str)] = &[
     ("recursive", "the recursive type {name}"),
     ("wide", "a 128-bit integer"),
@@ -47,12 +46,11 @@ fn wire_leaf(kind: &str) -> Result<&'static str, GenerateError> {
         .ok_or_else(|| GenerateError::key(kind))
 }
 
-/// Port of uniffi_types.py:52-54 (COLLISION_PREFIX): the prefix a generated type takes when its name is a
-/// hand-written record's or a reserved name (`WireClaimView`).
+/// The prefix a generated type takes when its name is a hand-written record's or a reserved name (`WireClaimView`).
 pub(crate) const COLLISION_PREFIX: &str = "Wire";
 
-/// Port of uniffi_types.py:55-62 (WIDTHS): Rust spellings of the integer widths the inventory records; UniFFI
-/// carries 8 to 64 bits, signed and unsigned, and nothing wider. In the dict literal's order.
+/// Rust spellings of the integer widths the inventory records; UniFFI carries 8 to 64 bits, signed and unsigned, and
+/// nothing wider. In the dict literal's order.
 pub(crate) const WIDTHS: &[(&str, &str)] = &[
     ("u8", "u8"),
     ("u16", "u16"),
@@ -81,8 +79,7 @@ fn width_of(width: &str) -> Option<&'static str> {
         .map(|&(_, rust)| rust)
 }
 
-/// Port of uniffi_types.py:63-76 (RESERVED): names a generated type may not take, compared without case. A set read
-/// for membership; in the literal's order.
+/// Names a generated type may not take, compared without case. A set read for membership; in the literal's order.
 pub(crate) const RESERVED: &[&str] = &[
     "Option",
     "Some",
@@ -166,10 +163,11 @@ pub(crate) const RESERVED: &[&str] = &[
     "Hash",
 ];
 
-/// Port of uniffi_types.py:77 (RAW_FORBIDDEN), a set read for membership.
+/// The words no raw identifier may spell (`snake` appends `_` instead), a set read for membership.
 pub(crate) const RAW_FORBIDDEN: &[&str] = &["crate", "self", "super", "Self"];
 
-/// Port of uniffi_types.py:78-83 (KEYWORDS), a set read for membership; in the literal's order.
+/// The words a field identifier spells as a raw identifier (`r#type`), a set read for membership; in the literal's
+/// order.
 pub(crate) const KEYWORDS: &[&str] = &[
     "as", "break", "const", "continue", "else", "enum", "extern", "false", "fn", "for", "if",
     "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "static",
@@ -178,19 +176,16 @@ pub(crate) const KEYWORDS: &[&str] = &[
     "virtual", "yield", "try", "gen",
 ];
 
-/// Port of uniffi_types.py:84 (DERIVES).
 pub(crate) const DERIVES: &str = "Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize";
 
-/// Port of uniffi_types.py:87-91 (literal): a Rust string literal, `json.dumps(text, ensure_ascii=False)` (the one
-/// call that passes it, brief H1). `re.search(r'\\[ubf]', out)` runs on the dumped text, so it refuses an escaped
-/// control character and also a text that holds a backslash followed by `u`, `b` or `f`; it is a text search, not a
-/// check for control characters.
+/// A Rust string literal, `json.dumps(text, ensure_ascii=False)` (the one call that passes it).
+/// `re.search(r'\\[ubf]', out)` runs on the dumped text, so it refuses an escaped control character and also a text
+/// that holds a backslash followed by `u`, `b` or `f`; it is a text search, not a check for control characters.
 pub(crate) fn literal(text: &Value) -> Result<String, GenerateError> {
     let out = dumps(
         text,
         DumpOptions {
             ensure_ascii: false,
-            ..DumpOptions::default()
         },
     );
     // re.search(r'\\[ubf]', out): a backslash, then `u`, `b` or `f` (all ASCII, so a byte pair is a character pair).
@@ -207,9 +202,9 @@ pub(crate) fn literal(text: &Value) -> Result<String, GenerateError> {
     Ok(out)
 }
 
-/// Port of uniffi_types.py:94-100 (snake): a field identifier for a wire key.
+/// A field identifier for a wire key.
 ///
-/// `re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', key)` is `py::re::sub_underscore_at_case_rise` (brief H2), then Python's
+/// `re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', key)` is `py::re::sub_underscore_at_case_rise`, then Python's
 /// Unicode `lower()`, then `re.sub(r'[^a-z0-9_]+', '_', name)` (each run of other characters becomes one `_`, written
 /// out below), `.strip('_') or 'value'`. A key that is no string is `re.sub`'s `TypeError`.
 pub(crate) fn snake(key: &Value) -> Result<String, GenerateError> {
@@ -257,9 +252,9 @@ type StructTag = (Value, Value);
 /// A generic substitution (`subst`, Python's `dict` of parameter name to closed IR), read by lookup only.
 type Subst = IndexMap<String, Ir>;
 
-/// Python's `repr` of a list of IR values (`repr(members)`, `repr(args)`): the cache keys of uniffi_types.py:249 and
-/// :288. `Ir::repr` spells each closed value as Python's `repr` does (tuples, and lists where `close` builds lists), so
-/// two keys are equal exactly when Python's are.
+/// Python's `repr` of a list of IR values (`repr(members)`, `repr(args)`): the cache keys of `tuple` and `r#ref`.
+/// `Ir::repr` spells each closed value as Python's `repr` does (tuples, and lists where `close` builds lists), so two
+/// keys are equal exactly when Python's are.
 fn list_repr(items: &[Ir]) -> String {
     let parts: Vec<String> = items.iter().map(Ir::repr).collect();
     format!("[{}]", parts.join(", "))
@@ -285,8 +280,8 @@ fn object_fields<'n>(place: &str, node: &'n Ir) -> Result<&'n [Field], GenerateE
     }
 }
 
-/// Port of uniffi_types.py:103-419 (UniffiTypes): the UniFFI mirrors of the inventory types the facade rows reach.
-/// It borrows the one `Inventory` (DESIGN 5): `root` and `root_is_empty` can root a new type in it (H10).
+/// The UniFFI mirrors of the inventory types the facade rows reach. It borrows the one `Inventory`: `root` and
+/// `root_is_empty` can root a new type in it.
 pub(crate) struct UniffiTypes<'i> {
     pub(crate) inv: &'i mut Inventory,
     /// Every name taken, upper-cased: the hand-written names, `RESERVED`, then each allocation (a set).
@@ -304,7 +299,6 @@ pub(crate) struct UniffiTypes<'i> {
 }
 
 impl<'i> UniffiTypes<'i> {
-    /// Port of uniffi_types.py:106-113 (UniffiTypes.__init__).
     pub(crate) fn new(
         inventory: &'i mut Inventory,
         taken: &IndexSet<String>,
@@ -331,11 +325,10 @@ impl<'i> UniffiTypes<'i> {
 
     // ---- the reference graph
 
-    /// Port of uniffi_types.py:117-165 (cycles): declarations on a by-value reference cycle; a UniFFI record cannot
-    /// hold itself. A sequence or a map holds its values behind a pointer in every binding, so only a cycle of
-    /// by-value edges (a field, an `Option`, a variant payload, a generic argument) counts. Tarjan's strongly
-    /// connected components, iteratively, visiting keys and children in the order of their `repr`, as Python does
-    /// (the set it returns does not depend on that order).
+    /// Declarations on a by-value reference cycle; a UniFFI record cannot hold itself. A sequence or a map holds its
+    /// values behind a pointer in every binding, so only a cycle of by-value edges (a field, an `Option`, a variant
+    /// payload, a generic argument) counts. Tarjan's strongly connected components, iteratively, visiting keys and
+    /// children in the order of their `repr`, as Python does (the set it returns does not depend on that order).
     fn cycles(&self) -> Result<IndexSet<Key>, GenerateError> {
         let mut edges: IndexMap<Key, IndexSet<Key>> = self
             .inv
@@ -388,8 +381,7 @@ impl<'i> UniffiTypes<'i> {
 
     // ---- roots
 
-    /// Port of uniffi_types.py:169-175 (root): the UniFFI type a row type crosses as, or `None` when it stays
-    /// `WireJson` whole.
+    /// The UniFFI type a row type crosses as, or `None` when it stays `WireJson` whole.
     pub(crate) fn root(&mut self, text: &str) -> Result<Option<String>, GenerateError> {
         let ir = self.inv.root_ir(text)?;
         let (unknown, _) = self.inv.reach(&ir, &mut IndexSet::new())?;
@@ -400,13 +392,12 @@ impl<'i> UniffiTypes<'i> {
         Ok(if mirror == WIRE { None } else { Some(mirror) })
     }
 
-    /// Port of uniffi_types.py:177-179 (empty).
+    /// Whether an IR value is a record with no fields.
     fn empty(mirror_ir: &Ir) -> bool {
         matches!(mirror_ir, Ir::Object(fields, _) if fields.is_empty())
     }
 
-    /// Port of uniffi_types.py:181-185 (root_is_empty): whether a row type is a record with no fields, so the method
-    /// takes no argument.
+    /// Whether a row type is a record with no fields, so the method takes no argument.
     pub(crate) fn root_is_empty(&mut self, text: &str) -> Result<bool, GenerateError> {
         let ir = self.inv.root_ir(text)?;
         if let Ir::Ref(key, _) = &ir {
@@ -417,7 +408,7 @@ impl<'i> UniffiTypes<'i> {
 
     // ---- types
 
-    /// Port of uniffi_types.py:189-191 (leaf): the first reason for a location is kept.
+    /// The first reason for a location is kept.
     fn leaf(&mut self, place: &str, why: &str) -> String {
         if !self.leaves.contains_key(place) {
             self.leaves.insert(place.to_owned(), why.to_owned());
@@ -425,7 +416,7 @@ impl<'i> UniffiTypes<'i> {
         WIRE.to_owned()
     }
 
-    /// Port of uniffi_types.py:193-201 (close): an IR value with the generic parameters in scope substituted.
+    /// An IR value with the generic parameters in scope substituted.
     fn close(node: &Ir, subst: &Subst) -> Ir {
         let close = |inner: &Ir| Box::new(Self::close(inner, subst));
         let close_all = |members: &[Ir]| {
@@ -462,7 +453,7 @@ impl<'i> UniffiTypes<'i> {
         }
     }
 
-    /// Port of uniffi_types.py:203-216 (mangle): a type argument as part of a monomorphised name.
+    /// A type argument as part of a monomorphised name.
     fn mangle(&self, node: &Ir) -> Result<String, GenerateError> {
         Ok(match node {
             Ir::Ref(key, arguments) => {
@@ -495,7 +486,7 @@ impl<'i> UniffiTypes<'i> {
         })
     }
 
-    /// Port of uniffi_types.py:218-237 (rt): the Rust spelling of an IR value in the generated module.
+    /// The Rust spelling of an IR value in the generated module.
     fn rt(&mut self, node: &Ir, subst: &Subst, place: &str) -> Result<String, GenerateError> {
         Ok(match node {
             Ir::Prim(Prim::Int, width) => match width_of(width.as_deref().unwrap_or("i64")) {
@@ -537,8 +528,8 @@ impl<'i> UniffiTypes<'i> {
         })
     }
 
-    /// Port of uniffi_types.py:239-273 (tuple): a tuple as a generated record with positional fields, crossing as
-    /// one JSON array (FIX 3298). Its name is taken before its members are spelled; its item is appended after.
+    /// A tuple as a generated record with positional fields, crossing as one JSON array (FIX 3298). Its name is taken
+    /// before its members are spelled; its item is appended after.
     fn tuple(
         &mut self,
         members: &[Ir],
@@ -598,11 +589,11 @@ impl<'i> UniffiTypes<'i> {
         Ok(name)
     }
 
-    /// Port of uniffi_types.py:275-300 (ref): a declaration's mirror, monomorphised by its closed arguments; a
-    /// newtype, alias or hand-written codec is its wire value, inline.
+    /// A declaration's mirror, monomorphised by its closed arguments; a newtype, alias or hand-written codec is its
+    /// wire value, inline.
     fn r#ref(&mut self, node: &Ir, subst: &Subst, place: &str) -> Result<String, GenerateError> {
         let Ir::Ref(key, arguments) = node else {
-            return Err(unexpected("uniffi_types.py:276", node));
+            return Err(unexpected("UniffiTypes::ref", node));
         };
         let decl = self.inv.decl(key)?;
         let (decl_name, params, item) = (decl.name.clone(), decl.params.clone(), decl.item.clone());
@@ -679,8 +670,7 @@ impl<'i> UniffiTypes<'i> {
         Ok(name)
     }
 
-    /// Port of uniffi_types.py:302-308 (allocate): `Base`, then `WireBase`, then `WireBase2`, ..., under Python's
-    /// Unicode `upper()` (not casefold).
+    /// `Base`, then `WireBase`, then `WireBase2`, ..., under Python's Unicode `upper()` (not casefold).
     fn allocate(&mut self, base: &str) -> String {
         let mut name = base.to_owned();
         let mut n = 2;
@@ -697,8 +687,8 @@ impl<'i> UniffiTypes<'i> {
 
     // ---- items
 
-    /// Port of uniffi_types.py:312-346 (fields): the fields of a record or a struct variant, and its struct tag, if
-    /// any. One `used` set dedups identifiers across the named and the flattened fields (`_2`, `_3`, ...).
+    /// The fields of a record or a struct variant, and its struct tag, if any. One `used` set dedups identifiers
+    /// across the named and the flattened fields (`_2`, `_3`, ...).
     fn fields(
         &mut self,
         owner: &str,
@@ -718,7 +708,7 @@ impl<'i> UniffiTypes<'i> {
         let mut used = IndexSet::new();
         let mut tag: Option<StructTag> = None;
         let prefix = if public { "pub " } else { "" };
-        for field in object_fields("uniffi_types.py:325", record)? {
+        for field in object_fields("UniffiTypes::fields", record)? {
             let place = format!("{owner}.{}", field.key.str());
             if let Ir::Lit(label) = &field.value {
                 if tag.is_some() {
@@ -770,8 +760,8 @@ impl<'i> UniffiTypes<'i> {
         Ok((out, tag))
     }
 
-    /// Port of uniffi_types.py:348-364 (record). A struct whose engine `Debug` is written by hand keeps a value out
-    /// of it (FIX 4993): its mirror's `Debug` names the type alone.
+    /// A record mirror's item. A struct whose engine `Debug` is written by hand keeps a value out of it (FIX 4993):
+    /// its mirror's `Debug` names the type alone.
     fn record(
         &mut self,
         name: &str,
@@ -810,7 +800,7 @@ impl<'i> UniffiTypes<'i> {
         Ok(record)
     }
 
-    /// Port of uniffi_types.py:366-393 (enum).
+    /// An enum mirror's item.
     fn r#enum(
         &mut self,
         name: &str,
@@ -868,7 +858,7 @@ impl<'i> UniffiTypes<'i> {
                 }
                 (VariantShape::Tuple, Some(payload)) => {
                     let Ir::Tuple(values) = &payload else {
-                        return Err(unexpected("uniffi_types.py:387", &payload));
+                        return Err(unexpected("UniffiTypes::enum, a tuple variant", &payload));
                     };
                     let mut spelled = Vec::with_capacity(values.len());
                     for value in values {
@@ -887,15 +877,19 @@ impl<'i> UniffiTypes<'i> {
                     let (fields, _) = self.fields(&place, &payload, subst, false)?;
                     body.push_str(&format!("{vname} {{\n{}}},\n", fields.concat()));
                 }
-                (_, None) => return Err(unexpected("uniffi_types.py:377", &variant.member)),
+                (_, None) => {
+                    return Err(unexpected(
+                        "UniffiTypes::enum, a variant payload",
+                        &variant.member,
+                    ));
+                }
             }
         }
         Ok(head + &format!("pub enum {name} {{\n") + &body + "}\n")
     }
 
-    /// Port of uniffi_types.py:395-406 (payload): a variant's payload IR (its value, or its struct body), out of the
-    /// member the inventory built (facade_types.py:944-967 builds each member; the indexing below follows those
-    /// shapes).
+    /// A variant's payload IR (its value, or its struct body), out of the member the inventory built
+    /// (`Inventory::enum_ir` builds each member; the indexing below follows those shapes).
     fn payload(meta: &EnumMeta, variant: &VariantMeta) -> Result<Option<Ir>, GenerateError> {
         let (member, shape) = (&variant.member, variant.shape);
         if shape == VariantShape::Unit {
@@ -907,7 +901,7 @@ impl<'i> UniffiTypes<'i> {
         let (tag, content) = (truthy(meta.tag.as_deref()), truthy(meta.content.as_deref()));
         if let (Some(_), Some(content)) = (tag, content) {
             // next(value for key, value, _ in member[1] if key == content)
-            return object_fields("uniffi_types.py:403", member)?
+            return object_fields("UniffiTypes::payload, an adjacently tagged member", member)?
                 .iter()
                 .find(|field| field.key.is_str(content))
                 .map(|field| Some(field.value.clone()))
@@ -921,13 +915,16 @@ impl<'i> UniffiTypes<'i> {
                         .first()
                         .map(|value| Some(value.clone()))
                         .ok_or_else(crate::facade_types::index_error),
-                    other => Err(unexpected("uniffi_types.py:405", other)),
+                    other => Err(unexpected(
+                        "UniffiTypes::payload, an internally tagged member",
+                        other,
+                    )),
                 };
             }
             return Ok(Some(member.clone()));
         }
         // member[1][0][1]: the value of `('object', [(label, value, False)], name)`.
-        object_fields("uniffi_types.py:406", member)?
+        object_fields("UniffiTypes::payload, an externally tagged member", member)?
             .first()
             .map(|field| Some(field.value.clone()))
             .ok_or_else(crate::facade_types::index_error)
@@ -935,7 +932,7 @@ impl<'i> UniffiTypes<'i> {
 
     // ---- output
 
-    /// Port of uniffi_types.py:410-419 (render).
+    /// The generated module: the header, the comment with the census, then the items.
     pub(crate) fn render(&self, header: &str, census: &[String]) -> String {
         let mut out = header.to_owned();
         out.push_str(
@@ -962,7 +959,7 @@ fn truthy(text: Option<&str>) -> Option<&str> {
     text.filter(|text| !text.is_empty())
 }
 
-/// uniffi_types.py:317-322 (`fields`' `ident`): `snake(text)`, then `_2`, `_3`, ... until unused.
+/// `fields`' `ident`: `snake(text)`, then `_2`, `_3`, ... until unused.
 fn ident(used: &mut IndexSet<String>, text: &Value) -> Result<String, GenerateError> {
     let mut name = snake(text)?;
     let mut n = 2;
@@ -974,11 +971,11 @@ fn ident(used: &mut IndexSet<String>, text: &Value) -> Result<String, GenerateEr
     Ok(name)
 }
 
-/// Port of uniffi_types.py:422-427 (strip_marker): an internally tagged struct variant's body without its tag field.
+/// An internally tagged struct variant's body without its tag field.
 fn strip_marker(body: &Ir, tag: &str) -> Result<Ir, GenerateError> {
     let strip = |record: &Ir| -> Result<Ir, GenerateError> {
         let Ir::Object(fields, hint) = record else {
-            return Err(unexpected("uniffi_types.py:425", record));
+            return Err(unexpected("strip_marker", record));
         };
         let kept = fields
             .iter()
@@ -1006,7 +1003,7 @@ fn by_repr(mut keys: Vec<Key>) -> Vec<Key> {
     keys
 }
 
-/// The state of uniffi_types.py:138-161 (`cycles`' Tarjan walk).
+/// The state of `cycles`' Tarjan walk.
 struct Tarjan<'e> {
     edges: &'e IndexMap<Key, IndexSet<Key>>,
     index: IndexMap<Key, usize>,
@@ -1034,7 +1031,7 @@ impl Tarjan<'_> {
         self.on.insert(Key::clone(key));
     }
 
-    /// uniffi_types.py:140-161 (`visit`).
+    /// Tarjan's `visit` from `start`, without recursion.
     fn visit(&mut self, start: Key) -> Result<(), GenerateError> {
         let children = self.children(&start)?;
         self.open(&start);
@@ -1093,12 +1090,12 @@ mod tests {
             .expect("an inventory over no sources")
     }
 
-    // `/Users/olety/.claude/jobs/51b185fd/tmp/g3/probe_types.py`, run from the checkout on nelly (Python 3.14.7) as
-    // `python3 -I - < probe_types.py`: UniffiTypes built over an inventory with no declarations, then
+    // Expected: what the Python generator printed (main e79eb76df3e, Python 3.14.7 on nelly) for UniffiTypes built
+    // over an inventory with no declarations, then
     //   err(t.fields, 'Owner', ('object', [('a', ('lit', 'x'), False), ('b', ('lit', 'y'), False)], None), {}, True)
     //   err(t.fields, 'Owner', ('and', []), {}, True)
-    // No tree reaches the first: facade_types builds at most one `lit` field per object (facade_types.py:858, 911,
-    // 957-958) and `enum` strips the internally tagged marker before `fields` (uniffi_types.py:389-390).
+    // No tree reaches the first: facade_types builds at most one `lit` field per object and `enum` strips the
+    // internally tagged marker before `fields`.
     #[test]
     fn fields_refuse_a_second_tag_field() {
         let mut inventory = empty_inventory();
@@ -1128,10 +1125,10 @@ mod tests {
         );
     }
 
-    // `/Users/olety/.claude/jobs/51b185fd/tmp/g3/probe_items.py` on nelly (Python 3.14.7, from the checkout):
+    // Expected: what the Python generator printed (main e79eb76df3e, Python 3.14.7 on nelly) for
     // print(repr(t.record('Tagged', 'Tagged', body, {}))) and print(repr(t.enum('Pairs', 'Pairs', meta, {}))) over an
     // inventory whose null_fields, closed and redacted name them. They reach the lines no corpus tree reaches: a
-    // record's struct tag (uniffi_types.py:329, 356), `ident`'s `_2`/`_3` (:320) and a tuple variant (:387).
+    // record's struct tag, `ident`'s `_2`/`_3` and a tuple variant.
     #[test]
     fn record_and_enum_items_are_pythons() {
         let mut inventory = empty_inventory();
@@ -1237,8 +1234,9 @@ mod tests {
         assert_eq!(leaves, [("Pairs.Pair", "a 128-bit integer")]);
     }
 
-    // probe_types.py: print(repr(node), err(t.rt, node, subst, f'W{i}')) for each case, then the leaves, the tuple
-    // cache and the items in order; `mangle` of seven values; `allocate` of eight names in a row.
+    // Expected: what the Python generator printed (main e79eb76df3e, Python 3.14.7 on nelly) for
+    // print(repr(node), err(t.rt, node, subst, f'W{i}')) for each case, then the leaves, the tuple cache and the items
+    // in order; `mangle` of seven values; `allocate` of eight names in a row.
     #[test]
     fn rt_mangle_and_allocate_are_pythons() {
         let mut inventory = empty_inventory();
@@ -1408,8 +1406,8 @@ mod tests {
         );
     }
 
-    // Printed by Python 3.14.7 on nelly from the uniffi_types.py definitions copied verbatim
-    // (`/Users/olety/.claude/jobs/51b185fd/tmp/g3/probe_uniffi.py`, `ssh nelly python3 -I - < probe_uniffi.py`):
+    // Printed by Python 3.14.7 on nelly from the Python generator's definitions copied verbatim into a probe (main
+    // e79eb76df3e):
     //   print(repr(v), err(literal, v))  /  print(repr(k), repr(snake(k)))
 
     #[test]
@@ -1512,7 +1510,7 @@ mod tests {
         );
     }
 
-    // print(w, w.title()) / print(repr(w), repr(w.upper())) of probe_uniffi.py.
+    // print(w, w.title()) / print(repr(w), repr(w.upper())) of the same probe.
     #[test]
     fn width_names_and_reservations_follow_python_case() {
         for (width, expected) in [

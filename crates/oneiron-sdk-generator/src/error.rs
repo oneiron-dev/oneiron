@@ -1,8 +1,10 @@
-//! `GenerateError`: what the Python generator prints last on stderr when it refuses its inputs (DESIGN 4).
+//! `GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python generator
+//! it replaced printed it.
 //!
-//! An uncaught Python exception ends its traceback with `<kind>: <message>`; `raise SystemExit(message)` prints the
-//! message alone. Both exit with status 1, and so does the binary on a `GenerateError`. The error fixtures compare
-//! that last line between the two generators, so every message here keeps Python's text.
+//! An uncaught Python exception ended its traceback with `<kind>: <message>`; `raise SystemExit(message)` printed the
+//! message alone. Both exited with status 1, and so does the binary on a `GenerateError`. The port was proved by
+//! comparing that last line between the two generators, so every message here keeps Python's text: a verb author's
+//! refusal reads as it always did.
 
 use std::fmt;
 use std::io;

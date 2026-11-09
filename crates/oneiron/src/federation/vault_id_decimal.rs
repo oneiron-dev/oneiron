@@ -3,8 +3,8 @@
 //!
 //! `#[serde(with = "crate::federation::vault_id_decimal")]` on every field
 //! that carries the id, beside `#[schemars(with = "String")]` where the type
-//! derives a schema; `scripts/sdk/facade_types.py` reads a `decimal` codec as
-//! a string, so the generated TypeScript, Python and UniFFI types say so too.
+//! derives a schema; the SDK generator's type inventory reads a `decimal` codec
+//! as a string, so the generated TypeScript, Python and UniFFI types say so too.
 use serde::{Deserialize, Deserializer, Serializer};
 
 pub(crate) fn serialize<S: Serializer>(id: &u64, serializer: S) -> Result<S::Ok, S::Error> {

@@ -1,9 +1,9 @@
-//! Port of generate.py's Python emitters (614-628, 686-770, 832-843): the facade verbs as the mixin `_FacadeVerbs`
-//! that `Oneiron` derives from, at `crates/oneiron-py/python/oneiron/_facade_verbs.py` and its stub `.pyi`.
+//! The Python emitters: the facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from, at
+//! `crates/oneiron-py/python/oneiron/_facade_verbs.py` and its stub `.pyi`.
 //!
 //! Every call into the shared `Inventory` (`py_type`, and `boundary_type`'s `py_stub`) happens where Python makes
-//! it (H10): the runtime module walks the same rows as the stub and makes the same calls, though it prints none of
-//! their types.
+//! it (the call order names its types): the runtime module walks the same rows as the stub and makes the same calls,
+//! though it prints none of their types.
 
 use super::common::{ArgumentValue, argument_kind, boundary_type, hand_declared, str_receiver};
 use super::emit_ts::{VerbNode, VerbTree, capitalized_words, concat_left, row_of, row_type};
@@ -15,7 +15,7 @@ use crate::py::builtins::is_keyword;
 use crate::py::text::{splitlines, title};
 use crate::py::value::{Dict, Value};
 
-/// Port of generate.py:686-688 (py_doc): a row's description as the docstring of each Python method that calls it.
+/// A row's description as the docstring of each Python method that calls it.
 fn py_doc(row: &Dict) -> String {
     match row.get("description") {
         Some(description) if description.truthy() => {
@@ -25,8 +25,8 @@ fn py_doc(row: &Dict) -> String {
     }
 }
 
-/// Port of generate.py:717-720 (leaf): the Python method a row ends in; a keyword (`continue`) takes the trailing
-/// underscore PEP 8 gives it (`keyword.iskeyword`, nelly's 3.14.7 list).
+/// The Python method a row ends in; a keyword (`continue`) takes the trailing underscore PEP 8 gives it
+/// (`keyword.iskeyword`, nelly's 3.14.7 list).
 fn leaf(name: &Value) -> Result<String, GenerateError> {
     let name = str_receiver(name, "rsplit")?;
     let part = name.rsplit_once('.').map_or(name, |(_, last)| last);
@@ -55,8 +55,7 @@ fn py_type(generator: &mut Generator, text: &str) -> Result<String, GenerateErro
     generator.inventory_mut()?.py_type(text, "Facade.")
 }
 
-/// Port of generate.py:690-715 (python_facade): a typed binding's verb, as a method of the runtime mixin or as its
-/// stub.
+/// A typed binding's verb, as a method of the runtime mixin or as its stub.
 fn python_facade(
     generator: &mut Generator,
     row: &Dict,
@@ -182,8 +181,7 @@ struct HandleShape {
     value: String,
 }
 
-/// Port of generate.py:614-628 (py_handle_shape): a generic-door verb's Python parameters, those parameters as the
-/// stub types them, and the input they send.
+/// A generic-door verb's Python parameters, those parameters as the stub types them, and the input they send.
 fn py_handle_shape(generator: &mut Generator, row: &Dict) -> Result<HandleShape, GenerateError> {
     let Some(handle_args) = row.get("handle_args") else {
         let empty = item(row, "input")?.is_str("EmptyRequest");
@@ -243,10 +241,10 @@ fn py_handle_shape(generator: &mut Generator, row: &Dict) -> Result<HandleShape,
     })
 }
 
-/// generate.py:731: the second `ask` overload's `spec_or_who` type.
+/// The second `ask` overload's `spec_or_who` type.
 const ASK_WHO: &str = "str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None";
 
-/// Port of generate.py:722-742 (python_handle_verb): a facade verb on the generic door, as a method of its namespace.
+/// A facade verb on the generic door, as a method of its namespace.
 fn python_handle_verb(
     generator: &mut Generator,
     row: &Dict,
@@ -295,7 +293,7 @@ fn python_handle_verb(
     ))
 }
 
-/// Port of generate.py:744-745 (python_verb): the typed binding's method, or the generic door's.
+/// The typed binding's method, or the generic door's.
 fn python_verb(
     generator: &mut Generator,
     id: RowId,
@@ -310,15 +308,14 @@ fn python_verb(
     }
 }
 
-/// Port of generate.py:747-748 (python_namespace_class): `_` + each `_`-separated part `str.title()`d + `Verbs`.
+/// `_` + each `_`-separated part `str.title()`d + `Verbs`.
 fn python_namespace_class(path: &[String]) -> String {
     let joined = path.join("_");
     let parts: String = joined.split('_').map(title).collect();
     format!("_{parts}Verbs")
 }
 
-/// A node whose segment is a namespace class rather than a plain method (generate.py:761): it holds verbs, or names
-/// none itself.
+/// A node whose segment is a namespace class rather than a plain method: it holds verbs, or names none itself.
 fn is_namespace(node: &VerbNode) -> bool {
     !node.children.is_empty() || node.row.is_none()
 }
@@ -339,7 +336,7 @@ struct ClassWalk<'o> {
 }
 
 impl ClassWalk<'_> {
-    /// generate.py:753-756 (python_class_verbs.accessor): the property that makes a namespace's class.
+    /// The property that makes a namespace's class.
     fn accessor(&self, name: &str, path: &[String]) -> String {
         let cls = python_namespace_class(path);
         let owner = self.owner;
@@ -351,8 +348,8 @@ impl ClassWalk<'_> {
         format!("    @property\n    def {name}(self) -> \"{owner}.{cls}\":{body}\n")
     }
 
-    /// generate.py:757-765 (python_class_verbs.namespace): one namespace's class, then its nested ones. Python's
-    /// `(name, child) in nested` holds exactly for the children `nested` was built from (names are unique keys).
+    /// One namespace's class, then its nested ones. Python's `(name, child) in nested` holds exactly for the children
+    /// `nested` was built from (names are unique keys).
     fn namespace(
         &mut self,
         generator: &mut Generator,
@@ -388,8 +385,7 @@ impl ClassWalk<'_> {
     }
 }
 
-/// Port of generate.py:750-770 (python_class_verbs): the facade class body: a bare verb is a method, a namespace a
-/// property whose class nests in it, under `owner`.
+/// The facade class body: a bare verb is a method, a namespace a property whose class nests in it, under `owner`.
 fn python_class_verbs(
     generator: &mut Generator,
     tree: &VerbTree,
@@ -424,8 +420,7 @@ fn python_class_verbs(
     Ok(members)
 }
 
-/// Port of generate.py:832-843 (python_facade_module): the facade verbs as the mixin `_FacadeVerbs` that `Oneiron`
-/// derives from (`stub`: its `.pyi`).
+/// The facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from (`stub`: its `.pyi`).
 pub(crate) fn python_facade_module(
     generator: &mut Generator,
     tree: &VerbTree,

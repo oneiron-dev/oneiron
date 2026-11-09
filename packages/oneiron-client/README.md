@@ -11,7 +11,7 @@ every verb's input and result, and hands back the raw `Response`.
 
 ## What is generated, and what is written by hand
 
-`scripts/sdk/generate.py` writes two files here from the verb table; never
+The SDK generator (`crates/oneiron-sdk-generator`) writes two files here from the verb table; never
 edit them by hand:
 
 * `src/facade.ts`: `FACADE_VERBS`; `FacadeInputs` and `FacadeResults`, each

@@ -1,20 +1,17 @@
-//! Python's `re` where Rust's `regex` differs (brief H2).
+//! Python's `re` where Rust's `regex` differs.
 //!
 //! - The five patterns that use look-around (which `regex` lacks), each a hand-written function beside its pattern.
 //! - Python's `\w` and `\s` (`str.isalnum()` plus `_`; `str.isspace()`), which are not Rust's Unicode classes:
 //!   `translate` rewrites them in a pattern.
 //! - Python's `\b` and `\B`, which `regex` spells with Rust's word class (`text::is_word` lists where it differs):
-//!   `translate` and `compile` refuse them, and `PyRegex` matches a pattern holding them with Python's boundaries,
-//!   for the subset of Python's syntax that `subset_violation` checks (Python's `\<` and `\>` are literals, which
-//!   `translate` keeps: to `regex` they are word boundaries).
+//!   `translate` and `compile` refuse them; a caller drops them from the pattern and checks Python's boundaries by
+//!   hand (`facade_types::reader::search_bounded`). Python's `\<` and `\>` are literals, which `translate` keeps: to
+//!   `regex` they are word boundaries.
 //! - Python's replacement templates (`re.sub(pattern, template, text)`): backslash escapes and `\g<0>`.
 //!
 //! Python's `$` (without `re.M`) also matches before a final newline; `translate` leaves it alone, so a caller whose
 //! text can end in `\n` writes `\n?\z` or checks by hand. `re.match` anchors at the start only, `re.fullmatch` at both
 //! ends (`compile_fullmatch`).
-
-use std::borrow::Cow;
-use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -33,11 +30,10 @@ pub(crate) const SPACE_CLASS: &str = r"\t\n\x0B\x0C\r\x1C-\x20\x{85}\x{A0}\x{168
 /// backspace to Python) becomes `\x08`, and `[` (a nested class to `regex`), a first `]`, `&` and `~` (set operators
 /// to `regex`) are escaped. Everything else is copied.
 ///
-/// Panics on a pattern outside the syntax `syntax_violation` checks (`subset_violation`'s rules but the first: a
-/// non-ASCII literal is taken, since no stand-in is matched here), and on a `\b` or `\B` outside a class: `regex` would
-/// read it with Rust's word class, so the pattern goes through `PyRegex`, which keeps Python's. The generator's
-/// patterns are constants (`every_generator_pattern_is_in_the_subset` builds each), so this fails a test, never an
-/// input; the one pattern made at run time (`rust_ir.rs`'s inline `mod`) adds only `regex::escape` of a name.
+/// Panics on a pattern outside the syntax `syntax_violation` checks, and on a `\b` or `\B` outside a class: `regex`
+/// would read it with Rust's word class, not Python's. The generator's patterns are constants
+/// (`every_generator_pattern_is_in_the_subset` builds each), so this fails a test, never an input; the one pattern
+/// made at run time (`rust_ir.rs`'s inline `mod`) adds only `regex::escape` of a name.
 pub(crate) fn translate(pattern: &str) -> String {
     if let Some(why) = syntax_violation(pattern) {
         panic!("{pattern:?}: py::re does not take {why}");
@@ -45,7 +41,8 @@ pub(crate) fn translate(pattern: &str) -> String {
     let (translated, boundaries) = translate_keeping_boundaries(pattern);
     assert!(
         !boundaries,
-        "{pattern:?} holds \\b or \\B, whose word class regex does not share with Python: use py::re::PyRegex"
+        "{pattern:?} holds \\b or \\B, whose word class regex does not share with Python: drop it and check the \
+         boundary by hand (facade_types::reader::search_bounded)"
     );
     translated
 }
@@ -126,39 +123,11 @@ pub(crate) fn compile_fullmatch(pattern: &str) -> Regex {
     Regex::new(&format!(r"\A(?:{})\z", translate(pattern))).expect("a constant pattern")
 }
 
-/// Rust's `\w` (Alphabetic, marks, Nd, connector punctuation, join controls), the class `regex`'s `\b` reads.
-static RUST_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w").expect("a constant class"));
-
-/// The character `PyRegex` matches in place of `c`, when Rust's and Python's word classes disagree on it: one of the
-/// same UTF-8 length that both classes see as Python sees `c`, and that every class a pattern in `PyRegex`'s subset
-/// can name (`\w`, `\W`, `\s`, `\S`, `\d`, `\D`, ASCII sets and their negations, `.`) takes or refuses as it does
-/// `c`. ASCII never differs.
-fn boundary_stand_in(c: char) -> Option<char> {
-    if c.is_ascii() {
-        return None;
-    }
-    let python = is_word(c);
-    if python == RUST_WORD.is_match(c.encode_utf8(&mut [0; 4])) {
-        return None;
-    }
-    // A Python word character (a number of category No: `²`) stands in as a letter (Lo); a Python non-word one (a
-    // mark, a connector, a join control) as punctuation or a symbol (Po, So). None is Nd, a space or a newline.
-    Some(match (python, c.len_utf8()) {
-        (true, 2) => '\u{AA}',
-        (true, 3) => '\u{4E00}',
-        (true, _) => '\u{20000}',
-        (false, 2) => '\u{A7}',
-        (false, 3) => '\u{2030}',
-        (false, _) => '\u{1F600}',
-    })
-}
-
-/// Why `PyRegex` refuses a Python pattern, or `None` when the pattern is in the subset of Python's syntax on which
-/// its stand-ins and `regex`'s iterators give Python's results (Sol's G1a review, pass 2):
-/// - ASCII text, and escapes that name an ASCII character or one of Python's classes: `\w \W \s \S \d \D`, the
-///   anchors `\b \B \A \z` (outside a class; inside one `\b` is a backspace), `\n \t \r \f \v \a`, `\x00`-`\x7F`, and
-///   an escaped ASCII punctuation character. So every class the pattern names takes or refuses a stand-in as it does
-///   the character it stands in for (`[\u0300-\u036f]`, `\xB2` and `\p{Mn}` would not).
+/// Why `translate` (so `compile` and `compile_fullmatch`) refuses a Python pattern, or `None` when the pattern is in
+/// the subset of Python's syntax on which `regex` gives Python's results:
+/// - Escapes that name an ASCII character or one of Python's classes: `\w \W \s \S \d \D`, the anchors `\b \B \A \z`
+///   (outside a class; inside one `\b` is a backspace), `\n \t \r \f \v \a`, `\x00`-`\x7F`, and an escaped ASCII
+///   punctuation character. A non-ASCII literal matches itself to both engines; a non-ASCII escape is refused.
 /// - Groups `(...)`, `(?:...)` and `(?P<name>...)`, and the flags `(?m)` and `(?s)` at the start; `$` only under
 ///   `(?m)` (without it Python's `$` also matches before a final newline, and `regex`'s does not).
 /// - The quantifiers `*`, `+`, `?`, `{m}`, `{m,}` and `{m,n}`, each greedy or lazy, of a part that cannot match
@@ -168,16 +137,6 @@ fn boundary_stand_in(c: char) -> Option<char> {
 ///
 /// The fewest characters a part matches is counted from the pattern text: a quantifier of a part that can match
 /// empty, or a pattern that can, is refused even when look-arounds would rule the empty match out.
-fn subset_violation(pattern: &str) -> Option<String> {
-    if !pattern.is_ascii() {
-        return Some("a non-ASCII character".to_owned());
-    }
-    syntax_violation(pattern)
-}
-
-/// `subset_violation`'s rules but the first, which `translate` (so `compile` and `compile_fullmatch`) checks: the
-/// syntax, the quantifiers and no empty match hold for any pattern `regex` runs for Python, while ASCII text is what
-/// `PyRegex`'s stand-ins need. A non-ASCII literal matches itself to both engines; a non-ASCII escape is refused.
 fn syntax_violation(pattern: &str) -> Option<String> {
     let mut scan = SubsetScan {
         pattern: pattern.as_bytes(),
@@ -194,7 +153,7 @@ fn syntax_violation(pattern: &str) -> Option<String> {
     }
 }
 
-/// A scan of a pattern for `subset_violation`. Each method returns the fewest characters its part matches.
+/// A scan of a pattern for `syntax_violation`. Each method returns the fewest characters its part matches.
 struct SubsetScan<'p> {
     pattern: &'p [u8],
     at: usize,
@@ -409,94 +368,6 @@ fn refusal<T>(at: usize, why: &str) -> Result<T, String> {
     Err(format!("{why} (offset {at})"))
 }
 
-/// A Python pattern with Python's `\b` and `\B` (and its `\w`, `\s`): `regex`'s word boundary reads Rust's word
-/// class, so a text holding a character the two classes disagree on is matched as a copy in which that character
-/// stands in for one both classes see as Python sees it (`boundary_stand_in`). The stand-ins keep each character's
-/// UTF-8 length, so every offset into the copy is the same offset into the text; the methods return offsets, and a
-/// caller slices its own text.
-///
-/// Only patterns in the subset `subset_violation` checks are taken; any other panics when it is built. The
-/// generator's patterns are constants, so a pattern outside the subset fails a test, never an input.
-pub(crate) struct PyRegex {
-    re: Regex,
-    boundaries: bool,
-}
-
-impl PyRegex {
-    fn build(pattern: &str, anchored: bool) -> Self {
-        if let Some(why) = subset_violation(pattern) {
-            panic!("{pattern:?}: PyRegex does not take {why}");
-        }
-        let (translated, boundaries) = translate_keeping_boundaries(pattern);
-        let translated = if anchored {
-            format!(r"\A(?:{translated})\z")
-        } else {
-            translated
-        };
-        Self {
-            re: Regex::new(&translated).expect("a constant pattern"),
-            boundaries,
-        }
-    }
-
-    /// `re.compile(pattern)`.
-    pub(crate) fn new(pattern: &str) -> Self {
-        Self::build(pattern, false)
-    }
-
-    /// A pattern for `re.fullmatch`.
-    pub(crate) fn fullmatch(pattern: &str) -> Self {
-        Self::build(pattern, true)
-    }
-
-    /// The text `regex` reads: `text` itself, or its copy with the stand-ins.
-    fn haystack<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        if !self.boundaries || !text.chars().any(|c| boundary_stand_in(c).is_some()) {
-            return Cow::Borrowed(text);
-        }
-        Cow::Owned(
-            text.chars()
-                .map(|c| boundary_stand_in(c).unwrap_or(c))
-                .collect(),
-        )
-    }
-
-    /// `pattern.search(text) is not None` (or `fullmatch` for a `PyRegex::fullmatch`).
-    pub(crate) fn is_match(&self, text: &str) -> bool {
-        self.re.is_match(&self.haystack(text))
-    }
-
-    /// `pattern.search(text, pos)`: the first match at or after `start`, as a byte range of `text`. `start` is a byte
-    /// offset on a character boundary (Python's `pos` counts characters); past the end it is the end, as in Python.
-    pub(crate) fn search_at(&self, text: &str, start: usize) -> Option<(usize, usize)> {
-        self.re
-            .find_at(&self.haystack(text), start.min(text.len()))
-            .map(|found| (found.start(), found.end()))
-    }
-
-    /// `pattern.finditer(text)`: each match's byte range in `text`. `regex`'s iterator is Python's here because no
-    /// match of a pattern in the subset is empty.
-    pub(crate) fn find_iter(&self, text: &str) -> Vec<(usize, usize)> {
-        self.re
-            .find_iter(&self.haystack(text))
-            .map(|found| (found.start(), found.end()))
-            .collect()
-    }
-
-    /// `pattern.finditer(text)` with its groups: per match, each group's byte range in `text` (group 0 first).
-    pub(crate) fn captures_iter(&self, text: &str) -> Vec<Vec<Option<(usize, usize)>>> {
-        self.re
-            .captures_iter(&self.haystack(text))
-            .map(|captures| {
-                captures
-                    .iter()
-                    .map(|group| group.map(|found| (found.start(), found.end())))
-                    .collect()
-            })
-            .collect()
-    }
-}
-
 fn char_before(text: &str, at: usize) -> Option<char> {
     text[..at].chars().next_back()
 }
@@ -505,7 +376,7 @@ fn char_at(text: &str, at: usize) -> Option<char> {
     text[at..].chars().next()
 }
 
-/// `facade_types.py:257` `re.sub(r'(?<!^)(?=[A-Z])', '_', name)`: `_` before every ASCII capital but a first one.
+/// `re.sub(r'(?<!^)(?=[A-Z])', '_', name)`: `_` before every ASCII capital but a first one.
 pub(crate) fn sub_underscore_before_capitals(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 4);
     for (at, c) in name.char_indices() {
@@ -517,7 +388,7 @@ pub(crate) fn sub_underscore_before_capitals(name: &str) -> String {
     out
 }
 
-/// `uniffi_types.py:96` `re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', key)`: `_` between an ASCII lower-case letter or digit
+/// `re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', key)`: `_` between an ASCII lower-case letter or digit
 /// and an ASCII capital.
 pub(crate) fn sub_underscore_at_case_rise(key: &str) -> String {
     let mut out = String::with_capacity(key.len() + 4);
@@ -534,7 +405,7 @@ pub(crate) fn sub_underscore_at_case_rise(key: &str) -> String {
     out
 }
 
-/// `generate.py:805` `re.findall(r'(?<![\w.])(\w+)\(', body)`: each word called as a function, not after a `.` or
+/// `re.findall(r'(?<![\w.])(\w+)\(', body)`: each word called as a function, not after a `.` or
 /// another word character, in order (repeats kept).
 pub(crate) fn findall_called_words(body: &str) -> Vec<&str> {
     let mut found = Vec::new();
@@ -560,7 +431,7 @@ pub(crate) fn findall_called_words(body: &str) -> Vec<&str> {
     found
 }
 
-/// `generate.py:1384` `re.search(r'(?<![\w"])invalid(?![\w"])', body) is not None`: the word `invalid` with no word
+/// `re.search(r'(?<![\w"])invalid(?![\w"])', body) is not None`: the word `invalid` with no word
 /// character or `"` on either side.
 pub(crate) fn search_bare_invalid(body: &str) -> bool {
     let free = |c: Option<char>| c.is_none_or(|c| !is_word(c) && c != '"');
@@ -590,7 +461,7 @@ fn literal_matches(
     found
 }
 
-/// `generate.py:2439` `re.sub(r'&\binput\b(?!\.)', value_input, checks)`: every `&input` that ends a word and is not
+/// `re.sub(r'&\binput\b(?!\.)', value_input, checks)`: every `&input` that ends a word and is not
 /// followed by `.` becomes `value_input` (a Python replacement template).
 pub(crate) fn sub_whole_input_borrow(
     checks: &str,
@@ -603,7 +474,7 @@ pub(crate) fn sub_whole_input_borrow(
     sub_matches(checks, &matches, value_input)
 }
 
-/// `generate.py:2440` `re.sub(r'\binput\b', value_input, checks)`: every whole word `input` becomes `value_input`.
+/// `re.sub(r'\binput\b', value_input, checks)`: every whole word `input` becomes `value_input`.
 pub(crate) fn sub_input_word(checks: &str, value_input: &str) -> Result<String, GenerateError> {
     let matches = literal_matches(checks, "input", |start, end| {
         char_before(checks, start).is_none_or(|c| !is_word(c))
@@ -1170,241 +1041,11 @@ mod tests {
         assert_eq!(translate(r"\<a\>[\<]"), "<a>[<]");
     }
 
-    // Each row: [m.span() for m in re.finditer(PATTERN, TEXT)] on nelly (Python 3.14.7), as UTF-8 byte offsets
-    // (Sol's G1a review, P1-6): Python's `\b` beside a combining mark, `²`, `‿`, ZWJ and U+0903.
-    type Spans = &'static [(usize, usize)];
-
+    // What `translate` refuses: escapes of no ASCII character or Python class, patterns that can match empty (Python's
+    // finditer gives (0, 0), (0, 1), (1, 1) for `\b|a` in "a", and (0, 1), (1, 1) for `\w*\b`), and syntax the subset
+    // does not take.
     #[test]
-    fn python_boundaries_match_python() {
-        let cases: &[(&str, &str, Spans)] = &[
-            ("a\\b", "a\u{301}", &[(0, 1)]),
-            ("a\\b", "a\u{b2}", &[]),
-            ("a\\B", "a\u{301}", &[]),
-            ("a\\B", "a\u{b2}", &[(0, 1)]),
-            ("\\b([A-Z]\\w*)\\b", "A\u{301}", &[(0, 1)]),
-            ("\\b([A-Z]\\w*)\\b", "A\u{b2} B", &[(0, 3), (4, 5)]),
-            (
-                "\\b([A-Z]\\w*)\\b",
-                "x Foo\u{203f}Bar Baz\u{b2} Qux\u{200d} \u{903}Zed",
-                &[(2, 5), (8, 11), (12, 17), (18, 21), (28, 31)],
-            ),
-            (
-                "\\b(?:struct|enum)\\s+([A-Za-z_]\\w*)",
-                "pub struct Foo\u{301}; enum\u{b2} Bar; struct\u{2028}Baz",
-                &[(4, 14), (30, 42)],
-            ),
-            (
-                "\\bfn\\s+deserialize\\b",
-                "fn  deserialize\u{301}(",
-                &[(0, 15)],
-            ),
-            ("\\bfn\\s+deserialize\\b", "fn deserialize\u{b2}", &[]),
-            (
-                "\\binput\\b",
-                "\u{e9}input input\u{b2} input\u{203f} (input)",
-                &[(16, 21), (26, 31)],
-            ),
-            (
-                "(?m)^[ \\t]*impl\\b[^{;]*?\\b(?:serde::)?Serialize\\s+for\\s+([A-Za-z_]\\w*)",
-                "impl Serialize for Foo\u{301} {}\u{a}impl\u{b2} Serialize for Bar {}\u{a}impl<T> serde::Serialize for Baz<T> {",
-                &[(0, 22), (56, 88)],
-            ),
-            ("\\b\\w", "\u{1d165}x\u{1f100}y", &[(4, 5)]),
-            ("\\w\\b", "\u{1d165}x\u{1f100}y", &[(9, 10)]),
-            ("[\\b]x", "\u{8}x", &[(0, 2)]),
-            ("\\<a\\>", "<a>", &[(0, 3)]),
-            ("[\\<\\>]+", "<>", &[(0, 2)]),
-            ("\\<\\w+\\b", "<x\u{301}", &[(0, 2)]),
-        ];
-        for (pattern, text, expected) in cases {
-            assert_eq!(
-                PyRegex::new(pattern).find_iter(text),
-                *expected,
-                "{pattern:?} {text:?}"
-            );
-        }
-        let words = PyRegex::new(r"\b([A-Z]\w*)\b");
-        let text = "A\u{b2} B";
-        let found: Vec<&str> = words
-            .captures_iter(text)
-            .iter()
-            .filter_map(|groups| groups[1].map(|(start, end)| &text[start..end]))
-            .collect();
-        assert_eq!(found, ["A\u{b2}", "B"]);
-        assert!(PyRegex::fullmatch(r"\w+\b").is_match("a\u{b2}"));
-        assert_eq!(
-            PyRegex::new(r"\bx").search_at("x \u{301}x x", 1),
-            Some((4, 5))
-        );
-    }
-
-    // python3 -c "import re; print(re.compile(PATTERN).search(TEXT, POS))" on nelly (3.14.7): a `pos` past the end
-    // is the end (Sol's G1a review, pass 2, P2-A).
-    type Search = (&'static str, &'static str, usize, Option<(usize, usize)>);
-
-    #[test]
-    fn search_at_clamps_the_start_as_python_does() {
-        let cases: &[Search] = &[
-            ("a\\b", "a", 2, None),
-            ("a\\b", "a", 100, None),
-            ("a\\b", "a a", 1, Some((2, 3))),
-            ("\\ba", "ba a", 1, Some((3, 4))),
-            ("\\ba", "ba a", 4, None),
-        ];
-        for (pattern, text, start, expected) in cases {
-            assert_eq!(
-                PyRegex::new(pattern).search_at(text, *start),
-                *expected,
-                "{pattern:?} {text:?} {start}"
-            );
-        }
-    }
-
-    // Every pattern the generator matches with Python's `\b`, each built as a `PyRegex` (so each is in its subset),
-    // against one text with the characters the word classes disagree on. Each row: per match of
-    // re.finditer(PATTERN, TEXT), each group's span, on nelly (3.14.7), as UTF-8 byte offsets. The Python patterns
-    // built from a name use `serde` (facade_types.py:230) and `T` (facade_types.py:1218).
-    type Groups = &'static [&'static [Option<(usize, usize)>]];
-
-    #[test]
-    fn generator_boundary_patterns_match_python() {
-        const TEXT: &str = "impl Serialize for Foo\u{301} {}\nimpl\u{b2} Serialize for Bar {}\nimpl<'de> serde::Deserialize<'de> for Baz\u{203f} {\npub my_macro! { pub(crate) struct Qux\u{301} }\nm\u{301}! ( Zed\u{b2} )\n#[serde\u{301}(x)] #[serde (y)] #[\u{e9}serde(z)]\nstruct A\u{b2}b; enum\u{200d} C; struct\u{2028}D\nfn deserialize\u{301}( fn  deserialize\u{b2} fn deserialize\n#[repr(u8)] repr(u16\u{301}) repr ( usize\u{b2}) \u{b2}repr(i32)\nself.inner\u{301}.serialize(serializer) xself.a.serialize( serializer ) self.b.serialize(serializer)\nT T\u{301} \u{b2}T T\u{203f} <T>\nclass Foo\u{301}: class Bar\u{b2} = 1\nBaz = 2\ninput input\u{301} \u{e9}input (input)\na\u{301} a\u{b2} a \u{301}a \u{b2}a \u{1d165}a\u{1f100}";
-        let cases: &[(&str, Groups)] = &[
-            // harness/unicode.rs after
-            (
-                "a\\b",
-                &[
-                    &[Some((380, 381))],
-                    &[Some((521, 522))],
-                    &[Some((529, 530))],
-                    &[Some((533, 534))],
-                    &[Some((537, 538))],
-                ],
-            ),
-            // harness/unicode.rs before
-            (
-                "\\ba",
-                &[
-                    &[Some((380, 381))],
-                    &[Some((521, 522))],
-                    &[Some((525, 526))],
-                    &[Some((529, 530))],
-                    &[Some((533, 534))],
-                    &[Some((543, 544))],
-                ],
-            ),
-            // harness/unicode.rs capitalised; generate.py:795,821,838
-            (
-                "\\b([A-Z]\\w*)\\b",
-                &[
-                    &[Some((5, 14)), Some((5, 14))],
-                    &[Some((19, 22)), Some((19, 22))],
-                    &[Some((35, 44)), Some((35, 44))],
-                    &[Some((49, 52)), Some((49, 52))],
-                    &[Some((73, 84)), Some((73, 84))],
-                    &[Some((94, 97)), Some((94, 97))],
-                    &[Some((137, 140)), Some((137, 140))],
-                    &[Some((152, 157)), Some((152, 157))],
-                    &[Some((208, 212)), Some((208, 212))],
-                    &[Some((222, 223)), Some((222, 223))],
-                    &[Some((234, 235)), Some((234, 235))],
-                    &[Some((435, 436)), Some((435, 436))],
-                    &[Some((437, 438)), Some((437, 438))],
-                    &[Some((445, 446)), Some((445, 446))],
-                    &[Some((451, 452)), Some((451, 452))],
-                    &[Some((460, 463)), Some((460, 463))],
-                    &[Some((473, 478)), Some((473, 478))],
-                    &[Some((483, 486)), Some((483, 486))],
-                ],
-            ),
-            // facade_types.py:230 (name 'serde')
-            ("\\bserde\\s*\\(", &[&[Some((176, 183))]]),
-            // facade_types.py:385
-            (
-                "(?m)^[ \\t]*impl\\b[^{;]*?\\b(?:serde::)?Serialize\\s+for\\s+([A-Za-z_]\\w*)",
-                &[&[Some((0, 22)), Some((19, 22))]],
-            ),
-            // facade_types.py:386
-            (
-                "(?m)^[ \\t]*impl\\b[^{;]*?\\b(?:serde::)?Deserialize<'de>\\s+for\\s+([A-Za-z_]\\w*)",
-                &[&[Some((56, 97)), Some((94, 97))]],
-            ),
-            // facade_types.py:388
-            (
-                "(?m)^[ \\t]*(?:pub\\s+)?(\\w+)!\\s*[({]\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:struct\\s+)?([A-Z]\\w*)\\b",
-                &[&[Some((103, 140)), Some((107, 115)), Some((137, 140))]],
-            ),
-            // facade_types.py:802
-            (
-                "\\b(?:struct|enum)\\s+([A-Za-z_]\\w*)",
-                &[
-                    &[Some((130, 140)), Some((137, 140))],
-                    &[Some((201, 212)), Some((208, 212))],
-                    &[Some((225, 235)), Some((234, 235))],
-                ],
-            ),
-            // facade_types.py:808
-            (
-                "\\bfn\\s+deserialize\\b",
-                &[&[Some((236, 250))], &[Some((272, 286))]],
-            ),
-            // facade_types.py:895
-            (
-                "\\brepr\\s*\\(\\s*([ui](?:8|16|32|64|size))\\b",
-                &[
-                    &[Some((289, 296)), Some((294, 296))],
-                    &[Some((299, 307)), Some((304, 307))],
-                ],
-            ),
-            // facade_types.py:990
-            (
-                "\\bself\\.([A-Za-z_]\\w*)\\.serialize\\(\\s*serializer\\s*\\)",
-                &[&[Some((406, 434)), Some((411, 412))]],
-            ),
-            // facade_types.py:1218 (param 'T')
-            (
-                "\\bT\\b",
-                &[
-                    &[Some((435, 436))],
-                    &[Some((437, 438))],
-                    &[Some((445, 446))],
-                    &[Some((451, 452))],
-                ],
-            ),
-            // generate.py:463 (re.M)
-            (
-                "(?m)^(?:class (\\w+)\\b|(\\w+) = )",
-                &[
-                    &[Some((454, 463)), Some((460, 463)), None],
-                    &[Some((483, 489)), None, Some((483, 486))],
-                ],
-            ),
-            // generate.py:2440
-            (
-                "\\binput\\b",
-                &[
-                    &[Some((491, 496))],
-                    &[Some((497, 502))],
-                    &[Some((514, 519))],
-                ],
-            ),
-        ];
-        for (pattern, expected) in cases {
-            assert_eq!(subset_violation(pattern), None, "{pattern:?}");
-            assert_eq!(
-                PyRegex::new(pattern).captures_iter(TEXT),
-                *expected,
-                "{pattern:?}"
-            );
-        }
-    }
-
-    // What `PyRegex` refuses (Sol's G1a review, pass 2): patterns whose classes would read the stand-ins otherwise
-    // than the characters they stand in for (P1-A: Python matches `a\b[\u0300-\u036f]` in "a\u0301" and `\b\xB2` in
-    // "\u00b2"), patterns that can match empty (P1-B: Python's finditer gives (0, 0), (0, 1), (1, 1) for `\b|a` in
-    // "a", and (0, 1), (1, 1) for `\w*\b`), and syntax the subset does not take.
-    #[test]
-    fn py_regex_refuses_patterns_outside_its_subset() {
+    fn syntax_violations_are_refused() {
         let escape = "an escape that names no ASCII character";
         let cases: &[(&str, &str)] = &[
             (r"a\b[\u0300-\u036f]", escape),
@@ -1414,7 +1055,6 @@ mod tests {
             (r"\p{Mn}\b", escape),
             (r"\b\N{DIGIT TWO}", escape),
             (r"(a)\1\b", escape),
-            ("\u{e9}\\b", "a non-ASCII character"),
             (r"\w*\b", "a pattern that can match empty"),
             (r"\b|a", "a pattern that can match empty"),
             (r"\b", "a pattern that can match empty"),
@@ -1439,7 +1079,7 @@ mod tests {
             (r"(?P<1a>a)", "a group name"),
         ];
         for (pattern, reason) in cases {
-            let why = subset_violation(pattern).unwrap_or_default();
+            let why = syntax_violation(pattern).unwrap_or_default();
             assert!(why.starts_with(reason), "{pattern:?}: {why:?}");
         }
         for pattern in [
@@ -1449,18 +1089,12 @@ mod tests {
             r"a{2}b{1,}c{0,3}?\b",
             r"\x41\b\.\-",
         ] {
-            assert_eq!(subset_violation(pattern), None, "{pattern:?}");
+            assert_eq!(syntax_violation(pattern), None, "{pattern:?}");
         }
     }
 
     #[test]
-    #[should_panic(expected = "PyRegex does not take a pattern that can match empty")]
-    fn py_regex_refuses_when_built() {
-        let _ = PyRegex::new(r"\w*\b");
-    }
-
-    #[test]
-    #[should_panic(expected = "use py::re::PyRegex")]
+    #[should_panic(expected = "regex does not share with Python")]
     fn translate_refuses_boundaries() {
         let _ = translate(r"\bfn\b");
     }
@@ -1510,19 +1144,13 @@ mod tests {
     }
 
     /// Every Python pattern the generator builds, read from the crate's source (this file's tests aside, which build
-    /// refused patterns on purpose): each literal passed to `compile`, `compile_fullmatch`, `translate`,
-    /// `PyRegex::new` or `PyRegex::fullmatch` outside a comment, or the `const` such a call names. Each is built as its
+    /// refused patterns on purpose): each literal passed to `compile`, `compile_fullmatch` or `translate` outside a
+    /// comment, or the `const` such a call names. Each is built as its
     /// call builds it, so a pattern outside the subset fails here, naming its file. The one pattern made at run time
     /// is `the_run_time_mod_pattern_is_taken_for_any_name`'s.
     #[test]
     fn every_generator_pattern_is_in_the_subset() {
-        const CALLS: [&str; 5] = [
-            "compile(",
-            "compile_fullmatch(",
-            "translate(",
-            "PyRegex::new(",
-            "PyRegex::fullmatch(",
-        ];
+        const CALLS: [&str; 3] = ["compile(", "compile_fullmatch(", "translate("];
         let mut files = Vec::new();
         let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
         while let Some(dir) = dirs.pop() {
@@ -1567,13 +1195,7 @@ mod tests {
                     let Some(pattern) = pattern else { continue };
                     let fullmatch = call.contains("fullmatch");
                     let outcome = std::panic::catch_unwind(|| {
-                        if call.starts_with("PyRegex") {
-                            let _ = if fullmatch {
-                                PyRegex::fullmatch(&pattern)
-                            } else {
-                                PyRegex::new(&pattern)
-                            };
-                        } else if fullmatch {
+                        if fullmatch {
                             let _ = compile_fullmatch(&pattern);
                         } else {
                             let _ = compile(&pattern);
@@ -1589,8 +1211,8 @@ mod tests {
             }
         }
         // Today's count (the reader, the index, the inventory, the rows, common, the emitters, uniffi, the catalog
-        // fragment, the harness): a scan that finds fewer has lost its way.
-        assert!(built.len() >= 45, "{} patterns: {built:#?}", built.len());
+        // fragment): a scan that finds fewer has lost its way.
+        assert!(built.len() >= 42, "{} patterns: {built:#?}", built.len());
     }
 
     // rust_ir.rs: `(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+{re.escape(last)}\s*\{`, made at run time from a

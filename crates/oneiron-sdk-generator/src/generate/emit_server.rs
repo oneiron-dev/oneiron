@@ -1,6 +1,5 @@
-//! Port of generate.py: the server's facade outputs (G4a): `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`),
-//! `host_door_rows.rs` (`host_door_rows`), and the door tables both they and the MCP dispatch read
-//! (generate.py:357-375).
+//! The server's facade outputs: `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`), `host_door_rows.rs`
+//! (`host_door_rows`), and the door tables both they and the MCP dispatch read.
 
 use super::emit_mcp::{TASK_PRODUCER_BRANCHES, takes_task_decisions, takes_task_work_turn};
 use super::row_access::{flag, flag_in, get_in, get_is, item, json, method_name, variant_name};
@@ -9,7 +8,7 @@ use crate::error::GenerateError;
 use crate::py::json::dumps_str;
 use crate::py::value::{Dict, Value, set_add};
 
-/// Port of generate.py:2123-2128 (HOST_DOOR_ROWS_DOC).
+/// The head comment of `host_door_rows.rs`.
 pub(crate) const HOST_DOOR_ROWS_DOC: &str =
     "// The host-door rows whose door checks its caller before the row's verb
 // hooks run (FIX 1763), one variant each, named as `AgentVerb` names it, and
@@ -18,14 +17,14 @@ pub(crate) const HOST_DOOR_ROWS_DOC: &str =
 // `\"host_door_precheck\": false` checks nothing before its hooks; those rows:
 ";
 
-/// generate.py:2132 `variant`: a row's `AgentVerb` variant.
+/// A row's `AgentVerb` variant.
 fn row_variant(row: &crate::py::value::Dict) -> Result<String, GenerateError> {
     Ok(variant_name(super::row_access::text(
         row, "name", "replace",
     )?))
 }
 
-/// generate.py:2148 `proof_variant`: `''.join(part.title() for part in kind.split('_'))`.
+/// `''.join(part.title() for part in kind.split('_'))`: a proof kind's `HostDoorProof` variant.
 fn proof_variant(kind: &Value) -> Result<String, GenerateError> {
     Ok(super::common::str_receiver(kind, "split")?
         .split('_')
@@ -33,8 +32,7 @@ fn proof_variant(kind: &Value) -> Result<String, GenerateError> {
         .collect())
 }
 
-/// Port of generate.py:2130-2178 (host_door_rows): the `HostDoorRow` enum `door_admits` matches, and the host doors
-/// it leaves out.
+/// The `HostDoorRow` enum `door_admits` matches, and the host doors it leaves out.
 pub(crate) fn host_door_rows(
     generator: &Generator,
     facade_rows: &[RowId],
@@ -155,7 +153,7 @@ pub(crate) fn host_door_rows(
     Ok(out)
 }
 
-/// Port of generate.py:357 (SERVER_RECALL_DOC): the doc comment of the server's `vault.recall` door.
+/// The doc comment of the server's `vault.recall` door.
 pub(crate) const SERVER_RECALL_DOC: &str =
     "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
 /// every server transport shares (`POST /v1/core/facade/vault.recall`, and
@@ -175,27 +173,27 @@ pub(crate) const SERVER_RECALL_DOC: &str =
 /// local-only and `partial`.
 ";
 
-/// Port of generate.py:360 (HOME_SERVER_DOORS): FIX 2905, the server doors that also ask an opened device's home, by
-/// row, with the caller the call (or the MCP actor) admitted as the last argument.
+/// FIX 2905: the server doors that also ask an opened device's home, by row, with the caller the call (or the MCP
+/// actor) admitted as the last argument.
 pub(crate) const HOME_SERVER_DOORS: &[(&str, &str)] = &[("vault.recall", "recall_home_listing")];
 
-/// Port of generate.py:366-367 (CALL_HOME_DOORS): FIX 3876, the rows whose page is read on the transport's own caller
-/// surface, then completed by the opened device's home: `(row, its facade door, its MCP home step)`.
+/// FIX 3876: the rows whose page is read on the transport's own caller surface, then completed by the opened device's
+/// home: `(row, its facade door, its MCP home step)`.
 pub(crate) const CALL_HOME_DOORS: &[(&str, &str, &str)] = &[(
     "vault.search.bm25",
     "super::search_home_doors::vault_search_bm25",
     "crate::api::search::complete_bm25_with_home",
 )];
 
-/// Port of generate.py:370 (HOOK_DECISION_ROWS): FIX 10425, the facade host-door rows whose answer counts its hooks'
-/// verdict decisions among its own (`model_free`). A set, read for membership.
+/// FIX 10425: the facade host-door rows whose answer counts its hooks' verdict decisions among its own (`model_free`).
+/// A set, read for membership.
 pub(crate) const HOOK_DECISION_ROWS: &[&str] = &["self.browser.batch", "self.browser.library.run"];
 
-/// Port of generate.py:375 (SOURCE_FEEDBACK_DOORS): FIX 10389, a host door that runs its caller's program answers a
-/// failure that keeps the program's type feedback beside its typed refusal. A set, read for membership.
+/// FIX 10389: a host door that runs its caller's program answers a failure that keeps the program's type feedback
+/// beside its typed refusal. A set, read for membership.
 pub(crate) const SOURCE_FEEDBACK_DOORS: &[&str] = &["execute_code"];
 
-/// Port of generate.py:1732-1738 (DISPATCH_DOC).
+/// The head comment of `dispatch.rs`.
 pub(crate) const DISPATCH_DOC: &str =
     "// The facade's one admission and typed call per verb-table row (OF-489).
 // Every server transport runs a facade verb here: each HTTP route through
@@ -205,10 +203,10 @@ pub(crate) const DISPATCH_DOC: &str =
 // derived from.
 ";
 
-/// Port of generate.py:1739 (DISPATCH_SIGNATURE).
+/// The parameters of each facade row's dispatch fn.
 pub(crate) const DISPATCH_SIGNATURE: &str = "server: &Arc<SyncServer>, call: &FacadeCall<'_>, input: Result<serde_json::Value, FacadeApiError>";
 
-/// generate.py:1807-1813: the anonymous-chat row's socket door, which refuses.
+/// The anonymous-chat row's socket door, which refuses.
 const ANONYMOUS_CHAT_BODY: &str = "let _ = (server, auth, input);
                 Err(oneiron::memory::MemoryError::new(
                     oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -229,9 +227,8 @@ fn admits(row: &Dict, key: &str) -> Result<bool, GenerateError> {
     flag_in(row, "admission", key)
 }
 
-/// Port of generate.py:1748-1772 (facade_dispatch's record_scope_guard): a raw door refuses any narrowed record
-/// capability; a door that reads only through the credential's lane serves a facet narrowing (owner ruling
-/// FACET-READ); a door that births records lands them in the credential's landing facet.
+/// A raw door refuses any narrowed record capability; a door that reads only through the credential's lane serves a
+/// facet narrowing (owner ruling FACET-READ); a door that births records lands them in the credential's landing facet.
 fn record_scope_guard(row: &Dict) -> Result<&'static str, GenerateError> {
     Ok(if admits(row, "claim_record_scope")? {
         "let position = facade_claim_position(server, call)?;"
@@ -260,8 +257,7 @@ fn named_in(name: &Value, names: &[&str]) -> bool {
     names.iter().any(|row| name.is_str(row))
 }
 
-/// Port of generate.py:1741-2121 (facade_dispatch): the facade routes, every one onto the shared adapter, and the
-/// dispatch both transports run.
+/// The facade routes, every one onto the shared adapter, and the dispatch both transports run.
 pub(crate) fn facade_dispatch(
     generator: &Generator,
     facade_rows: &[RowId],
@@ -642,8 +638,8 @@ Box::pin({method}(server, call, input))
     Ok(FacadeDispatch { routes, dispatch })
 }
 
-/// generate.py:1815-1861: an owner-grade row's door (a full-vault result must carry verifier-produced owner proof
-/// into same-snapshot engine admission, never generic actor-only invoke).
+/// An owner-grade row's door (a full-vault result must carry verifier-produced owner proof into same-snapshot engine
+/// admission, never generic actor-only invoke).
 fn owner_grade_door(row: &Dict) -> Result<String, GenerateError> {
     let scope = item(row, "scope")?.str();
     let name = json(item(row, "name")?);
@@ -695,7 +691,7 @@ fn owner_grade_door(row: &Dict) -> Result<String, GenerateError> {
     ))
 }
 
-/// generate.py:1862-1924: a host door's dispatch. It answers from the server's own state, outside any room turn,
+/// A host door's dispatch. It answers from the server's own state, outside any room turn,
 /// under the credential the call presented; a restrictive call's args that do not decode as the door's typed input
 /// give way to the caller's own (`facade_door_input`, FIX 5076).
 fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
@@ -826,8 +822,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     ))
 }
 
-/// generate.py:2100-2116: `call_verb`, the one verb table every server transport serves, and the head of its row
-/// match.
+/// `call_verb`, the one verb table every server transport serves, and the head of its row match.
 const CALL_VERB: &str = "/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any

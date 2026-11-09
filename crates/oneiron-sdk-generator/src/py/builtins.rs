@@ -1,11 +1,12 @@
-//! Python's builtin names and keywords, embedded from the reference interpreter (brief H5).
+//! Python's builtin names and keywords, embedded from the reference interpreter.
 //!
-//! The Python generator reads these from the interpreter that runs it, so its outputs change with the Python
+//! The Python generator read these from the interpreter that ran it, so its outputs changed with the Python
 //! version (3.13 added `PythonFinalizationError`; 3.15 adds `ImportCycleError`, `frozendict` and `sentinel`, and the
 //! soft keyword `lazy`). The port fixes them at CPython 3.14.7 as nelly runs it, without `-S` (so `site`'s
-//! `copyright`, `credits`, `exit`, `help`, `license` and `quit` are builtins). After G6 these lists are the contract.
+//! `copyright`, `credits`, `exit`, `help`, `license` and `quit` are builtins). These lists are the contract: no
+//! Python version is consulted.
 
-/// `facade_types.py:113` `PY_BUILTINS`: the names in `dir(builtins)` that do not start with `_`, sorted. Printed on
+/// `PY_BUILTINS`: the names in `dir(builtins)` that do not start with `_`, sorted. Printed on
 /// nelly (Python 3.14.7) by `python3 -c "import builtins; print(sorted(n for n in dir(builtins) if not n.startswith('_')))"`.
 pub(crate) const PY_BUILTINS: &[&str] = &[
     "ArithmeticError",
@@ -160,7 +161,7 @@ pub(crate) const PY_BUILTINS: &[&str] = &[
     "zip",
 ];
 
-/// `keyword.kwlist`, the hard keywords `keyword.iskeyword` tests (`generate.py:720`, `facade_types.py:1199`).
+/// `keyword.kwlist`, the hard keywords `keyword.iskeyword` tests.
 /// Printed on nelly (Python 3.14.7) by `python3 -c "import keyword; print(keyword.kwlist)"`.
 pub(crate) const KEYWORDS: &[&str] = &[
     "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
@@ -168,10 +169,6 @@ pub(crate) const KEYWORDS: &[&str] = &[
     "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
     "with", "yield",
 ];
-
-/// `keyword.softkwlist`, printed on nelly (Python 3.14.7) by `python3 -c "import keyword; print(keyword.softkwlist)"`.
-/// The generator never reads it: `keyword.iskeyword` tests the hard keywords only.
-pub(crate) const SOFT_KEYWORDS: &[&str] = &["_", "case", "match", "type"];
 
 /// `name in PY_BUILTINS`.
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -200,7 +197,6 @@ mod tests {
         assert!(!is_builtin("__import__"));
         assert!(is_keyword("None"));
         assert!(!is_keyword("match"));
-        assert!(SOFT_KEYWORDS.contains(&"match"));
         assert!(!is_keyword("print"));
     }
 }
