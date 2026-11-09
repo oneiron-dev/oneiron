@@ -4,7 +4,7 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1359 facade rows, 4873 declarations.
+Census: 1359 facade rows, 4872 declarations.
 Inputs: 1279 of 1359 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
 Results: 1173 of 1359 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 20.
@@ -12969,8 +12969,6 @@ class EmbeddingSpaceProbePutRequest(TypedDict):
     targets: NotRequired[list[EntityId]]
     source_refs: NotRequired[list[EntityId]]
     author: str
-class EngineControlChangesRequest(TypedDict):
-    ...
 EngineControlClass = Literal["maintenance_cadence", "work_budget", "wake_cadence", "knowledge_recipe"]
 EngineControlChange = TypedDict("EngineControlChange", {"by": str, "owner": bool, "class": EngineControlClass, "knob": str, "value": str, "changed_at": int})
 class EngineControlChangeEntry(TypedDict):

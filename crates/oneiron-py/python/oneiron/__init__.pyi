@@ -2453,7 +2453,7 @@ class Oneiron:
         @property
         def controls(self) -> "Oneiron._VaultEngineControlsVerbs": ...
     class _VaultEngineControlsVerbs:
-        def changes(self, spec: Facade.EngineControlChangesRequest) -> list[Facade.EngineControlChangeEntry]:
+        def changes(self, spec: Facade.EmptyRequest) -> list[Facade.EngineControlChangeEntry]:
             """The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first."""
     class _VaultEntitiesVerbs:
         def look_before_mint(self, spec: Facade.IdentityLookupRequest) -> Facade.IdentityLookup:

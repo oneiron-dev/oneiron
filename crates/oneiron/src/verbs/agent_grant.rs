@@ -353,18 +353,13 @@ pub struct EngineControlChangeEntry {
     pub change: EngineControlChange,
 }
 
-/// `vault.engine.controls.changes`'s input: none.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EngineControlChangesRequest {}
-
 /// `vault.engine.controls.changes`: every change the owner or a holder of
 /// `engine.controls` made to the engine's stored knobs, oldest first, for
 /// the owner to read (untangle 6.6).
 pub fn engine_control_changes_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    _input: EngineControlChangesRequest,
+    _input: super::EmptyRequest,
 ) -> MemoryResult<Vec<EngineControlChangeEntry>> {
     Ok(vault
         .engine_control_changes(owner)?

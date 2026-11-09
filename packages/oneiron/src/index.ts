@@ -2065,7 +2065,7 @@ export class Oneiron {
     engine: {
       controls: {
         /** The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first. */
-        changes: (input: Facade.EngineControlChangesRequest): Facade.EngineControlChangeEntry[] => this.#call(() => this.#client.vaultEngineControlsChanges(input) as Facade.EngineControlChangeEntry[]),
+        changes: (input: Facade.EmptyRequest): Facade.EngineControlChangeEntry[] => this.#call(() => this.#client.vaultEngineControlsChanges(input) as Facade.EngineControlChangeEntry[]),
       },
     },
     entities: {
