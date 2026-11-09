@@ -13,8 +13,8 @@
 mod fixture;
 
 use fixture::{
-    KIND, WORKER, annotation_held_row, at, claim, claimed, enqueued, last_note, open, person,
-    read, resume, unix_now,
+    KIND, WORKER, annotation_held_row, at, claim, claimed, enqueued, last_note, open, person, read,
+    resume, unix_now,
 };
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease, BudgetHoldState};
 use oneiron::attempt_queue::{
@@ -81,7 +81,11 @@ fn raw_resume_of_budget_hold_does_not_diverge_hold_record() {
         .plan_hold(row.id)
         .expect("plan hold")
         .expect("the hold record stays");
-    assert_eq!(hold.state, BudgetHoldState::Resumed, "the hold follows the row");
+    assert_eq!(
+        hold.state,
+        BudgetHoldState::Resumed,
+        "the hold follows the row"
+    );
     assert!(hold.held.is_empty(), "no attempt is left on the hold");
     assert_eq!(hold.resumed_at, Some(now + 3));
     assert_eq!(hold.resumed_by.as_deref(), Some(operator.as_str()));
@@ -158,7 +162,10 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
         WaveApplyOutcome::Applied(_) => panic!("with no decider the cut waits for the owner"),
     };
     let parked = read(&queue, row.id);
-    assert!(parked.fanout_hold_for(launch), "the planner waits on the launch");
+    assert!(
+        parked.fanout_hold_for(launch),
+        "the planner waits on the launch"
+    );
 
     let resumed = resume(&queue, row.id, &actor.to_hex(), now + 3);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);

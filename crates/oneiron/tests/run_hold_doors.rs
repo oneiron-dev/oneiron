@@ -61,7 +61,10 @@ fn raw_resume_of_hook_hold_keeps_the_saved_wait_and_grants_nothing() {
 
     let resumed = resume(&queue, row.id, &operator, now + 3);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
-    assert_eq!(last_note(&resumed.record), Some("override of the hook hold"));
+    assert_eq!(
+        last_note(&resumed.record),
+        Some("override of the hook hold")
+    );
     assert_eq!(
         run_hold::hold_override_actor(&vault, row.id).expect("override read"),
         None,
@@ -75,7 +78,10 @@ fn raw_resume_of_hook_hold_keeps_the_saved_wait_and_grants_nothing() {
         .resume_point
         .as_ref()
         .expect("the saved wait stays on the row");
-    assert_eq!(point.marker, wait.marker, "the next run meets the same hook boundary");
+    assert_eq!(
+        point.marker, wait.marker,
+        "the next run meets the same hook boundary"
+    );
     assert_eq!(point.artifact_ref, wait.artifact_ref, "on the same ask");
 }
 

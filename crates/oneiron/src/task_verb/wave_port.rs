@@ -686,7 +686,13 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                             if launch.released_by_override(attempt.id) {
                                 complete_overridden_planner_in(self.vault, txn, attempt, now)?;
                             } else {
-                                hold_planning_attempt_in(self.vault, txn, &mut launch, attempt, now)?;
+                                hold_planning_attempt_in(
+                                    self.vault,
+                                    txn,
+                                    &mut launch,
+                                    attempt,
+                                    now,
+                                )?;
                             }
                         }
                         Ok(WaveTaskApplyOutcome::Paused(launch.receipt()))
