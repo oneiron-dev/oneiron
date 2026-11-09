@@ -25,7 +25,6 @@ pub(super) fn stage_in_txn(
     context: &ItemContext<'_>,
     claim: &DerivedClaim,
 ) -> Result<ItemOutcome> {
-    let id = EntityId::now();
     let subject = context.resolve(&claim.subject)?;
     let evidence = claim
         .evidence
@@ -47,10 +46,36 @@ pub(super) fn stage_in_txn(
             source_meet: ClaimSource::Generated,
         },
     ));
+    stage_candidate_in_txn(
+        vault,
+        txn,
+        context,
+        &claim.local,
+        EntityId::now(),
+        &candidate,
+    )
+}
+
+/// Stages the claim `candidate`, minted as `id`, for the item `local` in a
+/// savepoint of `txn`: first at Auto, then, when the gate holds it, as a
+/// proposal (as the Dreamer's writers do). A refusal rolls the savepoint
+/// back and keeps a refusal receipt in `txn`.
+///
+/// # Errors
+///
+/// Any error other than the gate's refusal: each aborts the whole commit.
+pub(super) fn stage_candidate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    context: &ItemContext<'_>,
+    local: &str,
+    id: EntityId,
+    candidate: &ClaimCandidate,
+) -> Result<ItemOutcome> {
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
-        let mut envelope = envelope(context, claim, approval)?;
+        let mut envelope = envelope(context, local, approval)?;
         let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        vault.sign_retained_machine_claim_in_txn(&savepoint, &id, &candidate, &mut envelope)?;
+        vault.sign_retained_machine_claim_in_txn(&savepoint, &id, candidate, &mut envelope)?;
         let staged = vault
             .batch_in()
             .claim_candidate(
@@ -96,7 +121,7 @@ pub(super) fn stage_in_txn(
 /// the derivation surface, the batch, the item and the run.
 fn envelope(
     context: &ItemContext<'_>,
-    claim: &DerivedClaim,
+    local: &str,
     approval: ClaimApprovalStatus,
 ) -> Result<WriteEnvelope> {
     let mut provenance = vec![
@@ -105,7 +130,7 @@ fn envelope(
             Value::from(super::DERIVE_BATCH_KEY),
             Value::from(context.batch.to_hex()),
         ),
-        (Value::from("item"), Value::from(claim.local.as_str())),
+        (Value::from("item"), Value::from(local)),
     ];
     if let Some(run) = &context.stamp.run {
         provenance.push((Value::from("run"), Value::from(run.as_str())));

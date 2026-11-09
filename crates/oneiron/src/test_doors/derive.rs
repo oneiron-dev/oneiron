@@ -6,8 +6,8 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimSource;
 use crate::derive::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle,
-    DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
+    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs,
+    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemOutcome, ItemRef,
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
@@ -39,6 +39,25 @@ pub struct Evidence {
     pub local: &'static str,
     pub head: Named,
     pub sources: Vec<Named>,
+}
+
+/// A SameAs for a door batch: `source` is the same as `target`.
+#[derive(Debug, Clone)]
+pub struct SameAs {
+    pub local: &'static str,
+    pub source: Named,
+    pub target: Named,
+}
+
+/// A distinct assertion for a door batch: `a` and `b` are different, under
+/// the agent's `topology_seal` Grant `grant`; applied when `apply`.
+#[derive(Debug, Clone)]
+pub struct Distinct {
+    pub local: &'static str,
+    pub a: EntityId,
+    pub b: EntityId,
+    pub grant: EntityId,
+    pub apply: bool,
 }
 
 /// A supersession for a door batch: `new` replaces `old`.
@@ -103,6 +122,8 @@ pub enum Derived {
     Evidence(Evidence),
     Supersede(Supersede),
     Settle(Settle),
+    SameAs(SameAs),
+    Distinct(Distinct),
     About(About),
     Profile(Profile),
     Archive(Archive),
@@ -227,6 +248,23 @@ pub fn commit_in_attempt(
                             Settlement::HoldBoth => DerivedSettlement::HoldBoth,
                             Settlement::Dismiss => DerivedSettlement::Dismiss,
                         },
+                    }),
+                    Derived::SameAs(same_as) => DerivationItem::SameAs(DerivedSameAs {
+                        local: same_as.local.to_owned(),
+                        source: named(&same_as.source),
+                        target: named(&same_as.target),
+                    }),
+                    Derived::Distinct(distinct) => DerivationItem::Topology(DerivedTopology {
+                        local: distinct.local.to_owned(),
+                        op: crate::identity_topology::IdentityTopologyOp::AssertDistinct(
+                            crate::identity_topology::AssertDistinctOp {
+                                a: distinct.a,
+                                b: distinct.b,
+                                reason: "derived".to_owned(),
+                            },
+                        ),
+                        grant: distinct.grant,
+                        apply: distinct.apply,
                     }),
                     Derived::About(about) => DerivationItem::PersonAbout(DerivedPersonAbout {
                         local: about.local.to_owned(),
@@ -408,6 +446,39 @@ pub fn supports(vault: &Vault, source: EntityId, head: EntityId) -> Result<bool>
         .store
         .port_edge_get(&txn, &source, crate::edge::EdgeKind::Supports, &head)?
         .is_some())
+}
+
+/// Whether `source` holds a `same_as` edge to `target`.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn same_as_edge(vault: &Vault, source: EntityId, target: EntityId) -> Result<bool> {
+    use crate::ports::EdgeStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .port_edge_get(&txn, &source, crate::edge::EdgeKind::SameAs, &target)?
+        .is_some())
+}
+
+/// The embedded owner mints the standing grant that lets the Dreamer apply
+/// its SameAs links.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn mint_nightly_links(vault: &Vault) -> Result<()> {
+    let owner = super::steward::owner(vault)?;
+    crate::dreamer_consolidation::mint_nightly_link_grant(
+        vault,
+        &owner,
+        crate::dreamer_consolidation::NightlyLinkGrantRequest::default(),
+    )
+    .map_err(|error| {
+        crate::error::Error::InvalidConfig(format!("nightly link grant: {error:?}"))
+    })?;
+    Ok(())
 }
 
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),

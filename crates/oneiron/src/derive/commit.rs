@@ -130,6 +130,12 @@ impl Vault {
                     DerivationItem::Settle(settle) => {
                         super::settle::stage_in_txn(self, txn, &context, settle)?
                     }
+                    DerivationItem::SameAs(same_as) => {
+                        super::link::stage_same_as_in_txn(self, txn, &context, same_as)?
+                    }
+                    DerivationItem::Topology(topology) => {
+                        super::link::stage_topology_in_txn(self, txn, &context, topology)?
+                    }
                     DerivationItem::PersonAbout(about) => {
                         super::artifact::stage_about_in_txn(self, txn, &context, about)?
                     }
