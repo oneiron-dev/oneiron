@@ -1,11 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, type PairedActor, awaitPublic } from "./support/engine.ts";
-import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
-import { defineFile, redactor, secretHex } from "./support/run.ts";
-import { McpRpcError, PublicHttpError, CliClient, CliError, McpClient, PublicHttpClient, credentialParts, type SdkDriverResult } from "./support/clients.ts";
-import { randomUUID } from "node:crypto";
-import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { defineFile, redactor } from "./support/run.ts";
+import { McpRpcError } from "./support/clients.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -111,7 +109,7 @@ type surfaces03Verb = "vault.notes.author_brief" | "vault.notes.follow_citation"
   | "vault.shares.create" | "vault.shares.view" | "vault.shares.revoke";
 type surfaces03Command = { [V in surfaces03Verb]: {
   verb: V; input: FacadeInput<V>; inputs?: FacadeInput<V>[];
-  refusal?: { code: "NOT_FOUND" | "FORBIDDEN"; message?: string };
+  refusal?: { code: "INVENTED_REFERENCE" | "FORBIDDEN"; message?: string };
 } }[surfaces03Verb];
 type surfaces03Grant = NonNullable<FacadeInput<"vault.gate.policy.put">["manifest"]["scoped_grants"]>[number];
 interface surfaces03Fixtures {
@@ -198,7 +196,7 @@ async function surfaces03Run(
     if (command.refusal) {
       const reply = await actor.client.raw("POST", `/v1/core/facade/${command.verb}`, inputFor(command, 0));
       observe(`REST ${command.verb}`, reply.raw);
-      expect(reply.status).toBe(command.refusal.code === "NOT_FOUND" ? 404 : 403);
+      expect(reply.status).toBe(command.refusal.code === "INVENTED_REFERENCE" ? 422 : 403);
       const error = surfaces03Object(surfaces03Object(reply.body).error);
       expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
       expect(error.receiptRef).toBe(reply.headers.get("x-oneiron-receipt-ref"));
@@ -240,7 +238,7 @@ async function surfaces03Run(
       observe(`MCP ${command.verb} refusal`, error.response);
       if (!("error" in error.response)) throw new Error("SURFACES-03 missing RPC error");
       const rpc = error.response.error;
-      expect(rpc.code).toBe(command.refusal.code === "NOT_FOUND" ? -32004 : -32020);
+      expect(rpc.code).toBe(command.refusal.code === "INVENTED_REFERENCE" ? -32602 : -32020);
       const data = surfaces03Object(rpc.data);
       expect(data.kind).toBe("facade_error");
       expect(data.error_code).toBe("facade_error");
@@ -415,7 +413,8 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const viewInput = { share_ref: canonicalShare.share_id } satisfies FacadeInput<"vault.shares.view">;
     const deniedAuthor: surfaces03Command = {
       verb: "vault.notes.author_brief", input: authorInput,
-      refusal: { code: "NOT_FOUND", message: "brief citation source does not resolve" },
+      refusal: { code: "INVENTED_REFERENCE",
+        message: "the record named at `/citations/0/claim_ref` does not resolve for this writer; the write was refused and the refusal receipted" },
     };
     const deniedCreate: surfaces03Command = { verb: "vault.shares.create", input: createInput, refusal: { code: "FORBIDDEN" } };
     const absent = await surfaces03Run(engine, agent, agentVersions, [
@@ -809,6 +808,13 @@ function surfaces06Content(value: FacadeResult<"vault.personas.preview">) {
   const { compiled_at: _time, ...content } = value;
   return content;
 }
+function surfaces06McpArguments(input: FacadeInput<"vault.personas.preview">) {
+  return {
+    schema_version: "mcp_tool_args.v1",
+    consent: { policy_ref: "policy:surfaces-06", purpose: "persona preview parity" },
+    arguments: { spec: input },
+  };
+}
 async function surfaces06Previews(
   engine: EngineFixture, input: FacadeInput<"vault.personas.preview">, privateValues: readonly string[],
 ): Promise<FacadeResult<"vault.personas.preview">> {
@@ -817,7 +823,7 @@ async function surfaces06Previews(
   surfaces06Absent([rest, cli.stdout, cli.stderr], privateValues);
   expect(cli.exitCode).toBe(0);
   const cliValue = JSON.parse(cli.stdout) as FacadeResult<"vault.personas.preview">;
-  const mcp = await engine.mcp.callTool("vault.personas.preview", { spec: input });
+  const mcp = await engine.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input));
   surfaces06Absent(mcp, privateValues);
   expect(surfaces06Object(mcp).isError).toBe(false);
   const structured = surfaces06Object(surfaces06Object(mcp).structuredContent);
@@ -863,8 +869,8 @@ async function surfaces06RefusalReceipt(
  * No profile grant is exercised: owner persona acts and grant-gated psych
  * profiles are different doors. Populated facet access, approve/revoke, copy
  * strikes/export/edit and stale export consent remain unproved. Accepted-copy
- * content has no public read-back door. SDK refusal receipts stay asserted,
- * not waived; the small driver-metadata requirement is stated in the report.
+ * content has no public read-back door. All four refusal receipts are read
+ * before restart and compared with their saved rows after restart.
  */
 suite.test(test, "SURFACES-06", "Owner persona previews cite their sources across surfaces, refuse agents, and survive restart", async () => {
   const fixtures = await (await loadFixtures()).readJson<surfaces06Fixtures>("surfaces-scenarios");
@@ -887,7 +893,6 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
       kind: "PERSON", body: { name: data.profiles[1] }, occurred_at: fixtures.ledger.oldAt,
     });
     for (const person of [readerPerson, otherPerson]) {
-      await engine.awaitReceipt(person.receipt_ref);
       const read = await engine.client.call("vault.get", { entity_ref: person.id_hex });
       expect(read.value?.id_hex).toBe(person.id_hex);
       expect(read.value?.kind).toBe("PERSON");
@@ -906,7 +911,7 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     for (const input of claimInputs) {
       const result = await engine.client.call("vault.claims.upsert", {
         subject_ref: input.subject, predicate: input.predicate, value: input.value,
-        confidence: 1, source: "user_stated", scope, sensitivity: 0, salience: input.salience,
+        confidence: 1, source: "user_stated", scope, salience: input.salience,
         occurred_at: fixtures.ledger.oldAt, learned_at: fixtures.ledger.oldAt,
       });
       expect(result.approval).toBe("auto");
@@ -922,7 +927,6 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
       throw new Error("SURFACES-06 missing setup claim refs");
     }
     const diary = await engine.client.call("self.memory.diary", { content: privateDiary });
-    await engine.awaitReceipt(diary.receipt_ref);
     const diaryRead = await engine.client.call("vault.get", { entity_ref: diary.entry_ref });
     expect((JSON.stringify(diaryRead.value?.body) ?? "").includes(privateDiary)).toBe(true);
 
@@ -950,10 +954,10 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     const error = surfaces06Object(surfaces06Object(restError.reply.body).error);
     expect(error.code).toBe("FORBIDDEN");
     expect(error.message).toBe(message);
-    expect(typeof error.request_id === "string" && error.request_id.length > 0).toBe(true);
+    expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
     expect(Array.isArray(error.suggestions) && error.suggestions.length > 0).toBe(true);
-    expect(restError.reply.headers.get("x-oneiron-receipt-ref")).toBe(error.receipt_ref as string);
-    receipts.push(await surfaces06RefusalReceipt(engine, error.receipt_ref, reader, "http_facade", "FORBIDDEN", privateValues));
+    expect(restError.reply.headers.get("x-oneiron-receipt-ref")).toBe(error.receiptRef as string);
+    receipts.push(await surfaces06RefusalReceipt(engine, error.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     const cli = await reader.cli.run(["api", "call", "vault.personas.preview", "--data", "-"], JSON.stringify(input));
     surfaces06Absent([cli.stdout, cli.stderr], privateValues);
@@ -961,12 +965,12 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     const cliError = surfaces06Object(surfaces06Object(JSON.parse(cli.stdout)).error);
     expect(cliError.code).toBe("FORBIDDEN");
     expect(cliError.message).toBe(message);
-    expect(typeof cliError.request_id === "string" && cliError.request_id.length > 0).toBe(true);
+    expect(typeof cliError.requestId === "string" && cliError.requestId.length > 0).toBe(true);
     expect(Array.isArray(cliError.suggestions) && cliError.suggestions.length > 0).toBe(true);
-    receipts.push(await surfaces06RefusalReceipt(engine, cliError.receipt_ref, reader, "http_facade", "FORBIDDEN", privateValues));
+    receipts.push(await surfaces06RefusalReceipt(engine, cliError.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     let rpc: McpRpcError | undefined;
-    try { await reader.mcp.callTool("vault.personas.preview", { spec: input }); }
+    try { await reader.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input)); }
     catch (error) { if (!(error instanceof McpRpcError)) throw error; rpc = error; }
     if (rpc === undefined || !("error" in rpc.response)) throw new Error("SURFACES-06 expected a JSON-RPC refusal, not a tool result");
     surfaces06Absent(rpc.response, privateValues);
@@ -993,6 +997,7 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     expect(sdkError.code).toBe("FORBIDDEN");
     expect(sdkError.message).toBe(message);
     expect(Array.isArray(sdkError.suggestions) && sdkError.suggestions.length > 0).toBe(true);
+    receipts.push(await surfaces06RefusalReceipt(engine, sdkRow.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     await engine.restart();
     const restarted = await surfaces06Previews(engine, input, privateValues);
@@ -1002,13 +1007,13 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
       surfaces06Absent(read, privateValues);
       expect(read).toEqual(receipt);
     }
-    // Assert last so the first run reaches restart before the known SDK driver-metadata red.
-    // HARNESS NEED: each SDK driver result keeps m.lastReceiptRef() as receipt_ref.
-    await surfaces06RefusalReceipt(engine, surfaces06Object(sdkRow).receiptRef, reader, "http_facade", "FORBIDDEN", privateValues);
   } finally {
     await engine.close();
   }
 });
+
+// None: the merged destination already imports awaitPublic, type PairedActor,
+// redactor and secretHex.
 
 type surfaces07ReadVerb = "vault.agents.get" | "vault.workflows.get" | "vault.workflows.status";
 type surfaces07Read = {
@@ -1106,8 +1111,8 @@ async function surfaces07RefusalReceipt(
     row => row !== null, { label: "SURFACES-07 refusal receipt" },
   );
   if (receipt === null) throw new Error("SURFACES-07 refusal receipt did not persist");
-  expect(receipt).toMatchObject({ receipt_ref: ref, verb, actor_ref: actorRef,
-    actor_class: "agent", transport, outcome: { refused: { code } } });
+  expect(receipt).toMatchObject({ receipt_ref: ref, verb: transport === "http_facade" ? `v1/core/facade/${verb}` : verb,
+    actor_ref: actorRef, actor_class: "agent", transport, outcome: { refused: { code } } });
   return receipt;
 }
 async function surfaces07Refuse(
@@ -1122,9 +1127,9 @@ async function surfaces07Refuse(
     expect(http.status).toBe(403);
     const error = surfaces07Object(surfaces07Object(http.body).error);
     expect(error).toMatchObject({ code: "FORBIDDEN", message,
-      request_id: expect.any(String), suggestions: ["Present the owner's own verified, unattenuated credential."] });
-    expect(error.receipt_ref).toBe(http.headers.get("x-oneiron-receipt-ref"));
-    receipts.push(await surfaces07RefusalReceipt(engine, error.receipt_ref,
+      requestId: expect.any(String), suggestions: ["Present the owner's own verified, unattenuated credential."] });
+    expect(error.receiptRef).toBe(http.headers.get("x-oneiron-receipt-ref"));
+    receipts.push(await surfaces07RefusalReceipt(engine, error.receiptRef,
       request.verb, actor.principalRef, "http_facade", "FORBIDDEN"));
     expectedErrors.push({ code: error.code, message: error.message, suggestions: error.suggestions });
 
@@ -1134,8 +1139,8 @@ async function surfaces07Refuse(
     const cliError = surfaces07Object(surfaces07Object(JSON.parse(cli.stdout)).error);
     expect({ code: cliError.code, message: cliError.message, suggestions: cliError.suggestions })
       .toEqual({ code: error.code, message: error.message, suggestions: error.suggestions });
-    expect(cliError.request_id).toEqual(expect.any(String));
-    receipts.push(await surfaces07RefusalReceipt(engine, cliError.receipt_ref,
+    expect(cliError.requestId).toEqual(expect.any(String));
+    receipts.push(await surfaces07RefusalReceipt(engine, cliError.receiptRef,
       request.verb, actor.principalRef, "http_facade", "FORBIDDEN"));
 
     const mcp = await actor.mcp.rpc("tools/call", { name: request.verb,
@@ -1163,8 +1168,8 @@ async function surfaces07Refuse(
     if (result.ok) throw new Error("SURFACES-07 SDK allowed an agent owner act");
     const error = surfaces07Object(result.error);
     expect({ code: error.code, message: error.message, suggestions: error.suggestions }).toEqual(expectedErrors[index]);
-    // HARNESS NEED: each SDK operation must copy public m.lastReceiptRef() to receiptRef,
-    // including the catch branch, before the next operation replaces that handle state.
+    // The SDK driver retains public m.lastReceiptRef() for each operation,
+    // including refusals, before the next operation replaces that handle state.
     const metadata = surfaces07Object(result);
     receipts.push(await surfaces07RefusalReceipt(engine, metadata.receiptRef,
       request.verb, actor.principalRef, "http_facade", "FORBIDDEN"));
@@ -1289,6 +1294,8 @@ suite.test(test, "SURFACES-07", "Custom agent and saved workflow revisions agree
     await engine.close();
   }
 });
+
+// No additional imports: the merged surfaces test already imports every symbol used here.
 
 // The fixture names related_to, which is not an engine EdgeKind. This partial
 // exercises the registered mentions kind; it does not claim related_to support.
@@ -1480,6 +1487,8 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
     const error = surfaces08Object(result.error);
     expect({ code: error.code, message: error.message, suggestions: error.suggestions })
       .toEqual({ code: refusal.code, message: expectedError.message, suggestions: expectedError.suggestions });
+    receipts.push(await surfaces08ReceiptRead(actor, result.receiptRef, refusal.verb,
+      refusal.code, "http_facade", hidden));
   }
   return receipts;
 }
@@ -1493,7 +1502,7 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
  * Does not prove a new private project, grouped inbox delivery, completed weave,
  * scheduled digest or generated lens. No model, private queue or clock is used.
  */
-suite.test(test, "SURFACES-08", "Weave reports and link corrections respect reader scope across REST CLI MCP and SDK after restart", async () => {
+suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corrections agree across REST CLI MCP and SDK and persist through restart", async () => {
   const fixtures = await loadFixtures();
   const inputs = await fixtures.readJson<surfaces08Fixtures>("surfaces-scenarios");
   const data = inputs.cases.find(row => row.id === "SURFACES-08")?.fixture;
@@ -1707,8 +1716,8 @@ function surfaces09SdkFailure(result: SdkDriverResult, index = 0): surfaces09Fai
   if (row === undefined || row.ok) throw new Error("SURFACES-09 SDK refusal was not returned");
   const error = surfaces09Object(row.error);
   expect(typeof error.message === "string" && Array.isArray(error.suggestions)).toBe(true);
-  // Required driver field: capture m.lastReceiptRef() after this operation, also on catch.
-  return { code: surfaces09String(error.code), receipt: surfaces09String(surfaces09Object(row).receiptRef) };
+  // The driver captures the public SDK receipt getter after success and refusal.
+  return { code: surfaces09String(error.code), receipt: surfaces09String(row.receiptRef) };
 }
 async function surfaces09HttpFailure<V extends surfaces09Verb>(
   client: PublicHttpClient, verb: V, input: FacadeInput<V>,
@@ -1753,6 +1762,7 @@ async function surfaces09McpFailure<V extends surfaces09Verb>(
 }
 async function surfaces09PairScoped(
   engine: EngineFixture, principalRef: string, world: string, facet: string, verbs: string[],
+  privateValues: readonly string[],
 ): Promise<PairedActor> {
   const reply = await engine.client.request<surfaces09PairingLink>("POST", "/v1/core/pairing/links", {
     scope: {
@@ -1783,7 +1793,19 @@ async function surfaces09PairScoped(
   const actor: PairedActor = {
     principalRef, actorClass: "agent", ...paired, client, cli, mcp: new McpClient(client, "tool-first"),
   };
-  expect(await client.call("self.actor", {})).toMatchObject({ actor_ref: principalRef, actor_class: "agent" });
+  const readInput: FacadeInput<"vault.claims.list"> = { limit: 1 };
+  const scopedRead = await client.request<FacadeResult<"vault.claims.list">>(
+    "POST", "/v1/core/facade/vault.claims.list", readInput, { "x-oneiron-invocation": secretHex(16) });
+  expect(scopedRead.status).toBe(200);
+  const receiptRef = surfaces09String(scopedRead.headers.get("x-oneiron-receipt-ref"));
+  expect(receiptRef.startsWith("call:")).toBe(true);
+  const receipt = await awaitPublic(
+    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    row => row !== null, { label: "SURFACES-09 scoped pairing receipt" });
+  if (receipt === null) throw new Error("SURFACES-09 scoped pairing receipt is missing");
+  expect(receipt).toMatchObject({ actor_ref: principalRef, actor_class: "agent",
+    verb: "vault.claims.list", transport: "http_facade", outcome: "ok" });
+  for (const privateValue of privateValues) surfaces09Absent([scopedRead.body, receipt], privateValue);
   return actor;
 }
 async function surfaces09Setup(engine: EngineFixture, expected: surfaces09Registration): Promise<void> {
@@ -1803,12 +1825,12 @@ function surfaces09Setting(registration: surfaces09Registration, tool: string): 
  * admitted memory and Proposed exchanges inside the paired connector's ceiling;
  * owner-only controls refuse an agent, and selective write revocation survives restart.
  * Second doors: owner setup GET, claims.list/history, recall and receipts.get.
- * Harness need: SDK result rows expose receiptRef from Oneiron.lastReceiptRef().
+ * SDK result rows expose the actual per-operation Oneiron.lastReceiptRef().
  * Literal upload encoding is unproved: provider bodies are decoded. Native refusal-code parity remains asserted,
  * including the known MCP projection reds, rather than weakened to today's codes.
  */
 suite.test(test, "SURFACES-09",
-  "Memory injection stays within connector scope and write revocation survives restart across REST CLI MCP and SDK",
+  "Memory injection stays scoped and write revocation agrees across REST CLI MCP and SDK, then persists after restart",
   async () => {
     const fixtures = await loadFixtures();
     const scenarios = await fixtures.readJson<surfaces09Fixtures>("surfaces-scenarios");
@@ -1903,7 +1925,8 @@ enabled = false
       }
       const admitted = saved[0], privateClaim = saved[1];
       if (admitted === undefined || privateClaim === undefined) throw new Error("SURFACES-09 setup claims are missing");
-      const readOnly = await surfaces09PairScoped(fixture, principalRef, baseScope.world_id, admittedFacet, ["core:read"]);
+      const readOnly = await surfaces09PairScoped(fixture, principalRef, baseScope.world_id, admittedFacet,
+        ["core:read"], [privateValue, data.privateMemory]);
       const chat: FacadeInput<"ai.chat.completions"> = {
         model: data.model, stream: data.request.stream, n: data.request.n, user: falseAuthor,
         messages: data.request.messages.map(message => ({ ...message, name: falseAuthor })),
@@ -1928,23 +1951,25 @@ enabled = false
         const actual = typeof receipt.outcome === "object" ? receipt.outcome.refused.code : "ok";
         parity.push({ stage: `${stage} receipt`, carrier, actual, expected });
       };
+      // The generated facade grant check runs before the proxy's own scope check.
       const noGrant = [
         await surfaces09HttpFailure(readOnly.client, "ai.chat.completions", chat),
         await surfaces09CliFailure(readOnly, "ai.chat.completions", chat),
         await surfaces09McpFailure(readOnly, "ai.chat.completions", chat),
       ];
       for (const [index, failure] of noGrant.entries())
-        await surfaces09ObserveRefusal("missing write grant", carriers[index]!, "ai.chat.completions", failure, "scope_refused");
+        await surfaces09ObserveRefusal("missing write grant", carriers[index]!, "ai.chat.completions", failure, "FORBIDDEN");
       const noGrantSdk = await fixture.sdk.run("typescript", { mode: "remote", url: fixture.url, credential: readOnly.credential },
         [{ verb: "facade", path: "ai.chat.completions", input: chat }]);
       await surfaces09ObserveRefusal("missing write grant", "SDK", "ai.chat.completions",
-        surfaces09SdkFailure(noGrantSdk), "scope_refused");
+        surfaces09SdkFailure(noGrantSdk), "FORBIDDEN");
       expect(providers.seenFixtureCalls).toHaveLength(0);
       const exchangeInput: FacadeInput<"vault.claims.list"> = {
         subject_ref: principalRef, predicate: data.expected.exchangePredicate, limit: 16,
       };
       expect((await fixture.client.call("vault.claims.list", exchangeInput)).value).toEqual([]);
-      const agent = await surfaces09PairScoped(fixture, principalRef, baseScope.world_id, admittedFacet, ["core:read", "core:write"]);
+      const agent = await surfaces09PairScoped(fixture, principalRef, baseScope.world_id, admittedFacet,
+        ["core:read", "core:write"], [privateValue, data.privateMemory]);
       const admitInput: FacadeInput<"vault.connectors.proxy.admit"> = { actor: principalRef };
       const registration = await fixture.client.call("vault.connectors.proxy.admit", admitInput);
       expect(registration.key.status).toBe("active");
