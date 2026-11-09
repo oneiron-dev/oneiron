@@ -322,6 +322,23 @@ async fn binds_once(case: Case) {
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 }
 
+/// A predicate a rule declares normal: the correction lands with its grant.
+#[tokio::test]
+async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
+    binds_once(Case {
+        predicate: "profile.city",
+        first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+        owner_states_first: false,
+        second: (
+            "Oleksii again: I moved, I live in Porto now, not Lisbon.",
+            "Porto",
+        ),
+        seeded_before_critical_classes: false,
+        granted: true,
+    })
+    .await;
+}
+
 /// A class canon declares critical: the correction is held for the owner.
 #[tokio::test]
 async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
