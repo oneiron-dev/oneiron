@@ -2588,7 +2588,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/thing_agent/proposals.rs` | src | s | 9 crate-vis | — | The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the… |
 | `src/dreamer_consolidation/thing_agent/serve.rs` | src | m | 3 crate-vis | — | The thing pass (FIX 7508): a thing branch's agent, launched, served and collected inside its parent's wake… |
 | `src/dreamer_consolidation/turn_text.rs` | src | m | 25 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
-| `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 4 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
+| `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 5 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
 | `src/dreamer_consolidation/turn_text/projection.rs` | src | s | 2 crate-vis | — | The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation… |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/wake_plan.rs` | src | m | 2 struct · 27 crate-vis | PreparedConsolidationAttempt, PreparedWake | One frozen read revision and exact preparation of queued consolidation work |
@@ -3926,7 +3926,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 212 mod · 105 re-export · 28 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 213 mod · 105 re-export · 28 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -6358,6 +6358,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/slim/public.rs` | src | s | 6 struct · 7 enum · 2 fn | SavedIntentState, SavedResumeStep, SlimDropOutcome, SlimDropReceipt, SlimDropRequest, SlimIdlePolicy, SlimResidueView, SlimResumeOutcome +5 | Typed lifecycle observations and completion receipts over the SLIM controller |
 | `src/slim/supervisor.rs` | src | s | 2 struct · 1 enum · 2 fn | EligibleWait, SupervisorShedOutcome, SupervisorSlimStatus | The supervisor's view of SLIM (FIX 5186): a content-free observation of the live outbound wait a shed would… |
 | `src/slim/tests.rs` | test | m | — | — | — |
+| `src/snapshot_read/evidence_spans.rs` | src | s | 5 struct · 1 enum · 2 fn · 1 const | EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest | `vault.evidence.spans`: exact byte spans of one TURN's text, or one source's version, through the caller's… |
+| `src/snapshot_read/mod.rs` | src | s | 2 re-export | — | Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of… |
+| `src/snapshot_read/source_version.rs` | src | s | 1 struct · 1 enum · 3 crate-vis | SourceVersion, SourceVersionCheck | The version of one source row as a scoped read served it, and its recheck in a later transaction |
 | `src/source_audience/carried.rs` | src | s | 17 crate-vis | — | The carried form of a binding and a policy revision (Engine A, 6 Nov 03:46): the keys and the bytes a… |
 | `src/source_audience/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of source-audience bindings (fix list row 17455): each row's binding and its hold go… |
 | `src/source_audience/mod.rs` | src | L | 1 struct · 1 enum · 41 crate-vis | SourceAudienceEventView, SourceAudienceOp | Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A… |
@@ -7600,6 +7603,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 9 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
 | `src/vault_live_rows.rs` | src | s | 3 fn | — | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
+| `src/vault_live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
 | `src/vault_shape/apply.rs` | src | L | 3 struct · 2 enum · 5 fn · 4 crate-vis | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
 | `src/vault_shape/apply/actor.rs` | src | s | 1 crate-vis | — | Native actor setup uses the same declared definition as the owner's door |
 | `src/vault_shape/apply/journal.rs` | src | s | 2 fn · 5 crate-vis | — | Every apply's journal: one row per apply, keyed by the frontier of the plan it lands, written after each… |
@@ -8124,6 +8128,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
 | `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
+| `tests/primitive_a_evidence_spans.rs` | test | s | — | — | Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text… |
 | `tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs` | test | s | — | — | — |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
