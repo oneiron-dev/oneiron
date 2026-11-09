@@ -1,4 +1,5 @@
 use super::*;
+use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
 use std::sync::Arc;
 fn ledger() -> (tempfile::TempDir, UsageLedger) {
     let dir = oneiron::test_support::restore_tempdir();
@@ -21,15 +22,17 @@ fn event(id: &str, currency: &str) -> UsageEvent {
             input_tokens: 1_000,
             ..Default::default()
         },
-        cost_rates: UsageCostRates {
-            currency: currency.into(),
+        cost_rates: Some(UsageCostRates {
+            currency: Some(currency.into()),
             price_table_snapshot: "provider-2026-09".into(),
             input_per_million: 2_000_000_000,
             output_per_million: 0,
-            cache_read_per_million: 0,
-            cache_write_per_million: 0,
-        },
+            cache_read_per_million: Some(0),
+            cache_write_per_million: Some(0),
+        }),
+        unpriced: None,
         service_amount: 44_000_000,
+        run: None,
     }
 }
 #[test]
@@ -38,30 +41,30 @@ fn unmetered_modes_conflicts_overflow_and_invalid_keys() {
     for mode in [UsageMode::Local, UsageMode::Byo] {
         assert!(
             !ledger
-                .record_event(event("one", "USD"), mode)
+                .record_event(event("one", "USD"), mode, UsageEventOrigin::Posted)
                 .unwrap()
                 .recorded
         );
     }
     let mut e = event("one", "USD");
     ledger
-        .record_event(e.clone(), UsageMode::OneironCloud)
+        .record_event(e.clone(), UsageMode::OneironCloud, UsageEventOrigin::Posted)
         .unwrap();
     e.service_amount += 1;
     assert!(matches!(
-        ledger.record_event(e, UsageMode::OneironCloud),
+        ledger.record_event(e, UsageMode::OneironCloud, UsageEventOrigin::Posted),
         Err(UsageError::IdempotencyConflict)
     ));
     let mut e = event("two", "USD");
     e.service_amount = u64::MAX;
     assert!(matches!(
-        ledger.record_event(e, UsageMode::OneironCloud),
+        ledger.record_event(e, UsageMode::OneironCloud, UsageEventOrigin::Posted),
         Err(UsageError::Overflow)
     ));
     let mut e = event("three", "USD");
     e.owner = "x".repeat(256);
     assert!(matches!(
-        ledger.record_event(e, UsageMode::OneironCloud),
+        ledger.record_event(e, UsageMode::OneironCloud, UsageEventOrigin::Posted),
         Err(UsageError::InvalidField { .. })
     ));
 }
@@ -72,10 +75,10 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
     let first = event("one", "USD");
     let second = event("two", "JPY");
     ledger
-        .record_event(first.clone(), UsageMode::OneironCloud)
+        .record_event(first.clone(), UsageMode::OneironCloud, UsageEventOrigin::Posted)
         .unwrap();
     ledger
-        .record_event(second, UsageMode::OneironCloud)
+        .record_event(second, UsageMode::OneironCloud, UsageEventOrigin::Posted)
         .unwrap();
     let before = ledger.vault_rollup("owner-a", "vault-a").unwrap();
     ledger
@@ -98,9 +101,14 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
         )
         .unwrap();
     let snapshot = dir.path().join("checkpoint");
+    // The host's keystore signs and wraps the checkpoint (FIX 843, FIX 12225).
+    ledger
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     ledger.vault.snapshot_checkpoint(&snapshot, 200).unwrap();
     let (restored, _) = oneiron::Vault::restore_checkpoint(
         &snapshot,
+        &ledger.vault.checkpoint_key().unwrap(),
         &dir.path().join("restored"),
         oneiron::VaultConfig::device(),
         oneiron::recovery::checkpoint::RestoreReason::Restore,
@@ -123,13 +131,13 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
     );
     // A retry after restore rebuilds the view without counting the event twice.
     let replay = restored
-        .record_event(first, UsageMode::OneironCloud)
+        .record_event(first, UsageMode::OneironCloud, UsageEventOrigin::Posted)
         .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.vault_rollup, before);
     assert_eq!(restored.vault_rollup("owner-a", "vault-a").unwrap(), before);
     restored
-        .record_event(event("three", "USD"), UsageMode::OneironCloud)
+        .record_event(event("three", "USD"), UsageMode::OneironCloud, UsageEventOrigin::Posted)
         .unwrap();
     assert_eq!(
         restored

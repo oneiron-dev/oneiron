@@ -994,10 +994,13 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     let minted = mint_paired_credential(
         &vault,
         &issuer,
+        // The owner makes the agent link, as `pair agent` does (FIX 11713).
+        Some(&owner),
         &principal,
         "agent",
         verbs,
         30 * 24 * 60 * 60,
+        None,
     )
     .unwrap();
     vault
