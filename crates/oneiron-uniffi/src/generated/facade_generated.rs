@@ -1477,15 +1477,15 @@ export_facade! {
     let output = client.vault_packs_connector_update(&input)?;
     crate::codec::lift_record("vault.packs.connector.update", &output)
 };
-"vault.packs.connector.grants.get" => fn vault_packs_connector_grants_get(&self, input: ConnectorPackGrantsGetRequest) -> ConnectorPackGrants = |client| {
+"vault.packs.connector.grants.get" => fn vault_packs_connector_grants_get(&self, input: ConnectorPackGrantsGetRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest = crate::codec::lower_record("vault.packs.connector.grants.get", input)?;
     let output = client.vault_packs_connector_grants_get(&input)?;
-    crate::codec::lift_record("vault.packs.connector.grants.get", &output)
+    crate::codec::encode("vault.packs.connector.grants.get", &output)
 };
-"vault.packs.connector.grants.put" => fn vault_packs_connector_grants_put(&self, input: ConnectorPackGrantsPutRequest) -> ConnectorPackGrants = |client| {
-    let input: oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest = crate::codec::lower_record("vault.packs.connector.grants.put", input)?;
+"vault.packs.connector.grants.put" => fn vault_packs_connector_grants_put(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest = crate::codec::decode("vault.packs.connector.grants.put", &input)?;
     let output = client.vault_packs_connector_grants_put(&input)?;
-    crate::codec::lift_record("vault.packs.connector.grants.put", &output)
+    crate::codec::encode("vault.packs.connector.grants.put", &output)
 };
 "vault.packs.remove" => fn vault_packs_remove(&self, input: PackRemoveRequest) -> PackInstallReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackRemoveRequest = crate::codec::lower_record("vault.packs.remove", input)?;
@@ -1552,25 +1552,25 @@ export_facade! {
     let output = client.vault_connectors_slates_narrow(&input)?;
     crate::codec::lift_record("vault.connectors.slates.narrow", &output)
 };
-"vault.connectors.slates.scope_outcome" => fn vault_connectors_slates_scope_outcome(&self, input: ConnectorScopeOutcomeRequest) -> ConnectorScopeOutcomeView = |client| {
+"vault.connectors.slates.scope_outcome" => fn vault_connectors_slates_scope_outcome(&self, input: ConnectorScopeOutcomeRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorScopeOutcomeRequest = crate::codec::lower_record("vault.connectors.slates.scope_outcome", input)?;
     let output = client.vault_connectors_slates_scope_outcome(&input)?;
-    crate::codec::lift_record("vault.connectors.slates.scope_outcome", &output)
+    crate::codec::encode("vault.connectors.slates.scope_outcome", &output)
 };
-"vault.connectors.slates.revision_offers" => fn vault_connectors_slates_revision_offers(&self, input: ConnectorSlateRevisionOffersRequest) -> ConnectorSlateRevisionOffersView = |client| {
+"vault.connectors.slates.revision_offers" => fn vault_connectors_slates_revision_offers(&self, input: ConnectorSlateRevisionOffersRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSlateRevisionOffersRequest = crate::codec::lower_record("vault.connectors.slates.revision_offers", input)?;
     let output = client.vault_connectors_slates_revision_offers(&input)?;
-    crate::codec::lift_record("vault.connectors.slates.revision_offers", &output)
+    crate::codec::encode("vault.connectors.slates.revision_offers", &output)
 };
 "vault.connectors.slates.defer_revision" => fn vault_connectors_slates_defer_revision(&self, input: ConnectorSlateRevisionDeferRequest) -> ConnectorRevisionSnoozeView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSlateRevisionDeferRequest = crate::codec::lower_record("vault.connectors.slates.defer_revision", input)?;
     let output = client.vault_connectors_slates_defer_revision(&input)?;
     crate::codec::lift_record("vault.connectors.slates.defer_revision", &output)
 };
-"vault.connectors.slates.accept_revision" => fn vault_connectors_slates_accept_revision(&self, input: ConnectorSlateRevisionAcceptRequest) -> ConnectorSlateRevisionAcceptedView = |client| {
+"vault.connectors.slates.accept_revision" => fn vault_connectors_slates_accept_revision(&self, input: ConnectorSlateRevisionAcceptRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptRequest = crate::codec::lower_record("vault.connectors.slates.accept_revision", input)?;
     let output = client.vault_connectors_slates_accept_revision(&input)?;
-    crate::codec::lift_record("vault.connectors.slates.accept_revision", &output)
+    crate::codec::encode("vault.connectors.slates.accept_revision", &output)
 };
 "vault.connectors.slates.reask_issuer" => fn vault_connectors_slates_reask_issuer(&self, input: ConnectorIssuerReaskRequest) -> ConnectorCredentialBindingView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorIssuerReaskRequest = crate::codec::lower_record("vault.connectors.slates.reask_issuer", input)?;
@@ -2907,10 +2907,10 @@ export_facade! {
     let output = client.vault_consent_create_nightly_link_grant(&input)?;
     crate::codec::lift_record("vault.consent.create_nightly_link_grant", &output)
 };
-"vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> ConsentRegistry = |client| {
+"vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> WireJson = |client| {
     let input: oneiron::consent::ConsentRegistryQuery = crate::codec::lower_record("vault.consent.registry", input)?;
     let output = client.vault_consent_registry(&input)?;
-    crate::codec::lift_record("vault.consent.registry", &output)
+    crate::codec::encode("vault.consent.registry", &output)
 };
 "vault.consent.failure_signals_held" => fn vault_consent_failure_signals_held(&self) -> Option<HeldFailureSignalBatchView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.failure_signals_held")?;
@@ -2922,20 +2922,20 @@ export_facade! {
     let output = client.vault_consent_revoke(&input)?;
     crate::codec::lift_record("vault.consent.revoke", &output)
 };
-"vault.consent.bypass_grant_warning" => fn vault_consent_bypass_grant_warning(&self, input: BypassGrantWarningRequest) -> BypassGrantWarningView = |client| {
-    let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest = crate::codec::lower_record("vault.consent.bypass_grant_warning", input)?;
+"vault.consent.bypass_grant_warning" => fn vault_consent_bypass_grant_warning(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest = crate::codec::decode("vault.consent.bypass_grant_warning", &input)?;
     let output = client.vault_consent_bypass_grant_warning(&input)?;
-    crate::codec::lift_record("vault.consent.bypass_grant_warning", &output)
+    crate::codec::encode("vault.consent.bypass_grant_warning", &output)
 };
-"vault.consent.create_bypass_grant" => fn vault_consent_create_bypass_grant(&self, input: CreateBypassGrantRequest) -> Vec<ConsentActReceipt> = |client| {
-    let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest = crate::codec::lower_record("vault.consent.create_bypass_grant", input)?;
+"vault.consent.create_bypass_grant" => fn vault_consent_create_bypass_grant(&self, input: WireJson) -> Vec<ConsentActReceipt> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest = crate::codec::decode("vault.consent.create_bypass_grant", &input)?;
     let output = client.vault_consent_create_bypass_grant(&input)?;
     crate::codec::lift_record("vault.consent.create_bypass_grant", &output)
 };
-"vault.consent.active_bypass_grants" => fn vault_consent_active_bypass_grants(&self) -> Vec<BypassActiveState> = |client| {
+"vault.consent.active_bypass_grants" => fn vault_consent_active_bypass_grants(&self) -> WireJson = |client| {
     let input: oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest = crate::codec::lower_empty("vault.consent.active_bypass_grants")?;
     let output = client.vault_consent_active_bypass_grants(&input)?;
-    crate::codec::lift_record("vault.consent.active_bypass_grants", &output)
+    crate::codec::encode("vault.consent.active_bypass_grants", &output)
 };
 "vault.consent.bypassed_effect_receipts" => fn vault_consent_bypassed_effect_receipts(&self, input: BypassedEffectReceiptsRequest) -> Vec<BypassedEffectReceipt> = |client| {
     let input: oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest = crate::codec::lower_record("vault.consent.bypassed_effect_receipts", input)?;
@@ -2997,20 +2997,20 @@ export_facade! {
     let output = client.self_consent_graduation_demote(&input)?;
     crate::codec::lift_record("self.consent.graduation.demote", &output)
 };
-"vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
+"vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> WireJson = |client| {
     let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
     let output = client.vault_gate_policy_get(&input)?;
-    crate::codec::lift_record("vault.gate.policy.get", &output)
+    crate::codec::encode("vault.gate.policy.get", &output)
 };
-"vault.gate.policy.put" => fn vault_gate_policy_put(&self, input: PolicyManifestPut) -> PolicyManifestReceipt = |client| {
-    let input: oneiron::policy_manifest_doors::PolicyManifestPut = crate::codec::lower_record("vault.gate.policy.put", input)?;
+"vault.gate.policy.put" => fn vault_gate_policy_put(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPut = crate::codec::decode("vault.gate.policy.put", &input)?;
     let output = client.vault_gate_policy_put(&input)?;
-    crate::codec::lift_record("vault.gate.policy.put", &output)
+    crate::codec::encode("vault.gate.policy.put", &output)
 };
-"vault.gate.policy.propose" => fn vault_gate_policy_propose(&self, input: PolicyManifestPropose) -> PolicyManifestReceipt = |client| {
-    let input: oneiron::policy_manifest_doors::PolicyManifestPropose = crate::codec::lower_record("vault.gate.policy.propose", input)?;
+"vault.gate.policy.propose" => fn vault_gate_policy_propose(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPropose = crate::codec::decode("vault.gate.policy.propose", &input)?;
     let output = client.vault_gate_policy_propose(&input)?;
-    crate::codec::lift_record("vault.gate.policy.propose", &output)
+    crate::codec::encode("vault.gate.policy.propose", &output)
 };
 "vault.gate.checker.get" => fn vault_gate_checker_get(&self) -> GateCheckerView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.gate.checker.get")?;
@@ -5082,15 +5082,15 @@ export_facade! {
     let output = client.ai_speech(&input)?;
     crate::codec::lift_ai_answer("ai.speech", output)
 };
-"vault.voices.packs.put" => fn vault_voices_packs_put(&self, input: VoiceBankPackPutRequest) -> VoiceBankPackReceipt = |client| {
-    let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest = crate::codec::lower_record("vault.voices.packs.put", input)?;
+"vault.voices.packs.put" => fn vault_voices_packs_put(&self, input: WireJson) -> VoiceBankPackReceipt = |client| {
+    let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest = crate::codec::decode("vault.voices.packs.put", &input)?;
     let output = client.vault_voices_packs_put(&input)?;
     crate::codec::lift_record("vault.voices.packs.put", &output)
 };
-"vault.voices.render_consent" => fn vault_voices_render_consent(&self, input: VoiceRenderConsentRequest) -> VoiceRenderConsentReceipt = |client| {
-    let input: oneiron::task_verb::sdk::VoiceRenderConsentRequest = crate::codec::lower_record("vault.voices.render_consent", input)?;
+"vault.voices.render_consent" => fn vault_voices_render_consent(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::VoiceRenderConsentRequest = crate::codec::decode("vault.voices.render_consent", &input)?;
     let output = client.vault_voices_render_consent(&input)?;
-    crate::codec::lift_record("vault.voices.render_consent", &output)
+    crate::codec::encode("vault.voices.render_consent", &output)
 };
 "vault.voices.targets.provision" => fn vault_voices_targets_provision(&self, input: VoiceTargetProvisionRequest) -> VoiceTargetReceipt = |client| {
     let input: oneiron::task_verb::sdk::VoiceTargetProvisionRequest = crate::codec::lower_record("vault.voices.targets.provision", input)?;
@@ -5102,15 +5102,15 @@ export_facade! {
     let output = client.vault_voices_targets_evict(&input)?;
     crate::codec::lift_record("vault.voices.targets.evict", &output)
 };
-"vault.voices.inspect" => fn vault_voices_inspect(&self, input: VoiceBankInspectRequest) -> VoiceBankInspection = |client| {
+"vault.voices.inspect" => fn vault_voices_inspect(&self, input: VoiceBankInspectRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::VoiceBankInspectRequest = crate::codec::lower_record("vault.voices.inspect", input)?;
     let output = client.vault_voices_inspect(&input)?;
-    crate::codec::lift_record("vault.voices.inspect", &output)
+    crate::codec::encode("vault.voices.inspect", &output)
 };
-"vault.voices.lineage" => fn vault_voices_lineage(&self, input: VoiceRenderLineageRequest) -> Vec<VoiceRenderEventView> = |client| {
+"vault.voices.lineage" => fn vault_voices_lineage(&self, input: VoiceRenderLineageRequest) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest = crate::codec::lower_record("vault.voices.lineage", input)?;
     let output = client.vault_voices_lineage(&input)?;
-    crate::codec::lift_record("vault.voices.lineage", &output)
+    crate::codec::encode("vault.voices.lineage", &output)
 };
 "ai.transcribe" => fn ai_transcribe(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.transcribe", input)?;
@@ -5242,25 +5242,25 @@ export_facade! {
     let output = client.vault_decisions_bands_enforce(&input)?;
     crate::codec::lift_record("vault.decisions.bands.enforce", &output)
 };
-"vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> DecisionAsk = |client| {
+"vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> WireJson = |client| {
     let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::lower_record("vault.decisions.asks.answer", input)?;
     let output = client.vault_decisions_asks_answer(&input)?;
-    crate::codec::lift_record("vault.decisions.asks.answer", &output)
+    crate::codec::encode("vault.decisions.asks.answer", &output)
 };
 "vault.decisions.asks.climb" => fn vault_decisions_asks_climb(&self, input: DecisionAskClimbRequest) -> Option<ResolvedRole> = |client| {
     let input: oneiron::receipt::DecisionAskClimbRequest = crate::codec::lower_record("vault.decisions.asks.climb", input)?;
     let output = client.vault_decisions_asks_climb(&input)?;
     crate::codec::lift_record("vault.decisions.asks.climb", &output)
 };
-"vault.decisions.asks.confirm_grant" => fn vault_decisions_asks_confirm_grant(&self, input: DecisionAskConfirmGrantRequest) -> DecisionAsk = |client| {
+"vault.decisions.asks.confirm_grant" => fn vault_decisions_asks_confirm_grant(&self, input: DecisionAskConfirmGrantRequest) -> WireJson = |client| {
     let input: oneiron::receipt::DecisionAskConfirmGrantRequest = crate::codec::lower_record("vault.decisions.asks.confirm_grant", input)?;
     let output = client.vault_decisions_asks_confirm_grant(&input)?;
-    crate::codec::lift_record("vault.decisions.asks.confirm_grant", &output)
+    crate::codec::encode("vault.decisions.asks.confirm_grant", &output)
 };
-"self.decisions.asks" => fn self_decisions_asks(&self) -> Vec<DecisionAsk> = |client| {
+"self.decisions.asks" => fn self_decisions_asks(&self) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.decisions.asks")?;
     let output = client.self_decisions_asks(&input)?;
-    crate::codec::lift_record("self.decisions.asks", &output)
+    crate::codec::encode("self.decisions.asks", &output)
 };
 "connector.list" => fn connector_list(&self, input: ConnectorListRequest) -> Vec<ConnectorEntry> = |client| {
     let input: oneiron::task_verb::sdk::ConnectorListRequest = crate::codec::lower_record("connector.list", input)?;

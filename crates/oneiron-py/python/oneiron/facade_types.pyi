@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1353 facade rows, 4870 declarations.
-Inputs: 1280 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1181 of 1353 fully typed, 172 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 0.
+Census: 1353 facade rows, 4860 declarations.
+Inputs: 1273 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1167 of 1353 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 20.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6403,7 +6403,6 @@ class ConnectorIssuerHaltView(TypedDict):
     new_issuer: str
     detected_at: int
     dependent_rows: list[str]
-DataClass = Literal["public", "personal", "secret", "unclassified"]
 class ConnectorConsentRowView(TypedDict):
     tool: str
     data_class: SlateDataClass
@@ -6411,7 +6410,7 @@ class ConnectorConsentRowView(TypedDict):
     header_parameters: list[str]
     destroys: bool
     grant_id: NotRequired[str | None]
-    grant_ceiling: NotRequired[DataClass | None]
+    grant_ceiling: NotRequired[Any | None]
 class ConnectorConsentView(TypedDict):
     connector: str
     actor: str
@@ -6427,7 +6426,7 @@ class ConnectorPackGrants(TypedDict):
     authority: ConnectorConsentView
 class ConnectorPackGrantRow(TypedDict):
     tool: str
-    ceiling: DataClass
+    ceiling: Any
     headers: NotRequired[bool]
 class ConnectorPackGrantsPutRequest(TypedDict):
     basis: ConnectorPackBasis
@@ -6682,8 +6681,8 @@ class ConnectorScopeExceedEndpointBody(TypedDict):
 class ConnectorScopeExceedEndpoint(TypedDict):
     endpoint: ConnectorScopeExceedEndpointBody
 class ConnectorScopeExceedPayloadClassBody(TypedDict):
-    requested: DataClass
-    ceiling: DataClass
+    requested: Any
+    ceiling: Any
 class ConnectorScopeExceedPayloadClass(TypedDict):
     payload_class: ConnectorScopeExceedPayloadClassBody
 class ConnectorScopeExceedToolDataClassBody(TypedDict):
@@ -11205,7 +11204,6 @@ class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
 ConsentDomain = Literal["disclosure", "action"]
-ConsentGrantStatus = Literal["active", "revoked"]
 class ConsentRevokeAction(TypedDict):
     command: str
     grant_ref: str
@@ -11213,14 +11211,6 @@ class ConsentRegrantAction(TypedDict):
     command: str
     agent: str
     conversation: str
-class BypassScopeProject(TypedDict):
-    project: EntityId
-class BypassScopeThread(TypedDict):
-    thread: EntityId
-BypassScope = BypassScopeProject | BypassScopeThread
-class BypassExtent(TypedDict):
-    scope: BypassScope
-    floor_version: int
 class ConsentRegistryDelegation(TypedDict):
     purpose: str
     ticket_ref: NotRequired[str | None]
@@ -11242,7 +11232,7 @@ class ConsentRegistryAgentGrant(TypedDict):
     verb_classes: NotRequired[list[str]]
     wallet_ref: NotRequired[WalletRef | None]
     confers: bool
-ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": Any, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[Any | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class HeldFailureSignalBatchView(TypedDict):
@@ -11261,7 +11251,6 @@ class HeldFailureSignalBatchView(TypedDict):
     custody_stage: str
 class RevokeGrantRequest(TypedDict):
     grant: str
-CatastropheClass = Literal["WidenOwnAuthority", "KeyRecovery", "VaultWideDestruction", "SecurityControlDisable", "MassSecretExport", "WorldPrivacyWiden"]
 class BypassActionEnvelopeRequest(TypedDict):
     selectors: list[str]
     target: NotRequired[str | None]
@@ -11270,8 +11259,8 @@ class BypassActionEnvelopeRequest(TypedDict):
 class BypassGrantBoundRequest(TypedDict):
     actor: str
     actor_class: NotRequired[str | None]
-    classes: list[CatastropheClass]
-    scope: BypassScope
+    classes: list[Any]
+    scope: Any
     envelope: BypassActionEnvelopeRequest
 class BypassGrantWarningRequest(TypedDict):
     bound: BypassGrantBoundRequest
@@ -11426,15 +11415,9 @@ class SlideReviewPolicyRowHolderRoute(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
 SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
-class CodeConsentSettlementEligibilityAllPowerHolders(TypedDict):
-    mode: Literal["all_power_holders"]
-class CodeConsentSettlementEligibilityNamed(TypedDict):
-    mode: Literal["named"]
-    holders: list[str]
-CodeConsentSettlementEligibility = CodeConsentSettlementEligibilityAllPowerHolders | CodeConsentSettlementEligibilityNamed
 class CodeConsentSettlementRow(TypedDict):
     version: int
-    eligible: CodeConsentSettlementEligibility
+    eligible: Any
 class PolicyGrantMapEntry(TypedDict):
     key: PolicyGrantValue
     value: PolicyGrantValue
@@ -18902,15 +18885,6 @@ class AiAnswer(TypedDict):
     model: str
     parts: list[AiPart]
     usage: MediaUsage
-class VoiceRefOriginCaptured(TypedDict):
-    kind: Literal["captured"]
-    consent_event_ref: str
-class VoiceRefOriginDesigned(TypedDict):
-    kind: Literal["designed"]
-    vendor: str
-class VoiceRefOriginGenerated(TypedDict):
-    kind: Literal["generated"]
-VoiceRefOrigin = VoiceRefOriginCaptured | VoiceRefOriginDesigned | VoiceRefOriginGenerated
 class VoiceBankClipInput(TypedDict):
     register: str
     media_type: str
@@ -18919,37 +18893,19 @@ class VoiceBankClipInput(TypedDict):
 class VoiceBankPackPutRequest(TypedDict):
     voice_id: str
     pack_id: str
-    origin: VoiceRefOrigin
+    origin: Any
     clips: list[VoiceBankClipInput]
 class VoiceBankPackReceipt(TypedDict):
     voice_id: str
     pack_id: str
-VoiceRefSubjectKind = Literal["person", "designed"]
-class VoiceConsentBasisConversationalNoticeBody(TypedDict):
-    notice: str
-class VoiceConsentBasisConversationalNotice(TypedDict):
-    ConversationalNotice: VoiceConsentBasisConversationalNoticeBody
-class VoiceConsentBasisVerbalOnRecordingBody(TypedDict):
-    recording_ref: str
-    start_ms: int
-    end_ms: int
-    words: str
-class VoiceConsentBasisVerbalOnRecording(TypedDict):
-    VerbalOnRecording: VoiceConsentBasisVerbalOnRecordingBody
-class VoiceConsentBasisSettingsToggleBody(TypedDict):
-    surface_ref: str
-class VoiceConsentBasisSettingsToggle(TypedDict):
-    SettingsToggle: VoiceConsentBasisSettingsToggleBody
-VoiceConsentBasis = VoiceConsentBasisConversationalNotice | VoiceConsentBasisVerbalOnRecording | VoiceConsentBasisSettingsToggle
-VoiceConsentState = Literal["granted", "withdrawn"]
 class VoiceRenderConsentRequest(TypedDict):
     voice_id: str
     event_id: str
     occurred_at: int
     reach: ModelLocality
-    subject_kind: NotRequired[VoiceRefSubjectKind]
-    basis: NotRequired[VoiceConsentBasis | None]
-    state: VoiceConsentState
+    subject_kind: NotRequired[Any]
+    basis: NotRequired[Any | None]
+    state: Any
 VoiceVendorDeleteStatus = Literal["deleted", "no_clone_wire", "delete_failed", "absent"]
 class VoiceVendorEviction(TypedDict):
     target: str
@@ -18957,7 +18913,7 @@ class VoiceVendorEviction(TypedDict):
     vendor: VoiceVendorDeleteStatus
 class VoiceRenderConsentReceipt(TypedDict):
     voice_id: str
-    state: VoiceConsentState
+    state: Any
     reach: ModelLocality
     revision: str
     event_id: str
@@ -18992,7 +18948,7 @@ class VoiceIdentityView(TypedDict):
     version: int
     id: str
     owner: str
-    subject_kind: VoiceRefSubjectKind
+    subject_kind: Any
     pack_ids: list[str]
 class VoiceClipSummary(TypedDict):
     register: str
@@ -19001,18 +18957,18 @@ class VoiceClipSummary(TypedDict):
 class VoicePackSummary(TypedDict):
     version: int
     id: str
-    origin: VoiceRefOrigin
+    origin: Any
     clips: list[VoiceClipSummary]
     crossed: list[str]
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
-    subject_kind: VoiceRefSubjectKind
+    subject_kind: Any
     recorded_by: str
     occurred_at: int
     reach: ModelLocality
-    basis: NotRequired[VoiceConsentBasis | None]
-    state: VoiceConsentState
+    basis: NotRequired[Any | None]
+    state: Any
     revision: str
     sequence: int
 class VoiceTargetRenderHostedClone(TypedDict):
@@ -19451,7 +19407,7 @@ class AskEffect(TypedDict):
     external_observers: bool
     undo_fidelity: AskUndoFidelity
     blast_radius: int
-    catastrophe: NotRequired[CatastropheClass | None]
+    catastrophe: NotRequired[Any | None]
     project: NotRequired[str | None]
     thread: NotRequired[str | None]
     erase: bool
