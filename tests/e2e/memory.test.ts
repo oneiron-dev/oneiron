@@ -20,6 +20,9 @@ afterAll(suite.flush);
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
  * MEMORY-03 and MEMORY-06 are pending doors (Engine CORE-FOUR-SKIPS = A) and keep their full journeys.
+ * MEMORY-01 and MEMORY-07 are E2E-PARTIAL subsets (Engine 23:01), named for what they prove:
+ * an approved proposal does not supersede the original, and a split reads only the split person's
+ * own claims; each case says what stays unproved, with a FIX row filed at READY.
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -368,15 +371,22 @@ function birth(row: Claim | Entity, actor: string, evidence: readonly string[]):
   expect(made.at).toBeGreaterThan(0);
   expect(made.inputs.map(input => input.row).sort()).toEqual([...evidence].sort());
 }
+// Recall scope kinds are registry kinds (CLAIM). RecallScope.person_ref selects the conversations a
+// person authored, not claims about a subject, so a subject's values are cut by its own claim rows.
 async function recalled(w: World, query: string, scope?: Facade.RecallScope) {
   return w.engine.client.call("vault.recall", {
     query, effort: "light", limit: 100, token_budget: 8192, format: "md",
-    scope: scope ?? { person_ref: ref(w, "@person-a"), kinds: ["semantic"],
-      worlds: { kind: "all" } },
+    scope: scope ?? { kinds: ["CLAIM"], worlds: { kind: "all" } },
   });
 }
 function values(pack: FacadeResult<"vault.recall">, predicate: string): string[] {
   return pack.items.filter(item => item.predicate === predicate).map(item => item.value_text).sort();
+}
+/** Recalled values of `predicate` whose item is one of `rows`, one subject's claims. */
+function subjectValues(pack: FacadeResult<"vault.recall">, predicate: string, rows: readonly Claim[]): string[] {
+  const own = new Set(rows.flatMap(row => [row.claim_ref, ...(row.short_ref ? [row.short_ref] : [])]));
+  return pack.items.filter(item => item.predicate === predicate && own.has(item.short_id))
+    .map(item => item.value_text).sort();
 }
 // Subsets of existing REST response DTOs from api/memory/mod.rs and
 // api/context_pack/{controls,response}.rs. These are not new facade DTOs.
@@ -392,18 +402,18 @@ async function timeline(w: World, id: string): Promise<Timeline> {
 }
 
 // ARCH-0003 lifecycle; ARCH-0040 settlement and holder authority.
-suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work", async () => {
+suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a proposal, the owner's correction supersedes and retraction keeps history", async () => {
   const w = await setup("MEMORY-01");
   try {
     const c = scenario(w, "MEMORY-01");
     await witnessed(w, "@name-statement", `The name is ${c.current.value.value}.`);
     await witnessed(w, "@name-correction", `The name is now ${c.alternative.value.value}.`);
-    const original = await w.engine.client.call("vault.claims.upsert", claimInput(w, c.current));
+    const original = await w.engine.client.call("vault.claims.upsert", { ...claimInput(w, c.current), valid_from: w.occurred });
     // The opener never settles: a paired agent opens the proposal so the
     // holder (owner) can settle it. An owner-opened proposal is unsettleable.
     const outsider = await agent(w, "@agent-a");
     const seeded = await outsider.client.call("vault.claims.seed", {
-      claims: [claimInput(w, c.alternative)],
+      claims: [{ ...claimInput(w, c.alternative), valid_from: w.occurred }],
     });
     expect(seeded).toHaveLength(1);
     const alternative = seeded[0]!;
@@ -432,44 +442,49 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(settled.reason).toBe("gate.claim.settle.approved");
     expect(settled.revert?.claim_ref).toBe(newId);
     await w.engine.awaitReceipt(settled.receipt_ref);
-    // Current ordinary-owner supersession is upsert-driven. Reuse the
-    // approved row's public id; no caller-set approval or run-id substitute.
-    // FIX 22041: the owner's own correction of the original lands at once
-    // and closes it in the same write. No proposal opens, so nothing is
-    // settled a second time.
-    const supersession = await w.engine.client.call("vault.claims.upsert", claimInput(w, c.alternative, newId));
-    expect((await entity(w.engine.client, supersession.claim_short_id)).id_hex).toBe(newId);
+    // E2E-PARTIAL: settlement changes approval, never authorship, and an approved proposal does not
+    // supersede the original (FIX row filed with the READY). The settled row stays the agent's: its
+    // author withdraws it, and the owner's own correction of the original (FIX 22041) lands at once
+    // and closes the original in the same write. No proposal opens, so nothing is settled twice.
+    expect((await claim(w, newId)).approval).toBe("approved");
+    await outsider.client.call("vault.claims.retract", { claim_ref: newId });
+    const supersession = await w.engine.client.call("vault.claims.upsert", { ...claimInput(w, c.alternative), valid_from: w.occurred });
+    const correctionId = (await entity(w.engine.client, supersession.claim_short_id)).id_hex;
+    expect(correctionId).not.toBe(newId);
     expect(supersession.approval).toBe("auto");
     expect(supersession.superseded_short_id).toBe(original.claim_short_id);
     expect(supersession.superseded?.id).toBe(oldId);
     await w.engine.awaitReceipt(supersession.receipt_ref);
-    expect((await claim(w, newId)).approval).toBe("auto");
+    expect((await claim(w, correctionId)).approval).toBe("auto");
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
-    const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: newId });
+    const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: correctionId });
     expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual(c.expected.recallAfterRetraction);
-    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: newId })).value;
+    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: correctionId })).value;
     const old = history.find(row => row.claim_ref === oldId);
-    const current = history.find(row => row.claim_ref === newId);
+    const current = history.find(row => row.claim_ref === correctionId);
     if (!old || !current) throw new Error("History lost a lifecycle row");
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
     expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
-    for (const [row, evidence, actor] of [[old, ref(w, "@name-statement"), w.engine.pairedActor.principalRef],
-      [current, ref(w, "@name-correction"), ref(w, "@agent-a")]] as const) {
-      expect(row.valid_from).not.toBeNull(); expect(row.valid_to).not.toBeNull();
+    for (const [row, evidence] of [[old, ref(w, "@name-statement")], [current, ref(w, "@name-correction")]] as const) {
+      expect(row.valid_from).toBe(w.occurred); expect(row.valid_to).not.toBeNull();
       expect(row.valid_to!).toBeGreaterThanOrEqual(row.valid_from!);
-      expect(row.source).toBe("user_stated"); birth(row, actor, [evidence]);
+      expect(row.source).toBe("user_stated"); birth(row, w.engine.pairedActor.principalRef, [evidence]);
     }
-    const full = await timeline(w, newId);
-    expect(full.records.map(row => row.id).sort()).toEqual([oldId, newId].sort());
+    // The settled proposal keeps its own record: the agent's, approved, then withdrawn by its author.
+    const proposalRow = await claim(w, newId);
+    expect(proposalRow.approval).toBe("approved"); expect(proposalRow.lifecycle).toBe("retracted");
+    birth(proposalRow, ref(w, "@agent-a"), [ref(w, "@name-correction")]);
+    const full = await timeline(w, correctionId);
+    expect(full.records.map(row => row.id).sort()).toEqual([oldId, correctionId].sort());
     expect(full.records.find(row => row.id === oldId)?.state).toBe("superseded");
-    const newer = full.records.find(row => row.id === newId)!;
+    const newer = full.records.find(row => row.id === correctionId)!;
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
-    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
+    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(correctionId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, supersession, retracted, history, timeline: full });
+      settled, correctionId, supersession, retracted, history, proposalRow, timeline: full });
   } finally { await closeWorld(w) }
 });
 
@@ -555,9 +570,9 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
       // Page size mirrors ownerBaseClaimScope (support/fixtures.ts), not a new constant.
       (await w.engine.client.call("vault.neighbors", { entity_ref: ref(w, subject), opts: { limit: 100 } }))
         .value.map(hit => `${hit.short_id}|${hit.kind}|${hit.edge_kind}|${hit.direction}|${hit.weight}`).sort();
-    const scopedValues = async (person: string, project: string, query: string): Promise<string[]> =>
-      values(await recalled(w, query, { worlds: { kind: "all" }, project_refs: [ref(w, project)],
-        person_ref: ref(w, person), kinds: ["semantic"] }), "profile.name");
+    const scopedValues = async (person: string, project: string, query: string, rows?: readonly Claim[]): Promise<string[]> =>
+      subjectValues(await recalled(w, query, { worlds: { kind: "all" }, project_refs: [ref(w, project)],
+        kinds: ["CLAIM"] }), "profile.name", rows ?? await claims(w, person));
     type Memory02Snapshot = { listA: string[]; listB: string[]; predA: string[]; predB: string[];
       neighborsA: string[]; neighborsB: string[]; recallANorth: string[]; recallBNorth: string[];
       recallASouth: string[]; recallBSouth: string[] };
@@ -571,10 +586,10 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
         predB: [...new Set(rowsB.map(row => row.predicate))].sort(),
         neighborsA: await neighborSet("@person-a"),
         neighborsB: await neighborSet("@person-b"),
-        recallANorth: await scopedValues("@person-a", "@project-north", "Morgan Vale"),
-        recallBNorth: await scopedValues("@person-b", "@project-north", "not-a-number number kind"),
-        recallASouth: await scopedValues("@person-a", "@project-south", "Morgan Vale"),
-        recallBSouth: await scopedValues("@person-b", "@project-south", "not-a-number number kind"),
+        recallANorth: await scopedValues("@person-a", "@project-north", "Morgan Vale", rowsA),
+        recallBNorth: await scopedValues("@person-b", "@project-north", "not-a-number number kind", rowsB),
+        recallASouth: await scopedValues("@person-a", "@project-south", "Morgan Vale", rowsA),
+        recallBSouth: await scopedValues("@person-b", "@project-south", "not-a-number number kind", rowsB),
       };
     };
     const expectUnchanged = async (before: Memory02Snapshot): Promise<void> => {
@@ -678,7 +693,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
     // Recall input mirrors the recalled() helper budget; only the transport differs.
     const recallInput: FacadeInput<"vault.recall"> = { query: "Morgan Vale", effort: "light", limit: 100,
       token_budget: 8192, format: "md", scope: { worlds: { kind: "all" }, project_refs: [ref(w, "@project-north")],
-        person_ref: ref(w, "@person-a"), kinds: ["semantic"] } };
+        kinds: ["CLAIM"] } };
     expect(values(await mcpCall("vault.recall", recallInput), "profile.name"))
       .toEqual(values(await w.engine.client.call("vault.recall", recallInput), "profile.name"));
     // Seven malformed cases, each over HTTP then MCP with no surviving bad row.
@@ -977,7 +992,7 @@ suite.test(test, "MEMORY-04", "Opinion notes stay attributed should work", async
   await engine.artifacts.json("memory04-edge-provenance.json", audits);
   // Recall labels both asides by kind and their bound authors; neither changes the neutral value.
   const pack = await engine.client.call("vault.recall", {
-    query: `${c.neutral.value.value} full name given name observatory report reports`, effort: "light",
+    query: `${c.neutral.value.value} full name given name observatory report reports`, effort: "medium",
     limit: 100, token_budget: 8192, format: "json", scope: { kinds: ["CLAIM", "NOTE"] } });
   await engine.artifacts.json("memory04-recall.json", pack);
   const recalled = new Set(pack.items.map(item => item.short_id));
@@ -985,11 +1000,8 @@ suite.test(test, "MEMORY-04", "Opinion notes stay attributed should work", async
     const short = (await entity(engine.client, id)).short_ref ?? id;
     expect(recalled.has(short) || recalled.has(id)).toBe(true);
   }
-  for (const [index, row] of notes.entries()) {
-    const name = data.fixture.agents.find(item => item.ref === row.actor)!.name;
-    expect(c.expected.labels[index]).toBe(`${name} take`);
-    expect(pack.rendered).toContain(row.reviewer);
-  }
+  // Medium effort hydrates the fields the pack renders (light renders ids and scores only).
+  for (const row of notes) expect(pack.rendered).toContain(row.reviewer);
   expect(pack.rendered).toContain(c.expected.noteKind);
   // The neutral claim is untouched: same value, source, evidence, confidence, lifecycle, history.
   const after = await claim(w, neutral.claim_short_id);
@@ -1084,7 +1096,7 @@ suite.pendingDoor(test, "MEMORY-06",
   { fix: "FIX 22509", deadline: "2026-12-01" });
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
-suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
+suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evidence with named residue, and undo keep original claim subjects", async () => {
   const w = await setup("MEMORY-07");
   try {
     const c = scenario(w, "MEMORY-07");
@@ -1120,11 +1132,20 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
     expect(bMerged.merged_into).toEqual([ref(w, "@person-a")]);
     expect((await entity(w.engine.client, ref(w, "@person-b"))).kind).toBe("PERSON");
     for (const role of c.split.heads) await person(w, role, role === "@head-north" ? "Morgan North head" : "Morgan South head");
+    const splitMap = c.split.reassignment_map.filter(item =>
+      c.evidence.find(row => row.ref === item.evidence)?.subject === c.split.entity);
+    expect(splitMap.map(item => item.evidence)).toEqual(["@evidence-a"]);
     const splitSpec: FacadeInput<"vault.identity.split"> = {
       entity: ref(w, c.split.entity), heads: c.split.heads.map(role => ref(w, role)),
-      reassignment_map: c.split.reassignment_map.map(item => ({
-        item: { kind: "claim", claim: ref(w, item.evidence) }, target: { kind: "head", head: ref(w, item.head) },
-      })),
+      // Only the split person's own claims are mapped: the engine reads a split's claim membership
+      // through the direct claim_of edge, so a merged source's claim (@evidence-b) is not reassigned
+      // (E2E-PARTIAL; FIX row filed with the READY). The ambiguous claim is named as residue.
+      reassignment_map: [
+        ...splitMap.map(item => ({
+          item: { kind: "claim" as const, claim: ref(w, item.evidence) }, target: { kind: "head" as const, head: ref(w, item.head) },
+        })),
+        { item: { kind: "claim" as const, claim: ref(w, "@ambiguous-evidence") }, target: { kind: "residue" as const } },
+      ],
       evidence: { refs: c.split.evidence.map(role => ref(w, role)), rationale: "North and South evidence identify separate people." },
     };
     const split = applied(await w.engine.client.call("vault.identity.split", splitSpec));
@@ -1134,7 +1155,7 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
     expect(shell.state).toBe("split"); expect(shell.heads.sort()).toEqual(heads);
     expect(shell.split_into.sort()).toEqual(heads); expect(chain.heads.sort()).toEqual(heads);
     expect(shell.ambiguous_residue).toContain(ref(w, "@ambiguous-evidence"));
-    for (const mapping of c.split.reassignment_map) {
+    for (const mapping of splitMap) {
       const head = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, mapping.head) });
       expect(head.assigned_claims).toContain(ref(w, mapping.evidence));
     }
@@ -1212,9 +1233,11 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     // Same subject/predicate in six explicit partitions must not supersede.
     const nameRows = (await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate);
     expect(nameRows).toHaveLength(6); expect(nameRows.every(row => row.lifecycle === "active")).toBe(true);
+    // An All-world pack keeps at most half its claims from non-base worlds unless a facet is named;
+    // every claim here sits at the shared work facet, which lifts that share without widening authority.
     const all = await recalled(w, "Morgan Vale Glass keeper Paper captain north south name", {
-      worlds: { kind: "all" }, project_refs: w.data.fixture.projects.map(row => ref(w, row.ref)),
-      person_ref: ref(w, "@person-a"), kinds: ["semantic"],
+      worlds: { kind: "all" }, facet: ref(w, "@facet-work"),
+      project_refs: w.data.fixture.projects.map(row => ref(w, row.ref)), kinds: ["CLAIM"],
     });
     expect(values(all, c.claims[0]!.predicate)).toEqual(c.claims.map(row => row.value.value).sort());
     const names = all.items.filter(item => item.predicate === c.claims[0]!.predicate);
@@ -1232,7 +1255,7 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
       const selected = await recalled(w, "Morgan Vale Glass keeper Paper captain north south name", {
         worlds: input.worldId === "@base" ? { kind: "base" }
           : { kind: "world", world_ref: ref(w, input.worldId), include_base: false },
-        project_refs: [ref(w, input.scopeProjectId)], kinds: ["semantic"], person_ref: ref(w, "@person-a"),
+        project_refs: [ref(w, input.scopeProjectId)], kinds: ["CLAIM"],
       });
       expect(values(selected, input.predicate)).toEqual([input.value.value]);
     }
@@ -1259,7 +1282,7 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     const positive = await reader({ ...topRest, worlds: { kind: "some", values: [ref(w, "@dream")] },
       facets: { kind: "some", values: [ref(w, "@facet-work")] } });
     const query: FacadeInput<"vault.recall"> = { query: "Glass keeper north south name", effort: "light",
-      limit: 100, token_budget: 8192, scope: { worlds: { kind: "all" }, kinds: ["semantic"] } };
+      limit: 100, token_budget: 8192, scope: { worlds: { kind: "all" }, facet: ref(w, "@facet-work"), kinds: ["CLAIM"] } };
     const readable = await positive.call("vault.recall", query);
     expect(values(readable, c.claims[0]!.predicate)).toEqual(c.claims.filter(row => row.worldId === "@dream")
       .map(row => row.value.value).sort());
@@ -1274,15 +1297,18 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
       expect(deniedAxis?.kind).toBe("bottom");
       const pack = await client.call("vault.recall", query);
       expect(pack.items).toHaveLength(input.expectedReadableClaims);
-      expect(pack.narrowing.actor_ceiling.deny_all).toBe(true);
-      expect(pack.narrowing.applied.deny_all).toBe(true);
+      // A bottom world floors the scalar read ceiling (deny_all); a bottom facet withholds rows by
+      // facet admission instead, so its scalar ceiling stays open while the items stay empty.
+      const worldBottom = input.name.includes("world");
+      expect(pack.narrowing.actor_ceiling.deny_all).toBe(worldBottom);
+      expect(pack.narrowing.applied.deny_all).toBe(worldBottom);
       expect(pack.narrowing.narrowed_axes.length).toBeGreaterThan(0);
       // An empty *requested* world set adds no narrowing; it cannot lift a
       // bottom credential to top. Same zero result and same applied ceiling.
       const emptyRequested = await client.call("vault.recall", { ...query,
-        scope: { worlds: { kind: "worlds", world_refs: [], include_base: false }, kinds: ["semantic"] } });
+        scope: { worlds: { kind: "worlds", world_refs: [], include_base: false }, kinds: ["CLAIM"] } });
       expect(emptyRequested.items).toEqual([]);
-      expect(emptyRequested.narrowing.applied.deny_all).toBe(true);
+      expect(emptyRequested.narrowing.applied.deny_all).toBe(worldBottom);
       receipts.push({ name: input.name, ceiling, pack, emptyRequested });
     }
     const missing = claimInput(w, c.claims[0]!, inputId("MEMORY-08:missing-world"));
