@@ -203,7 +203,11 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
     expect(delegateGrant.grant_ref).toBe(delegated.grant_ref);
     expect(delegateGrant.delegated_by).toBe(adminRef);
     expect(delegateGrant.expires_at).toBe(expiresAt);
-    expect(delegateGrant.authority_scope).toEqual(delegateScope);
+    // Input `sensitivity: {kind:"all"}` is stored as its canonical top, at_most restricted (oneiron-authority federation/scope.rs:182-231).
+    expect(delegateGrant.authority_scope).toEqual({
+      ...delegateScope,
+      sensitivity: { kind: "at_most", value: "restricted" },
+    });
     await fed01Refused(owner, delegateRef, () => delegate.client.call("vault.members.delegate", {
       parent_grant: delegateGrant.grant_ref, member_ref: memberRef, authority_scope: delegateScope, expires_at: expiresAt,
     }), 400, "BAD_REQUEST");
@@ -343,7 +347,9 @@ suite.test(test, "FEDERATION-02", "Two live Owners jointly configure a veto poli
   const fixture = await (await loadFixtures()).readJson<Fed02CasesFixture>("federation-canon-scenarios");
   const scenario = fixture.cases.find(row => row.id === "FEDERATION-02");
   if (!scenario) throw new Error("federation-canon-scenarios has no FEDERATION-02 row");
-  const waitSecs = scenario.inputs.fixtureVetoWaitSeconds;
+  // The engine clock is real whole seconds (store_clock.rs:29-35); a 2 s window can close between
+  // the start and the co-Owner's objection. 31 s outlasts the 30 s case, and no step needs maturity.
+  const waitSecs = Math.max(scenario.inputs.fixtureVetoWaitSeconds, 31);
   const defaultWaitSecs = scenario.expected.defaultVetoWaitSeconds;
   expect(scenario.inputs.acts).toContain("delete_vault");
   expect(scenario.expected.defaultActs).toContain("delete_vault");
