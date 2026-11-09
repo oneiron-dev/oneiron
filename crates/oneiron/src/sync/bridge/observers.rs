@@ -652,6 +652,38 @@ pub(crate) fn register_repo_manifests_observer(
     )
 }
 
+/// Observer B for the turn-program arming and wake maps (FIX 5266): the
+/// armings, then the riding wakes.
+pub(crate) fn register_turn_program_observers(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> (Subscription, Subscription) {
+    let arms_map = doc.get_map(crate::sync::turn_programs::TURN_PROGRAM_ARMS_MAP);
+    let wakes_map = doc.get_map(crate::sync::turn_programs::TURN_PROGRAM_WAKES_MAP);
+    (
+        subscribe_map_observer(
+            doc,
+            &arms_map,
+            vault,
+            materializer,
+            window_key,
+            crate::sync::turn_programs::materialize_turn_program_arms_from_delta,
+            ("turn_program_arms", None),
+        ),
+        subscribe_map_observer(
+            doc,
+            &wakes_map,
+            vault,
+            materializer,
+            window_key,
+            crate::sync::turn_programs::materialize_turn_program_wakes_from_delta,
+            ("turn_program_wakes", None),
+        ),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(

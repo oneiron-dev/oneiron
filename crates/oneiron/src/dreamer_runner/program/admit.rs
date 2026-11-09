@@ -24,7 +24,7 @@ use super::types::{
     OwedWakeHold, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
 };
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
 const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
@@ -70,6 +70,12 @@ impl Vault {
         now: u64,
     ) -> Result<WakeAdmission> {
         let admitted = self.with_write_txn_grouped(|txn| admit_in_txn(self, txn, wake, now))?;
+        // A wake another machine carried here leaves its window once decided,
+        // which clears the machine that recorded it (FIX 5266).
+        #[cfg(feature = "sync")]
+        if matches!(admitted, WakeAdmission::Decided(_)) {
+            self.refresh_turn_program_wakes_in_live_windows(&wake.turn.turn);
+        }
         if let WakeAdmission::Decided(receipt) = &admitted
             && receipt.first
             && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Queued { .. })
@@ -104,6 +110,26 @@ pub(super) fn admit_in_txn(
         WAKE.delete(vault, txn, &wake.key())?;
         super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(WakeAdmission::Decided(existing.receipt(false)));
+    }
+    // A wake decided on another machine (an imported `Admitted` row), or one
+    // whose owed row went meanwhile, is admitted by nothing here: a drain's
+    // copy read before the import is stale (FIX 5266).
+    if DECIDED.get(vault, &*txn, &wake.key())? == Some(admission) {
+        if WAKE.contains(vault, &*txn, &wake.key())? {
+            WAKE.delete(vault, txn, &wake.key())?;
+            super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
+        }
+        return Ok(WakeAdmission::Held);
+    }
+    if !WAKE.contains(vault, &*txn, &wake.key())? {
+        return Ok(WakeAdmission::Held);
+    }
+    // A riding wake is the elected home's to admit, through every door into
+    // this writer (FIX 5266): elsewhere its row stays owed as it stands, and
+    // rides there.
+    #[cfg(feature = "sync")]
+    if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+        return Ok(WakeAdmission::Held);
     }
     let judged = judge_in_txn(vault, &*txn, &wake)?;
     let refused = judged.as_ref().err().copied();
