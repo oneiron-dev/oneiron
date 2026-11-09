@@ -136,16 +136,18 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
                 "json"
             );
             drop(reader);
-            let prefix = br#"{"format":"json","rendered":""#;
+            // OF-222 (fe8d9318937): an export is an archive, standard base64 on
+            // the wire; `AAAA` is three zero bytes.
+            let prefix = br#"{"format":"json","digest":"","archive":""#;
             let suffix = b"\"}";
             let count = if large {
-                MAX_REMOTE_RESPONSE_BYTES + 1
+                (MAX_REMOTE_RESPONSE_BYTES / 4 + 1) * 4
             } else {
                 4
             };
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", prefix.len() + count + suffix.len()).unwrap();
             stream.write_all(prefix).unwrap();
-            let block = [b'x'; 64 * 1024];
+            let block = [b'A'; 64 * 1024];
             let mut remaining = count;
             while remaining > 0 {
                 let n = remaining.min(block.len());
@@ -159,17 +161,21 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
     let generic = client
         .agent_verb("vault.export", serde_json::json!({"format":"json"}))
         .unwrap();
-    assert_eq!(generic["rendered"], "xxxx");
-    let large = client.vault_export(Some("json")).unwrap();
+    assert_eq!(generic["archive"], "AAAA");
+    let oneiron::memory::ExportAnswer::Inline(large) = client.vault_export(Some("json")).unwrap()
+    else {
+        panic!("an inline export");
+    };
     assert_eq!(large.format, "json");
-    assert_eq!(large.rendered.len(), MAX_REMOTE_RESPONSE_BYTES + 1);
-    assert!(large.rendered.bytes().all(|byte| byte == b'x'));
+    assert_eq!(large.archive.len(), (MAX_REMOTE_RESPONSE_BYTES / 4 + 1) * 3);
+    assert!(large.archive.iter().all(|byte| *byte == 0));
     server.join().unwrap();
 }
 
 /// A loopback peer that answers one export with a valid document whose
-/// `rendered` text is `count` bytes, framed by `Content-Length` or by closing
-/// the connection, and hands back how many bytes it wrote of how many.
+/// archive is `count` zero bytes (a multiple of three: `AAAA` each three),
+/// framed by `Content-Length` or by closing the connection, and hands back
+/// how many bytes it wrote of how many.
 fn export_peer(
     count: usize,
     content_length: bool,
@@ -194,8 +200,8 @@ fn export_peer(
         }
         reader.read_exact(&mut vec![0; length]).unwrap();
         drop(reader);
-        let mut body = br#"{"format":"json","rendered":""#.to_vec();
-        body.resize(body.len() + count, b'x');
+        let mut body = br#"{"format":"json","digest":"","archive":""#.to_vec();
+        body.resize(body.len() + count / 3 * 4, b'A');
         body.extend_from_slice(b"\"}");
         let framing = if content_length {
             format!("Content-Length: {}\r\n", body.len())
@@ -215,35 +221,42 @@ fn export_peer(
     (origin, served)
 }
 
-/// C13: export read whatever the origin sent. It now reads at most its own
-/// ceiling: a body at the ceiling decodes, one byte more is refused, whether
-/// `Content-Length` announces it or not, and the client stops reading.
+/// C13 capped what export read at a ceiling. Rule 5 (OF-222, FIX 2766,
+/// 79f9066ed5c) removed that ceiling: an export streams whole into its typed
+/// result, so the same bodies, at the old ceiling, past it and an origin that
+/// keeps sending, now decode in full, with or without `Content-Length`.
 #[test]
 fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
     const LIMIT: usize = 64 * 1024;
-    let framing = br#"{"format":"json","rendered":""}"#.len();
+    let framing = br#"{"format":"json","digest":"","archive":""}"#.len();
+    // The largest archive whose body fits the old ceiling, and the next one.
+    let at_limit = (LIMIT - framing) / 4 * 3;
     let export = |count: usize, content_length: bool| {
         let (origin, served) = export_peer(count, content_length);
         // The client, and with it any connection, is gone before the join.
         let result = {
-            let mut client = RemoteClient::connect(&origin, "local-secret", None).unwrap();
-            client.export_limit = LIMIT;
+            let client = RemoteClient::connect(&origin, "local-secret", None).unwrap();
             client.call::<_, oneiron::memory::MemoryExport>(
-                "export",
+                "vault.export",
                 &serde_json::json!({"format":"json"}),
             )
         };
         (result, served.join().unwrap())
     };
     for content_length in [true, false] {
-        let (at_limit, _) = export(LIMIT - framing, content_length);
-        assert_eq!(at_limit.unwrap().rendered.len(), LIMIT - framing);
-        let (over, _) = export(LIMIT - framing + 1, content_length);
-        assert!(over.is_err(), "one byte over the export ceiling");
+        let (at, _) = export(at_limit, content_length);
+        assert_eq!(at.unwrap().archive.len(), at_limit);
+        let (over, _) = export(at_limit + 3, content_length);
+        assert_eq!(
+            over.expect("past the old ceiling").archive.len(),
+            at_limit + 3
+        );
     }
-    // An origin that keeps sending is cut off near the ceiling, not read to
-    // its end.
-    let (endless, (written, total)) = export(1024 * LIMIT, false);
-    assert!(endless.is_err());
-    assert!(written < total, "the client read all {total} bytes");
+    // An origin that keeps sending is read to its end.
+    let (endless, (written, total)) = export(1024 * LIMIT / 4 * 3, false);
+    assert_eq!(
+        endless.expect("read whole").archive.len(),
+        1024 * LIMIT / 4 * 3
+    );
+    assert_eq!(written, total);
 }

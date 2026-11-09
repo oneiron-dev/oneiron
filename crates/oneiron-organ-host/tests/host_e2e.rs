@@ -13,8 +13,8 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::{
-    CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganState,
-    SightedInput, Unavailable,
+    BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
+    OrganState, SightedInput, Unavailable,
 };
 use oneiron_organ_protocol::Value;
 
@@ -346,30 +346,21 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
     host.install(spec);
     let small = || call("organ.echo", 1.into(), Vec::new(), "g");
     host.call(&vault, small()).expect("small call");
+    // Rule 5 (protocol 2.0, FIX 6191, 5b61e287afc): an install's frame size is
+    // a threshold, never a refusal, and a message takes as many frames as it
+    // needs; so a call past the frame size is carried, not refused.
     for _ in 0..6 {
         let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
-        let err = host.call(&vault, big).expect_err("too large");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
-            "{err:?}"
-        );
+        host.call(&vault, big).expect("carried across frames");
     }
-    // Small on the wire but past what the organ decodes: deeper than the
-    // depth limit, or more values than the value limit.
-    let deep: fn() -> rmpv::Value =
-        || (0..MAX_FRAME_DEPTH).fold(rmpv::Value::Nil, |inner, _| rmpv::Value::Array(vec![inner]));
-    let wide: fn() -> rmpv::Value = || {
-        let count = usize::try_from(MAX_FRAME_VALUES).expect("fits");
-        rmpv::Value::Array(vec![rmpv::Value::Nil; count])
-    };
+    // The same rule carries a value of any depth and any width (the retired
+    // MAX_FRAME_DEPTH was 64 levels, MAX_FRAME_VALUES 2^21 values): what
+    // bounds one is the memory its receiver books before building it.
+    let deep: fn() -> Value = || (0..64).fold(Value::Nil, |inner, _| Value::Array(vec![inner]));
+    let wide: fn() -> Value = || Value::Array(vec![Value::Nil; 1 << 21]);
     for args in [deep, deep, deep, wide, wide, wide] {
-        let err = host
-            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
-            .expect_err("refused");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::Refused(_))),
-            "{err:?}"
-        );
+        host.call(&vault, call("organ.echo", args(), Vec::new(), "g"))
+            .expect("carried");
     }
     let status = host.status("probe").expect("installed");
     assert_eq!(
@@ -464,7 +455,7 @@ fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
     spec.max_output_bytes = 16 * 1024 * 1024;
     host.install(spec);
     let twelve = || {
-        let args = rmpv::Value::Map(vec![
+        let args = Value::Map(vec![
             ("count".into(), 1.into()),
             ("bytes".into(), (12 * 1024 * 1024).into()),
         ]);
@@ -499,10 +490,7 @@ fn stopping_an_organ_kills_what_it_forked() {
     let (_dir, vault) = vault();
     let host = host();
     let forked = host
-        .call(
-            &vault,
-            call("probe.fork", rmpv::Value::Nil, Vec::new(), "g"),
-        )
+        .call(&vault, call("probe.fork", Value::Nil, Vec::new(), "g"))
         .expect("fork");
     let pid = forked.report.as_i64().expect("the child's pid");
     assert!(pid > 0 && running(pid));
