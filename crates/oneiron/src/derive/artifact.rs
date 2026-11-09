@@ -4,7 +4,6 @@
 
 use super::batch::{DerivedPersonAbout, DerivedPsychProfile};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
-use crate::claim::{ScopedRead, ScopedReadActorKey};
 use crate::dreamer_consolidation::{about_facts_in, publish_person_about_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -25,13 +24,6 @@ pub const PROFILE_MALFORMED: &str = "gate.deny.derive.profile_malformed";
 
 /// The reason a landed artifact's receipt names.
 const ARTIFACT_ALLOWED: &str = "gate.allow.derive.artifact";
-
-/// `actor`'s own scoped read: what it may derive from.
-fn actor_read(vault: &Vault, actor: WriteActor) -> Result<ScopedRead<'_>> {
-    let key = ScopedReadActorKey::for_engine_actor(actor)
-        .ok_or(Error::InvalidClaimBody("a derivation actor has no read"))?;
-    Ok(vault.scoped_read(key))
-}
 
 /// What a person `about` item is written from, as an actor reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +49,7 @@ impl Vault {
         actor: WriteActor,
         person: EntityId,
     ) -> Result<PersonAboutFacts> {
-        let read = actor_read(self, actor)?;
+        let read = super::actor_read(self, actor)?;
         self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let (digest, bands) = about_facts_in(self, &read, &txn, person)?;
@@ -89,7 +81,7 @@ pub(super) fn stage_about_in_txn(
         Ok(allowance) => allowance,
         Err(refusal) => return refuse(vault, txn, context, person, refusal.token()),
     };
-    let read = actor_read(vault, actor)?;
+    let read = super::actor_read(vault, actor)?;
     let lines: Vec<(u8, String)> = item
         .lines
         .iter()
@@ -144,7 +136,7 @@ pub(super) fn stage_profile_in_txn(
         Ok(allowance) => allowance,
         Err(refusal) => return refuse(vault, txn, context, id, refusal.token()),
     };
-    let read = actor_read(vault, actor)?;
+    let read = super::actor_read(vault, actor)?;
     if read
         .get_entities_parts_in_txn(txn, &[subject])?
         .iter()

@@ -56,6 +56,18 @@ pub struct DerivedClaim {
     pub evidence: Vec<ItemRef>,
 }
 
+/// Evidence an agent derived (kind 2): rows it reads that support a stored
+/// claim it reads.
+#[derive(Debug, Clone)]
+pub struct DerivedEvidence {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The claim the evidence supports.
+    pub head: ItemRef,
+    /// The supporting rows: TURNs, cited whole, or admissible claims.
+    pub sources: Vec<ItemRef>,
+}
+
 /// A supersession an agent derived: the claim `new` replaces the claim
 /// `old`, which the agent's grant reaches.
 #[derive(Debug, Clone)]
@@ -151,6 +163,8 @@ pub struct DerivedPsychProfile {
 pub enum DerivationItem {
     /// A `Generated` claim (kind 1).
     Claim(DerivedClaim),
+    /// Evidence for a stored claim (kind 2).
+    Evidence(DerivedEvidence),
     /// A supersession (kind 3).
     Supersede(DerivedSupersede),
     /// A conflict settlement (kind 3).
@@ -168,6 +182,7 @@ impl DerivationItem {
     pub fn local(&self) -> &str {
         match self {
             Self::Claim(claim) => &claim.local,
+            Self::Evidence(evidence) => &evidence.local,
             Self::Supersede(supersede) => &supersede.local,
             Self::Settle(settle) => &settle.local,
             Self::PersonAbout(about) => &about.local,
@@ -180,6 +195,7 @@ impl DerivationItem {
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Claim(_) => "claim",
+            Self::Evidence(_) => "evidence",
             Self::Supersede(_) => "supersede",
             Self::Settle(_) => "settle",
             Self::PersonAbout(_) => "person_about",
@@ -193,6 +209,9 @@ impl DerivationItem {
         match self {
             Self::Claim(claim) => std::iter::once(&claim.subject)
                 .chain(claim.evidence.iter())
+                .collect(),
+            Self::Evidence(evidence) => std::iter::once(&evidence.head)
+                .chain(evidence.sources.iter())
                 .collect(),
             Self::Supersede(supersede) => vec![&supersede.new, &supersede.old],
             Self::Settle(settle) => match &settle.settlement {
