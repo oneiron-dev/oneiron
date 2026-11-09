@@ -26,7 +26,7 @@ mod commit;
 mod record;
 mod settle;
 mod supersede;
-mod tables;
+pub(crate) mod tables;
 
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSettle,
