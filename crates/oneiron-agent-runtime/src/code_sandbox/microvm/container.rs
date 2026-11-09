@@ -1,6 +1,6 @@
 //! OCI code and browser sessions on Linux hosts without a usable microVM.
 
-use super::{backend::backend_error, *};
+use super::*;
 use crate::Result;
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
 use crate::engine_executor::{CANCEL_POLL_SLICE, StepCancellation};
