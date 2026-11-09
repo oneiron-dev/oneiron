@@ -15,8 +15,7 @@ use std::task::{Context, Poll, Waker};
 
 use oneiron::dreamer_runner::{
     DREAMER_SERVER_PARK_OWNER, DreamerAttemptStatus, DreamerParkedAttemptRecord,
-    EnqueueDreamerConsolidationAttempt, ParkResumer, ReleaseParkedAttemptRequest,
-    release_parked_attempt_as_owner,
+    EnqueueDreamerConsolidationAttempt, ParkResumer,
 };
 use oneiron::memory::DreamerParkCauseView;
 use oneiron::test_doors::wake_d1_park_release as doors;
@@ -49,6 +48,8 @@ fn open_vault_with(config: VaultConfig) -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    // The owner exists before any park, so a park's notice has its owner to name.
+    vault.ensure_embedded_owner_actor().expect("embedded owner");
     Ok((dir, vault))
 }
 
@@ -235,6 +236,15 @@ fn embedded_owner_proof(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
         .expect("owner proof")
 }
 
+/// A try's lease generation (`attempt_count`), as the owner's reads show it beside its park.
+fn attempt_count(store: &DreamerRunnerStore<'_>, queued: &DreamerAttemptStatus) -> Result<u32> {
+    Ok(store
+        .status(queued.attempt.id)?
+        .expect("the try")
+        .attempt
+        .attempt_count)
+}
+
 /// A try's id as the owner's reads spell it: 32 lowercase hex digits.
 fn attempt_hex(status: &DreamerAttemptStatus) -> String {
     status
@@ -277,15 +287,13 @@ fn an_executor_error_park_raises_the_notice_and_resumes_only_at_release() -> Res
     );
 
     let owner = embedded_owner_proof(&vault);
-    let view = release_parked_attempt_as_owner(
+    let view = doors::release_as_owner(
         &vault,
         &owner,
-        &ReleaseParkedAttemptRequest {
-            attempt: attempt_hex(&queued),
-            cause: DreamerParkCauseView::ExecutorError,
-            parked_at: parked.parked_at,
-            note: None,
-        },
+        &attempt_hex(&queued),
+        DreamerParkCauseView::ExecutorError,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
     )?;
     assert_eq!(view.cause, "executor_error");
     assert!(store.parked_attempt(queued.attempt.id)?.is_none());
@@ -319,6 +327,79 @@ fn after_a_restart_an_executor_error_park_stays_parked_with_its_notice() -> Resu
         doors::park_notice_seen(&vault, &parked)?,
         Some(false),
         "the owner's notice stands"
+    );
+    Ok(())
+}
+
+/// Review 6910 P1: each live owner's notice of a park names that owner as its recipient, so no other reader whose
+/// lane admits notifications sees the parked try.
+#[test]
+fn the_park_notice_names_its_owner_as_recipient() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    let parked = park_executor_error(&vault, &store, &queued, 20)?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    assert_eq!(
+        doors::park_notice_recipient(&vault, &parked)?,
+        Some(Some(owner.to_hex())),
+        "FAILBEFORE 6910 P1: the owner's notice names its owner"
+    );
+    Ok(())
+}
+
+/// Review 6910 P1: a release of an earlier park of the same try refuses, even when the later park falls in the same
+/// second; the later park stands and its notice stays raised. A try parks only under a lease, so the later park is a
+/// later lease generation.
+#[test]
+fn a_stale_release_of_an_earlier_park_refuses() -> Result<()> {
+    let store_clock = oneiron_store::ports::manual_clock::ManualClock::new(20);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = open_vault_with(config)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    let owner = embedded_owner_proof(&vault);
+
+    let first = park_executor_error(&vault, &store, &queued, 20)?;
+    let first_count = attempt_count(&store, &queued)?;
+    doors::release_as_owner(
+        &vault,
+        &owner,
+        &attempt_hex(&queued),
+        DreamerParkCauseView::ExecutorError,
+        first.parked_at,
+        first_count,
+    )?;
+
+    // In the same second the next pass claims the try again, and it parks again.
+    let second = park_executor_error(&vault, &store, &queued, 20)?;
+    assert_eq!(
+        second.parked_at, first.parked_at,
+        "both parks fall in the same second"
+    );
+    assert!(attempt_count(&store, &queued)? > first_count);
+
+    let stale = doors::release_as_owner(
+        &vault,
+        &owner,
+        &attempt_hex(&queued),
+        DreamerParkCauseView::ExecutorError,
+        first.parked_at,
+        first_count,
+    );
+    assert!(
+        matches!(stale, Err(oneiron::Error::ConcurrentWrite(_))),
+        "FAILBEFORE 6910 P1: a release of the earlier park refuses: {stale:?}"
+    );
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_some(),
+        "the later park stands"
+    );
+    assert_eq!(
+        doors::park_notice_seen(&vault, &second)?,
+        Some(false),
+        "the later park's notice stays raised"
     );
     Ok(())
 }
