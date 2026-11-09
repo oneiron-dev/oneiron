@@ -12,6 +12,7 @@ pub(crate) mod tests {
     use super::super::verify_sig_pipeline::Checks;
     use super::super::*;
     use crate::api::{VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
+    use crate::memory::testing::process_operation_limits;
 
     /// 2026-07-30T08:00:00Z — the applicable verification time.
     pub(crate) const AT_UNIX: u64 = 1_785_398_400;
@@ -434,9 +435,11 @@ pub(crate) mod tests {
         doc
     }
 
-    pub(crate) fn dss_check(doc: &Document, covered: &[EmbeddedCert]) -> Checks {
-        let mut checks = Checks::new();
-        verify_dss(doc, &[], covered, AT_UNIX, usize::MAX, &mut checks);
+    pub(crate) fn dss_check(doc: &Document, covered: &[EmbeddedCert]) -> Checks<'static> {
+        let limits = process_operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(limits);
+        verify_dss(doc, &[], covered, AT_UNIX, &memory, &mut checks, limits).unwrap();
         checks
     }
 
