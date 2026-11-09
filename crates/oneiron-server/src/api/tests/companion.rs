@@ -1043,7 +1043,7 @@ async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
     let grant = oneiron::AccessGrant::companion_profile_read(
         seeded_test_entity_id(0x0002_2201),
         seeded_test_entity_id(0x0002_2202),
-        seeded_test_entity_id(0x0002_2203),
+        Some(seeded_test_entity_id(0x0002_2203)),
         10,
     );
     for n in 0..101_u128 {

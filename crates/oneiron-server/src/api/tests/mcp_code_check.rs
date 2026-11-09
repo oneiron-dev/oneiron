@@ -11,7 +11,7 @@
 use super::mcp_quickjs::{CodeMode, code_mode_server_with};
 use super::*;
 use oneiron::code_run::CodeRunReplayRecord;
-use oneiron_code_check::{ShadowCheck, TscRsBudget, TscRsWasm};
+use oneiron_code_check::{FeedbackCheck, TscRsBudget, TscRsWasm};
 
 /// Each program, with the codes the evidence measured on both checkers.
 const FIXTURES: [(&str, &str, &[u32]); 7] = [
@@ -65,7 +65,7 @@ struct Run {
 /// Runs `program`, then calls the same run again: it resumes after the
 /// program's step, or starts over with [`AFTER`] when the program failed
 /// before any host call left a record.
-async fn run(program: &str, check: Option<Arc<ShadowCheck>>) -> Run {
+async fn run(program: &str, check: Option<Arc<FeedbackCheck>>) -> Run {
     let mode = code_mode_server_with(vec![program.to_owned(), AFTER.to_owned()], check);
     let actor = seeded_test_entity_id(0x0024_7001);
     let credential = "shadow-check-credential";
@@ -139,7 +139,8 @@ impl Run {
                 "request": call.request,
                 "outcome": call.outcome,
             })).collect::<Vec<_>>(),
-            "clock": record.determinism.frozen_unix_ms,
+            // determinism is an Option on today's record (witnessed here).
+            "clock": record.determinism.as_ref().map(|determinism| determinism.frozen_unix_ms),
             "steps": record.step_checkpoints.iter().map(|step| json!({
                 "seq": step.seq,
                 "label": step.label,
@@ -182,7 +183,8 @@ fn mask_run_identity(text: String) -> String {
 
 #[tokio::test]
 async fn shadow_mode_changes_no_programs_behaviour_or_result() {
-    let shadow = Arc::new(ShadowCheck::new(Arc::new(
+    // ShadowCheck became FeedbackCheck (3748955211e, #3903, FIX 8277; rule D).
+    let shadow = Arc::new(FeedbackCheck::new(Arc::new(
         TscRsWasm::load(TscRsBudget::default()).unwrap(),
     )));
     let mut failed_steps = 0;

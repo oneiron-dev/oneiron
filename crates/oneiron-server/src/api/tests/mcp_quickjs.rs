@@ -153,6 +153,16 @@ pub(super) struct CodeMode {
 }
 
 fn code_mode_server(scripts: Vec<String>) -> CodeMode {
+    code_mode_server_with(scripts, None)
+}
+
+/// [`code_mode_server`], with feedback mode's type check when `check` is set.
+/// Shadow mode's `ShadowCheck` became feedback mode's `FeedbackCheck`, handed to
+/// the provider through a loaded `TypeFeedback` (3748955211e, #3903, FIX 8277).
+pub(super) fn code_mode_server_with(
+    scripts: Vec<String>,
+    check: Option<Arc<oneiron_code_check::FeedbackCheck>>,
+) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
@@ -290,6 +300,14 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
         },
         "code-task",
     );
+    let provider = match check {
+        Some(check) => {
+            let feedback = oneiron::engine_executor::TypeFeedback::loading("tsc-rs", vault.clone());
+            feedback.loaded(Ok(check));
+            provider.with_code_check(feedback)
+        }
+        None => provider,
+    };
     let config = crate::mcp::McpCodeModeProvider::executor_config(
         &provider,
         &vault,
