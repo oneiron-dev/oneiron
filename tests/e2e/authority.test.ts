@@ -536,9 +536,11 @@ suite.test(test, "AUTHORITY-06", "Scope position and ceiling should work", async
   const band = (stamp: Position): number => {
     if (!stamp) throw new Error("Stamped row has no readable position");
     expect(stamp.kind).toBe("position");
-    if (stamp.scope.bands.kind !== "some") throw new Error("A record position names its band");
-    expect(stamp.scope.bands.values).toHaveLength(1);
-    return stamp.scope.bands.values[0]!;
+    // The generated axis type is optional and not narrowed by kind: read it by shape.
+    const bands = stamp.scope.bands as unknown as { kind: string; values?: number[] } | undefined;
+    if (bands?.kind !== "some" || !bands.values) throw new Error("A record position names its band");
+    expect(bands.values).toHaveLength(1);
+    return bands.values[0]!;
   };
   const claimPosition = await position(engine.client, ids.claim);
   const messagePosition = await position(engine.client, ids.message);
@@ -588,7 +590,7 @@ suite.test(test, "AUTHORITY-06", "Scope position and ceiling should work", async
   const ownerAll = await exported(engine.client, allChannel);
   expect(fixtureRows(ownerAll)).toEqual([ids.claim, ids.message].sort());
   const exportedClaim = ownerAll.records.find(row => row.record.id === ids.claim)!;
-  expect(exportedClaim.position).toEqual(claimPosition);
+  expect(exportedClaim.position).toEqual(claimPosition!);
   expect(exportedClaim.bytes.length).toBeGreaterThan(0);
   const readerAll = await exported(claimsOnly, allChannel);
   expect(fixtureRows(readerAll)).toEqual([ids.claim]);
