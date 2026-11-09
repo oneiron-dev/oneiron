@@ -105,11 +105,7 @@ const RUN_TREE_RUNTIME_ACTOR: &str = "runtime";
 /// carries a readiness instant — claim and lease-timeout requeue both clear
 /// both spellings — so only deferred rows take this arm.
 fn run_tree_status(record: &AttemptRecord) -> RunTreeStatus {
-    let deferred = record.scheduled_at.or(record.backoff_until).is_some();
-    match record.state {
-        AttemptState::Queued if deferred => RunTreeStatus::Paused,
-        state => RunTreeStatus::from(state),
-    }
+    crate::attempt_queue::RunState::of(record).tree_status()
 }
 
 fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
