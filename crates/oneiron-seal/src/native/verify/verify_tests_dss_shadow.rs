@@ -203,4 +203,93 @@ mod tests {
         let checks = material_check(&doc, &[&first, &second], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
+    #[test]
+    fn dss_crl_listing_by_a_vouched_key_is_a_revocation() {
+        // A key a trust anchor vouches for under the leaf's issuer name is
+        // the issuer's own revocation authority (ruling Q2), so its CRL is
+        // about the leaf's chain (Engine call Q-C = A): its listing of the
+        // leaf is a genuine revocation and fails, never forged material.
+        // One row per legitimate shape of the Q2 tests above, each now
+        // listing the leaf's serial.
+        let serial_of = |der: &[u8]| {
+            x509_cert::Certificate::from_der(der)
+                .unwrap()
+                .tbs_certificate
+                .serial_number
+        };
+        let anchor = test_ca("issuer");
+        let anchor_leaf = leaf_under(&anchor, "leaf");
+        let crl_signer = child_ca(&anchor, "issuer");
+        let old = test_ca("issuer");
+        let old_leaf = leaf_under(&old, "leaf");
+        let new = test_ca("issuer");
+        let link_der = link_certificate(&old, &new);
+        let first = test_ca("issuer");
+        let second = test_ca("issuer");
+        let second_leaf = leaf_under(&second, "leaf");
+        let rows: Vec<(&str, Document, Vec<&TestCa>, &[u8])> = vec![
+            (
+                "a CA's separate CRL-signing key",
+                dss_doc(
+                    &[anchor_leaf.clone(), crl_signer.cert_der.clone()],
+                    &[build_crl(
+                        &crl_signer,
+                        THIS_UPDATE,
+                        NEXT_UPDATE,
+                        None,
+                        vec![serial_of(&anchor_leaf)],
+                    )],
+                    &[],
+                ),
+                vec![&anchor],
+                anchor_leaf.as_slice(),
+            ),
+            (
+                "a rolled-over key with its link certificate",
+                dss_doc(
+                    &[old_leaf.clone(), new.cert_der.clone(), link_der],
+                    &[build_crl(
+                        &new,
+                        THIS_UPDATE,
+                        NEXT_UPDATE,
+                        None,
+                        vec![serial_of(&old_leaf)],
+                    )],
+                    &[],
+                ),
+                vec![&old],
+                old_leaf.as_slice(),
+            ),
+            (
+                "an anchored CA with the same subject",
+                dss_doc(
+                    std::slice::from_ref(&second_leaf),
+                    &[build_crl(
+                        &first,
+                        THIS_UPDATE,
+                        NEXT_UPDATE,
+                        None,
+                        vec![serial_of(&second_leaf)],
+                    )],
+                    &[],
+                ),
+                vec![&first, &second],
+                second_leaf.as_slice(),
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (row, doc, anchors, leaf) in rows {
+            let checks = material_check(&doc, &anchors, &[leaf]);
+            let found = dss_finding(&checks);
+            if found
+                != (
+                    VerifyCheckStatus::Fail,
+                    Some(VerifyFindingCode::ValidationMaterialInvalid),
+                )
+            {
+                wrong.push(format!("{row}: {found:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "rows not as ruled: {wrong:#?}");
+    }
 }
