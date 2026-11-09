@@ -1,8 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { resolve } from "node:path";
-import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import { decode } from "@msgpack/msgpack";
+import { blake3 } from "@noble/hashes/blake3";
+import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { CliClient, PublicHttpClient, WsClient, credentialParts } from "./support/clients.ts";
+import { CliClient, PublicHttpClient, WsClient, boundHeaders, credentialParts } from "./support/clients.ts";
 import { loadFixtures, requireAsset } from "./support/fixtures.ts";
 import { defineFile, LIMITS, ManagedProcess, ownResource, redactor, runProcess, secretHex } from "./support/run.ts";
 
@@ -72,15 +75,82 @@ function mintedSlip(before: readonly AuditRow[], after: readonly AuditRow[], hol
   return row;
 }
 
+const upgradeHeaders = (): Record<string, string> => ({
+  connection: "Upgrade", upgrade: "websocket", "sec-websocket-version": "13",
+  "sec-websocket-key": Buffer.from(secretHex(16), "hex").toString("base64"),
+});
+
 async function refusedUpgrade(url: string, credential: string): Promise<void> {
   // Send a real upgrade handshake and inspect its HTTP refusal before any
   // socket exists. A DNS error, timeout or protocol error must not count as
   // denial. The live-credential control below also opens an actual socket.
-  const reply = await new PublicHttpClient(url, { credential }).raw("GET", "/ws", undefined, {
-    connection: "Upgrade", upgrade: "websocket", "sec-websocket-version": "13",
-    "sec-websocket-key": Buffer.from(secretHex(16), "hex").toString("base64"),
-  });
+  const reply = await new PublicHttpClient(url, { credential }).raw("GET", "/ws", undefined, upgradeHeaders());
   expect(reply.status).toBe(401);
+}
+
+type Refusal = { error: { code: string } };
+const SLIP_PREFIX = "v2.slip.";
+// PKCS#8 DER prefix of a raw 32-byte Ed25519 seed, as clients.ts signs with.
+const ED25519_PKCS8_PREFIX = "302e020100300506032b657004220420";
+const seedBytes = (seed: string): number[] => [...Buffer.from(seed, "hex")];
+
+/** The public key of a holder seed: what a transfer names, never the seed. */
+function holderPublicKey(seed: string): number[] {
+  const key = createPrivateKey({
+    key: Buffer.concat([Buffer.from(ED25519_PKCS8_PREFIX, "hex"), Buffer.from(seed, "hex")]),
+    format: "der", type: "pkcs8",
+  });
+  const spki = createPublicKey(key).export({ format: "der", type: "spki" });
+  return [...spki.subarray(spki.length - 32)];
+}
+
+/** The paired credential format: the returned slip beside the holder's own seed. */
+function holderCredential(token: string, seed: string): string {
+  expect(token.startsWith(SLIP_PREFIX)).toBe(true);
+  const credential = `v2.cred.${token.slice(SLIP_PREFIX.length)}.${seed}`;
+  credentialParts(credential);
+  return credential;
+}
+
+/** A typed facade call the server must refuse: the status and code, nothing else. */
+async function refusal(client: PublicHttpClient, verb: string, input: unknown,
+  headers?: HeadersInit): Promise<{ status: number; code: string }> {
+  const reply = await client.raw<Refusal>("POST", `/v1/core/facade/${verb}`, input, headers);
+  expect(reply.status).toBeGreaterThanOrEqual(400);
+  expect(reply.status).toBeLessThan(500);
+  return { status: reply.status, code: reply.body.error.code };
+}
+
+/** BLAKE3 of the original envelope bytes: the audit's entry_hash for that row. */
+const envelopeHash = (entry: string): string => Buffer.from(blake3(Buffer.from(entry, "base64"))).toString("hex");
+
+/** One bit flipped inside the primary signature, in place: still canonical
+ * MessagePack, same op, same signer, but a signature that verifies nothing. */
+function corruptedSignature(entry: string): string {
+  const bytes = Buffer.from(entry, "base64");
+  const envelope = decode(bytes) as { signer: { signature: Uint8Array } };
+  const signature = Buffer.from(envelope.signer.signature);
+  expect(signature.length).toBe(64);
+  const at = bytes.indexOf(signature);
+  expect(at).toBeGreaterThan(0);
+  expect(bytes.indexOf(signature, at + 1)).toBe(-1);
+  const forged = Buffer.from(bytes);
+  forged[at + 7] = forged[at + 7]! ^ 0x01;
+  return forged.toString("base64");
+}
+
+/** The same signed envelope with its advisory timestamp moved back a day.
+ * ts is the last field, a canonical u32; the original signature covers it. */
+function backdated(entry: string): string {
+  const bytes = Buffer.from(entry, "base64");
+  const envelope = decode(bytes) as { ts: number };
+  const field = bytes.length - 8;
+  expect([...bytes.subarray(field, field + 4)]).toEqual([0xa2, 0x74, 0x73, 0xce]);
+  expect(bytes.readUInt32BE(field + 4)).toBe(envelope.ts);
+  expect(envelope.ts).toBeGreaterThan(86_400);
+  const forged = Buffer.from(bytes);
+  forged.writeUInt32BE(envelope.ts - 86_400, field + 4);
+  return forged.toString("base64");
 }
 
 // EngineFixture.restart deliberately keeps its issuer and credential. This
@@ -135,10 +205,107 @@ async function handoffHost(engine: EngineFixture): Promise<{
 // a second vault, then an offline child narrowed by Scope meet (never a new
 // owner-minted pairing standing in for attenuation). Scope has explicit
 // {kind:"bottom"|"all"|"some", values?} axes and a sensitivity ceiling.
-// Missing: neither shipped JS/Python SDK nor HTTP catalog exposes the
-// holder's shrink-only credential attenuation/transfer call. Do not hand-roll
-// slip signing, call Rust's CapabilitySlip.attenuate, or silently omit that leg.
-suite.todo(test, "AUTHORITY-01", "waits on typed public holder credential attenuation and transfer");
+// Door: self.credential.attenuate({holder_seed, caveat, next_binding_key?})
+// -> {token, binding_key}. The host appends the holder's caveat to the slip
+// this request presented; no slip signing is hand-rolled here.
+suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work", async () => {
+  const engine = await EngineFixture.start({ id: "AUTHORITY-01", profile });
+  const owner = engine.pairedActor;
+  const { bearer, seed } = credentialParts(owner.credential);
+  const address = { namespace: ["authority-01"], key: "slip-proof" };
+  await engine.client.call("vault.kv.put", { ...address, value: "vault-bound", request_id: "authority-01-seed" });
+  const unauthorized = { status: 401, code: "UNAUTHORIZED" };
+
+  // One holder proof admits one request. The identical replay, header for
+  // header, is refused over HTTP and again at the WS upgrade.
+  const proof = Object.fromEntries(boundHeaders(owner.credential));
+  const replay = { ...proof, "x-oneiron-invocation": secretHex(16) };
+  const anonymous = new PublicHttpClient(engine.url, { artifacts: engine.artifacts });
+  const admitted = await anonymous.raw<FacadeResult<"vault.kv.get">>("POST", "/v1/core/facade/vault.kv.get", address, replay);
+  expect(admitted.status).toBe(200);
+  expect(admitted.body?.value).toBe("vault-bound");
+  expect(await refusal(anonymous, "vault.kv.get", address, replay)).toEqual(unauthorized);
+  const replayedUpgrade = await anonymous.raw("GET", "/ws", undefined, { ...proof, ...upgradeHeaders() });
+  expect(replayedUpgrade.status).toBe(401);
+  // A fresh proof from the same holder is still admitted.
+  expect((await engine.client.call("vault.kv.get", address))?.value).toBe("vault-bound");
+
+  // The slip alone proves nothing: the same bearer under another holder key.
+  const strangerSeed = secretHex();
+  redactor.add(strangerSeed);
+  const strangerCredential = `v2.cred.${bearer.slice(SLIP_PREFIX.length)}.${strangerSeed}`;
+  credentialParts(strangerCredential);
+  const stranger = new PublicHttpClient(engine.url, { credential: strangerCredential, artifacts: engine.artifacts });
+  expect(await refusal(stranger, "vault.kv.get", address)).toEqual(unauthorized);
+  await refusedUpgrade(engine.url, strangerCredential);
+  // Nor can the slip's presenter attenuate it with a seed that is not its holder's.
+  const wrongSeed = await refusal(engine.client, "self.credential.attenuate",
+    { holder_seed: seedBytes(strangerSeed), caveat: {} });
+  expect(wrongSeed).toEqual({ status: 403, code: "FORBIDDEN" });
+
+  // Holder attenuation narrows by Scope meet; it mints no actor, grant or slip.
+  const before = await auditRows(engine.client);
+  const readOnly: Facade.Scope = {
+    worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" }, audience: { kind: "all" },
+    verbs: { kind: "some", values: ["core:read"] }, sensitivity: { kind: "all" },
+  };
+  const child = await engine.client.call("self.credential.attenuate", {
+    holder_seed: seedBytes(seed), caveat: { scope: { kind: "ceiling", scope: readOnly } },
+  });
+  // No transfer was asked for: the child stays with the same holder key.
+  expect(child.binding_key).toEqual(holderPublicKey(seed));
+  const childCredential = holderCredential(child.token, seed);
+  const childClient = new PublicHttpClient(engine.url, { credential: childCredential, artifacts: engine.artifacts });
+  expect((await childClient.call("vault.kv.get", address))?.value).toBe("vault-bound");
+  expect((await childClient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
+  const childWrite = { ...address, value: "child-widened", request_id: "authority-01-child-write" };
+  expect(await refusal(childClient, "vault.kv.put", childWrite)).toEqual({ status: 403, code: "FORBIDDEN" });
+
+  // The child asks for every verb back. The meet keeps it read-only.
+  const widened = await childClient.call("self.credential.attenuate", {
+    holder_seed: seedBytes(seed), caveat: { scope: { kind: "ceiling", scope: { ...readOnly, verbs: { kind: "all" } } } },
+  });
+  const widenedClient = new PublicHttpClient(engine.url,
+    { credential: holderCredential(widened.token, seed), artifacts: engine.artifacts });
+  expect((await widenedClient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
+  expect(await refusal(widenedClient, "vault.kv.put", { ...childWrite, request_id: "authority-01-widened-write" }))
+    .toEqual({ status: 403, code: "FORBIDDEN" });
+
+  // Transfer names only the recipient's public key. The recipient's own seed
+  // proves the moved slip; the former holder's seed no longer does.
+  const recipientSeed = secretHex();
+  redactor.add(recipientSeed);
+  const moved = await childClient.call("self.credential.attenuate", {
+    holder_seed: seedBytes(seed), caveat: {}, next_binding_key: holderPublicKey(recipientSeed),
+  });
+  expect(moved.binding_key).toEqual(holderPublicKey(recipientSeed));
+  const recipient = new PublicHttpClient(engine.url,
+    { credential: holderCredential(moved.token, recipientSeed), artifacts: engine.artifacts });
+  expect((await recipient.call("vault.kv.get", address))?.value).toBe("vault-bound");
+  expect((await recipient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
+  const formerHolder = new PublicHttpClient(engine.url,
+    { credential: holderCredential(moved.token, seed), artifacts: engine.artifacts });
+  expect(await refusal(formerHolder, "vault.kv.get", address)).toEqual(unauthorized);
+
+  const after = await auditRows(engine.client);
+  expect(after.map(row => row.entry_hash).sort()).toEqual(before.map(row => row.entry_hash).sort());
+  // The parent credential keeps its own authority.
+  await engine.client.call("vault.kv.put", { ...address, value: "owner-writes", request_id: "authority-01-owner-write" });
+  expect((await recipient.call("vault.kv.get", address))?.value).toBe("owner-writes");
+
+  // A slip is bound to the vault that minted it. One server at a time, as
+  // this file's one slot schedules: stop this vault, then present both
+  // credentials to an independent second vault.
+  await engine.close();
+  const second = await EngineFixture.start({ id: "AUTHORITY-01-second-vault", profile });
+  for (const credential of [owner.credential, childCredential]) {
+    const foreign = new PublicHttpClient(second.url, { credential, artifacts: second.artifacts });
+    expect(await refusal(foreign, "vault.kv.get", address)).toEqual(unauthorized);
+    await refusedUpgrade(second.url, credential);
+  }
+  // A live control: the refusal is the binding, not a dead server.
+  expect(await second.client.call("vault.kv.get", address)).toBeNull();
+});
 
 // AUTHORITY-02 — Signed history determines live authority should work.
 // OF-160/175/039/056/155/469; identity#authority-log.
@@ -164,10 +331,83 @@ suite.todo(test, "AUTHORITY-02", "waits on typed signed authority history transf
 // then submit both a new forged entry and a replacement at the existing hash.
 // Reload the audit/receipts and verify unchanged entry bytes, attribution and
 // effective access. Invalid Ed25519/P-256 signatures confer no standing.
-// Missing: the typed signed-envelope submission/export contract. Sending a
-// made-up authority body through vault.batch/structural.put would only test a
-// generic malformed write, not the signed append-only protocol (G01).
-suite.todo(test, "AUTHORITY-03", "waits on typed public signed authority envelope export and submission");
+// Doors: vault.authority.history.export({}) -> {entries: base64[]} and
+// vault.authority.history.import({entries}) -> {entry_refs}. Every forgery
+// below starts from a real exported envelope; none is a made-up body.
+suite.test(test, "AUTHORITY-03", "Public authority history is append-only should work", async () => {
+  // A foreign vault's own signed history and owner credential, kept after it stops.
+  const foreign = await EngineFixture.start({ id: "AUTHORITY-03-foreign", profile });
+  const foreignHistory = await foreign.client.call("vault.authority.history.export", {});
+  const foreignCredential = foreign.pairedActor.credential;
+  await foreign.close();
+
+  const engine = await EngineFixture.start({ id: "AUTHORITY-03", profile });
+  const history = await engine.client.call("vault.authority.history.export", {});
+  const audit = await auditRows(engine.client);
+  // The export is the log itself: each original envelope hashes to exactly one audit row.
+  expect(history.entries.map(envelopeHash).sort()).toEqual(audit.map(row => row.entry_hash).sort());
+  expect(audit.filter(row => row.source_op === "genesis")).toHaveLength(1);
+  expect(audit.every(row => row.fold_valid)).toBe(true);
+  const ownHashes = new Set(history.entries.map(envelopeHash));
+  expect(foreignHistory.entries.some(entry => ownHashes.has(envelopeHash(entry)))).toBe(false);
+  const unchanged = async (): Promise<void> => {
+    expect((await engine.client.call("vault.authority.history.export", {})).entries).toEqual(history.entries);
+    const rows = await auditRows(engine.client);
+    expect(rows.map(row => [row.entry_hash, row.signer_key, row.seq, row.fold_valid]))
+      .toEqual(audit.map(row => [row.entry_hash, row.signer_key, row.seq, row.fold_valid]));
+  };
+
+  // Importing the vault's own history again changes nothing.
+  await engine.client.call("vault.authority.history.import", history);
+  await unchanged();
+
+  // Forgeries of the owner's real slip mint: a broken signature, a backdated
+  // copy, and a truncated body. Alone or inside the full real history, each
+  // is refused and the import writes nothing.
+  const mint = audit.find(row => row.source_op === "slip_mint" && row.holder_ref === engine.pairedActor.principalRef);
+  if (!mint) throw new Error("Owner pairing left no slip mint in the audit");
+  const original = history.entries.find(entry => envelopeHash(entry) === mint.entry_hash)!;
+  const forgeries = [
+    corruptedSignature(original),
+    backdated(original),
+    Buffer.from(original, "base64").subarray(0, -1).toString("base64"),
+  ];
+  const invalidBody = { status: 400, code: "BAD_REQUEST" };
+  for (const forged of forgeries) {
+    expect(ownHashes.has(envelopeHash(forged))).toBe(false);
+    expect(await refusal(engine.client, "vault.authority.history.import", { entries: [forged] })).toEqual(invalidBody);
+    expect(await refusal(engine.client, "vault.authority.history.import", { entries: [...history.entries, forged] }))
+      .toEqual(invalidBody);
+  }
+  expect(await refusal(engine.client, "vault.authority.history.import", { entries: ["not base64 at all"] }))
+    .toEqual(invalidBody);
+  // A different genesis is not this vault's history.
+  expect(await refusal(engine.client, "vault.authority.history.import", foreignHistory)).toEqual(invalidBody);
+  await unchanged();
+
+  // The foreign vault's owner has no standing here, to read or to write the log.
+  const stranger = new PublicHttpClient(engine.url, { credential: foreignCredential, artifacts: engine.artifacts });
+  const unauthorized = { status: 401, code: "UNAUTHORIZED" };
+  expect(await refusal(stranger, "vault.authority.history.export", {})).toEqual(unauthorized);
+  expect(await refusal(stranger, "vault.authority.history.import", foreignHistory)).toEqual(unauthorized);
+
+  // The log survives a restart byte for byte, and the owner's access with it.
+  await engine.restart();
+  await unchanged();
+
+  // A real append extends the log. Every earlier envelope stays, unchanged.
+  const paired = await engine.pairActor({ principalRef: engine.pairedActor.principalRef, actorClass: "human" });
+  const grown = await engine.client.call("vault.authority.history.export", {});
+  const added = grown.entries.filter(entry => !ownHashes.has(envelopeHash(entry)));
+  expect(grown.entries.filter(entry => ownHashes.has(envelopeHash(entry)))).toEqual(history.entries);
+  expect(added.length).toBeGreaterThan(0);
+  const grownAudit = await auditRows(engine.client);
+  const addedRows = grownAudit.filter(row => !ownHashes.has(row.entry_hash));
+  expect(addedRows.map(row => row.entry_hash).sort()).toEqual(added.map(envelopeHash).sort());
+  expect(addedRows.every(row => row.fold_valid)).toBe(true);
+  expect(addedRows.some(row => row.source_op === "slip_mint" && row.holder_ref === paired.principalRef)).toBe(true);
+  expect((await paired.client.call("vault.kv.get", { namespace: ["authority-03"], key: "absent" }))).toBeNull();
+});
 
 // AUTHORITY-04 — Conflicting signed authority is not a grant should work.
 // OF-166/291; identity#authority-log, including the host-root amendments.
