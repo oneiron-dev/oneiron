@@ -329,6 +329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/adopted_fold/result_parents.rs` | src | s | 1 crate-vis | — | The parents a residence result names on a vault that adopted a checkpoint image (FIX 5412, CALLS "FIX 5412… |
 | `src/authority/adopted_fold/settle.rs` | src | m | 3 crate-vis | — | The tail's seeded fold past an adopted image, settled and projected (OF-469, slice C): what the live fold… |
 | `src/authority/agent_grant_act.rs` | src | s | 6 crate-vis | — | The signed half of the owner's agent Grant doors (FIX 5628, Engine 10-20 00:5x): the owner's mint or revoke… |
+| `src/authority/agent_principal.rs` | src | s | 1 fn | — | A named token agent's own-vault agent binding (PRIVACY-07) |
 | `src/authority/agent_tier.rs` | src | s | 1 enum · 5 fn · 1 const | AgentTier | ARCH-0028's registration-time authority tiers for an outside agent, as stored authority: the credential… |
 | `src/authority/agent_world_undo.rs` | src | s | 4 crate-vis | — | An agent's world privacy edit judged by its Grant (FIX 11426, contract §4) |
 | `src/authority/ai_grant.rs` | src | s | 1 fn · 1 crate-vis | — | The narrower `ai.*` inference Grant (FIX 3208; Engine 10-29 09:36 on L02's recommendation) |
@@ -425,7 +426,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/log_structure.rs` | src | m | 17 crate-vis | — | The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store… |
 | `src/authority/machine_answers.rs` | src | m | 2 fn · 7 crate-vis | — | The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a… |
 | `src/authority/machine_claims.rs` | src | s | 8 crate-vis | — | The fold's machine key claims, indexed once per view: P1's poison per admitter (a key two machines claim, a… |
-| `src/authority/machine_enroll.rs` | src | s | 1 fn · 1 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
+| `src/authority/machine_enroll.rs` | src | s | 1 fn · 2 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
 | `src/authority/machine_identity.rs` | src | m | 3 struct · 11 fn · 1 const · 1 re-export · 9 crate-vis | LocalMachine, MachineEnrolmentRequest, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
 | `src/authority/machine_identity/request_code_text.rs` | src | s | 2 fn | — | A machine's request code as the owner reads and types it (FIX 4956): 26 Crockford base32 symbols, the… |
 | `src/authority/machine_profile/apply.rs` | src | s | 9 crate-vis | — | The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every… |
@@ -3503,7 +3504,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/failure_signal_policy.rs` | src | s | 10 crate-vis | — | Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows |
 | `src/gate/fanout_mode.rs` | src | s | 1 enum · 1 crate-vis | FanoutApprovalMode | Fan-out approval policy dial and its stable wire spelling |
 | `src/gate/fanout_policy.rs` | src | s | 16 crate-vis | — | Manifest-backed fan-out policy composition; no executable defaults |
-| `src/gate/foreign_agent.rs` | src | m | 4 fn · 3 crate-vis | — | Owner-bound foreign introductions |
+| `src/gate/foreign_agent.rs` | src | m | 4 fn · 4 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 22 crate-vis | — | — |
 | `src/gate/hosted_tts_policy.rs` | src | s | 10 crate-vis | — | DEC-0005 hosted TTS resource rows |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |

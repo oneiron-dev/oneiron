@@ -939,7 +939,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/big_rung/route.rs` | src | s | 6 crate-vis | — | The route a Big-rung call takes (FIX 9525) |
 | `src/bin/oneiron-broker.rs` | src | s | — | — | `oneiron-broker serve`: the credential broker, run as its own OS user |
 | `src/bin/oneiron-vm-init.rs` | src | s | — | — | `oneiron-vm-init`: a vault VM's root bootstrap, run by the image's init before the engine… |
-| `src/bin/oneiron-vm-outbox.rs` | src | s | — | — | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/builtin_host.rs` | src | s | 6 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
@@ -2019,4 +2018,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/openapi_off_record_rooms.rs` | test | s | — | — | The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with… |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
+| `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |
