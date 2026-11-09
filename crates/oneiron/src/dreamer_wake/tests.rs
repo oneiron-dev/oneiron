@@ -871,3 +871,177 @@ fn a_cooperative_worker_lands_through_the_driver_and_is_not_reported_completed()
     ));
     Ok(())
 }
+
+/// Parks every admitted attempt as a cancelled pass does after admission.
+struct CancelledParkExecutor;
+
+impl DreamerAttemptExecutor for CancelledParkExecutor {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        Ok(DreamerAttemptExecution::Park {
+            reason: "wake-pass cancelled".to_owned(),
+            cause: crate::dreamer_runner::DreamerParkCause::Cancelled,
+        })
+    }
+}
+
+/// WAKE-D1 (lead, 9 Nov): a Cancelled park resumes on the next pass of the same running process, with no restart
+/// and no lease reclaim.
+#[test]
+fn a_cancelled_park_resumes_on_the_next_pass() -> Result<()> {
+    let store_clock = crate::ports::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "cancelled", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(20);
+            20
+        }),
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1);
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_eq!(
+        parked.cause,
+        crate::dreamer_runner::DreamerParkCause::Cancelled
+    );
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut completer = CompletingExecutor {
+        completed_units: 25,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, {
+            store_clock.set(30);
+            30
+        }),
+        &mut completer,
+        &WakeCancellation::new(),
+    ))?;
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_none(),
+        "the next pass resumes the cancelled park"
+    );
+    assert_eq!(report.completed, 1);
+    Ok(())
+}
+
+/// Parks `queued` as an executor error of the server's Dreamer pass, and returns the park.
+fn park_executor_error(
+    store: &DreamerRunnerStore<'_>,
+    queued: &crate::dreamer_runner::DreamerAttemptStatus,
+    now: u64,
+) -> Result<crate::dreamer_runner::DreamerParkedAttemptRecord> {
+    store.park_attempt(ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
+        reason: "the seat login lapsed".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::ExecutorError,
+        park_owner: crate::dreamer_runner::DREAMER_SERVER_PARK_OWNER.to_owned(),
+        carried_spend: None,
+        now,
+    })
+}
+
+/// Whether the vault's embedded owner saw `park`'s release notice; `None` when it was never raised.
+fn park_notice_seen(
+    vault: &Vault,
+    park: &crate::dreamer_runner::DreamerParkedAttemptRecord,
+) -> Result<Option<bool>> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let txn = vault.store.env.read_txn()?;
+    vault.notification_seen_in_txn(
+        &txn,
+        &crate::dreamer_runner::park_release::park_release_notice_source(park),
+        &owner,
+    )
+}
+
+/// WAKE-D1: an ExecutorError park raises the owner's notice, no later pass resumes it, and the owner's release
+/// resumes it as the same try and resolves the notice.
+#[test]
+fn an_executor_error_park_raises_the_notice_and_resumes_only_at_release() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    let parked = park_executor_error(&store, &queued, 20)?;
+    assert_eq!(
+        park_notice_seen(&vault, &parked)?,
+        Some(false),
+        "the owner's notice is raised"
+    );
+
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut completer = CompletingExecutor {
+        completed_units: 25,
+        executed: 0,
+    };
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 40),
+        &mut completer,
+        &WakeCancellation::new(),
+    ))?;
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_some(),
+        "no pass retries an owner-act park"
+    );
+
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let view = crate::dreamer_runner::release_parked_attempt_as_owner(
+        &vault,
+        &owner,
+        &crate::dreamer_runner::ReleaseParkedAttemptRequest {
+            attempt: crate::entity_id::bytes_to_hex_lower(queued.attempt.id.as_bytes()),
+            cause: crate::memory::DreamerParkCauseView::ExecutorError,
+            parked_at: parked.parked_at,
+            note: None,
+        },
+    )?;
+    assert_eq!(view.cause, "executor_error");
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
+    assert_eq!(
+        park_notice_seen(&vault, &parked)?,
+        Some(true),
+        "the release resolves the notice"
+    );
+    Ok(())
+}
+
+/// WAKE-D1-BOOT (lead, 9 Nov): boot no longer resumes an ExecutorError park of the Dreamer's own pass (C5). After a
+/// restart the park stays and its notice stands, until the owner's release. Boot recovery asks the BootRecovery row
+/// (oneiron-server ai_host/lifecycle.rs), which this checks on the reopened vault.
+#[test]
+fn after_a_restart_an_executor_error_park_stays_parked_with_its_notice() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    park_executor_error(&store, &queued, 20)?;
+    let queued_id = queued.attempt.id;
+    drop(store);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let store = DreamerRunnerStore::new(&vault);
+    let parked = store
+        .parked_attempt(queued_id)?
+        .expect("the park outlives the restart");
+    assert!(!parked.resumable_by(crate::dreamer_runner::ParkResumer::BootRecovery));
+    assert_eq!(
+        park_notice_seen(&vault, &parked)?,
+        Some(false),
+        "the owner's notice stands"
+    );
+    Ok(())
+}
