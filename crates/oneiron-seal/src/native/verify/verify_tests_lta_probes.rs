@@ -464,18 +464,15 @@ pub(crate) mod tests {
                 .filter(|c| c.kind == VerifyCheckKind::ValidationMaterial)
                 .map(|c| (c.status, c.finding))
                 .collect();
+            // Lead ruling F with its Q3: the cycle makes the OCSP array
+            // malformed presented material, which is discarded. Every covered
+            // certificate here is a trust anchor, so coverage is complete
+            // without it and the material passes; the cycle still grants no
+            // archival authority (below).
             assert!(
-                material.iter().any(|(status, finding)| if valid_material {
-                    *status == VerifyCheckStatus::Pass
-                } else {
-                    // Lead ruling F: a reference cycle is malformed presented
-                    // material, NotRun with ValidationMaterialPossibleTampering.
-                    (*status, *finding)
-                        == (
-                            VerifyCheckStatus::NotRun,
-                            Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
-                        )
-                }),
+                material
+                    .iter()
+                    .any(|(status, _)| *status == VerifyCheckStatus::Pass),
                 "{mode}: {material:?}"
             );
             if valid_material {

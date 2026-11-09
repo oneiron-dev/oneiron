@@ -384,6 +384,43 @@ fn names_covered_certificate(
     Ok(false)
 }
 
+/// Whether a valid CRL's `signer` has revocation authority over `cert`
+/// (RFC 5280 §5.1.1.3, §5.2.1, §6.3.3(f), §8): it issued `cert`, or it holds
+/// a key that `cert`'s own issuer certified under the signer's subject (a
+/// separate CRL-signing key, or a rollover's link certificate the old key
+/// issued for the new one). A same-subject key that only another trust
+/// anchor vouches for is no shadow, but has no authority over `cert`: two
+/// CAs may share a name, and a CRL path must end at the certificate's own
+/// trust anchor.
+pub(super) fn crl_signer_authorized(
+    cert: &EmbeddedCert,
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    if issued_by(cert, signer, memory)? {
+        return Ok(true);
+    }
+    let subject = &signer.cert.tbs_certificate.subject;
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    for cert_issuer in embedded.iter().chain(anchors.iter()) {
+        if !issued_by(cert, cert_issuer, memory)? {
+            continue;
+        }
+        for holder in std::iter::once(signer).chain(embedded.iter()) {
+            if holder.cert.tbs_certificate.subject == *subject
+                && holder.cert.tbs_certificate.subject_public_key_info == *key
+                && holder.der != cert_issuer.der
+                && issued_by(holder, cert_issuer, memory)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Whether a valid CRL's `signer` shadows `cert`'s issuer: it carries the
 /// issuer's subject, it did not sign `cert`, and no trust anchor vouches for
 /// its key. An anchor vouches for the key when it carries the same subject
