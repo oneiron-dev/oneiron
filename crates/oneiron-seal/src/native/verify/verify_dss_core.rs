@@ -107,6 +107,14 @@ fn check_dss(
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
         )?,
+        MaterialValidity::Forged => {
+            checks.record(
+                VerifyCheckKind::ValidationMaterial,
+                false,
+                VerifyFindingCode::ValidationMaterialInvalid,
+            )?;
+            checks.material_forged = true;
+        }
         MaterialValidity::Unresolved(reason) => {
             checks.not_run_with_reason(VerifyCheckKind::ValidationMaterial, Some(reason))?;
         }
@@ -117,6 +125,9 @@ fn check_dss(
 enum MaterialValidity {
     Valid,
     Invalid,
+    /// Invalid because presented material is forged (a shadow CRL signer):
+    /// never a symptom of a missing trust root.
+    Forged,
     Unresolved(VerifyFindingCode),
 }
 
@@ -217,7 +228,7 @@ fn material_valid(
     // certificates the valid responses bind to with a `good` status, and of
     // those with an `unknown` status, read in place.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
-    let mut ocsp_unknown_targets: Vec<&[u8]> = Vec::new();
+    let mut ocsp_unknown_targets: Vec<&EmbeddedCert> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
         DssArray::Malformed => return Ok(MaterialValidity::Invalid),
@@ -231,7 +242,7 @@ fn material_valid(
                     return Ok(MaterialValidity::Invalid);
                 };
                 memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
-                memory.admit_len::<&[u8]>(evidence.unknown_targets.len())?;
+                memory.admit_len::<&EmbeddedCert>(evidence.unknown_targets.len())?;
                 ocsp_targets.extend(evidence.good_targets);
                 ocsp_unknown_targets.extend(evidence.unknown_targets);
             }
@@ -249,14 +260,21 @@ fn material_valid(
     // non-anchor certificate, one in a signer or TSA chain this report
     // covers. An `unknown` about any other certificate says nothing about
     // the chain, and material unrelated to the chain never changes a genuine
-    // result (EN 319 102-1 §5.1.3 and §5.2.6.4 step 4).
+    // result (EN 319 102-1 §5.1.3 and §5.2.6.4 step 4). The match is on the
+    // certificate's signed content (TBSCertificate), not its DER: a CertID
+    // binds to the first certificate that matches it, and a second encoding
+    // of the same certificate (another valid signature over the same
+    // content) names the same certificate.
     let mut covered_ok = true;
     let mut ocsp_unknown = false;
     for cert in covered {
         if anchors.iter().any(|anchor| anchor.der == cert.der) {
             continue;
         }
-        if ocsp_unknown_targets.contains(&cert.der.as_slice()) {
+        if ocsp_unknown_targets
+            .iter()
+            .any(|target| target.cert.tbs_certificate == cert.cert.tbs_certificate)
+        {
             ocsp_unknown = true;
         }
         let mut crl_covered = false;
@@ -285,7 +303,7 @@ fn material_valid(
             }
             for signer in &crl_issuers {
                 if crl_signer_shadows(cert, signer, &embedded, anchors, covered, memory)? {
-                    return Ok(MaterialValidity::Invalid);
+                    return Ok(MaterialValidity::Forged);
                 }
             }
         }

@@ -198,7 +198,10 @@ pub(super) fn anchors(
 /// root availability is NotRun. No provisional result grants trust or profile.
 /// The covered certificates serve as those roots as they are, never copied
 /// (FIX 12260). Memory its decodes were refused ends it as itself, never as
-/// a failed or malformed DSS.
+/// a failed or malformed DSS. A failure on forged presented material (a
+/// shadow CRL signer) is never a missing-root symptom and stays as it is:
+/// treating every covered certificate as a root would exempt it from the
+/// very check that found the forgery.
 pub(super) fn classify_missing_material_root(
     doc: &Document,
     covered: &[EmbeddedCert],
@@ -215,6 +218,7 @@ pub(super) fn classify_missing_material_root(
             )
     });
     if !unresolved
+        || checks.material_forged
         || !checks.list.iter().any(|c| {
             c.kind == VerifyCheckKind::ValidationMaterial && c.status == VerifyCheckStatus::Fail
         })
