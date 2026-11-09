@@ -204,6 +204,8 @@ mod membership_gate_tests;
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]
+mod steward_tests;
+#[cfg(test)]
 mod tests;
 
 // The flat federation.rs module used to provide these names to the sibling test

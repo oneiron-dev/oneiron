@@ -1,0 +1,13 @@
+{
+  "name": "reveal.describe",
+  "description": "What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value.",
+  "input": "crate::task_verb::sdk::RevealDescribeRequest",
+  "output": "crate::task_verb::sdk::RevealHandleCard",
+  "call": "crate::task_verb::sdk::describe_secret_as_caller(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -127,7 +127,7 @@ impl Vault {
     /// Reading the saved calls. A storage error on one call leaves it ready
     /// for the next pass.
     pub fn drain_verb_asks(&self) -> Result<usize> {
-        if self.verb_hook_state.suppressed() || !self.hooks_enabled()? {
+        if self.runtime().verb_hook_state().suppressed() || !self.hooks_enabled()? {
             return Ok(0);
         }
         let mut ran = 0;
@@ -175,7 +175,8 @@ impl Vault {
         };
         // A retry of the call in flight now resumes it itself.
         let Some(_held) = self
-            .verb_hook_state
+            .runtime()
+            .verb_hook_state()
             .hold_for_drain(invocation, actor, group)
         else {
             return Ok(false);

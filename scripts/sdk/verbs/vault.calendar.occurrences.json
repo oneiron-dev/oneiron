@@ -1,0 +1,15 @@
+{
+  "name": "vault.calendar.occurrences",
+  "description": "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue.",
+  "input": "crate::calendar::query::CalendarOccurrencesPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>",
+  "call": "memory.calendar_occurrences_page(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

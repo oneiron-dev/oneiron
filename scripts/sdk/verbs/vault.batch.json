@@ -1,0 +1,19 @@
+{
+  "name": "vault.batch",
+  "description": "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
+  "input": "crate::core_write::CoreBatchWriteInput",
+  "output": "crate::core_write::CoreBatchWriteReceipt",
+  "call": "memory.core_batch_write(&input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

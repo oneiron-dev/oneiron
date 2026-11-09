@@ -1,0 +1,31 @@
+{
+  "name": "tasks.answer.forward.challenge",
+  "description": "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it.",
+  "input": "crate::task_verb::sdk::TaskAnswerForwardChallengeRequest",
+  "output": "crate::task_verb::sdk::TaskAnswerForwardChallenge",
+  "mcp_served": "[input.handle.group_ref]",
+  "call": "crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(&memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?)",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "handle",
+        "type": "crate::task_verb::TaskAskHandle"
+      },
+      {
+        "name": "intent_key",
+        "type": "String"
+      },
+      {
+        "name": "act",
+        "type": "crate::task_verb::AskForwardAct"
+      }
+    ]
+  }
+}

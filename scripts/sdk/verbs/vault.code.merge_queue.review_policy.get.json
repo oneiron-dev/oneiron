@@ -1,0 +1,19 @@
+{
+  "name": "vault.code.merge_queue.review_policy.get",
+  "description": "Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant.",
+  "input": "EmptyRequest",
+  "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+  "call": "memory.merge_queue_review_policy_get_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.get\"))?",
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "openapi": true,
+  "host_door_proof": "review_policy"
+}

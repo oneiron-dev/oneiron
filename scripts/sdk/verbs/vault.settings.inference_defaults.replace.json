@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.inference_defaults.replace",
+  "description": "Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling.",
+  "input": "crate::policy_setting_doors::InferenceDefaultsReplaceRequest",
+  "output": "crate::policy_setting_doors::PolicyActionOutcome",
+  "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

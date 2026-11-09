@@ -18,7 +18,7 @@ afterAll(suite.flush);
 /*
  * ARCH-0080 #crash-safety/#replay/#verb-outcomes/#host-verbs, OF-579/580/581.
  * Binding read at main 65529b62e07209d8faeb0c0fcde7812e3df9cc46:
- * scripts/sdk/agent-verbs.json, both generated SDKs, the server's OpenAPI
+ * scripts/sdk/verbs/, both generated SDKs, the server's OpenAPI
  * registration/owner paths, facade host doors, MCP argument/result DTOs and CLI.
  * EngineFixture captures runtime OpenAPI as a binding diagnostic, not an oracle.
  * hooks-scenarios pins canon and independent fixture facts for all seven IDs.

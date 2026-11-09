@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.hyde.pending",
+  "description": "Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing.",
+  "input": "crate::query_expansion::host::HydeHostPendingRequest",
+  "output": "Vec<crate::query_expansion::host::HydeHostWork>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.pending\", &input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "hyde_caller"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.find",
+  "description": "Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index.",
+  "input": "crate::memory::graph_fs_doors::GraphFsFindRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_find(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.channel_identities.fulfill",
+  "description": "Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated.",
+  "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+  "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+  "call": "memory.channel_identity_fulfill_as(&memory.embedded_owner(\"vault.channel_identities.fulfill\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

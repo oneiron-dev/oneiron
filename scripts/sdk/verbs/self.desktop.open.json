@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.open",
+  "description": "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor.",
+  "input": "oneiron_browser::OpenInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
+  "call": "oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| driver.open(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

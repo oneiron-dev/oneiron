@@ -1,0 +1,20 @@
+{
+  "name": "vault.repo.checkout.bind",
+  "description": "Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoCheckoutBindInput>",
+  "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.checkout.bind\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.cat",
+  "description": "Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference.",
+  "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_cat(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

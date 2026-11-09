@@ -1,0 +1,14 @@
+{
+  "name": "vault.claims.settle",
+  "description": "The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof.",
+  "input": "crate::memory::ClaimSettleRequest",
+  "output": "crate::memory::ClaimSettlement",
+  "call": "memory.claim_settle(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "claim_settler"
+}

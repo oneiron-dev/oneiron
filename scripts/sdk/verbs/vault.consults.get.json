@@ -1,0 +1,16 @@
+{
+  "name": "vault.consults.get",
+  "description": "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies.",
+  "input": "crate::task_verb::run_doors::ConsultReadRequest",
+  "output": "crate::task_verb::run_doors::ConsultInspection",
+  "call": "crate::task_verb::run_doors::read_consult_as(memory.vault(), &memory.embedded_owner(\"vault.consults.get\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

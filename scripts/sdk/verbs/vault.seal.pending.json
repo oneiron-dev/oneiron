@@ -1,0 +1,16 @@
+{
+  "name": "vault.seal.pending",
+  "description": "Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker.",
+  "input": "crate::self_heal::audit::doors::SealPendingRequest",
+  "output": "Vec<crate::self_heal::audit::SealCheckRequest>",
+  "call": "crate::self_heal::audit::doors::pending_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.pending\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

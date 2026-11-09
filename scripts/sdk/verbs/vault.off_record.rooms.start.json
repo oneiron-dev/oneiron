@@ -1,0 +1,16 @@
+{
+  "name": "vault.off_record.rooms.start",
+  "description": "A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential.",
+  "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
+  "output": "crate::task_verb::sdk::OffRecordRoomView",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record_room"
+}

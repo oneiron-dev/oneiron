@@ -1,0 +1,17 @@
+{
+  "name": "self.off_record.waits.answer",
+  "description": "The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on.",
+  "input": "crate::task_verb::sdk::OffRecordWaitAnswerRequest",
+  "output": "crate::task_verb::sdk::OffRecordWaitAnswered",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.answer\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

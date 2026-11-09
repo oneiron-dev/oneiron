@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.manifest.read",
+  "description": "Reads the owner-pinned v2 model manifest, or none when no manifest is configured.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "Option<crate::llm::manifest::ModelManifest>",
+  "call": "crate::task_verb::sdk::read_model_manifest(memory)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

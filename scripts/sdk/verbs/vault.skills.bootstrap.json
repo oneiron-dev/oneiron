@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.bootstrap",
+  "description": "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::BootstrapSkillView>",
+  "call": "crate::task_verb::sdk::skill_bootstrap_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.bootstrap\")?, &_input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

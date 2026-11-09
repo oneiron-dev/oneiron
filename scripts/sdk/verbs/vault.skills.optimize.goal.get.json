@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.goal.get",
+  "description": "Reads the optimizer goal identity, effective axes, revision and joined project goal claim.",
+  "input": "SkillOptimizeGoalRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeGoalView",
+  "call": "crate::task_verb::sdk::skill_optimize_goal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.goal.get\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

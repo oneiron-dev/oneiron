@@ -98,7 +98,8 @@ impl OffRecordSession<'_> {
                 let key = self.hook_key()?;
                 return self
                     .vault
-                    .verb_hook_state
+                    .runtime()
+                    .verb_hook_state()
                     .session
                     .stage(self.vault, &key, rows);
             }

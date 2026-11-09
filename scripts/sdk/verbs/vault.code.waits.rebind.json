@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.waits.rebind",
+  "description": "Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged.",
+  "input": "crate::memory::code_wait_doors::CodeWaitRebindRequest",
+  "output": "crate::memory::code_wait_doors::CodeWaitRebindReceipt",
+  "call": "memory.code_wait_rebind_as(&memory.embedded_owner(\"vault.code.waits.rebind\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

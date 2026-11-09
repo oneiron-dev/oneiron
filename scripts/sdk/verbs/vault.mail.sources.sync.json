@@ -1,0 +1,14 @@
+{
+  "name": "vault.mail.sources.sync",
+  "description": "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner.",
+  "input": "crate::mail_pack::MailSourceSyncRequest",
+  "output": "crate::mail_pack::MailSyncReport",
+  "call": "memory.mail_sources_sync(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_proof": "owner"
+}

@@ -295,7 +295,7 @@ class VerbRoleTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        verbs = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())["verbs"]
+        verbs = [json.loads(path.read_text()) for path in sorted((ROOT / "scripts/sdk/verbs").glob("*.json"))]
         cls.rows = {row["name"]: row for row in verbs}
 
     def field(self, key):

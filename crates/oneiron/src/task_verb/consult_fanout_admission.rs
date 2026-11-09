@@ -47,7 +47,6 @@ use crate::outbound_chokepoint::{
 use crate::own_rate::{OwnRate, OwnRateKind, count_in_txn};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 /// An AUTO answer taken outside the writer, replayed inside it.
@@ -627,7 +626,7 @@ impl Memory<'_> {
                 window_seconds: rate.window_seconds,
             },
         )?;
-        let provenance = facade_provenance(AgentVerb::TasksCreate.as_str());
+        let provenance = facade_provenance(crate::verb_names::TASKS_CREATE);
         for entry in entries {
             run.task_refs.push(
                 self.mint_task_in_txn(

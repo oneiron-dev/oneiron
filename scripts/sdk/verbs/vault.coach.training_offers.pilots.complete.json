@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.pilots.complete",
+  "description": "Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score.",
+  "input": "crate::skill_optimize::offer_pilot::OfferPilotComplete",
+  "output": "crate::skill_optimize::offer_pilot::OfferPilot",
+  "call": "crate::skill_optimize::offer_pilot::complete_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.complete\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

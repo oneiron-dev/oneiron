@@ -17,7 +17,7 @@
 //! [`oneiron::task_verb::sdk::AgentVerb`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
-//! is generated from `scripts/sdk/agent-verbs.json`. Each facade row has a
+//! is generated from `scripts/sdk/verbs/`. Each facade row has a
 //! typed Rust method and one shared dispatch path, on both backends, beside
 //! the generated N-API, Python, HTTP and MCP projections. Adding a row extends
 //! all of those doors rather than leaving a transport-only stub.
@@ -41,8 +41,9 @@
 
 #![forbid(unsafe_code)]
 
-#[path = "generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 mod caps;
 mod embedded;
 mod error;

@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.body.deck.export",
+  "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::office_body::DeckExportRequest",
+  "output": "crate::office_body::DeckExportView",
+  "call": "memory.artifacts_body_deck_export(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Projects a deck, landing it as the next version when its export gate is open.\n",
+      "ts": "/** Projects a deck, landing it as the next version when its export gate is open. */",
+      "py": "Projects a deck, landing it as the next version when its export gate is open."
+    }
+  }
+}

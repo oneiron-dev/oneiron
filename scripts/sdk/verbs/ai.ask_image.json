@@ -1,0 +1,16 @@
+{
+  "name": "ai.ask_image",
+  "description": "One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt.",
+  "input": "crate::task_verb::sdk::AskImageRequest",
+  "output": "crate::task_verb::sdk::AskImageAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.ask_image\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}
