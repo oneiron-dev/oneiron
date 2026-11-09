@@ -207,6 +207,16 @@ impl TurnProgramArming {
     }
 }
 
+/// A disarm this machine knows (FIX 5266): when it was made, on the
+/// disarming writer's recording clock, so an arming of the same registration
+/// carried in an older window never arms it here again, and only an arming
+/// made after it would.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TurnProgramDisarm {
+    pub(super) at: u64,
+}
+
 /// The wake a landed turn owes one armed program, sealed in that turn's own
 /// commit: the registration and definition revision it woke, the authority
 /// the turn was admitted under, and the turn.
