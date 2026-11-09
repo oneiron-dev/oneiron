@@ -462,14 +462,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            ),
-            "stale uncovered evidence must fail ValidationMaterial"
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signer is a self-signed trust
+        // anchor, so every covered certificate is an anchor, and the stale
+        // CRL its own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the profile assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     // --- dss_revision_end adversarial probes: the re-checker's shapes -----

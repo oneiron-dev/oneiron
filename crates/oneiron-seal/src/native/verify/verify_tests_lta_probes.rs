@@ -258,13 +258,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     /// Probe B2 (dormant staging, activation by trailer /Root switch): the
@@ -395,13 +396,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     #[test]
