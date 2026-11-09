@@ -88,7 +88,7 @@ pub(crate) struct DeriveAllowance {
     /// The policy frontier hash it was judged under.
     pub(crate) frontier: [u8; 32],
     /// The Steward grant's id once a host minted it, else
-    /// [`super::DREAMER_LANDING_ROWS_REF`] (the policy rows).
+    /// [`super::dreamer_grant::DREAMER_LANDING_ROWS_REF`] (the policy rows).
     pub(crate) grant_ref: String,
 }
 
@@ -113,7 +113,7 @@ pub(crate) fn derive_verdict_in_txn(
         &actor.entity_ref().to_hex(),
     );
     let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
-        None => super::DREAMER_LANDING_ROWS_REF.to_owned(),
+        None => super::dreamer_grant::DREAMER_LANDING_ROWS_REF.to_owned(),
         Some(None) => return Ok(Err(DeriveRefusal::OptedOut)),
         Some(Some(grant)) => {
             let Some(row) = crate::federation::standing_steward_grant_in(
