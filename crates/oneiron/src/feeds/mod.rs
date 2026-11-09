@@ -1,23 +1,28 @@
 //! Change feeds (untangle slice 6.8, primitive B; ARCH-0080 §4 Sources and cursors).
 //!
 //! Any actor subscribes to what changed in the vault and reads it from a durable cursor of its
-//! own: edits and withdrawals of every entity kind from the store's change log, and settled
-//! proposals from the settlement feed the fact hooks follow. A subscription is a cursor per
-//! source, not a copy of the rows: a read pages the sources after the cursor, an ack moves it.
+//! own. Four sources: edits and withdrawals of every entity kind from the store's change log;
+//! settled proposals from the settlement feed the fact hooks follow; edges added and removed; and
+//! redirty notices, a TURN whose words changed with no new version of its own. A subscription is
+//! a cursor per source, not a copy of the rows: a read pages the sources after the cursor, an ack
+//! moves it.
 //!
 //! - **The grant is checked at delivery.** Each entry is shown only when the subscriber's own read
 //!   lane, at read time, shows its entity: an edit at the revision it left (or as it stands, once
-//!   that revision is gone), a settlement at its pinned revision, and a withdrawal only where the
-//!   lane may learn the row is gone ([`ScopedRead::withdrawals_revealed_in`], the rule a short
-//!   reference to an erased row follows). A narrowed grant hides entries written before it
-//!   narrowed. Nothing is frozen at subscribe.
-//! - **Positions are commit order, never a timestamp.** The change log's ids are drawn inside the
-//!   writer that commits each row, and the settlement feed's sequence likewise, so a reader that
-//!   resumes after its last position misses nothing that commits later.
-//! - **One cursor mechanism.** The positions, the sources and the settlement feed are the fact
-//!   hooks' own. A subscription following the settlement feed counts as its reader, so the feed
-//!   records settlements while hooks are off, and its prune keeps every row a subscription has not
-//!   acknowledged.
+//!   that revision is gone), a settlement at its pinned revision, an edge when both its ends are
+//!   shown, a redirty notice when its TURN is, and a withdrawal only where the lane may learn the
+//!   row is gone ([`ScopedRead::withdrawals_revealed_in`], the rule a short reference to an
+//!   erased row follows). A narrowed grant hides entries written before it narrowed. Nothing is
+//!   frozen at subscribe.
+//! - **Positions are commit order, never a timestamp.** The change log's ids and each feed's
+//!   sequence are drawn inside the writer that commits the row, so a reader that resumes after its
+//!   last position misses nothing that commits later.
+//! - **One cursor mechanism.** The change log positions and the settlement feed are the fact
+//!   hooks' own. A subscription following settlements counts as that feed's reader, so it records
+//!   settlements while hooks are off, and its prune keeps every row a subscription has not
+//!   acknowledged. The edge and redirty feeds are written only while a subscription follows them,
+//!   in the change's own commit, and the same housekeeping prune takes the rows every follower
+//!   acknowledged. An erase scrubs every feed row that names an erased id.
 //! - **The cursor commits with what the subscriber made of it.** [`ack_feed_in_txn`] moves a
 //!   cursor inside a caller's write, so a derivation and the ack of what it read land together
 //!   (slice 6.7's `feed_ack`).
@@ -25,7 +30,10 @@
 //! The verbs `vault.feeds.subscribe`, `.read`, `.ack` and `.unsubscribe` land in slice 6.8d, after
 //! the per-verb sources (slice 4.2); until then these are the engine's doors.
 
+mod edges;
 pub(crate) mod tables;
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +46,8 @@ use crate::store::Store;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Error, Result, Vault};
 
+pub(crate) use edges::{record_edge_change_in_txn, record_redirty_in_txn};
+
 /// One subscription row per actor and subscription.
 const SUBSCRIPTIONS: SideTable<(EntityId, EntityId), SubscriptionRow, Named> =
     SideTable::new(&side_table::FEED_SUBSCRIPTION);
@@ -45,6 +55,10 @@ const SUBSCRIPTIONS: SideTable<(EntityId, EntityId), SubscriptionRow, Named> =
 /// One cursor row per subscription and source.
 const CURSORS: SideTable<(EntityId, [u8; 1]), CursorRow, Named> =
     SideTable::new(&side_table::FEED_CURSOR);
+
+/// One row per source and subscription following it.
+const FOLLOWING: SideTable<([u8; 1], EntityId), (), Named> =
+    SideTable::new(&side_table::FEED_FOLLOWING);
 
 /// The type of each entity a physical delete removed while the change log was followed.
 const WITHDRAWN_TYPES: SideTable<EntityId, WithdrawnType, Named> =
@@ -78,16 +92,22 @@ pub enum FeedSource {
     Changes,
     /// Settled proposals, in settlement order: the fact hooks' settlement feed.
     Settlements,
+    /// Edges added and removed, in commit order.
+    Edges,
+    /// TURNs whose words changed with no new version of their own, in commit order.
+    Redirty,
 }
 
 impl FeedSource {
-    pub const ALL: [Self; 2] = [Self::Changes, Self::Settlements];
+    pub const ALL: [Self; 4] = [Self::Changes, Self::Settlements, Self::Edges, Self::Redirty];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Changes => "changes",
             Self::Settlements => "settlements",
+            Self::Edges => "edges",
+            Self::Redirty => "redirty",
         }
     }
 
@@ -95,13 +115,8 @@ impl FeedSource {
         match self {
             Self::Changes => 0,
             Self::Settlements => 1,
-        }
-    }
-
-    const fn fact_source(self) -> FactSource {
-        match self {
-            Self::Changes => FactSource::ClaimChangelog,
-            Self::Settlements => FactSource::Settlement,
+            Self::Edges => 2,
+            Self::Redirty => 3,
         }
     }
 
@@ -112,6 +127,35 @@ impl FeedSource {
             FactSource::Schedule | FactSource::SurfaceInbound => None,
         }
     }
+
+    /// The newest position in this source, or `None` while it holds nothing, in `txn`.
+    fn head_in_txn(self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<Position>> {
+        Ok(match self {
+            Self::Changes => crate::runtime_hooks::fact_source_head_in_txn(
+                vault,
+                txn,
+                FactSource::ClaimChangelog,
+            )?
+            .map(Position::Fact),
+            Self::Settlements => {
+                crate::runtime_hooks::fact_source_head_in_txn(vault, txn, FactSource::Settlement)?
+                    .map(Position::Fact)
+            }
+            Self::Edges => edges::edge_head_in_txn(&vault.store, txn)?.map(Position::Edges),
+            Self::Redirty => edges::redirty_head_in_txn(&vault.store, txn)?.map(Position::Redirty),
+        })
+    }
+}
+
+/// A position in one source. Two positions compare only within one source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Position {
+    /// A change log or settlement feed position: the hooks' own.
+    Fact(FactPosition),
+    /// An edge feed sequence.
+    Edges(u64),
+    /// A redirty feed sequence.
+    Redirty(u64),
 }
 
 /// What an entry says happened.
@@ -126,9 +170,14 @@ pub enum FeedEntryKind {
     Withdrawal,
     /// A proposal was settled.
     Settlement,
+    /// An edge was added or removed.
+    Edge,
+    /// A TURN's words changed with no new version of its own: what was derived from them is
+    /// due again.
+    Redirty,
 }
 
-/// The write behind an entry, as the change log or the settlement feed names it.
+/// The write behind an entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FeedOp {
@@ -141,6 +190,9 @@ pub enum FeedOp {
     Redact,
     Forget,
     Settle,
+    EdgeAdded,
+    EdgeRemoved,
+    Redirty,
 }
 
 impl FeedOp {
@@ -164,48 +216,62 @@ impl FeedOp {
             }
             Self::Delete | Self::Redact | Self::Forget => FeedEntryKind::Withdrawal,
             Self::Settle => FeedEntryKind::Settlement,
+            Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
+            Self::Redirty => FeedEntryKind::Redirty,
         }
     }
 }
 
-/// A position in one source, as text: `changes:<32 hex>` or `settlements:<16 hex>`.
+/// A position in one source, as text: `changes:<32 hex>`, `settlements:<16 hex>`,
+/// `edges:<16 hex>` or `redirty:<16 hex>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct FeedPosition(pub String);
 
 impl FeedPosition {
-    fn of(position: FactPosition) -> Result<Self> {
-        let source = FeedSource::of_fact_source(position.source()).ok_or(
-            Error::InvariantViolation("a feed position names a hook-only source"),
-        )?;
+    fn of(position: Position) -> Result<Self> {
+        let (source, bytes) = match position {
+            Position::Fact(position) => (
+                FeedSource::of_fact_source(position.source()).ok_or(Error::InvariantViolation(
+                    "a feed position names a hook-only source",
+                ))?,
+                position.bytes(),
+            ),
+            Position::Edges(sequence) => (FeedSource::Edges, sequence.to_be_bytes().to_vec()),
+            Position::Redirty(sequence) => (FeedSource::Redirty, sequence.to_be_bytes().to_vec()),
+        };
         Ok(Self(format!(
             "{}:{}",
             source.as_str(),
-            crate::receipt::hex_lower(&position.bytes())
+            crate::receipt::hex_lower(&bytes)
         )))
     }
 
     /// The source and the typed position this text names.
-    fn parse(&self) -> Result<(FeedSource, FactPosition)> {
+    fn parse(&self) -> Result<(FeedSource, Position)> {
         let (source, hex) = self
             .0
             .split_once(':')
             .ok_or_else(|| invalid("a feed position is <source>:<hex>"))?;
+        let sequence = || {
+            crate::deletion::parse_hex::<8>(hex)
+                .map(u64::from_be_bytes)
+                .ok_or_else(|| invalid("a feed sequence position is 16 hex"))
+        };
         match source {
             "changes" => Ok((
                 FeedSource::Changes,
-                FactPosition::ClaimChangelog(ClaimChangelogPosition(
+                Position::Fact(FactPosition::ClaimChangelog(ClaimChangelogPosition(
                     crate::deletion::parse_hex::<16>(hex)
                         .ok_or_else(|| invalid("a changes position is 32 hex"))?,
-                )),
+                ))),
             )),
             "settlements" => Ok((
                 FeedSource::Settlements,
-                FactPosition::Settlement(SettlementPosition(u64::from_be_bytes(
-                    crate::deletion::parse_hex::<8>(hex)
-                        .ok_or_else(|| invalid("a settlements position is 16 hex"))?,
-                ))),
+                Position::Fact(FactPosition::Settlement(SettlementPosition(sequence()?))),
             )),
+            "edges" => Ok((FeedSource::Edges, Position::Edges(sequence()?))),
+            "redirty" => Ok((FeedSource::Redirty, Position::Redirty(sequence()?))),
             _ => Err(invalid("unknown feed source")),
         }
     }
@@ -220,12 +286,12 @@ pub struct FeedSelector {
     /// The entry kinds it takes.
     #[serde(default)]
     pub kinds: Vec<FeedEntryKind>,
-    /// The entity type bytes it takes.
+    /// The entity type bytes it takes: an edge's by its source end.
     #[serde(default)]
     pub entity_types: Vec<u8>,
     /// Predicate globs (`*` matches any run) a claim's edit or settlement must match; with any
-    /// glob, only claims pass. A withdrawn claim's predicate went with its body, so a withdrawal
-    /// passes this list.
+    /// glob, no other entity's edit or settlement passes. A withdrawn claim's predicate went with
+    /// its body, so withdrawals, edges and redirty notices pass this list.
     #[serde(default)]
     pub predicates: Vec<String>,
 }
@@ -282,24 +348,42 @@ pub struct FeedReadRequest {
     pub limit: Option<usize>,
 }
 
+/// An edge an entry names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FeedEdge {
+    #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
+    pub source: EntityId,
+    /// The edge kind's snake_case name.
+    pub kind: String,
+    #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
+    pub target: EntityId,
+}
+
 /// One change a subscriber may see.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FeedEntry {
     pub position: FeedPosition,
     pub kind: FeedEntryKind,
     pub op: FeedOp,
+    /// The entity the change is to: an edge's source end.
     #[serde(with = "crate::serialize::entity_ref")]
     #[schemars(with = "String")]
     pub entity: EntityId,
     pub entity_type: u8,
-    /// Who made the write.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub actor: EntityId,
+    /// Who made the write, where the source records it: the change log and the settlement feed
+    /// do; the edge and redirty feeds do not.
+    #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
+    pub actor: Option<EntityId>,
     /// When it committed, on the vault's recording clock.
     pub recorded_at: u64,
     /// The retained revision the write left, when it still stands.
     pub revision: Option<RevisionRef>,
+    /// The edge, for an edge entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<FeedEdge>,
 }
 
 /// One page of a subscription. It moves no cursor: [`Vault::feed_ack`] does, with `through`.
@@ -347,7 +431,7 @@ struct CursorRow {
 }
 
 impl CursorRow {
-    fn position(&self) -> Result<Option<FactPosition>> {
+    fn position(&self) -> Result<Option<Position>> {
         self.position
             .as_ref()
             .map(|position| position.parse().map(|(_, position)| position))
@@ -391,11 +475,7 @@ impl Vault {
             SUBSCRIPTIONS.put(&self.store, txn, &(actor, subscription), &row)?;
             for source in &request.selector.sources {
                 let position = match request.start {
-                    FeedStart::Head => crate::runtime_hooks::fact_source_head_in_txn(
-                        self,
-                        txn,
-                        source.fact_source(),
-                    )?,
+                    FeedStart::Head => source.head_in_txn(self, txn)?,
                     FeedStart::Beginning => None,
                 };
                 let cursor = CursorRow {
@@ -403,6 +483,7 @@ impl Vault {
                     updated_at: at,
                 };
                 CURSORS.put(&self.store, txn, &(subscription, [source.tag()]), &cursor)?;
+                FOLLOWING.put(&self.store, txn, &([source.tag()], subscription), &())?;
             }
             subscription_view_in_txn(self, txn, actor, subscription, row)
         })
@@ -470,6 +551,8 @@ impl Vault {
             let scanned = match source {
                 FeedSource::Changes => changes_after_in_txn(self, &txn, cursor, limit)?,
                 FeedSource::Settlements => settlements_after_in_txn(self, &txn, cursor, limit)?,
+                FeedSource::Edges => edges::edges_after_in_txn(self, &txn, cursor, limit)?,
+                FeedSource::Redirty => edges::redirty_after_in_txn(self, &txn, cursor, limit)?,
             };
             if let Some(through) = scanned.through {
                 page.through.push(FeedPosition::of(through)?);
@@ -503,8 +586,8 @@ impl Vault {
         })
     }
 
-    /// Ends `reader`'s subscription: its row and its cursors go in one write, so the settlement
-    /// feed no longer keeps rows for it. `false` when it was not this actor's or is gone.
+    /// Ends `reader`'s subscription: its row, its cursors and its following rows go in one write,
+    /// so no feed keeps rows for it. `false` when it was not this actor's or is gone.
     ///
     /// # Errors
     ///
@@ -519,7 +602,7 @@ impl Vault {
             if !SUBSCRIPTIONS.delete(&self.store, txn, &(actor, subscription))? {
                 return Ok(false);
             }
-            CURSORS.delete_from(&self.store, txn, subscription.as_bytes())?;
+            forget_subscription_in_txn(&self.store, txn, subscription)?;
             forget_withdrawn_types_unless_followed_in_txn(&self.store, txn)?;
             Ok(true)
         })
@@ -556,7 +639,7 @@ pub(crate) fn ack_feed_in_txn(
             return Err(invalid("a feed ack names one source twice"));
         }
         seen.push(source);
-        let head = crate::runtime_hooks::fact_source_head_in_txn(vault, txn, source.fact_source())?;
+        let head = source.head_in_txn(vault, txn)?;
         if head.is_none_or(|head| position > head) {
             return Err(invalid("a feed ack moves past its source's head"));
         }
@@ -598,12 +681,9 @@ pub(crate) fn remember_withdrawn_type_in_txn(
     WITHDRAWN_TYPES.put(store, txn, id, &WithdrawnType { entity_type })
 }
 
-/// Whether any subscription follows the change log in `txn`.
+/// Whether any subscription follows the change log in `txn`: one seek.
 fn changes_followed_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(CURSORS
-        .scan_keys(store, txn, &[])?
-        .iter()
-        .any(|(_, tag)| *tag == [FeedSource::Changes.tag()]))
+    source_followed_in_txn(store, txn, FeedSource::Changes)
 }
 
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
@@ -616,12 +696,20 @@ pub(crate) fn followed_in_txn(
     let Some(source) = FeedSource::of_fact_source(source) else {
         return Ok(false);
     };
-    for key in CURSORS.scan_keys(&vault.store, txn, &[])? {
-        if key.1 == [source.tag()] {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    source_followed_in_txn(&vault.store, txn, source)
+}
+
+/// Whether any subscription follows `source` in `txn`: one seek.
+fn source_followed_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: FeedSource,
+) -> Result<bool> {
+    Ok(FOLLOWING
+        .iter_from(store, txn, &[source.tag()])?
+        .next()
+        .transpose()?
+        .is_some())
 }
 
 /// The lowest cursor of every subscription following `source`, read in `txn`.
@@ -633,33 +721,118 @@ pub(crate) fn floor_in_txn(
     let Some(source) = FeedSource::of_fact_source(source) else {
         return Ok(FeedFloor::Unfollowed);
     };
-    let mut floor = FeedFloor::Unfollowed;
-    for row in CURSORS.iter_from(&vault.store, txn, &[])? {
-        let ((_, tag), cursor) = row?;
-        if tag != [source.tag()] {
-            continue;
+    Ok(match source_floor_in_txn(&vault.store, txn, source)? {
+        SourceFloor::Unfollowed => FeedFloor::Unfollowed,
+        SourceFloor::AtStart => FeedFloor::AtStart,
+        SourceFloor::At(Position::Fact(position)) => FeedFloor::At(position),
+        SourceFloor::At(_) => {
+            return Err(Error::CorruptedIndex(
+                "a hook source's floor names a feed sequence",
+            ));
         }
-        let Some(position) = cursor.position()? else {
-            return Ok(FeedFloor::AtStart);
+    })
+}
+
+/// The lowest cursor of every subscription following one source.
+enum SourceFloor {
+    Unfollowed,
+    AtStart,
+    At(Position),
+}
+
+fn source_floor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: FeedSource,
+) -> Result<SourceFloor> {
+    let mut floor = SourceFloor::Unfollowed;
+    for key in FOLLOWING.scan_keys(store, txn, &[source.tag()])? {
+        let (_, subscription) = key;
+        let position = CURSORS
+            .get(store, txn, &(subscription, [source.tag()]))?
+            .ok_or(Error::CorruptedIndex("feed follower without its cursor"))?
+            .position()?;
+        let Some(position) = position else {
+            return Ok(SourceFloor::AtStart);
         };
         floor = match floor {
-            FeedFloor::At(held) if held <= position => FeedFloor::At(held),
-            _ => FeedFloor::At(position),
+            SourceFloor::At(held) if held <= position => SourceFloor::At(held),
+            _ => SourceFloor::At(position),
         };
     }
     Ok(floor)
 }
 
-/// An erased actor follows nothing: its subscriptions and their cursors go in the erase's own
-/// writer, by key, so a row that does not decode goes too, and the settlement feed keeps no row
-/// for it.
+/// The housekeeping prune of the feeds this module owns, beside the hooks' own: each takes the
+/// edge and redirty rows at or below the lowest cursor of every subscription following it, or
+/// every row while none does, at most `max_rows` a feed, in one write only when there are any.
+/// A subscription made after the plan starts at the feed head, past every planned row.
+///
+/// # Errors
+///
+/// The read or the write.
+pub(crate) fn prune_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
+    let planned = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut planned = Vec::new();
+        for source in [FeedSource::Edges, FeedSource::Redirty] {
+            let floor = match source_floor_in_txn(&vault.store, &rtxn, source)? {
+                SourceFloor::AtStart => continue,
+                SourceFloor::Unfollowed => None,
+                SourceFloor::At(position) => Some(position),
+            };
+            let rows = edges::passed_rows_in_txn(&vault.store, &rtxn, source, floor, max_rows)?;
+            if !rows.is_empty() {
+                planned.push((source, rows));
+            }
+        }
+        planned
+    };
+    if planned.is_empty() {
+        return Ok(());
+    }
+    // The plan above only says there is work. The rows go as this write's own snapshot plans
+    // them (review #6897): a subscription made since the read above, one that starts at the
+    // beginning above all, holds every row its cursor has not passed.
+    vault.with_write_txn_grouped(|txn| {
+        for (source, _) in &planned {
+            let floor = match source_floor_in_txn(&vault.store, txn, *source)? {
+                SourceFloor::AtStart => continue,
+                SourceFloor::Unfollowed => None,
+                SourceFloor::At(position) => Some(position),
+            };
+            let rows = edges::passed_rows_in_txn(&vault.store, txn, *source, floor, max_rows)?;
+            edges::delete_rows_in_txn(&vault.store, txn, *source, &rows)?;
+        }
+        Ok(())
+    })
+}
+
+/// An erase's scrub of the feeds this module owns: every edge row with an erased end and every
+/// redirty row naming an erased TURN go, in the caller's erase write. The change log and the
+/// settlement feed are scrubbed where they live.
+///
+/// # Errors
+///
+/// The scan or the deletes.
+pub(crate) fn scrub_feeds_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &BTreeSet<EntityId>,
+) -> Result<()> {
+    edges::scrub_in_txn(&vault.store, txn, ids)
+}
+
+/// An erased actor follows nothing: its subscriptions, their cursors and their following rows go
+/// in the erase's own writer, by key, so a row that does not decode goes too, and no feed keeps a
+/// row for it.
 pub(crate) fn erase_feed_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
     for (_, subscription) in SUBSCRIPTIONS.scan_keys(&vault.store, txn, actor.as_bytes())? {
-        CURSORS.delete_from(&vault.store, txn, subscription.as_bytes())?;
+        forget_subscription_in_txn(&vault.store, txn, subscription)?;
     }
     SUBSCRIPTIONS.delete_from(&vault.store, txn, actor.as_bytes())?;
     forget_withdrawn_types_unless_followed_in_txn(&vault.store, txn)
@@ -686,6 +859,19 @@ pub(crate) fn scrub_withdrawn_types_in_txn(
     for id in ids {
         WITHDRAWN_TYPES.delete(store, txn, id)?;
     }
+    Ok(())
+}
+
+/// Drops `subscription`'s cursors and following rows, in the caller's write.
+fn forget_subscription_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    subscription: EntityId,
+) -> Result<()> {
+    for source in FeedSource::ALL {
+        FOLLOWING.delete(store, txn, &([source.tag()], subscription))?;
+    }
+    CURSORS.delete_from(store, txn, subscription.as_bytes())?;
     Ok(())
 }
 
@@ -750,8 +936,10 @@ fn subscription_view_in_txn(
 /// How the subscriber's lane judges one candidate.
 #[derive(Debug, Clone, Copy)]
 enum Judge {
-    /// An edit or a settlement: shown when this read of its entity is.
+    /// An edit, a settlement or a redirty notice: shown when this read of its entity is.
     Read(PointRead<'static>),
+    /// An edge: shown when both its ends are.
+    ReadBoth(PointRead<'static>, PointRead<'static>),
     /// A withdrawal: shown where the lane may learn the row is gone.
     Withdrawal,
     /// Its history is gone, so no lane can be shown it.
@@ -767,7 +955,7 @@ struct Candidate {
 /// One bounded read of a source.
 struct Scanned {
     entries: Vec<Candidate>,
-    through: Option<FactPosition>,
+    through: Option<Position>,
     more: bool,
 }
 
@@ -776,12 +964,12 @@ struct Scanned {
 fn changes_after_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    after: Option<FactPosition>,
+    after: Option<Position>,
     limit: usize,
 ) -> Result<Scanned> {
     let after = match after {
         None => None,
-        Some(FactPosition::ClaimChangelog(position)) => Some(position.0),
+        Some(Position::Fact(FactPosition::ClaimChangelog(position))) => Some(position.0),
         Some(_) => {
             return Err(Error::CorruptedIndex(
                 "a changes cursor names another source",
@@ -803,7 +991,7 @@ fn changes_after_in_txn(
         if change.id != id {
             return Err(Error::CorruptedIndex("feed changelog identity"));
         }
-        let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(id));
+        let position = Position::Fact(FactPosition::ClaimChangelog(ClaimChangelogPosition(id)));
         scanned.through = Some(position);
         let op = FeedOp::of_change(change.op);
         let entity_type = match vault.store.port_entity_record(txn, &change.entity)? {
@@ -841,9 +1029,10 @@ fn changes_after_in_txn(
                 op,
                 entity: change.entity,
                 entity_type,
-                actor: change.actor_principal,
+                actor: Some(change.actor_principal),
                 recorded_at: change.recorded_at,
                 revision,
+                edge: None,
             },
             judge,
         });
@@ -855,12 +1044,12 @@ fn changes_after_in_txn(
 fn settlements_after_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    after: Option<FactPosition>,
+    after: Option<Position>,
     limit: usize,
 ) -> Result<Scanned> {
     let after = match after {
         None => None,
-        Some(FactPosition::Settlement(position)) => Some(position),
+        Some(Position::Fact(FactPosition::Settlement(position))) => Some(position),
         Some(_) => {
             return Err(Error::CorruptedIndex(
                 "a settlements cursor names another source",
@@ -870,7 +1059,9 @@ fn settlements_after_in_txn(
     let settled = crate::runtime_hooks::settled_feed_facts_after_in_txn(vault, txn, after, limit)?;
     let mut scanned = Scanned {
         entries: Vec::with_capacity(settled.facts.len()),
-        through: settled.through.map(FactPosition::Settlement),
+        through: settled
+            .through
+            .map(|position| Position::Fact(FactPosition::Settlement(position))),
         more: settled.more,
     };
     for fact in settled.facts {
@@ -879,14 +1070,17 @@ fn settlements_after_in_txn(
         };
         scanned.entries.push(Candidate {
             entry: FeedEntry {
-                position: FeedPosition::of(FactPosition::Settlement(fact.position))?,
+                position: FeedPosition::of(Position::Fact(FactPosition::Settlement(
+                    fact.position,
+                )))?,
                 kind: FeedEntryKind::Settlement,
                 op: FeedOp::Settle,
                 entity: fact.entity,
                 entity_type: record.entity_type,
-                actor: fact.actor,
+                actor: Some(fact.actor),
                 recorded_at: fact.recorded_at,
                 revision: fact.revision,
+                edge: None,
             },
             judge: fact.point.map_or(Judge::Withheld, Judge::Read),
         });
@@ -910,13 +1104,17 @@ fn shown_in_txn(
                     || selector.entity_types.contains(&candidate.entry.entity_type))
         })
         .collect();
-    let points: Vec<PointRead<'static>> = candidates
-        .iter()
-        .filter_map(|candidate| match candidate.judge {
-            Judge::Read(point) => Some(point),
-            Judge::Withdrawal | Judge::Withheld => None,
-        })
-        .collect();
+    let mut points: Vec<PointRead<'static>> = Vec::new();
+    for candidate in &candidates {
+        match candidate.judge {
+            Judge::Read(point) => points.push(point),
+            Judge::ReadBoth(source, target) => {
+                points.push(source);
+                points.push(target);
+            }
+            Judge::Withdrawal | Judge::Withheld => {}
+        }
+    }
     let withdrawn: Vec<(EntityId, u8)> = candidates
         .iter()
         .filter(|candidate| matches!(candidate.judge, Judge::Withdrawal))
@@ -934,14 +1132,16 @@ fn shown_in_txn(
         let (visible, taken) = match candidate.judge {
             Judge::Read(_) => match rows.next().flatten() {
                 Some(row) => match row.body.as_deref() {
-                    Some(body) => (
-                        true,
-                        takes_predicate(selector, candidate.entry.entity_type, body),
-                    ),
+                    Some(body) => (true, takes_predicate(selector, &candidate.entry, body)),
                     None => (false, false),
                 },
                 None => (false, false),
             },
+            Judge::ReadBoth(_, _) => {
+                let source = rows.next().flatten().is_some_and(|row| row.body.is_some());
+                let target = rows.next().flatten().is_some_and(|row| row.body.is_some());
+                (source && target, true)
+            }
             Judge::Withdrawal => (revealed.next().unwrap_or(false), true),
             Judge::Withheld => (false, false),
         };
@@ -955,12 +1155,12 @@ fn shown_in_txn(
 }
 
 /// Whether a shown row's body passes the selector's predicate globs: every row when there are
-/// none, and only a claim whose predicate one glob matches when there are.
-fn takes_predicate(selector: &FeedSelector, entity_type: u8, body: &[u8]) -> bool {
-    if selector.predicates.is_empty() {
+/// none, and a redirty notice always; otherwise only a claim whose predicate one glob matches.
+fn takes_predicate(selector: &FeedSelector, entry: &FeedEntry, body: &[u8]) -> bool {
+    if selector.predicates.is_empty() || entry.kind == FeedEntryKind::Redirty {
         return true;
     }
-    if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+    if entry.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return false;
     }
     crate::claim::decode_claim_body(body, true).is_ok_and(|claim| {

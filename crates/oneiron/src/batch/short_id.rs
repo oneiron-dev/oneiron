@@ -269,10 +269,14 @@ pub(super) fn delete_related_edges(
         }
     }
     for (kind, target) in &outbound {
-        store.port_remove_edge_rows(wtxn, id, *kind, target)?;
+        if store.port_remove_edge_rows(wtxn, id, *kind, target)? {
+            crate::feeds::record_edge_change_in_txn(store, wtxn, id, *kind, target, false)?;
+        }
     }
     for (kind, source) in &inbound {
-        store.port_remove_edge_rows(wtxn, source, *kind, id)?;
+        if store.port_remove_edge_rows(wtxn, source, *kind, id)? {
+            crate::feeds::record_edge_change_in_txn(store, wtxn, source, *kind, id, false)?;
+        }
     }
 
     let mut neighbors: Vec<EntityId> = outbound
