@@ -1615,6 +1615,7 @@ pub(crate) fn mcp_agent_verb_input(
         "self.browser.library.run" => a.spec.clone().ok_or_else(invalid),
         "self.browser.handover" => a.spec.clone().ok_or_else(invalid),
         "self.browser.switch_engine" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.put" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.supersede" => a.spec.clone().ok_or_else(invalid),
         "self.fold" => a.spec.clone().ok_or_else(invalid),
         "self.compact" => a.spec.clone().ok_or_else(invalid),
@@ -5755,6 +5756,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.browser.switch_engine" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.claims.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.claims.supersede" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -8497,6 +8501,7 @@ async fn execute_agent_verb_row_on(
         "self.browser.library.run" => boxed_mcp_verb_row_self_browser_library_run(row).await,
         "self.browser.handover" => boxed_mcp_verb_row_self_browser_handover(row).await,
         "self.browser.switch_engine" => boxed_mcp_verb_row_self_browser_switch_engine(row).await,
+        "vault.claims.put" => boxed_mcp_verb_row_vault_claims_put(row).await,
         "vault.claims.supersede" => boxed_mcp_verb_row_vault_claims_supersede(row).await,
         "self.fold" => boxed_mcp_verb_row_self_fold(row).await,
         "self.compact" => boxed_mcp_verb_row_self_compact(row).await,
@@ -75866,6 +75871,65 @@ async fn mcp_verb_row_self_browser_switch_engine(row: McpVerbRow<'_>) -> McpVerb
             &memory,
             "self.browser.switch_engine",
         ),
+        input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_claims_put<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_claims_put(row))
+}
+async fn mcp_verb_row_vault_claims_put(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.claims.put", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemoryClaimInput> =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_put(
+        server,
+        auth,
+        actor
+            .off_record_session
+            .as_deref()
+            .map(oneiron::EntityId::from_hex)
+            .transpose()
+            .map_err(|_| invalid())?,
         input,
     ))
     .await;
