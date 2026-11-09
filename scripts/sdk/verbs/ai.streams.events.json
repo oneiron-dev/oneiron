@@ -1,0 +1,15 @@
+{
+  "name": "ai.streams.events",
+  "description": "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty.",
+  "input": "crate::llm::model_stream::ModelStreamEventsRequest",
+  "output": "crate::llm::model_stream::ModelStreamEvents",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.events\", &input)?",
+  "host_door": true,
+  "openapi": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

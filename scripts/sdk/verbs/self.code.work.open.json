@@ -1,0 +1,8 @@
+{
+  "name": "self.code.work.open",
+  "input": "crate::memory::repo_doors::RepoWorkOpenInput",
+  "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoWorkOpen"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.propose",
+  "description": "Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules.",
+  "input": "SkillOptimizeProposeRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeProposalReceipt",
+  "call": "crate::task_verb::sdk::skill_optimize_propose_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.propose\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

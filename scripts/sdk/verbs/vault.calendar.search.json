@@ -1,0 +1,15 @@
+{
+  "name": "vault.calendar.search",
+  "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue.",
+  "input": "crate::calendar::query::CalendarSearchPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>",
+  "call": "memory.calendar_search_page(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

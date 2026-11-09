@@ -1,0 +1,24 @@
+{
+  "name": "vault.notes.author_brief",
+  "description": "Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction.",
+  "prose_links": [
+    "/markdown"
+  ],
+  "input": "crate::note::AuthorBriefRequest",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.author_citing_brief(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true,
+  "refs": [
+    "/citations/*/claim_ref",
+    "/citations/*/document_ref"
+  ]
+}

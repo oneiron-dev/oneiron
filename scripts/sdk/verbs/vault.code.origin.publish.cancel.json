@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.publish.cancel",
+  "description": "Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is.",
+  "input": "crate::origin::publish::OriginPublishIdRequest",
+  "output": "crate::origin::publish::OriginPublishRequestView",
+  "call": "memory.origin_publish_cancel_as(&memory.origin_publish_proof(\"vault.code.origin.publish.cancel\"), input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "origin_publish"
+}

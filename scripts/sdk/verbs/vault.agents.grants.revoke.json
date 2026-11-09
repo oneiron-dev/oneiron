@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.grants.revoke",
+  "description": "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing.",
+  "input": "crate::task_verb::sdk::AgentGrantRevokeRequest",
+  "output": "crate::task_verb::sdk::AgentGrantRevoked",
+  "call": "crate::task_verb::sdk::revoke_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

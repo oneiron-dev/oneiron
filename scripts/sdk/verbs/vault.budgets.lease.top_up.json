@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.lease.top_up",
+  "description": "The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap.",
+  "input": "crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest",
+  "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
+  "call": "crate::agent_dispatch::budget_doors::top_up_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.top_up\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

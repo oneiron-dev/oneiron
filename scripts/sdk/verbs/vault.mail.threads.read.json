@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.threads.read",
+  "description": "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.",
+  "input": "crate::mail_pack::MailThreadRequest",
+  "output": "crate::mail_pack::MailThreadView",
+  "call": "memory.mail_thread(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

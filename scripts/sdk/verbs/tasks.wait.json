@@ -1,0 +1,8 @@
+{
+  "name": "tasks.wait",
+  "input": "crate::code_run::TaskWaitInput",
+  "output": "crate::code_run::TaskWaitOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "TasksWaitSet"
+}

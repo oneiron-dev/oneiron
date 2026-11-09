@@ -1,0 +1,14 @@
+{
+  "name": "vault.coach.inspect",
+  "description": "Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane.",
+  "input": "crate::memory::CoachInspectRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>",
+  "call": "memory.coach_inspect(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

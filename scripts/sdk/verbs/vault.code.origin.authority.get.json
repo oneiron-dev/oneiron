@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.authority.get",
+  "description": "Read one served origin authority and this host identity under the owner credential.",
+  "input": "crate::memory::origin_doors::OriginRepoRequest",
+  "output": "crate::memory::origin_doors::OriginAuthorityView",
+  "call": "memory.origin_authority_get_as(&memory.embedded_owner(\"vault.code.origin.authority.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

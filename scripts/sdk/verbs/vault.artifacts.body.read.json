@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.body.read",
+  "description": "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history; an agent that gives why reads its lifted secrets whole once a grant covers their keys.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyReadRequest",
+  "output": "crate::office_body::OfficeBodyView",
+  "call": "memory.artifacts_body_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Reads a DOCX or XLSX live body, at its head or an earlier frontier.\n",
+      "ts": "/** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */",
+      "py": "Reads a live body, at its head or an earlier frontier."
+    }
+  }
+}

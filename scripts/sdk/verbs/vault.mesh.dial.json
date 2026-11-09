@@ -1,0 +1,17 @@
+{
+  "name": "vault.mesh.dial",
+  "description": "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream.",
+  "input": "crate::task_verb::sdk::MeshDialRequest",
+  "output": "crate::sync::mesh_path::MeshPathReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.dial\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

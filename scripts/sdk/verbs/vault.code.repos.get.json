@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.repos.get",
+  "description": "Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work.",
+  "input": "crate::memory::origin_doors::CodeRepoGetRequest",
+  "output": "Option<crate::memory::origin_doors::CodeRepoView>",
+  "call": "memory.code_repo_get_as(&memory.embedded_owner(\"vault.code.repos.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.session_model_heal_count",
+  "description": "Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused.",
+  "input": "crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest",
+  "output": "crate::memory::code_run_doors::CodeRunSessionModelHealCountView",
+  "call": "memory.code_run_session_model_heal_count_as(&memory.embedded_owner(\"vault.code.session_model_heal_count\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

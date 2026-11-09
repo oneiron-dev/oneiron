@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.sources.settings.set",
+  "description": "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address.",
+  "input": "crate::mail_pack::MailSourceSettingsRequest",
+  "output": "crate::mail_pack::MailSourceView",
+  "call": "memory.mail_sources_settings_set(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

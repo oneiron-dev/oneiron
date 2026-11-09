@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.checks.get",
+  "description": "Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass.",
+  "input": "crate::memory::merge_queue_doors::CodeCheckReceiptRequest",
+  "output": "Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>",
+  "call": "memory.merge_queue_check_receipt_as(&memory.embedded_owner(\"vault.code.checks.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

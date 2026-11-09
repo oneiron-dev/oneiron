@@ -1,0 +1,16 @@
+{
+  "name": "vault.step_up.passkeys.reset",
+  "description": "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential.",
+  "input": "crate::authority::StepUpPasskeysResetRequest",
+  "output": "crate::authority::StepUpPasskeysReset",
+  "call": "crate::task_verb::sdk::reset_step_up_passkeys_as(memory.vault(), &memory.embedded_owner(\"vault.step_up.passkeys.reset\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
