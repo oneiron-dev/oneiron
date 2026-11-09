@@ -106,6 +106,10 @@ pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
+/// The live-run claim put test's gate fixtures, for its integration test doors
+/// (`test_doors::live_run_claim_put`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod live_run_claim_put_fixture;
 #[cfg(test)]
 mod tests;
 

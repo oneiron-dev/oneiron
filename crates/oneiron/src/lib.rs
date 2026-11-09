@@ -700,3 +700,8 @@ pub(crate) mod test_util;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support;
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
