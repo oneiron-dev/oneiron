@@ -37,6 +37,7 @@ serde_json = { workspace = true }
 napi = { version = "3", default-features = false, features = ["dyn-symbols"] }
 
 [build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
 napi-build = "2"
 
 [features]
