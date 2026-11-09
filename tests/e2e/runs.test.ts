@@ -1,5 +1,11 @@
-import { afterAll, test } from "bun:test";
-import { defineFile } from "./support/run.ts";
+import { afterAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { ScriptedProviders } from "./support/providers.ts";
+import { defineFile, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -13,8 +19,11 @@ afterAll(suite.flush);
  * Read the current generated HTTP/Oneiron SDK catalogs, server OpenAPI
  * registration/DTOs and CLI, not the plan's older implementation snapshot.
  *
- * These are complete-flow TODOs, not passing partial smoke tests. suite.todo
- * registers Bun test.todo and the shared runner's mandatory BLOCKED result.
+ * A written case proves exactly the subset its name states, and only when
+ * that subset keeps a promise of the planned title (Engine E2E-PARTIAL = A,
+ * 9 Nov 2026); its comment lists what stays unproved and the missing piece.
+ * Every other case is a TODO naming its missing door, not a partial smoke
+ * test. suite.todo registers Bun test.todo and the runner's BLOCKED result.
  * G01 requires the missing typed HTTP AND SDK call; a generic entity write,
  * consolidation input, app action or execute_code is not its replacement.
  * Canon's semantic types below do not invent endpoint paths or wire spellings.
@@ -53,12 +62,22 @@ afterAll(suite.flush);
  * key. The sink records attempts as well as accepted effects: do not let its
  * idempotency cache hide an engine repeat. Check final result + both receipts.
  *
- * Missing: typed Dreamer workflow/program admission through the turn wake and
- * settled-step/checkpoint reads. Queue completion/result_ref and witness ACK
- * do not establish a committed intermediate step. The current consolidation
- * executor is not an arbitrary outbound-effect program. No private step seed.
+ * Promise: an armed turn program, woken by a real turn, settles step one, is
+ *   SIGKILLed while step two's provider reply is held, resumes as the same
+ *   try with step one injected, never re-executed, and finishes once.
+ * Doors: vault.witness, vault.turn_programs.arm/.admission, vault.runs.program,
+ *   .program_step, .program_checkpoint, vault.skill_hubs.* + vault.skills.import.
+ * Missing: a public door that makes a FIRST-PARTY callable SKILL active for
+ *   vault.turn_programs.arm. Hub import is the only deterministic activation,
+ *   and an imported callable runs on the Foreign tier, whose sandbox links no
+ *   self.verbs.call import (no verb methods), so its program makes no write,
+ *   model or send step: nothing settles, and no provider call can be held.
+ * Also unproved: a verb write cut by SIGKILL replays Uncertain and holds for
+ *   good (only a Read-scope ai.verdict would re-run), and the pinned entry
+ *   commits its checkpoint only at entry end, so after a mid-entry kill step
+ *   one answers from its kept receipt and program_checkpoint shows injected=false.
  */
-suite.todo(test, "RUNS-01", "waits on typed turn-woken Dreamer workflow admission and settled-step/checkpoint reads (Dreamer survives a kill should work)");
+suite.todo(test, "RUNS-01", "waits on a public door that activates a first-party callable SKILL for vault.turn_programs.arm: imported callables run Foreign with no self.verbs.call import, so no turn program settles a step a kill could interrupt (Dreamer survives a kill should work)");
 
 /* RUNS-02 — Only waiting branch pauses should work.
  * Rows: OF-203, OF-390, OF-391. ARCH-0026 #run-tree.
@@ -87,47 +106,212 @@ suite.todo(test, "RUNS-01", "waits on typed turn-woken Dreamer workflow admissio
  * No polling-model calls while A waits. Do not replace children with two
  * unrelated root requests or treat tasks.answer as approval of an outbound act.
  *
- * Missing: typed live branch fan-out and Query/Signal wait/result projection.
- * Existing ask/wait/answer verbs alone cannot prove a run-tree branch parked,
- * another child continued, or a matching consent signal was consumed once.
+ * Missing (main e79eb76df3e): fan-out admission now exists (vault.fanout.spawn
+ * from an attached live run), but no typed branch wait/Query/Signal read binds
+ * the human wait, its matching answer, the cached settlement and the resumed
+ * child to the same live branch. vault.runs.branches.get invents no wait class
+ * (task_verb/run_doors.rs:14-18); a facade `wait` binds a detached step with
+ * run_id None (ask_facade/wait.rs:77-130), so it is not branch A's checkpoint.
  */
-suite.todo(test, "RUNS-02", "waits on typed live child-branch admission and Query/Signal wait/settlement reads (Only waiting branch pauses should work)");
+suite.todo(test, "RUNS-02", "waits on a typed branch wait/Signal read binding a human wait, its matching answer and the resumed child to one live branch (Only waiting branch pauses should work)");
 
-/* RUNS-03 — Steer pause resume and cancel should work.
- * Rows: OF-203, OF-239, OF-419, OF-391. ARCH-0026 #run-tree.
- * Oracle: runs-scenarios / RUNS-03.
- *
- * Existing typed HTTP shapes:
- *   POST /v1/core/run-tree/intervene
- *     { job_id, kind: interrupt|pause|resume|cancel|redirect, note?, placement? }
- *     -> { job_id, run_id?, kind, effect, tree? }
- *   steer({ task_ref, instruction, key }) -> { task_ref, branch, run_id,
- *     key, state: Pending|Settled|RefusedCancelCapacity|RefusedCancelUnavailable }
- *   POST /v1/owner/steer takes the same SteerRequest/SteerReceipt; it exists.
- *   cancel({ task_ref }) -> TaskCancelReceipt
- *     { approval, effected, proposal_ref?, gate_decision_ref?, status?,
- *       cancel_requested, forced }
- * The task cancel can request graceful cancellation, but its input cannot
- * explicitly select owner force. Run-tree cancel is a queue intervention,
- * not the missing typed cancel.force with its landing/partial-result receipt.
- * Canon: cancel.request may be refused WITH a reason receipt; cancel.force
- * is owner-only and unrefusable. Landing preserves partial results/resume
- * points. AgentRunStatus distinguishes failed from lease-reclaimed abandoned;
- * it is not the queue status enum and has no cancelled member to invent.
- *
- * Start a held multi-step actor and pair a distinct unauthorized caller.
- * Require unauthorized steer/pause/cancel/force refusal with no state change.
- * Owner steers at a safe breakpoint, queries progress, pauses that branch,
- * resumes it, then requests graceful cancel. Script one refusal with reason,
- * re-request and inspect landing's saved partial result. On a second live
- * branch exercise owner force. Retry terminal control: no extra work or
- * receipt/effect. Inspect typed waits, completion, execution failure, lease
- * reclamation and cancellation distinctly, not by matching log/card strings.
- *
- * Missing: explicit typed owner force, cancellation/landing receipts and the
- * full branch Query/AgentRunStatus projection. No app-action/generic escape.
+type Runs03Branch = FacadeResult<"vault.runs.branches.get">["branches"][number];
+type Runs03Outcome<T> = { readonly value: T } | { readonly refused: { readonly status: number; readonly code: string } };
+
+/** The authored RUNS-03 inputs (steer wording and key) from runs-scenarios. */
+async function runs03Inputs(): Promise<{ readonly steerInstruction: string; readonly steerKey: string }> {
+  const data = await (await loadFixtures()).readJson<{
+    scenarios: readonly { id: string; inputs: { steerInstruction: string; steerKey: string } }[];
+  }>("runs-scenarios");
+  const row = data.scenarios.find(scenario => scenario.id === "RUNS-03");
+  if (!row) throw new Error("runs-scenarios has no RUNS-03 row");
+  return row.inputs;
+}
+
+/** One door call, kept as its success body or its public refusal (status + error code). */
+async function runs03Attempt<T>(call: () => Promise<T>): Promise<Runs03Outcome<T>> {
+  try {
+    return { value: await call() };
+  } catch (error) {
+    if (error instanceof PublicHttpError) return { refused: { status: error.reply.status, code: error.error?.code ?? "" } };
+    throw error;
+  }
+}
+
+/** A call that must be refused: its status and error code. */
+async function runs03Refusal(call: () => Promise<unknown>): Promise<{ readonly status: number; readonly code: string }> {
+  const outcome = await runs03Attempt(call);
+  if ("value" in outcome) throw new Error("expected a public refusal, got a success body");
+  return outcome.refused;
+}
+
+/** Mints one owner TASK with no assignee: the Dreamer lane's one local realizing attempt. */
+async function runs03Task(engine: EngineFixture, title: string, label: string): Promise<string> {
+  const created = await engine.client.call("tasks.create", {
+    spec: { title, description: "RUNS-03 branch under owner run control", lane: "runs03" },
+    label,
+  });
+  expect(created.approval).toBe("auto");
+  expect(created.effected).toBe(true);
+  expect(created.proposal_ref ?? null).toBeNull();
+  if (!created.route || !("DreamerAttempt" in created.route)) throw new Error(`${title} did not route to a local Dreamer attempt`);
+  if (!created.task_ref) throw new Error(`${title} returned no TASK ref`);
+  return created.task_ref;
+}
+
+/** The TASK's single branch, read through the owner's branch door. */
+async function runs03Branch(engine: EngineFixture, task: string): Promise<Runs03Branch> {
+  const view = await engine.client.call("vault.runs.branches.get", { task_ref: task });
+  expect(view.task_ref).toBe(task);
+  expect(view.branches).toHaveLength(1);
+  const [branch] = view.branches;
+  if (!branch) throw new Error(`TASK ${task} has no branch`);
+  return branch;
+}
+
+/* RUNS-03 (partial): the owner pauses, resumes and force-cancels real queued
+ * TASK branches; an unauthorized caller's force, steer, pause and soft cancel
+ * change nothing; a pause and a forced cancellation both survive a SIGKILL.
+ * Doors: HTTP facade tasks.create, vault.runs.branches.get, vault.runs.pause,
+ * vault.runs.resume, vault.tasks.cancel.force, steer, cancel,
+ * vault.agents.create, self.actor; CLI `token pair` through engine.pairActor.
+ * Unproved: steer consumed at a safe breakpoint (needs a live leased run with
+ * a run_id, which needs a scripted live worker rig not bound here).
+ * Unproved: graceful cancel refusal with a reason, landing and its saved
+ * partial result (no public door makes a worker soft-reject or land).
+ * Unproved: the owner's soft cancel effecting (fresh-vault gate likely
+ * proposes it; see RUNS-03.report.md) and failed/abandoned branch status.
  */
-suite.todo(test, "RUNS-03", "waits on typed owner cancel.force, landing receipts and branch lifecycle reads (Steer pause resume and cancel should work)");
+suite.test(test, "RUNS-03", "Owner pause, resume and force-cancel of queued task branches survive a kill and refuse an unauthorized caller", async () => {
+  const inputs = await runs03Inputs();
+  // Explicit host setting: no Dreamer runs, so nothing claims the queued branches.
+  const engine = await EngineFixture.start({ id: "RUNS-03", profile, serverConfig: "[models.dreamer]\nenabled = false\n" });
+
+  const pauseTask = await runs03Task(engine, "RUNS-03 pause and resume", "runs03-pause");
+  const forceTask = await runs03Task(engine, "RUNS-03 owner force", "runs03-force");
+  const pauseBefore = await runs03Branch(engine, pauseTask);
+  const forceBefore = await runs03Branch(engine, forceTask);
+  for (const branch of [pauseBefore, forceBefore]) {
+    expect(branch.branch).toMatch(/^[0-9a-f]{32}$/);
+    expect(branch.state).toBe("Queued");
+    expect(branch.agent_status).toBe("spawned");
+    expect(branch.signals).toEqual([]);
+    expect(branch.cancel_state.cancellation ?? null).toBeNull();
+  }
+  expect(pauseBefore.branch).not.toBe(forceBefore.branch);
+
+  // An unauthorized caller: a real inert agent principal, paired with every verb,
+  // holding no standing on either TASK.
+  const strangerRef = createHash("sha256").update("runs-03:unauthorized-caller").digest("hex").slice(0, 32);
+  const agent = await engine.client.call("vault.agents.create", {
+    agent_def_ref: strangerRef,
+    definition: { agent_id: "runs-03-unauthorized", display_name: "runs-03-unauthorized",
+      desc: "Holds no standing on either RUNS-03 TASK", version: "1" },
+  });
+  expect(agent.agent_def_ref).toBe(strangerRef);
+  const stranger = await engine.pairActor({ principalRef: strangerRef, actorClass: "agent" });
+  const identity = await stranger.client.call("self.actor", {});
+  expect(identity.actor_ref).toBe(strangerRef);
+  expect(identity.actor_class).toBe("agent");
+
+  expect(await runs03Refusal(() => stranger.client.call("vault.tasks.cancel.force",
+    { task_ref: forceTask, reason: "runs-03 unauthorized force" }))).toEqual({ status: 403, code: "FORBIDDEN" });
+  expect(await runs03Refusal(() => stranger.client.call("steer",
+    { task_ref: pauseTask, instruction: inputs.steerInstruction, key: `${inputs.steerKey}-unauthorized` })))
+    .toEqual({ status: 403, code: "FORBIDDEN" });
+  const strangerPause = await runs03Refusal(() => stranger.client.call("vault.runs.pause",
+    { branch: pauseBefore.branch, note: "runs-03 unauthorized pause" }));
+  expect([403, 404]).toContain(strangerPause.status);
+  expect(["FORBIDDEN", "NOT_FOUND"]).toContain(strangerPause.code);
+  // The soft cancel is refused at the read admission when the stranger cannot
+  // read the TASK, else parked as a proposal; on either path it stops nothing.
+  const strangerCancel = await runs03Attempt(() => stranger.client.call("cancel", { task_ref: forceTask }));
+  if ("value" in strangerCancel) {
+    expect(strangerCancel.value.approval).toBe("proposed");
+    expect(strangerCancel.value.effected).toBe(false);
+    expect(strangerCancel.value.forced).toBe(false);
+    expect(strangerCancel.value.cancel_requested).toBe(false);
+  } else {
+    expect([403, 404]).toContain(strangerCancel.refused.status);
+  }
+  expect(await runs03Branch(engine, pauseTask)).toEqual(pauseBefore);
+  expect(await runs03Branch(engine, forceTask)).toEqual(forceBefore);
+
+  // Owner pause; a repeat is a replay that changes nothing.
+  const paused = await engine.client.call("vault.runs.pause", { branch: pauseBefore.branch, note: "runs-03 owner pause" });
+  expect(paused.effect).toBe("paused");
+  expect(paused.branch.branch).toBe(pauseBefore.branch);
+  expect(paused.branch.state).toBe("Paused");
+  expect(paused.branch.agent_status).toBe("needs_input");
+  expect(paused.branch.attempt_count).toBe(pauseBefore.attempt_count);
+  const pausedAgain = await engine.client.call("vault.runs.pause", { branch: pauseBefore.branch });
+  expect(pausedAgain.effect).toBe("already_paused");
+  expect(pausedAgain.branch).toEqual(paused.branch);
+  expect(await runs03Branch(engine, pauseTask)).toEqual(paused.branch);
+
+  // Owner force: unrefusable, receipted, and a repeat stops nothing more.
+  const forced = await engine.client.call("vault.tasks.cancel.force", { task_ref: forceTask, reason: "runs-03 owner force" });
+  expect(forced.task_ref).toBe(forceTask);
+  expect(forced.effected).toBe(true);
+  expect(forced.forced).toBe(1);
+  expect(forced.branches).toHaveLength(1);
+  const [stopped] = forced.branches;
+  if (!stopped) throw new Error("Owner force returned no branch");
+  expect(stopped.branch).toBe(forceBefore.branch);
+  expect(stopped.state).toBe("Cancelled");
+  expect(stopped.agent_status).toBe("cancelled");
+  expect(stopped.cancel_state.cancellation?.mode).toBe("forced");
+  expect(stopped.cancel_state.cancellation?.grounds).toBe("owner");
+  expect(stopped.cancel_state.cancellation?.reason).toBe("runs-03 owner force");
+  expect((stopped.cancel_state.receipts ?? []).filter(receipt => receipt.kind === "force_cancelled")).toHaveLength(1);
+  const forcedAgain = await engine.client.call("vault.tasks.cancel.force", { task_ref: forceTask, reason: "runs-03 owner force" });
+  expect(forcedAgain.effected).toBe(false);
+  expect(forcedAgain.forced).toBe(0);
+  expect(forcedAgain.branches).toEqual(forced.branches);
+  expect(await runs03Branch(engine, forceTask)).toEqual(stopped);
+  // The paused sibling is untouched by the other TASK's force.
+  expect(await runs03Branch(engine, pauseTask)).toEqual(paused.branch);
+
+  // Failure step: SIGKILL the owned server and restart the same vault.
+  await engine.kill();
+  await engine.restart();
+  expect(await runs03Branch(engine, pauseTask)).toEqual(paused.branch);
+  expect(await runs03Branch(engine, forceTask)).toEqual(stopped);
+
+  // The durable pause resumes after the kill; a repeat is a replay.
+  const resumed = await engine.client.call("vault.runs.resume", { branch: pauseBefore.branch, note: "runs-03 owner resume" });
+  expect(resumed.effect).toBe("resumed");
+  expect(resumed.branch.branch).toBe(pauseBefore.branch);
+  expect(resumed.branch.state).toBe("Queued");
+  expect(resumed.branch.agent_status).toBe("spawned");
+  expect(resumed.branch.attempt_count).toBe(pauseBefore.attempt_count);
+  const resumedAgain = await engine.client.call("vault.runs.resume", { branch: pauseBefore.branch });
+  expect(resumedAgain.effect).toBe("already_resumed");
+  expect(resumedAgain.branch).toEqual(resumed.branch);
+
+  // Boundary, not steer coverage: a branch with no live run takes no steer
+  // and keeps no stray signal.
+  expect(await runs03Refusal(() => engine.client.call("steer",
+    { task_ref: pauseTask, instruction: inputs.steerInstruction, key: inputs.steerKey })))
+    .toEqual({ status: 409, code: "INVALID_STATE" });
+  expect((await runs03Branch(engine, pauseTask)).signals).toEqual([]);
+
+  // The resumed branch is still the owner's to stop.
+  const finalForce = await engine.client.call("vault.tasks.cancel.force", { task_ref: pauseTask });
+  expect(finalForce.effected).toBe(true);
+  expect(finalForce.forced).toBe(1);
+  const finalBranch = await runs03Branch(engine, pauseTask);
+  expect(finalBranch.state).toBe("Cancelled");
+  expect(finalBranch.agent_status).toBe("cancelled");
+  expect(finalBranch.cancel_state.cancellation?.mode).toBe("forced");
+
+  // Terminal retry: a soft cancel of the already-forced TASK stops nothing more.
+  const terminalCancel = await engine.client.call("cancel", { task_ref: forceTask });
+  expect(terminalCancel.effected).toBe(false);
+  expect(terminalCancel.forced).toBe(false);
+  expect(terminalCancel.cancel_requested).toBe(false);
+  expect(await runs03Branch(engine, forceTask)).toEqual(stopped);
+});
 
 /* RUNS-04 — Wake stops at its wall-clock ceiling should work.
  * Row: OF-179. ARCH-0026 #wake-model, #run-tree.
@@ -151,94 +335,600 @@ suite.todo(test, "RUNS-03", "waits on typed owner cancel.force, landing receipts
  * No private clock, shortened ceiling, token-limit surrogate or timeout abort.
  * This is a real 180-second observation, not a loop of immediate status reads.
  *
- * Missing: typed wake admission/deadline and parked-continuation observation.
- * Attempt updated_at or a provider arrival cannot prove the wake's epoch.
+ * Missing (main e79eb76df3e): the wake reads now exist
+ * (vault.consolidation.wake.status gives the ceiling, call leases and the
+ * per-generation checkpoint). The case needs a real 180 s observation, which
+ * is a nightly budget case, not a 30 s E2E case (Fable section 4, rule 8), and
+ * a publicly armed two-step program whose provider calls are scripted.
  */
-suite.todo(test, "RUNS-04", "waits on typed wake admission/deadline and parked-continuation reads (Wake stops at its wall-clock ceiling should work)");
+suite.todo(test, "RUNS-04", "waits on a nightly budget slot for a real 180 s wake observation and a publicly armed two-step program (Wake stops at its wall-clock ceiling should work)");
 
-/* RUNS-05 — Changed evidence wakes once and idle stays idle should work.
- * Rows: OF-191, OF-194, OF-218, OF-361, OF-498. ARCH-0026 #wake-model.
- * Oracle: runs-scenarios / RUNS-05.
- *
- * Current public setup includes vault.settings.wake_policy.set({ policy,
- * idempotency_key }) -> { outcome }; the policy body is opaque in the SDK.
- * vault.witness and vault.rooms.speak land turns and wake the Dreamer. Do not
- * claim those doors or the production wake supervisor are absent.
- * Canon: one engine scheduler; changed-evidence recipes only when idle and
- * within lease. Dreamer and Coach use that scheduler; an unchanged projection
- * writes no conclusions, and a durable wait performs zero model polling.
- * Needed typed observation: evidence identity/cursor, recipe/wake identity,
- * conclusions, Coach work and a receipted cadence boundary/idle wait state.
- * Needed duplicate intake: replay the SAME evidence/event id, not another
- * witnessed turn whose text happens to be identical. No frozen DTO is known.
- *
- * Seed the two residents publicly and set a short owner cadence. Witness the
- * fixture's novel turn, let the scripted sieve/worker settle and record the
- * public conclusion identities. Replay the same ingress event, await one
- * cadence boundary and inspect both conclusion sets and provider requests.
- * Require only the intended novel-evidence work; duplicates produce no new
- * conclusions. Park the human wait and observe the whole idle cadence: no
- * model requests. Check single-scheduler receipts across both resident jobs,
- * not just a momentary flat request count. Script unexpected calls as errors.
- *
- * Missing: typed identity-preserving evidence replay and sieve/Coach recipe
- * settlement/cadence reads. No fresh duplicate-text witness or private tick.
- */
-suite.todo(test, "RUNS-05", "waits on typed evidence replay and sieve/Coach cadence/settlement reads (Changed evidence wakes once and idle stays idle should work)");
+type Runs05Evidence = FacadeResult<"vault.sieve.evidence">;
 
-/* RUNS-06 — Sieve queue retains lower-priority work should work.
- * Rows: OF-498, OF-216. ARCH-0026 #wake-model.
- * Oracle: runs-scenarios / RUNS-06.
- *
- * Canon interest entry: span refs (source/turn/range), kind/entity, interest
- * and pending work, durably ordered by score. Priority changes order, never
- * retention. The rule sieve is implemented; a private sieve_queue accessor
- * is not a public typed queue read. ConsolidationStatus is one attempt, not
- * interest handles, outstanding span/rung membership or budget replenishment.
- * Needed typed calls: interest-page read, owner lease/refill, cadence/weave
- * settlement with consumed span refs. Wire names must wait for the catalog.
- *
- * Ingest the three authored spans. Owner policy permits exactly the first
- * unit of work; await its settled receipt. Read ordered queue handles and
- * require medium + low still pending with their original source/range refs.
- * Restart without reseeding. Both handles/refs must survive; then refill
- * through owner authorization and observe the remaining work consumed once.
- * A later weave consumes retained evidence, not merely the already-generated
- * prose. Assert all three source memberships and no priority-based drop.
- * Never predict numeric implementation scores or inspect queue storage.
- *
- * Missing: typed interest handles/page, lease refill and consumed-span receipts.
- */
-suite.todo(test, "RUNS-06", "waits on typed sieve interest-queue reads, owner lease refill and consumed-span receipts (Sieve queue retains lower-priority work should work)");
+/** Host models: one scripted origin serves the Dreamer's two seats, so a Dreamer
+ * can start; this case scripts no answer, so any model call fails the case. */
+function runs05Config(providers: ScriptedProviders): string {
+  const origin = providers.urls.model;
+  if (!origin) throw new Error("ScriptedProviders started no model origin");
+  return `
+[models]
+extraction_egress = true
+[models.providers.runs05]
+kind = "local-openai-compat"
+base_url = "${origin}"
+revision = "e2e-v1"
+[models.roles.extraction_teacher]
+model = "runs05:runs05-extract"
+[models.roles.dreamer_current]
+model = "runs05:runs05-summary"
+[models.dreamer]
+enabled = true
+[models.workflows]
+enabled = false
+`;
+}
 
-/* RUNS-07 — Parallel consolidation preserves evidence trust should work.
- * Rows: OF-052, OF-204, OF-216. ARCH-0026 #swarm-fanout, #wake-model.
- * Oracle: runs-scenarios / RUNS-07.
- *
- * Canon typed DESIGN: bucket = subject * predicate_root * world * facet *
- * relationship * project. Child output = judgement + a set of references
- * (source id + claim id or byte range), NOT authoritative hash/trust/bytes.
- * Root pins ONE ledger revision, re-reads, derives hash/trust and deduplicates
- * source+hash before corroboration. A generated re-citation adds zero signals;
- * taint is the most restrictive ancestor, including edge.provenance. Only the
- * root vouches. The catalog has no typed root-frontier/accounting receipt.
- *
- * Publicly create the same-subject source, its generated re-citation, one
- * tool-output ancestor in project amber, and equal-text evidence in bronze.
- * Wake the six-axis buckets. Finish siblings out of order; after the root
- * pin, edit the first source through its real edit door. Require every root
- * read to use the original pin. Two amber children citing that source remain
- * ONE signal; its summary adds none, tool output adds a second, with taint
- * no stronger than tool_output. Bronze stays separate, never adding amber
- * support. A child's forged hash/trust must not influence accounting; reject
- * or receipt its integrity violation instead of silently trusting the value.
- * Check settled claims AND corroboration/provenance receipts, not just prose.
- *
- * Missing: typed reference-carrying parallel consolidation, revision-pinned
- * root reads and evidence accounting/taint receipts. Generic enqueue's unknown
- * input cannot seed child judgements or manufacture a pinned revision.
+/** Public stopped-vault owner command that routes the vault's model purposes to the
+ * own-server origin, as PRIVACY-01 does; without it the Dreamer does not start. */
+async function runs05GrantRoute(engine: EngineFixture): Promise<void> {
+  await engine.kill();
+  const grant = await engine.cli.run(["dreamer", "grant", "--config", `${engine.root}/oneiron.toml`,
+    "--extraction-route", "own_server"]);
+  expect(grant.exitCode).toBe(0);
+  await engine.restart();
+}
+
+/** Owner dials that keep paid work out: no follower session, and no wake
+ * recipe can come due within the case. Read back through the public reads. */
+async function runs05QuietRecipes(engine: EngineFixture, idempotencyKey: string): Promise<void> {
+  const recipe = await engine.client.call("vault.sieve.recipe_policy", {});
+  const quietRecipe = { ...recipe, follower_enabled: false };
+  expect(await engine.client.call("vault.sieve.recipe_policy.set", { policy: quietRecipe })).toEqual(quietRecipe);
+  const cadence = await engine.client.call("vault.sieve.cadence", {});
+  const quietWake = { ...cadence.policy, wake_grain_turns: 1_000_000, new_records: 1_000_000, idle_secs: 86_400,
+    quiet_weave_secs: 86_400, longest_wait_secs: 86_400, nightly_secs: 86_400 };
+  await engine.client.call("vault.settings.wake_policy.set", { policy: quietWake, idempotency_key: idempotencyKey });
+  expect((await engine.client.call("vault.sieve.cadence", {})).policy).toEqual(quietWake);
+}
+
+/** Awaits a committed sieve read of the turn: the read clears the owed marker in
+ * the same transaction that queues (or keeps) its spans. Reads only. */
+function runs05Read(engine: EngineFixture, turn: string): Promise<Runs05Evidence> {
+  return awaitPublic(() => engine.client.call("vault.sieve.evidence", { turn }),
+    view => view.turn === turn && !view.owed && !view.continuing && (view.reading ?? null) !== null,
+    { label: `sieve read of TURN ${turn}` });
+}
+
+/** Every conclusion id the shared-scheduler settlement roots and their jobs name. */
+async function runs05Conclusions(engine: EngineFixture): Promise<string[]> {
+  const page = await engine.client.call("vault.sieve.settlements", { limit: 100 });
+  const ids = new Set<string>();
+  for (const wake of page.wakes) {
+    for (const id of wake.outcome.conclusions) ids.add(id);
+    for (const job of wake.jobs) for (const id of job.conclusions) ids.add(id);
+  }
+  return [...ids].sort();
+}
+
+/** The sieve's public evidence state: interest queue, retained readings, consumed receipts, conclusions. */
+async function runs05Snapshot(engine: EngineFixture) {
+  return {
+    queue: await engine.client.call("vault.sieve.queue", { limit: 1000 }),
+    retained: await engine.client.call("vault.sieve.retained", { limit: 1000 }),
+    receipts: await engine.client.call("vault.sieve.receipts", { limit: 1000 }),
+    conclusions: await runs05Conclusions(engine),
+  };
+}
+
+/* RUNS-05 (partial): after the real sieve has read a novel turn, replaying
+ * that same stored TURN (not a second witness of the same words) owes it a
+ * read again; the Dreamer re-reads it and the TURN identity, reading digest,
+ * queued span handles, retained readings, consumed receipts and conclusion
+ * ids are all unchanged, before and after a SIGKILL restart.
+ * Doors: HTTP facade vault.witness, vault.conversations.create,
+ * vault.sieve.{evidence,evidence.replay,queue,retained,receipts,settlements,
+ * recipe_policy,recipe_policy.set,cadence}, vault.settings.wake_policy.set;
+ * CLI `dreamer grant` on the stopped vault; ScriptedProviders (no answers).
+ * Unproved: the novel turn's own paid work and conclusions (owner dials keep
+ * paid recipes out; the finite novelty/extraction script is unbound), so the
+ * conclusion comparison holds trivially here.
+ * Unproved: a cadence boundary, Dreamer+Coach on one scheduler and zero model
+ * polling during a resident-bound durable human wait (no such wait binds).
  */
-suite.todo(test, "RUNS-07", "waits on typed parallel reference frontier and pinned-root evidence accounting receipts (Parallel consolidation preserves evidence trust should work)");
+suite.test(test, "RUNS-05", "Replaying an already-read turn re-reads the same TURN and adds no new sieve evidence, even after a kill", async () => {
+  const data = await (await loadFixtures()).readJson<{
+    scenarios: readonly { id: string; inputs: { novelTurn: string } }[];
+  }>("runs-scenarios");
+  const novelTurn = data.scenarios.find(scenario => scenario.id === "RUNS-05")?.inputs.novelTurn;
+  if (!novelTurn) throw new Error("runs-scenarios has no RUNS-05 novel turn");
+  const providers = await ScriptedProviders.start({ id: "runs-05-no-paid-work", steps: [], origins: ["model"] });
+  const engine = await EngineFixture.start({ id: "RUNS-05", profile, serverConfig: runs05Config(providers) });
+  await runs05GrantRoute(engine);
+  const client = engine.client;
+  await runs05QuietRecipes(engine, "runs-05-novel-only");
+  const room = await client.call("vault.conversations.create", {
+    body: { v: 1, kind: "direct", member_ids: [engine.pairedActor.principalRef], title: "RUNS-05 evidence replay" },
+    text: [{ field: "title", value: "RUNS-05 evidence replay" }],
+  });
+
+  const witnessed = await client.call("vault.witness", {
+    conversation_ref: room.id, occurred_at: Math.floor(Date.now() / 1000),
+    messages: [{ author: "user", message_type: "text", content: novelTurn, is_visible: true, order: 0 }],
+  });
+  const turn = witnessed.turn?.id;
+  const message = witnessed.messages?.[0]?.id;
+  if (!turn || !message) throw new Error("Witness returned no TURN or MESSAGE record");
+  const first = await runs05Read(engine, turn);
+  const before = await runs05Snapshot(engine);
+  // The novel turn is the only evidence in the queue, and it yielded spans.
+  expect(before.queue.spans.length).toBeGreaterThan(0);
+  for (const span of before.queue.spans) {
+    expect(span.turn).toBe(turn);
+    expect(span.source).toBe(message);
+  }
+  expect(before.queue.skipped_unreadable).toBe(0);
+  expect(before.receipts.receipts).toEqual([]);
+
+  // Replay the same ingress identity twice: each answer names the original
+  // TURN and its unchanged reading, and owes it one read.
+  for (let replay = 0; replay < 2; replay++) {
+    const replayed = await client.call("vault.sieve.evidence.replay", { turn });
+    expect(replayed.turn).toBe(turn);
+    expect(replayed.owed).toBe(true);
+    expect(replayed.reading).toEqual(first.reading);
+  }
+  const reread = await runs05Read(engine, turn);
+  expect(reread.turn).toBe(turn);
+  expect(reread.reading).toEqual(first.reading);
+  expect(await runs05Snapshot(engine)).toEqual(before);
+
+  // Forged input: replaying a CONVERSATION is refused and owes nothing.
+  try {
+    await client.call("vault.sieve.evidence.replay", { turn: room.id });
+    throw new Error("Replay of a non-TURN was accepted");
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBe(400);
+    expect(error.error?.code).toBe("BAD_REQUEST");
+  }
+  const afterRefusal = await client.call("vault.sieve.evidence", { turn });
+  expect(afterRefusal.owed).toBe(false);
+  expect(afterRefusal.reading).toEqual(first.reading);
+
+  // Failure step: SIGKILL the owned server and restart the same vault, no reseed.
+  await engine.kill();
+  await engine.restart();
+  const durable = await client.call("vault.sieve.evidence", { turn });
+  expect(durable.turn).toBe(turn);
+  expect(durable.owed).toBe(false);
+  expect(durable.reading).toEqual(first.reading);
+  expect(await runs05Snapshot(engine)).toEqual(before);
+
+  // The same replay after the restart is still identity-preserving and adds nothing.
+  const replayedAfter = await client.call("vault.sieve.evidence.replay", { turn });
+  expect(replayedAfter.turn).toBe(turn);
+  expect(replayedAfter.owed).toBe(true);
+  const rereadAfter = await runs05Read(engine, turn);
+  expect(rereadAfter.reading).toEqual(first.reading);
+  expect(await runs05Snapshot(engine)).toEqual(before);
+
+  // No model call was made: the re-read is the rule sieve's, and paid work was dialed out.
+  await engine.close();
+  await providers.close();
+  expect(providers.seenFixtureCalls).toEqual([]);
+});
+
+type Runs06Span = FacadeResult<"vault.sieve.queue">["spans"][number];
+type Runs06Evidence = FacadeResult<"vault.sieve.evidence">;
+interface Runs06Source { readonly label: string; readonly priority: string; readonly turn: string; readonly message: string;
+  readonly evidence: Runs06Evidence; readonly spans: readonly Runs06Span[]; readonly top: Runs06Span }
+
+/** The owner-authored ranking dial for each fixture priority. Owner data, not an engine default. */
+function runs06DateInterest(priority: string): number {
+  const interest = ({ highest: 300, middle: 200, lowest: 100 } as Readonly<Record<string, number>>)[priority];
+  if (interest === undefined) throw new Error(`No RUNS-06 date interest for priority ${priority}`);
+  return interest;
+}
+
+/** Host models: one scripted origin serves the Dreamer's two seats, so a Dreamer
+ * can start; this case scripts no answer, so any model call fails the case. */
+function runs06Config(providers: ScriptedProviders): string {
+  const origin = providers.urls.model;
+  if (!origin) throw new Error("ScriptedProviders started no model origin");
+  return `
+[models]
+extraction_egress = true
+[models.providers.runs06]
+kind = "local-openai-compat"
+base_url = "${origin}"
+revision = "e2e-v1"
+[models.roles.extraction_teacher]
+model = "runs06:runs06-extract"
+[models.roles.dreamer_current]
+model = "runs06:runs06-summary"
+[models.dreamer]
+enabled = true
+[models.workflows]
+enabled = false
+`;
+}
+
+/** Public stopped-vault owner command that routes the vault's model purposes to the
+ * own-server origin, as PRIVACY-01 does; without it the Dreamer does not start. */
+async function runs06GrantRoute(engine: EngineFixture): Promise<void> {
+  await engine.kill();
+  const grant = await engine.cli.run(["dreamer", "grant", "--config", `${engine.root}/oneiron.toml`,
+    "--extraction-route", "own_server"]);
+  expect(grant.exitCode).toBe(0);
+  await engine.restart();
+}
+
+/** Owner dials that keep paid work out: no follower session, and no wake
+ * recipe can come due within the case. Read back through the public reads. */
+async function runs06QuietRecipes(engine: EngineFixture, idempotencyKey: string): Promise<void> {
+  const recipe = await engine.client.call("vault.sieve.recipe_policy", {});
+  const quietRecipe = { ...recipe, follower_enabled: false };
+  expect(await engine.client.call("vault.sieve.recipe_policy.set", { policy: quietRecipe })).toEqual(quietRecipe);
+  const cadence = await engine.client.call("vault.sieve.cadence", {});
+  const quietWake = { ...cadence.policy, wake_grain_turns: 1_000_000, new_records: 1_000_000, idle_secs: 86_400,
+    quiet_weave_secs: 86_400, longest_wait_secs: 86_400, nightly_secs: 86_400 };
+  await engine.client.call("vault.settings.wake_policy.set", { policy: quietWake, idempotency_key: idempotencyKey });
+  expect((await engine.client.call("vault.sieve.cadence", {})).policy).toEqual(quietWake);
+}
+
+/** Awaits the turn's first sieve read: the read clears the owed marker in the same
+ * transaction that queues its spans, so this is a committed-read barrier. Reads only. */
+function runs06Read(engine: EngineFixture, turn: string): Promise<Runs06Evidence> {
+  return awaitPublic(() => engine.client.call("vault.sieve.evidence", { turn }),
+    view => view.turn === turn && !view.owed && !view.continuing && (view.reading ?? null) !== null,
+    { label: `sieve read of TURN ${turn}` });
+}
+
+async function runs06Refusal(call: () => Promise<unknown>): Promise<{ readonly status: number; readonly code: string }> {
+  try { await call(); }
+  catch (error) {
+    if (error instanceof PublicHttpError) return { status: error.reply.status, code: error.error?.code ?? "" };
+    throw error;
+  }
+  throw new Error("expected a public refusal, got a success body");
+}
+
+/* RUNS-06 (partial): three authored turns are read by the real rule sieve
+ * under owner ranking dials; the lower-ranked spans stay queued, with their
+ * original turn/source/range handles, past a one-span page, a policy
+ * replacement and a SIGKILL restart, and nothing is consumed or dropped.
+ * Doors: HTTP facade vault.witness, vault.conversations.create,
+ * vault.sieve.{policy,policy.set,queue,retained,receipts,evidence,
+ * recipe_policy,recipe_policy.set,cadence}, vault.settings.wake_policy.set;
+ * CLI `dreamer grant` on the stopped vault; ScriptedProviders (no answers).
+ * Unproved: budget-gated consumption of only the first unit and a refill
+ * consuming the rest once (refill replaces a counter total; it is not a
+ * per-queue gate, and the paid novelty/typing/extraction script is unbound).
+ * Unproved: a later weave citing the retained evidence (no per-weave
+ * consumed-source/citation read exists).
+ */
+suite.test(test, "RUNS-06", "Lower-ranked sieve spans stay queued with their source ranges past a one-span page, a policy change and a kill", async () => {
+  const data = await (await loadFixtures()).readJson<{
+    scenarios: readonly { id: string; inputs: { spans: readonly { label: string; text: string; priority: string }[] } }[];
+  }>("runs-scenarios");
+  const authored = data.scenarios.find(scenario => scenario.id === "RUNS-06")?.inputs.spans;
+  if (!authored || authored.length !== 3) throw new Error("runs-scenarios RUNS-06 must author three spans");
+  const providers = await ScriptedProviders.start({ id: "runs-06-no-paid-work", steps: [], origins: ["model"] });
+  const engine = await EngineFixture.start({ id: "RUNS-06", profile, serverConfig: runs06Config(providers) });
+  await runs06GrantRoute(engine);
+  const client = engine.client;
+  await runs06QuietRecipes(engine, "runs-06-retention-only");
+  const basePolicy = await client.call("vault.sieve.policy", {});
+  const room = await client.call("vault.conversations.create", {
+    body: { v: 1, kind: "direct", member_ids: [engine.pairedActor.principalRef], title: "RUNS-06 sieve retention" },
+    text: [{ field: "title", value: "RUNS-06 sieve retention" }],
+  });
+
+  // Each source is scored under its own owner ranking row; its first read is
+  // awaited before the next row is written.
+  const sources: Runs06Source[] = [];
+  for (const input of authored) {
+    const policy = { ...basePolicy, date_interest: runs06DateInterest(input.priority) };
+    expect(await client.call("vault.sieve.policy.set", { policy })).toEqual(policy);
+    const witnessed = await client.call("vault.witness", {
+      conversation_ref: room.id, occurred_at: Math.floor(Date.now() / 1000),
+      messages: [{ author: "user", message_type: "text", content: input.text, is_visible: true, order: 0 }],
+    });
+    const turn = witnessed.turn?.id;
+    const message = witnessed.messages?.[0]?.id;
+    if (!turn || !message) throw new Error(`Witness of ${input.label} returned no TURN or MESSAGE record`);
+    expect(witnessed.messages).toHaveLength(1);
+    const evidence = await runs06Read(engine, turn);
+    const spans = (await client.call("vault.sieve.queue", { limit: 1000 })).spans.filter(span => span.turn === turn);
+    for (const span of spans) {
+      expect(span.source).toBe(message);
+      expect(span.end).toBeGreaterThan(span.start);
+      expect(span.owed).toContain("novelty");
+    }
+    const top = spans.find(span => span.kind === "date");
+    if (!top) throw new Error(`The sieve queued no date span for ${input.label}`);
+    sources.push({ label: input.label, priority: input.priority, turn, message, evidence, spans, top });
+  }
+  const [high, medium, low] = sources;
+  if (!high || !medium || !low) throw new Error("Three sources were not read");
+  expect([high.priority, medium.priority, low.priority]).toEqual(["highest", "middle", "lowest"]);
+  // Each source kept the ranking row it was read under: later rows rescored nothing.
+  expect(new Set([high.top.policy_digest, medium.top.policy_digest, low.top.policy_digest]).size).toBe(3);
+  expect(high.top.score).toBeGreaterThan(medium.top.score);
+  expect(medium.top.score).toBeGreaterThan(low.top.score);
+
+  const queued = await client.call("vault.sieve.queue", { limit: 1000 });
+  expect(queued.skipped_unreadable).toBe(0);
+  expect(queued.skipped_detached).toBe(0);
+  expect(queued.spans.every(span => sources.some(source => source.turn === span.turn))).toBe(true);
+  for (const source of sources) for (const span of source.spans) expect(queued.spans).toContainEqual(span);
+  const order = queued.spans.map(span => span.span);
+  expect(order.indexOf(high.top.span)).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf(high.top.span)).toBeLessThan(order.indexOf(medium.top.span));
+  expect(order.indexOf(medium.top.span)).toBeLessThan(order.indexOf(low.top.span));
+
+  // A one-span page serves the highest-ranked span and deletes nothing.
+  const head = await client.call("vault.sieve.queue", { limit: 1 });
+  expect(head.spans).toEqual(queued.spans.slice(0, 1));
+  expect(head.spans[0]?.turn).toBe(high.turn);
+  expect(await client.call("vault.sieve.queue", { limit: 1000 })).toEqual(queued);
+
+  // A replacement ranking row that would rank names above dates changes no
+  // queued span: a priority change neither drops nor rescores queued work.
+  const replaced = { ...basePolicy, date_interest: 1, name_interest: 1000 };
+  expect(await client.call("vault.sieve.policy.set", { policy: replaced })).toEqual(replaced);
+  expect(await client.call("vault.sieve.queue", { limit: 1000 })).toEqual(queued);
+  // Forged input: an invalid ranking row is refused and replaces nothing.
+  expect(await runs06Refusal(() => client.call("vault.sieve.policy.set", { policy: { ...replaced, max_turns_per_pass: 0 } })))
+    .toEqual({ status: 400, code: "BAD_REQUEST" });
+  expect(await client.call("vault.sieve.policy", {})).toEqual(replaced);
+
+  // Every queued span is also a retained original reading; none was consumed.
+  const retained = await client.call("vault.sieve.retained", { limit: 1000 });
+  for (const span of queued.spans) expect(retained.spans).toContainEqual(span);
+  expect((await client.call("vault.sieve.receipts", { limit: 1000 })).receipts).toEqual([]);
+
+  // Failure step: SIGKILL the owned server and restart the same vault, no reseed.
+  await engine.kill();
+  await engine.restart();
+  expect(await client.call("vault.sieve.queue", { limit: 1000 })).toEqual(queued);
+  expect(await client.call("vault.sieve.queue", { limit: 1 })).toEqual(head);
+  expect(await client.call("vault.sieve.retained", { limit: 1000 })).toEqual(retained);
+  expect((await client.call("vault.sieve.receipts", { limit: 1000 })).receipts).toEqual([]);
+  expect(await client.call("vault.sieve.policy", {})).toEqual(replaced);
+  for (const source of sources) {
+    const evidence = await client.call("vault.sieve.evidence", { turn: source.turn });
+    expect(evidence.turn).toBe(source.turn);
+    expect(evidence.owed).toBe(false);
+    expect(evidence.reading).toEqual(source.evidence.reading);
+  }
+
+  // No model call was made: the read is the rule sieve's, and paid work was dialed out.
+  await engine.close();
+  await providers.close();
+  expect(providers.seenFixtureCalls).toEqual([]);
+});
+
+/** 2026-10-17T00:00:00Z, the fixture's authored day, in Unix seconds: a setup input, never a clock change. */
+const RUNS07_OCCURRED = 1792195200;
+const RUNS07_PREDICATE = "observatory.lens";
+/** predicate_root drops the final dotted segment (crates/oneiron/src/claim/predicate_grammar.rs:193-202). */
+const RUNS07_PREDICATE_ROOT = "observatory";
+const RUNS07_STRANGER = "07000000000000000000000000000030";
+/** Arrival order is the reverse of sort order: the root stores children sorted by child_ref. */
+const RUNS07_CHILD_FIRST_SORTED = "07000000000000000000000000000011";
+const RUNS07_CHILD_SECOND_SORTED = "07000000000000000000000000000012";
+const RUNS07_CHILD_FORGED = "07000000000000000000000000000013";
+const RUNS07_CHILD_LIVE_HEAD = "07000000000000000000000000000014";
+const RUNS07_CHILD_EMPTY_RANGE = "07000000000000000000000000000015";
+const RUNS07_CHILD_STRANGER = "07000000000000000000000000000016";
+
+interface Runs07Scenario {
+  readonly id: string;
+  readonly inputs: {
+    readonly sources: readonly { readonly label: string; readonly sourceClass: Facade.ClaimSource; readonly text: string }[];
+    readonly postPinSourceEdit: string;
+    readonly invalidChildMetadata: { readonly hash: string; readonly trust: string };
+  };
+  readonly expected: {
+    readonly rootPinnedRevisionCount: number;
+    readonly duplicateCitationAddsSignals: number;
+    readonly livePostPinEditUsedByOldWake: boolean;
+    readonly childComputedHashTrusted: boolean;
+  };
+}
+type Runs07Accounting = FacadeResult<"vault.consolidation.accounting">;
+type Runs07BucketAccounting = Runs07Accounting["buckets"][number];
+type Runs07Child = FacadeInput<"vault.consolidation.frontier">["children"][number];
+
+async function runs07Scenario(): Promise<Runs07Scenario> {
+  const fixture = await (await loadFixtures()).readJson<{ readonly scenarios: readonly Runs07Scenario[] }>("runs-scenarios");
+  const scenario = fixture.scenarios.find(row => row.id === "RUNS-07");
+  if (!scenario) throw new Error("Missing RUNS-07 fixture scenario");
+  return scenario;
+}
+function runs07OnlyRow<T>(rows: readonly T[], label: string): T {
+  expect(rows).toHaveLength(1);
+  const row = rows[0];
+  if (row === undefined) throw new Error(`${label} is empty`);
+  return row;
+}
+function runs07OnlyBucket(accounting: Runs07Accounting): Runs07BucketAccounting {
+  return runs07OnlyRow(accounting.buckets, "root accounting buckets");
+}
+function runs07SameBytes(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+async function runs07EntityId(client: PublicHttpClient, entity_ref: string, kind: string): Promise<string> {
+  const read = await client.call("vault.get", { entity_ref });
+  if (!read.value) throw new Error(`Public entity missing: ${entity_ref}`);
+  expect(read.value.kind).toBe(kind);
+  return read.value.id_hex;
+}
+/** A typed call the engine must refuse; returns the public status and envelope code. */
+async function runs07Refusal<V extends FacadeVerb>(client: PublicHttpClient, verb: V, input: FacadeInput<V>):
+  Promise<{ readonly status: number; readonly code: string | undefined }> {
+  try {
+    await client.call(verb, input);
+  } catch (error) {
+    if (error instanceof PublicHttpError) return { status: error.reply.status, code: error.error?.code };
+    throw error;
+  }
+  throw new Error(`${verb} was admitted where the engine must refuse it`);
+}
+function runs07Claim(owner: string, scope: Facade.ClaimScope, source: Facade.ClaimSource, value: string,
+  id?: string): FacadeInput<"vault.claims.upsert"> {
+  return { ...(id === undefined ? {} : { id }), predicate: RUNS07_PREDICATE, subject_ref: owner, value,
+    confidence: 0.9, source, scope, evidence_turn_refs: [] };
+}
+function runs07Child(child_ref: string, bucket_hash: number[], value: string,
+  evidence: Facade.ConsolidationReference[]): Runs07Child {
+  return { child_ref, bucket_hash, judgement: { predicate: RUNS07_PREDICATE, value, confidence: 0.8 }, evidence };
+}
+
+/* RUNS-07 (partial) — the root trusts only its own pin and counts a duplicate child citation once.
+ * Promise: after the owner pins source-a, children carry references only; the root counts one
+ *   independent signal from its own source+hash however many children cite it, never takes a
+ *   child's hash/trust, keeps its original pin across a live-head correction and a restart.
+ * Doors: HTTP facade vault.structural.put, vault.claims.upsert, vault.get, vault.agents.create,
+ *   vault.consolidation.pin/.frontier/.accounting; raw POST of the same frontier route for the
+ *   malformed (forged hash/trust) wire; engine.pairActor for the stranger; engine.restart().
+ * Unproved: summary-a (needs authorized generated lineage), foreign-tool second signal (tool_output
+ *   lands Proposed, needs a public review path), bronze/crossProjectMerge (needs two real projects,
+ *   which today need the model-driven project drafter), ancestor taint meet, settled claims and
+ *   their corroboration receipts (bridge settlement has no root-attributed public read), the
+ *   four-child [2,0,3,1] order (two children here), out-of-bounds byte ranges (needs a pinnable TURN).
+ * Project axis: a public TASK stands in for amber because the default project id has no entity row
+ *   and pin requires a readable project selector (root_evidence.rs:319-326, visibility.rs:139-141).
+ * DEFECT expected today: the bucket names the claim's own facet; pin reads a facade claim's facet
+ *   from scope key "facet_ref" only, so this pin is refused as crossing its axes (see report).
+ */
+suite.test(test, "RUNS-07", "Consolidation root trusts only its own pin and counts duplicate citations once should work", async () => {
+  const engine = await EngineFixture.start({ id: "RUNS-07", profile, serverConfig: "[models.dreamer]\nenabled = false\n" });
+  const scenario = await runs07Scenario();
+  const sourceA = scenario.inputs.sources.find(row => row.label === "source-a");
+  if (!sourceA) throw new Error("Missing RUNS-07 source-a");
+  const client = engine.client;
+  const owner = engine.pairedActor.principalRef;
+  const base = await ownerBaseClaimScope(client, owner);
+  // A readable project-axis carrier (see header). TASK bodies need the TaskRole::Task byte.
+  const carrier = await client.call("vault.structural.put", {
+    kind: "TASK", body: { title: "RUNS-07 project axis", role: 1 },
+    occurred_at: RUNS07_OCCURRED, learned_at: RUNS07_OCCURRED,
+  });
+  const scope: Facade.ClaimScope = { ...base, scope_project_id: carrier.id_hex };
+
+  const written = await client.call("vault.claims.upsert", runs07Claim(owner, scope, sourceA.sourceClass, sourceA.text));
+  expect(written.approval).toBe("auto");
+  const sourceId = await runs07EntityId(client, written.claim_short_id, "CLAIM");
+  const pinnedRef: Facade.ConsolidationReference = { source_id: sourceId, claim_id: sourceId };
+  // The claim's own six-axis placement: base world is stored as absent, the owner's substrate
+  // facet, all relationships (absent), and the carrier project.
+  const bucket: Facade.ConsolidationRootBucket = { subject: owner, predicate_root: RUNS07_PREDICATE_ROOT,
+    world: null, facet: scope.scope_facet_id, relationship: null, project: scope.scope_project_id };
+
+  const pinned = await client.call("vault.consolidation.pin", { buckets: [{ bucket, evidence: [pinnedRef] }] });
+  const rootRef = pinned.root_ref;
+  const revisions = new Set<number>([pinned.revision]);
+  const pinnedBucket = runs07OnlyBucket(pinned);
+  const bucketHash = pinnedBucket.bucket_hash;
+  const pin = runs07OnlyRow(pinnedBucket.pinned, "root pins");
+  expect(pin.reference.source_id).toBe(sourceId);
+  expect(pin.trust_class).toBe(sourceA.sourceClass);
+  expect(pin.corroborates).toBe(true);
+  expect(pin.refusal ?? null).toBeNull();
+  expect(pin.ancestors).toHaveLength(0);
+  expect(pinnedBucket.children).toHaveLength(0);
+  expect(pinnedBucket.independent).toHaveLength(0);
+
+  // The owner corrects source-a after the pin: a fresh live head supersedes the pinned claim.
+  const corrected = await client.call("vault.claims.upsert",
+    runs07Claim(owner, scope, sourceA.sourceClass, scenario.inputs.postPinSourceEdit, sourceId));
+  expect(corrected.approval).toBe("auto");
+  expect(corrected.superseded_short_id).toBe(written.claim_short_id);
+  expect(corrected.claim_short_id).not.toBe(written.claim_short_id);
+  const liveHeadId = await runs07EntityId(client, corrected.claim_short_id, "CLAIM");
+  const afterEdit = await client.call("vault.consolidation.accounting", { root_ref: rootRef });
+  revisions.add(afterEdit.revision);
+  expect(afterEdit).toEqual(pinned);
+  // Control: a pin taken now reads the new head's bytes at a later revision, so an unchanged
+  // old root proves it never re-read the live head.
+  const livePin = await client.call("vault.consolidation.pin",
+    { buckets: [{ bucket, evidence: [{ source_id: liveHeadId, claim_id: liveHeadId }] }] });
+  expect(livePin.root_ref).not.toBe(rootRef);
+  expect(livePin.revision).toBeGreaterThan(pinned.revision);
+  const livePinRow = runs07OnlyRow(runs07OnlyBucket(livePin).pinned, "live-head pins");
+  expect(runs07SameBytes(livePinRow.content_hash, pin.content_hash)).toBe(false);
+
+  // Children finish out of order and both cite source-a: one independent signal.
+  const first = await client.call("vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_SECOND_SORTED, bucketHash, "amber", [pinnedRef])] });
+  revisions.add(first.revision);
+  const firstBucket = runs07OnlyBucket(first);
+  const firstSignal = runs07OnlyRow(firstBucket.independent, "independent sources after one child");
+  expect(firstSignal.reference.source_id).toBe(sourceId);
+  expect(firstBucket.duplicates_collapsed).toBe(0);
+  const second = await client.call("vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_FIRST_SORTED, bucketHash, "amber", [pinnedRef])] });
+  revisions.add(second.revision);
+  const counted = runs07OnlyBucket(second);
+  expect(counted.children.map(child => child.child_ref)).toEqual([RUNS07_CHILD_FIRST_SORTED, RUNS07_CHILD_SECOND_SORTED]);
+  expect(counted.independent.length - firstBucket.independent.length).toBe(scenario.expected.duplicateCitationAddsSignals);
+  expect(counted.duplicates_collapsed).toBe(1);
+  expect(counted.excluded_references).toBe(0);
+  const signal = runs07OnlyRow(counted.independent, "independent sources after two children");
+  // The counted signal is the root's own verified source+hash and trust, never a child's.
+  expect(signal.reference.source_id).toBe(sourceId);
+  expect(runs07SameBytes(signal.content_hash, pin.content_hash)).toBe(true);
+  expect(runs07SameBytes(signal.source_revision, pin.source_revision)).toBe(true);
+  expect(signal.trust_class).toBe(sourceA.sourceClass);
+  expect(runs07SameBytes(signal.content_hash, livePinRow.content_hash)).toBe(scenario.expected.livePostPinEditUsedByOldWake);
+  expect(counted.independent.some(row => !runs07SameBytes(row.content_hash, pin.content_hash)))
+    .toBe(scenario.expected.childComputedHashTrusted);
+  for (const child of counted.children) {
+    // Stored references serialize absent locator parts as null, so compare their identity.
+    expect(child.evidence.map(ref => [ref.source_id, ref.claim_id ?? null, ref.byte_range ?? null]))
+      .toEqual([[sourceId, sourceId, null]]);
+    expect(child).not.toHaveProperty("content_hash");
+    expect(child).not.toHaveProperty("trust_class");
+  }
+
+  // Identical replay changes nothing; every refused child leaves the accounting unchanged.
+  const replayed = await client.call("vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_SECOND_SORTED, bucketHash, "amber", [pinnedRef])] });
+  expect(replayed).toEqual(second);
+  const changed = await runs07Refusal(client, "vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_SECOND_SORTED, bucketHash, "cobalt", [pinnedRef])] });
+  expect(changed).toEqual({ status: 400, code: "BAD_REQUEST" });
+  const liveHeadCitation = await runs07Refusal(client, "vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_LIVE_HEAD, bucketHash, "cobalt", [{ source_id: liveHeadId, claim_id: liveHeadId }])] });
+  expect(liveHeadCitation).toEqual({ status: 400, code: "BAD_REQUEST" });
+  const emptyRange = await runs07Refusal(client, "vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_EMPTY_RANGE, bucketHash, "amber", [{ source_id: sourceId, byte_range: [3, 3] }])] });
+  expect(emptyRange).toEqual({ status: 400, code: "BAD_REQUEST" });
+  // Malformed wire on purpose: a child-supplied hash/trust is not part of the typed input.
+  const forged = await client.raw("POST", "/v1/core/facade/vault.consolidation.frontier", {
+    root_ref: rootRef,
+    children: [{ ...runs07Child(RUNS07_CHILD_FORGED, bucketHash, "amber", [pinnedRef]), ...scenario.inputs.invalidChildMetadata }],
+  }, { "x-oneiron-invocation": secretHex(16) });
+  expect(forged.status).toBe(400);
+  // Only the owner's root vouches: a paired agent cannot add a child to it.
+  await client.call("vault.agents.create", { agent_def_ref: RUNS07_STRANGER,
+    definition: { agent_id: "runs07-stranger", desc: "RUNS-07 unauthorized child submitter", version: "1" } });
+  const stranger = await engine.pairActor({ principalRef: RUNS07_STRANGER, actorClass: "agent" });
+  const strangerChild = await runs07Refusal(stranger.client, "vault.consolidation.frontier", { root_ref: rootRef,
+    children: [runs07Child(RUNS07_CHILD_STRANGER, bucketHash, "amber", [pinnedRef])] });
+  expect(strangerChild.status).toBe(403);
+  const settled = await client.call("vault.consolidation.accounting", { root_ref: rootRef });
+  revisions.add(settled.revision);
+  expect(settled).toEqual(second);
+
+  await engine.restart();
+  const restarted = await client.call("vault.consolidation.accounting", { root_ref: rootRef });
+  revisions.add(restarted.revision);
+  expect(restarted).toEqual(second);
+  expect(revisions.size).toBe(scenario.expected.rootPinnedRevisionCount);
+});
 
 /* RUNS-08 — Fanout preserves slots and cap should work.
  * Rows: OF-393, OF-290, OF-532. ARCH-0026 #swarm-fanout; ARCH-0079 #work,
@@ -273,10 +963,18 @@ suite.todo(test, "RUNS-07", "waits on typed parallel reference frontier and pinn
  * multiply by width. Read real cost/reservation receipts and refunds; never
  * use provider call count or copied child budgets as the shared-spend oracle.
  *
- * Missing: typed batch spawn/slot outcomes and shared lease accounting reads.
- * Do not use execute_code or construct an internal plan in unknown constraints.
+ * Missing: the typed doors now exist (vault.fanout.spawn/slots/launch/resume/
+ * resume_as/ack, tasks.wave, vault.budgets.lease/settlements). Two public
+ * prerequisites do not: (1) an owner door that sets the fan-out approval mode
+ * to manual. set_consult_fanout_policy has no server caller and the shipped
+ * mode is auto with threshold 1000, so widths 3/26 raise no check. (2) A
+ * deterministic public way to hold a task-bound live run between entries,
+ * which spawn needs as its live_run handle: the attach guard spans a whole
+ * entry, and a run leaves at settlement unless it parks. A refusal-only probe
+ * (bad handle 400, stranger resume 403, absent launch null) proves no slot,
+ * statement or cap and is not written. Do not use execute_code or an internal plan.
  */
-suite.todo(test, "RUNS-08", "waits on typed MCP/HTTP batched child slots and shared lease accounting reads (Fanout preserves slots and cap should work)");
+suite.todo(test, "RUNS-08", "waits on an owner door that sets manual fan-out approval and a deterministic public hold of a task-bound live run for vault.fanout.spawn (Fanout preserves slots and cap should work)");
 
 /* RUNS-09 — Proactive commitment waits for authorization should work.
  * Rows: OF-187, OF-194. ARCH-0026 #wake-model; ARCH-0067 #tasks.
@@ -304,8 +1002,15 @@ suite.todo(test, "RUNS-08", "waits on typed MCP/HTTP batched child slots and sha
  * the typed lifecycle door and read fulfilled with evidence + receipt. A later
  * due/cadence event must not emit another reminder for the closed obligation.
  *
- * Missing: typed indexed commitment birth, due proposal observation and
- * evidence-backed fulfilment calls. Never write commitment/index internals or
- * silently auto-authorize a user promise merely to get the connector to run.
+ * Missing: the typed commitment doors now exist (vault.commitments.create/get/
+ * instances/proposals/fulfill/release/supersede/ledger, reminder_route.get/set).
+ * The due proposal is written only inside a served Dreamer pass, which admits
+ * nothing without a routed extraction role and extraction egress. The birth
+ * evidence TURN then wakes extraction producers that have no deterministic
+ * script. Delivery needs a verified LINE/Slack/Telegram connection, whose
+ * checks call fixed provider URLs, and no public read lists a reminder's
+ * outbound attempts by key. With the Dreamer off, every "nothing sent before
+ * consent" read is vacuous. Never write commitment/index internals or
+ * auto-authorize a user promise to make the connector run.
  */
-suite.todo(test, "RUNS-09", "waits on typed indexed commitment creation, due proposal and evidence-backed fulfilment (Proactive commitment waits for authorization should work)");
+suite.todo(test, "RUNS-09", "waits on a scriptable served Dreamer pass for the due commitment wake, a verifiable loopback reminder connection and a public read of reminder outbound attempts (Proactive commitment waits for authorization should work)");
