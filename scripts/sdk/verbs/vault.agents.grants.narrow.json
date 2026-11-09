@@ -1,0 +1,15 @@
+{
+  "name": "vault.agents.grants.narrow",
+  "description": "The owner narrows or revokes the Dreamer's or the Coach's Steward grant; a narrowing that breaks a vault function answers what breaks and applies only with the confirm it gave.",
+  "input": "crate::task_verb::sdk::SystemAgentGrantNarrowRequest",
+  "output": "crate::task_verb::sdk::SystemAgentGrantNarrowed",
+  "call": "crate::task_verb::sdk::narrow_system_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.narrow\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

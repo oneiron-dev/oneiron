@@ -13,6 +13,10 @@ pub(crate) fn admits_preset(scope: &Scope, verb: &str) -> bool {
     scope.admits(verb, &record, &Scope::top())
 }
 
+/// The Steward role in one plain sentence, said beside its name in the
+/// roster verbs' output and in the SDK (ARCH-0043).
+pub const STEWARD_ROLE_NOTE: &str = "A Steward looks after the vault's memory for its owners: it can read and organise everything in this vault, but it can only suggest who joins or what role they get, and it can never give itself more access.";
+
 /// A Steward reads across its vault root.
 pub(crate) const STEWARD_READ_VERB: &str = "read";
 /// A Steward lands what it derives (for an agent: the Auto ceiling and the
