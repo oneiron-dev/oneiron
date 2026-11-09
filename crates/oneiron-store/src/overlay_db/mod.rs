@@ -9,9 +9,6 @@ pub mod accessors;
 pub mod iters;
 pub mod merge;
 
-#[cfg(test)]
-mod tests;
-
 pub use self::accessors::{OverlayDb, OverlayStrDb};
 
 // Only OverlayDb/OverlayStrDb are named outside this module

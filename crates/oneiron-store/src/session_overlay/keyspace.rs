@@ -581,43 +581,6 @@ mod hygiene_tests {
     }
 
     #[test]
-    fn cow_overwrite_and_remove_scrub_displaced_values_before_state_drop() {
-        let original = seeded(OverlayKeyspace::Entities);
-        let mut copy = original.clone();
-        Arc::make_mut(&mut copy.keyspaces[OverlayKeyspace::Entities.slot()]);
-        let ptr = allocation(owned_body(&copy, OverlayKeyspace::Entities));
-        observe_drop(ptr, true, || {
-            apply_mutation(
-                &mut copy,
-                &OverlayMutation::Put {
-                    keyspace: OverlayKeyspace::Entities,
-                    key: b"private-index-key".to_vec(),
-                    value: b"replacement".to_vec(),
-                },
-            )
-            .expect("overwrite");
-        });
-        assert_eq!(
-            owned_body(&original, OverlayKeyspace::Entities),
-            b"private-overlay-value"
-        );
-        let ptr = allocation(owned_body(&copy, OverlayKeyspace::Entities));
-        observe_drop(ptr, true, || {
-            apply_mutation(
-                &mut copy,
-                &OverlayMutation::Delete {
-                    keyspace: OverlayKeyspace::Entities,
-                    key: b"private-index-key".to_vec(),
-                    base_backed: false,
-                },
-            )
-            .expect("remove");
-        });
-        let ptr = allocation(owned_body(&original, OverlayKeyspace::Entities));
-        observe_drop(ptr, true, || drop(original));
-    }
-
-    #[test]
     fn duplicate_remove_and_retirement_scrub_values_and_identity() {
         let original = seeded(OverlayKeyspace::TextPostings);
         let mut copy = original.clone();

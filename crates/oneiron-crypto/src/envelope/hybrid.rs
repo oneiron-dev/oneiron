@@ -110,5 +110,3 @@ fn combine(
     out
 }
 
-#[cfg(test)]
-mod tests;

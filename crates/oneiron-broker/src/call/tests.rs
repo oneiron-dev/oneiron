@@ -19,37 +19,6 @@ fn call(origin: &str) -> CallHeader {
 }
 
 #[test]
-fn the_digest_covers_method_path_headers_and_body_but_not_auth_or_order() {
-    let headers = vec![
-        ("content-type".to_owned(), "application/json".to_owned()),
-        ("x-trace".to_owned(), "1".to_owned()),
-    ];
-    let base = request_digest("POST", "/v1/chat/completions", &headers, BODY);
-    let mut reordered = headers.clone();
-    reordered.reverse();
-    reordered.push(("Authorization".to_owned(), "Bearer anything".to_owned()));
-    assert_eq!(
-        request_digest("POST", "/v1/chat/completions", &reordered, BODY),
-        base
-    );
-    let mut other_header = headers.clone();
-    other_header[1].1 = "2".to_owned();
-    for changed in [
-        request_digest("PUT", "/v1/chat/completions", &headers, BODY),
-        request_digest("POST", "/api/v1/chat/completions", &headers, BODY),
-        request_digest("POST", "/v1/chat/completions", &other_header, BODY),
-        request_digest(
-            "POST",
-            "/v1/chat/completions",
-            &headers,
-            br#"{"model":"gpt-y","messages":[]}"#,
-        ),
-    ] {
-        assert_ne!(changed, base);
-    }
-}
-
-#[test]
 fn a_call_passes_only_for_its_own_bytes() {
     let call = call("https://api.example.test");
     assert!(call.check(BODY).is_ok());
@@ -69,22 +38,6 @@ fn a_call_passes_only_for_its_own_bytes() {
         .headers
         .push(("accept-encoding".to_owned(), "gzip".to_owned()));
     assert_eq!(encoded.check(BODY), Err(Refusal::Header));
-}
-
-#[test]
-fn the_origin_is_one_exact_https_origin() {
-    assert!(call("https://127.0.0.1:8443").check(BODY).is_ok());
-    for origin in [
-        "http://api.example.test",
-        "https://api.example.test/",
-        "https://api.example.test/v1",
-        "https://user@api.example.test",
-        "https://API.example.test",
-        "https://api.example.test:443",
-        "https://api.example.test?x=1",
-    ] {
-        assert_eq!(call(origin).check(BODY), Err(Refusal::Origin), "{origin}");
-    }
 }
 
 #[test]

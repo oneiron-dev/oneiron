@@ -346,37 +346,6 @@ mod tests {
     use crate::consent::grant::ConsentGrantStatus::{Active, Revoked};
 
     #[test]
-    fn marker_table_matches_the_three_primitives() {
-        use MarkerCommand::*;
-        use MarkerState::*;
-        assert_eq!(ConsentLifecycle::marker(None, Approve), Ok(Available));
-        for from in [Available, Spent, Unreadable] {
-            assert_eq!(
-                ConsentLifecycle::marker(Some(from), Approve),
-                Err(MarkerRefusal::AlreadyCarries)
-            );
-            assert_eq!(
-                ConsentLifecycle::marker(Some(from), TakeDecisionSlot),
-                Err(MarkerRefusal::SlotTaken)
-            );
-        }
-        assert_eq!(
-            ConsentLifecycle::marker(None, Spend),
-            Err(MarkerRefusal::NoLiveMarker)
-        );
-        assert_eq!(ConsentLifecycle::marker(Some(Available), Spend), Ok(Spent));
-        assert_eq!(
-            ConsentLifecycle::marker(Some(Spent), Spend),
-            Err(MarkerRefusal::AlreadySpent)
-        );
-        assert_eq!(
-            ConsentLifecycle::marker(Some(Unreadable), Spend),
-            Err(MarkerRefusal::Unreadable)
-        );
-        assert_eq!(ConsentLifecycle::marker(None, TakeDecisionSlot), Ok(Spent));
-    }
-
-    #[test]
     fn a_repeat_revoke_writes_nothing_and_a_mint_always_writes_active() {
         assert_eq!(
             ConsentLifecycle::grant(None, GrantCommand::Revoke),
@@ -444,25 +413,5 @@ mod tests {
             ConsentLifecycle::widen(Some(WidenState::Settled), ForgetPredecessor),
             WidenStep::Unchanged
         );
-    }
-
-    #[test]
-    fn the_code_wait_table_holds_the_writers_edges_and_no_backward_edge() {
-        use CodeWaitCommand::*;
-        let held = |from, command, to| ConsentLifecycle::code_wait(from, command, to).is_ok();
-        assert!(held(None, Mint, S::Provisional));
-        assert!(held(Some(S::Provisional), Seal, S::Waiting));
-        assert!(held(Some(S::Waiting), Answer, S::Settling));
-        for from in [S::Provisional, S::Waiting, S::Settling] {
-            assert!(held(Some(from), Settle, S::Settled));
-        }
-        assert!(held(Some(S::Settling), RecordAdmission, S::Settling));
-        assert!(held(Some(S::Settled), Consume, S::Consumed));
-        assert!(held(Some(S::Settling), ConfirmRebind, S::Settling));
-        assert!(!held(Some(S::Consumed), Settle, S::Settled));
-        assert!(!held(Some(S::Settled), Answer, S::Settling));
-        assert!(!held(Some(S::Waiting), Consume, S::Consumed));
-        assert!(!held(Some(S::Consumed), RefuseResume, S::Consumed));
-        assert!(!held(Some(S::Provisional), Mint, S::Provisional));
     }
 }

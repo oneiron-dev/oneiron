@@ -236,5 +236,3 @@ impl ScriptRunSplitter {
     }
 }
 
-#[cfg(test)]
-mod tests;

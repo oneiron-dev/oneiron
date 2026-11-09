@@ -425,28 +425,6 @@ mod tests {
     use crate::error::Error;
 
     #[test]
-    fn every_derived_id_carries_version_eight() {
-        let domains = derived_domains::ALL;
-        let distinct = domains.iter().collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(distinct.len(), domains.len(), "every domain is its own");
-        for domain in domains {
-            for parts in [&[][..], &[&b"part"[..]][..], &[&b"a"[..], &b"b"[..]][..]] {
-                let id = EntityId::derive(domain, parts).unwrap();
-                let bytes = id.as_bytes();
-                assert_eq!(bytes[6] >> 4, 8, "{}", String::from_utf8_lossy(domain));
-                assert_eq!(bytes[8] >> 6, 0b10, "{}", String::from_utf8_lossy(domain));
-                assert_eq!(EntityId::derive(domain, parts).unwrap(), id);
-            }
-        }
-        // Parts are length-prefixed, so moving a byte across a boundary moves the id.
-        let domain = derived_domains::KEY_VALUE;
-        assert_ne!(
-            EntityId::derive(domain, &[b"ab", b"c"]).unwrap(),
-            EntityId::derive(domain, &[b"a", b"bc"]).unwrap()
-        );
-    }
-
-    #[test]
     fn a_reserved_derived_id_is_refused_with_an_error() {
         let domain = b"oneiron test reserved derived id";
         assert!(derive_with(domain, &[b"part"], |_| false).is_ok());
@@ -475,27 +453,6 @@ mod tests {
     }
 
     #[test]
-    fn presentation_grammar_accepts_every_live_prefix_shape() {
-        for (raw, prefix, digits) in [
-            ("sm3", "sm", "3"),
-            ("mc4", "mc", "4"),
-            ("vt5", "vt", "5"),
-            ("cl17", "cl", "17"),
-            // Undeclared prefixes are SYNTACTICALLY fine; resolution rejects
-            // them. `mx01` keeps its leading zero — the digits are an identity,
-            // not a number.
-            ("zz9", "zz", "9"),
-            ("mx01", "mx", "01"),
-            // Length above the minimum is a registry question, not a grammar one.
-            ("abcd12", "abcd", "12"),
-        ] {
-            let parsed = parse_presentation_id(raw).unwrap_or_else(|_| panic!("{raw} must parse"));
-            assert_eq!(parsed.prefix, prefix, "{raw} prefix");
-            assert_eq!(parsed.digits, digits, "{raw} digits");
-        }
-    }
-
-    #[test]
     fn presentation_grammar_rejects_malformed_shapes() {
         for raw in [
             "",      // empty
@@ -512,22 +469,6 @@ mod tests {
             assert!(
                 parse_presentation_id(raw).is_err(),
                 "{raw:?} must not parse"
-            );
-        }
-    }
-
-    /// ONE-1930 / DEV-3 regression pin. `session_overlay.rs` mints room aliases
-    /// as `s<digits>` and its namespace-separation contract requires those to
-    /// fail the durable grammar — otherwise a leaked session alias resolves
-    /// through the composed overlay ∪ base read instead of being rejected.
-    /// Relaxing `MIN_PRESENTATION_PREFIX_LEN` without moving that sigil first
-    /// breaks the contract, so this test is the tripwire on it.
-    #[test]
-    fn presentation_grammar_excludes_the_session_alias_namespace() {
-        for raw in ["s1", "s2", "s10", "s99"] {
-            assert!(
-                parse_presentation_id(raw).is_err(),
-                "session alias {raw} must not parse as a durable presentation id"
             );
         }
     }

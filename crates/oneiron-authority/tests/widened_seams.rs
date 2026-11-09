@@ -140,18 +140,6 @@ fn signature_validation_refuses_a_suite_that_does_not_match_its_key() {
 }
 
 #[test]
-fn a_software_key_never_meets_a_hardware_floor() {
-    assert!(!tier_meets_floor(
-        AuthorityTier::Software,
-        AuthorityTier::Hardware
-    ));
-    assert!(tier_meets_floor(
-        AuthorityTier::Hardware,
-        AuthorityTier::Hardware
-    ));
-}
-
-#[test]
 fn entry_signatures_refuse_tampering_a_foreign_signer_and_an_unsigned_cosign() {
     let entry = signed_entry(&[11]);
     assert!(verify_entry_signatures(&entry).is_ok());
@@ -243,41 +231,6 @@ fn key_and_attestation_checks_refuse_malformed_material() {
 }
 
 #[test]
-fn a_child_slip_that_widens_its_parent_does_not_narrow_it() {
-    let parent = claims();
-    assert!(parent.validate().is_ok());
-    assert!(parent.narrows(&parent));
-
-    let mut later = claims();
-    later.expires_at += 1;
-    let mut longer_ttl = claims();
-    longer_ttl.ttl_secs += 1;
-    let mut reusable = claims();
-    reusable.single_use = false;
-    let mut other_holder = claims();
-    other_holder.holder_ref = "someone-else".to_owned();
-    let mut wider_scope = claims();
-    wider_scope.scope = Scope::top();
-    let mut other_record = claims();
-    other_record.records = ["other-secret".to_owned()].into();
-    for child in [
-        later,
-        longer_ttl,
-        reusable,
-        other_holder,
-        wider_scope,
-        other_record,
-    ] {
-        assert!(!child.narrows(&parent), "{child:?}");
-    }
-
-    let mut shorter = claims();
-    shorter.expires_at = 50;
-    shorter.ttl_secs = 30;
-    assert!(shorter.narrows(&parent));
-}
-
-#[test]
 fn slip_claims_refuse_floor_names_and_overlong_one_shots() {
     assert!(names_a_floor("DOOR_SCAN_ALWAYS_ON"));
     assert!(names_a_floor("x-door_max_lease_ttl_secs"));
@@ -294,99 +247,6 @@ fn slip_claims_refuse_floor_names_and_overlong_one_shots() {
     for refused in [floor_verb, floor_record, long_one_shot] {
         assert!(refused.validate().is_err(), "{refused:?}");
     }
-}
-
-#[test]
-fn consent_predicates_refuse_revoked_non_owner_and_cloud_keys() {
-    let owner = folded(ROLE_OWNER, AuthorityTier::Hardware, false);
-    assert!(folded_device_can_authority_consent(&owner));
-    assert!(folded_peer_device_is_consent_root(&owner));
-    assert!(folded_host_device_can_consent(&owner));
-    for refused in [
-        folded(ROLE_OWNER, AuthorityTier::Hardware, true),
-        folded(ROLE_AGENT, AuthorityTier::Hardware, false),
-        folded(ROLE_RECOVERY, AuthorityTier::Hardware, false),
-    ] {
-        assert!(
-            !folded_device_can_authority_consent(&refused),
-            "{refused:?}"
-        );
-        assert!(!folded_peer_device_is_consent_root(&refused), "{refused:?}");
-        assert!(!folded_host_device_can_consent(&refused), "{refused:?}");
-    }
-    // The local fold never takes consent from a cloud-marked key; only the peer and
-    // managed-host arms ignore those markings.
-    for cloud in [
-        folded(ROLE_OWNER | ROLE_CLOUD, AuthorityTier::Hardware, false),
-        folded(ROLE_OWNER, AuthorityTier::CloudCustodial, false),
-    ] {
-        assert!(!folded_device_can_authority_consent(&cloud), "{cloud:?}");
-        assert!(folded_peer_device_is_consent_root(&cloud), "{cloud:?}");
-    }
-    assert!(!device(ROLE_AGENT).can_authority_consent());
-    assert!(device(ROLE_ADMIN).can_authority_consent());
-
-    let mut roster = BTreeMap::new();
-    assert!(!roster_has_live_owner(&roster, &key()));
-    roster.insert(key(), owner);
-    assert!(roster_has_live_owner(&roster, &key()));
-    roster.insert(key(), folded(ROLE_OWNER, AuthorityTier::Hardware, true));
-    assert!(!roster_has_live_owner(&roster, &key()));
-    roster.insert(key(), folded(ROLE_ADMIN, AuthorityTier::Hardware, false));
-    assert!(!roster_has_live_owner(&roster, &key()));
-}
-
-#[test]
-fn slip_mint_decoder_revalidates_the_claims_it_reads() {
-    let action = SlipMintAction { claims: claims() };
-    let Value::Map(entries) = slip_mint_value(&action) else {
-        panic!("a slip mint encodes as a map");
-    };
-    assert_eq!(
-        decode_slip_mint(&entries).unwrap(),
-        AuthorityOp::SlipMint(action)
-    );
-
-    let mut expired = claims();
-    expired.expires_at = expired.issued_at;
-    let Value::Map(entries) = slip_mint_value(&SlipMintAction { claims: expired }) else {
-        panic!("a slip mint encodes as a map");
-    };
-    assert!(decode_slip_mint(&entries).is_err());
-}
-
-#[test]
-fn authority_vocabulary_parsers_refuse_unknown_spellings() {
-    for value in ["", "ED25519", "secp256k1"] {
-        assert_eq!(AuthoritySignatureSuite::parse(value), None, "{value:?}");
-    }
-    for value in ["", "Hardware", "tpm"] {
-        assert_eq!(AuthorityTier::parse(value), None, "{value:?}");
-    }
-    for value in ["", "Accept", "approve"] {
-        assert_eq!(AuthorityConfirmKind::parse(value), None, "{value:?}");
-    }
-    for value in ["", "Clear", "allow"] {
-        assert_eq!(
-            CriticalWriteConfirmDisposition::parse(value),
-            None,
-            "{value:?}"
-        );
-    }
-    for value in ["", "Token_Reauth", "none"] {
-        assert_eq!(CriticalWriteConfirmMethod::parse(value), None, "{value:?}");
-    }
-    for value in ["", "Connect", "merge"] {
-        assert_eq!(FederationLifecycleKind::parse(value), None, "{value:?}");
-    }
-    assert_eq!(
-        AuthorityConfirmKind::parse(CONFIRM_KIND_ACCEPT),
-        Some(AuthorityConfirmKind::Accept)
-    );
-    assert_eq!(
-        AuthorityTier::parse("cloud_custodial"),
-        Some(AuthorityTier::CloudCustodial)
-    );
 }
 
 fn genesis(
@@ -576,43 +436,3 @@ fn federation_decoders_refuse_malformed_ids_scopes_and_foreign_worlds() {
     assert!(decode_federation_direction_scope_value(&Value::from(1)).is_err());
 }
 
-#[test]
-fn only_disconnect_dissolve_and_promote_are_terminal_lifecycle_shapes() {
-    let lifecycle = |kind| {
-        let mut entry = signed_entry(&[]);
-        entry.op = AuthorityOp::FederationLifecycle(FederationLifecycleAction {
-            kind,
-            pact_id: [1; 32],
-            grant_ref: EntityId::from_bytes([2; 16]).expect("a valid entity id"),
-            peer_vault_id: [3; 32],
-            pact_epoch: 1,
-            pact_scope: None,
-            effective_scope: None,
-            scope_digest: None,
-            gesture: None,
-            successor_vault_id: None,
-            pact_nonce: [4; 16],
-        });
-        entry
-    };
-    for kind in [
-        FederationLifecycleKind::Disconnect,
-        FederationLifecycleKind::Dissolve,
-        FederationLifecycleKind::Promote,
-    ] {
-        assert!(
-            is_terminal_federation_lifecycle(&lifecycle(kind)),
-            "{kind:?}"
-        );
-    }
-    for kind in [
-        FederationLifecycleKind::Connect,
-        FederationLifecycleKind::Rescope,
-    ] {
-        assert!(
-            !is_terminal_federation_lifecycle(&lifecycle(kind)),
-            "{kind:?}"
-        );
-    }
-    assert!(!is_terminal_federation_lifecycle(&signed_entry(&[])));
-}

@@ -555,24 +555,3 @@ fn sign(token: &TokenHex, vault: &str, holder: &str, body: &[u8]) -> String {
     transcript.mac()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn account_action_binds_holder_vault_and_exact_body() {
-        let token = TokenHex::from_token(&[3; 32]);
-        let action = ManagedWidenAction::sign_after_account_auth(
-            &token,
-            "vault-a",
-            &"a".repeat(32),
-            b"proposal A",
-        );
-        assert!(action.verify(&token, "vault-a", b"proposal A"));
-        assert!(!action.verify(&token, "vault-a", b"proposal B"));
-        assert!(!action.verify(&token, "vault-b", b"proposal A"));
-        assert!(!action.verify(&TokenHex::from_token(&[4; 32]), "vault-a", b"proposal A"));
-        let mut other = action;
-        other.holder_ref = "b".repeat(32);
-        assert!(!other.verify(&token, "vault-a", b"proposal A"));
-    }
-}

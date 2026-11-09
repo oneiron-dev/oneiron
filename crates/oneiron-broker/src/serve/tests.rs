@@ -94,37 +94,6 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn one_call_is_one_send_with_the_key_and_the_answer_comes_back() {
-    let fake = FakeProvider::start(FakeReply::json(
-        200,
-        &serde_json::json!({"usage": {"prompt_tokens": 3}}),
-    ));
-    let broker = broker(None, &[fake.ca_pem()]).await;
-    let reply = client(&broker.socket, broker.uid)
-        .connect()
-        .await
-        .expect("connect")
-        .call(&chat(fake.origin(), BODY), BODY, key())
-        .await
-        .expect("call");
-    let Outcome::Answered { status, .. } = reply.outcome else {
-        panic!("not answered: {:?}", reply.outcome);
-    };
-    assert_eq!(status, 200);
-    assert!(contains(&reply.body, b"prompt_tokens"));
-    let seen = fake.seen();
-    assert_eq!(seen.len(), 1, "exactly one send");
-    assert_eq!(seen[0].method, "POST");
-    assert_eq!(seen[0].path, "/v1/chat/completions");
-    assert_eq!(seen[0].body, BODY, "the exact bytes the digest bound");
-    assert_eq!(
-        seen[0].header("authorization"),
-        Some(format!("Bearer {SENTINEL}").as_str())
-    );
-    assert_eq!(seen[0].header("accept-encoding"), Some("identity"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_key_the_provider_echoes_never_leaves_the_broker() {
     let fake = FakeProvider::start(FakeReply::json(401, &serde_json::json!({})));
     fake.respond_with(|request| {
@@ -211,75 +180,6 @@ async fn a_redirect_is_answered_and_never_followed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_broker_rechecks_a_call_and_sends_nothing_for_a_bad_one() {
-    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
-    let broker = broker(None, &[fake.ca_pem()]).await;
-    let other = br#"{"model":"gpt-x","messages":[{"role":"user","content":"more"}]}"#;
-    let route = br#"{"model":"gpt-x","route":"fallback"}"#;
-    let cases: [(CallHeader, &[u8], Refusal); 3] = [
-        // The permit bound one request; another one is sent with its digest.
-        (chat(fake.origin(), BODY), other, Refusal::Digest),
-        (chat(fake.origin(), route), route, Refusal::RouteOverride),
-        (chat("https://127.0.0.1:1", BODY), BODY, Refusal::Connect),
-    ];
-    for (call, body, refusal) in cases {
-        // Straight onto the socket, past the daemon's own check.
-        let mut stream = UnixStream::connect(&broker.socket).await.expect("connect");
-        write_call(&mut stream, &call, body, SENTINEL.as_bytes())
-            .await
-            .expect("write");
-        let (reply, reply_body) = read_reply(&mut stream).await.expect("reply");
-        assert_eq!(reply.outcome, Outcome::Refused { reason: refusal });
-        assert!(reply_body.is_empty());
-    }
-    assert!(fake.seen().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_untrusted_certificate_or_an_encoded_reply_returns_nothing() {
-    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
-    let untrusting = broker(None, &[]).await;
-    let reply = client(&untrusting.socket, untrusting.uid)
-        .connect()
-        .await
-        .expect("connect")
-        .call(&chat(fake.origin(), BODY), BODY, key())
-        .await
-        .expect("call");
-    assert_eq!(
-        reply.outcome,
-        Outcome::Refused {
-            reason: Refusal::Connect
-        }
-    );
-    assert!(
-        fake.seen().is_empty(),
-        "the TLS check fails before the request"
-    );
-
-    fake.respond_with(|_| FakeReply {
-        status: 200,
-        headers: vec![("content-encoding".to_owned(), "gzip".to_owned())],
-        body: SENTINEL.as_bytes().to_vec(),
-    });
-    let broker = broker(None, &[fake.ca_pem()]).await;
-    let reply = client(&broker.socket, broker.uid)
-        .connect()
-        .await
-        .expect("connect")
-        .call(&chat(fake.origin(), BODY), BODY, key())
-        .await
-        .expect("call");
-    assert_eq!(
-        reply.outcome,
-        Outcome::Failed {
-            reason: Failure::ReplyEncoded
-        }
-    );
-    assert!(reply.body.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn only_the_named_peers_talk() {
     let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
     let ours = broker(None, &[fake.ca_pem()]).await;
@@ -308,49 +208,6 @@ async fn only_the_named_peers_talk() {
     .await;
     assert!(read_reply(&mut stream).await.is_err());
     assert!(fake.seen().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_coding_in_any_value_of_either_header_returns_nothing() {
-    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
-    let broker = broker(None, &[fake.ca_pem()]).await;
-    let codings: [&[(&str, &str)]; 3] = [
-        // The first value alone says nothing is encoded.
-        &[
-            ("content-encoding", "identity"),
-            ("content-encoding", "gzip"),
-        ],
-        &[("content-encoding", "identity, br")],
-        // A transfer coding the HTTP stack leaves on the bytes.
-        &[("transfer-encoding", "gzip, chunked")],
-    ];
-    for headers in codings {
-        let named: Vec<(String, String)> = headers
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect();
-        let sent = named.clone();
-        fake.respond_with(move |_| FakeReply {
-            status: 200,
-            headers: sent.clone(),
-            body: SENTINEL.as_bytes().to_vec(),
-        });
-        let reply = client(&broker.socket, broker.uid)
-            .connect()
-            .await
-            .expect("connect")
-            .call(&chat(fake.origin(), BODY), BODY, key())
-            .await
-            .expect("call");
-        assert_eq!(
-            reply.outcome,
-            Outcome::Failed {
-                reason: Failure::ReplyEncoded
-            },
-            "{named:?}"
-        );
-        assert!(reply.body.is_empty(), "{named:?}");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

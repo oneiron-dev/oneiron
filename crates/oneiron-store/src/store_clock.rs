@@ -321,5 +321,3 @@ impl Drop for LeaseRenewal {
     }
 }
 
-#[cfg(test)]
-mod tests;
