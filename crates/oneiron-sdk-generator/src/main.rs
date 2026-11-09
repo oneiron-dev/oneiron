@@ -13,6 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use oneiron_sdk_generator::{GenerateError, Run, py_is_decimal, py_is_space, py_repr};
 
@@ -432,7 +433,15 @@ fn formatter_width() -> i64 {
 /// digits (`sys.int_info.default_max_str_digits`). `None` where Python raises `ValueError`; a value past `i64`
 /// saturates (the caller caps it).
 fn python_int(text: &str) -> Option<i64> {
-    let body = text.trim_matches(py_is_space);
+    // CPython turns each non-ASCII white space into ' ' and strips ASCII white space (` \t\n\v\f\r`); the ASCII
+    // separators U+001C-U+001F, white space to `str.isspace()`, stay and are refused.
+    let body = text.trim_matches(|c: char| {
+        if c.is_ascii() {
+            matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+        } else {
+            py_is_space(c)
+        }
+    });
     let (negative, digits) = match body.strip_prefix(['+', '-']) {
         Some(rest) => (body.starts_with('-'), rest),
         None => (false, body),
@@ -620,22 +629,47 @@ fn failure(error: &GenerateError) -> ExitCode {
 
 // ---- arguments that are not UTF-8
 
-/// Byte `b` (0x80-0xFF) of an argument that is not UTF-8 stands as `U+10FF00 + b` while it is parsed: Python decodes
-/// `argv` with `surrogateescape`, giving the lone surrogate `U+DC00 + b`, which a Rust `String` cannot hold. (A real
-/// U+10FF80-U+10FFFF in an argument is shown as such a byte: private use, not met in a command line.)
-const ESCAPED_BYTE_BASE: u32 = 0x0010_FF00;
+/// Byte `b` (0x80-0xFF) of an argument that is not UTF-8 stands as `base + b` while it is parsed: Python decodes
+/// `argv` with `surrogateescape`, giving the lone surrogate `U+DC00 + b`, which a Rust `String` cannot hold. `base` is
+/// chosen per command line (`choose_stand_in_base`) so that no stand-in is a character an argument really holds; 0
+/// until then (no stand-ins).
+static STAND_IN_BASE: AtomicU32 = AtomicU32::new(0);
+
+/// The stand-in window for these arguments: the first `base` (a multiple of 0x100 in the private-use planes 15 and
+/// 16) whose `base + 0x80 ..= base + 0xFF` holds no character of any argument. Only a command line that names a
+/// character in each of the 512 windows finds none; it keeps the last window, whose characters then read as bytes.
+fn choose_stand_in_base(args: &[OsString]) -> u32 {
+    let held: Vec<u32> = args
+        .iter()
+        .flat_map(|arg| {
+            arg.to_string_lossy()
+                .chars()
+                .map(u32::from)
+                .collect::<Vec<_>>()
+        })
+        .filter(|&code| code >= 0x000F_0080)
+        .collect();
+    (0..0x200_u32)
+        .map(|window| 0x000F_0000 + window * 0x100)
+        .find(|base| {
+            !held
+                .iter()
+                .any(|code| (base + 0x80..=base + 0xFF).contains(code))
+        })
+        .unwrap_or(0x0010_FF00)
+}
 
 /// An argument as Python's `sys.argv` holds it, with the stand-ins for its undecodable bytes.
 #[cfg(unix)]
 fn decode_argument(arg: &OsStr) -> String {
     use std::os::unix::ffi::OsStrExt;
+    let base = STAND_IN_BASE.load(Ordering::Relaxed);
     let mut text = String::new();
     for chunk in arg.as_bytes().utf8_chunks() {
         text.push_str(chunk.valid());
         for &byte in chunk.invalid() {
             text.push(
-                char::from_u32(ESCAPED_BYTE_BASE + u32::from(byte))
-                    .unwrap_or(char::REPLACEMENT_CHARACTER),
+                char::from_u32(base + u32::from(byte)).unwrap_or(char::REPLACEMENT_CHARACTER),
             );
         }
     }
@@ -649,10 +683,9 @@ fn decode_argument(arg: &OsStr) -> String {
 
 /// The byte a stand-in holds.
 fn escaped_byte(c: char) -> Option<u32> {
+    let base = STAND_IN_BASE.load(Ordering::Relaxed);
     let code = u32::from(c);
-    (ESCAPED_BYTE_BASE + 0x80..=ESCAPED_BYTE_BASE + 0xFF)
-        .contains(&code)
-        .then(|| code - ESCAPED_BYTE_BASE)
+    (base != 0 && (base + 0x80..=base + 0xFF).contains(&code)).then(|| code - base)
 }
 
 /// A message as Python's stderr writes it (`errors='backslashreplace'`): each lone surrogate as `\udcXX`.
@@ -668,8 +701,8 @@ fn shown(text: &str) -> String {
 }
 
 /// `repr(arg)` of an argument: a lone surrogate is `\udcXX` in Python's `repr`. `py_repr` writes a stand-in as the
-/// escape of a code point that is not printable (`\U0010ffXX`) and every real backslash doubled, so each such escape
-/// is a stand-in.
+/// escape of a code point that is not printable (`\U000fXXXX` or `\U0010XXXX`, private use) and every real backslash
+/// doubled, so such an escape of a stand-in's code point is a stand-in.
 fn arg_repr(arg: &str) -> String {
     let repr = py_repr(arg);
     let mut out = String::with_capacity(repr.len());
@@ -703,6 +736,14 @@ fn arg_repr(arg: &str) -> String {
     out
 }
 
+/// `parser.error(message)`: the usage and `<prog>: error: <message>` on stderr, exit status 2.
+fn argument_refusal(prog: &str, width: i64, message: &str) -> ExitCode {
+    let usage = format_usage(prog, width);
+    let _ = std::io::stderr()
+        .write_all(format!("{usage}{prog}: error: {}\n", shown(message)).as_bytes());
+    ExitCode::from(2)
+}
+
 /// Port of generate.py:2928-2983 (main): the module level, then the arguments, then one mode.
 fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
     let root = match find_root() {
@@ -717,19 +758,9 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
         Err(error) => return failure(&error),
     };
     let width = formatter_width();
+    STAND_IN_BASE.store(choose_stand_in_base(args), Ordering::Relaxed);
     let args: Vec<String> = args.iter().map(|arg| decode_argument(arg)).collect();
-    let parsed = match parse(&args) {
-        // A directory named by bytes that are not UTF-8: Python writes there; the port refuses it (as G1a and G1b
-        // refuse such file names).
-        Parsed::Args {
-            out_dir: Some(dir), ..
-        } if dir.chars().any(|c| escaped_byte(c).is_some()) => Parsed::Error(format!(
-            "argument --out-dir: a directory name that is not UTF-8: {}",
-            arg_repr(&dir)
-        )),
-        parsed => parsed,
-    };
-    let (check, out_dir, package) = match parsed {
+    let (check, out_dir, package) = match parse(&args) {
         Parsed::Args {
             check,
             out_dir,
@@ -739,12 +770,7 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
             let _ = std::io::stdout().write_all(format_help(prog, width).as_bytes());
             return ExitCode::SUCCESS;
         }
-        Parsed::Error(message) => {
-            let usage = format_usage(prog, width);
-            let _ = std::io::stderr()
-                .write_all(format!("{usage}{prog}: error: {}\n", shown(&message)).as_bytes());
-            return ExitCode::from(2);
-        }
+        Parsed::Error(message) => return argument_refusal(prog, width, &message),
     };
     let result = if !package.is_empty() {
         // generate.py:2934-2949: a package build writes its own outputs in the tree; the docs mirror runs
@@ -757,6 +783,18 @@ fn generate_main(prog: &str, args: &[OsString]) -> ExitCode {
             }
         })
     } else if let Some(dir) = out_dir {
+        // A directory named by bytes that are not UTF-8, in the mode that uses it: Python writes there; the port
+        // refuses it, as G1a and G1b refuse such file names (coordinator ruling).
+        if dir.chars().any(|c| escaped_byte(c).is_some()) {
+            return argument_refusal(
+                prog,
+                width,
+                &format!(
+                    "argument --out-dir: a directory name that is not UTF-8: {}",
+                    arg_repr(&dir)
+                ),
+            );
+        }
         // generate.py:2950-2958: every output under the directory, and the three generated docs (SDKGEN-DOCS = A:
         // written here, no agent-docs.py).
         run.write_out_dir(Path::new(&Run::command_line_path(&dir)))
@@ -954,7 +992,7 @@ mod tests {
     // python3 -c "print(int(T))" on nelly (3.14.7), None for a ValueError, for each T below.
     #[test]
     fn columns_are_read_as_python_int() {
-        let cases: [(&str, Option<i64>); 19] = [
+        let cases: [(&str, Option<i64>); 20] = [
             (" 40 ", Some(40)),
             ("+40", Some(40)),
             ("-5", Some(-5)),
@@ -971,6 +1009,7 @@ mod tests {
             ("\u{2003} 72\u{3000}", Some(72)),
             ("040", Some(40)),
             ("- 5", None),
+            ("\x1c40\x1f", None),
             ("\u{b2}", None),
             ("4\u{6f0}", Some(40)),
             ("999999999999999999999999999999", Some(i64::MAX)),
@@ -985,12 +1024,24 @@ mod tests {
     // Python: sys.argv holds '\udcff' for a byte 0xff; repr('a\udcff') is 'a\udcff'; stderr writes it as \udcff.
     #[test]
     fn undecodable_arguments_show_as_python_shows_them() {
-        let stand_in = |byte: u32| char::from_u32(ESCAPED_BYTE_BASE + byte).expect("a stand-in");
+        // The window a command line with no private-use character gets (every test that uses stand-ins sets it).
+        let base = choose_stand_in_base(&[]);
+        assert_eq!(base, 0x000F_0000);
+        STAND_IN_BASE.store(base, Ordering::Relaxed);
+        let stand_in = |byte: u32| char::from_u32(base + byte).expect("a stand-in");
         let arg = format!("a{}", stand_in(0xff));
         assert_eq!(arg_repr(&arg), r"'a\udcff'");
         assert_eq!(shown(&format!("x {arg}")), r"x a\udcff");
         assert_eq!(arg_repr(r"\U0010ffff"), r"'\\U0010ffff'");
         assert_eq!(arg_repr("it's"), "\"it's\"");
+        // A real private-use character outside the window is itself (Python: repr('\U0010ff80') is '\U0010ff80').
+        assert_eq!(arg_repr("\u{10ff80}"), r"'\U0010ff80'");
+        assert_eq!(shown("\u{10ff80}"), "\u{10ff80}");
+        // A command line that holds a character of the first window moves the stand-ins to the next.
+        assert_eq!(
+            choose_stand_in_base(&[OsString::from("x\u{f0080}")]),
+            0x000F_0100
+        );
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
