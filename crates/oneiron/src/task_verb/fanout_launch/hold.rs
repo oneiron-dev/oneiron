@@ -191,6 +191,7 @@ pub(in crate::task_verb) fn hold_ask_in(
         pause: None,
         check_row: None,
         held_attempts: Vec::new(),
+        resumed_by_override: Vec::new(),
         dispatched_at: None,
         task_refs: Vec::new(),
         denied: false,
@@ -346,6 +347,32 @@ pub(in crate::task_verb) fn hold_planning_attempt_in(
         launch.held_attempts.push(attempt.id);
     }
     save_launch(vault, txn, launch)?;
+    Ok(())
+}
+
+/// RUN-HOLD: completes a planning attempt a generic Resume released from
+/// this launch's hold, in the writer of the launch's next apply, instead of
+/// parking it again. Its cut is frozen on the launch and waits for the
+/// owner's approval, which launches it; the planner's own work is done.
+pub(in crate::task_verb) fn complete_overridden_planner_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptRecord,
+    now: u64,
+) -> MemoryResult<()> {
+    let lease_owner = attempt
+        .lease_owner
+        .clone()
+        .ok_or_else(|| MemoryError::bad_request("wave planner lease has no owner"))?;
+    AttemptQueue::new(vault).complete_in_txn(
+        txn,
+        CompleteAttempt {
+            id: attempt.id,
+            lease_owner,
+            attempt_count: attempt.attempt_count,
+            now,
+        },
+    )?;
     Ok(())
 }
 
