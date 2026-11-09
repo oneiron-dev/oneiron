@@ -1,0 +1,20 @@
+{
+  "name": "vault.notes.create",
+  "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
+  "prose_links": [
+    "/markdown"
+  ],
+  "input": "CreateNoteRequest",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.create_note(&input.kind, &input.markdown)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "overlay_write": true
+}

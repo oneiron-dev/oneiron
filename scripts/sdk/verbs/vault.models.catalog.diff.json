@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.catalog.diff",
+  "description": "Diffs two immutable model catalog revisions, including prices, scores and retired offers.",
+  "input": "crate::llm::catalog_doors::ModelCatalogDiffRequest",
+  "output": "crate::llm::catalog_doors::ModelCatalogDiff",
+  "call": "memory.vault().diff_model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.diff\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

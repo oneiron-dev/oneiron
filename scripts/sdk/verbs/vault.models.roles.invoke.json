@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.roles.invoke",
+  "description": "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt.",
+  "input": "crate::llm::manifest::doors::ModelRoleInvoke",
+  "output": "crate::llm::manifest::doors::ModelRoleInvocation",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.roles.invoke\", &input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

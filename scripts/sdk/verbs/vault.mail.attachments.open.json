@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.attachments.open",
+  "description": "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers.",
+  "input": "crate::mail_pack::MailAttachmentOpenRequest",
+  "output": "crate::mail_pack::MailAttachmentView",
+  "call": "memory.mail_attachments_open(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

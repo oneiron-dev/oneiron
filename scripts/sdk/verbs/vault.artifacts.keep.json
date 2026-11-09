@@ -1,0 +1,27 @@
+{
+  "name": "vault.artifacts.keep",
+  "description": "Settles one waiting artifact proposal into a version.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::blob_artifact::ProposalSettleRequest",
+  "output": "crate::blob_artifact::KeptProposal",
+  "call": "memory.artifacts_keep(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Keeps one waiting proposal as a new version, once, with its receipt.\n",
+      "ts": "/** Keeps one waiting proposal as a new version, once, with its receipt. */",
+      "py": "Keeps one waiting proposal as a new version, once, with its receipt."
+    }
+  }
+}

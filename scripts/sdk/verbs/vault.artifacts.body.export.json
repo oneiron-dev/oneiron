@@ -1,0 +1,36 @@
+{
+  "name": "vault.artifacts.body.export",
+  "description": "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export.",
+  "refs": [
+    "/artifact_ref",
+    "/made_by/inputs/*/row",
+    "/made_by/trigger/task",
+    "/made_by/trigger/ask",
+    "/made_by/trigger/skill"
+  ],
+  "input": "crate::office_body::OfficeBodyExportVerbRequest",
+  "output": "crate::office_body::OfficeBodyExportView",
+  "call": "memory.artifacts_body_export(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Exports the live body as the artifact's next version.\n",
+      "ts": "/** Exports the live body as the artifact's next version. */",
+      "py": "Exports the live body as the artifact's next version."
+    }
+  }
+}

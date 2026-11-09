@@ -1,0 +1,39 @@
+{
+  "name": "cancel",
+  "description": "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.",
+  "refs": [
+    "/task_ref"
+  ],
+  "input": "TaskRequest",
+  "output": "crate::task_verb::TaskCancelReceipt",
+  "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
+  "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
+  "scope": "Write",
+  "proposes": true,
+  "mcp_scope": "addressed",
+  "mcp_fields": {
+    "task_ref": "task_ref"
+  },
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "task_ref"
+    ]
+  },
+  "section": true,
+  "binding": {
+    "assemble": true,
+    "native": "agent_verb",
+    "args": [
+      {
+        "name": "task_ref",
+        "kind": "text"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Cancels one task under the ladder's `auto` default. The receipt says\n    /// what stopped and what became a proposal instead.\n",
+      "ts": "/** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */",
+      "py": "Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "vault.rooms.find",
+  "description": "One page of a room's threads.",
+  "input": "RoomRequest",
+  "output": "crate::workspace_roster::RoomThreadPage",
+  "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "room_ref": "room_ref",
+    "turn_ref": "after"
+  },
+  "mcp_required_fields": [
+    "room_ref"
+  ],
+  "page": {
+    "rows": "rows",
+    "cursor": "next_after",
+    "resume": "turn_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "room_ref",
+        "type": "String"
+      },
+      {
+        "name": "after",
+        "type": "Option<String>"
+      },
+      {
+        "name": "limit",
+        "type": "Option<usize>"
+      }
+    ]
+  }
+}

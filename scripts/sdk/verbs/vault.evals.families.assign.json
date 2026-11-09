@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.families.assign",
+  "description": "Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse.",
+  "input": "crate::skill_optimize::eval_doors::EvalFamilyAssignRequest",
+  "output": "crate::skill_optimize::SourceFamily",
+  "call": "crate::skill_optimize::eval_doors::assign_family(memory.vault(), &memory.embedded_owner(\"vault.evals.families.assign\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

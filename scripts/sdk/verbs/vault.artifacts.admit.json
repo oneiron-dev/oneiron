@@ -1,0 +1,14 @@
+{
+  "name": "vault.artifacts.admit",
+  "description": "Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard.",
+  "input": "crate::blob_artifact::ArtifactAdmitSubmit",
+  "output": "crate::blob_artifact::ArtifactAskOutcome",
+  "call": "memory.artifacts_admit(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "artifact_asker"
+}

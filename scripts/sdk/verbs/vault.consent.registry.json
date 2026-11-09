@@ -1,0 +1,16 @@
+{
+  "name": "vault.consent.registry",
+  "description": "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants.",
+  "input": "crate::consent::ConsentRegistryQuery",
+  "output": "crate::consent::ConsentRegistry",
+  "call": "crate::consent::lifecycle::registry(memory.vault(), &memory.embedded_owner(\"vault.consent.registry\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

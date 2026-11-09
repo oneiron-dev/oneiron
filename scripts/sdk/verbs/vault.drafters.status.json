@@ -1,0 +1,16 @@
+{
+  "name": "vault.drafters.status",
+  "description": "The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor.",
+  "input": "crate::drafter::DrafterStatusRequest",
+  "output": "crate::drafter::DrafterStatus",
+  "call": "crate::drafter::drafter_status_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.status\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

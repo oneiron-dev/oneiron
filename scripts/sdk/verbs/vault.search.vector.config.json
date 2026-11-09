@@ -1,0 +1,15 @@
+{
+  "name": "vault.search.vector.config",
+  "description": "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search.",
+  "input": "EmptyRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>",
+  "call": "memory.vector_search_config()?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_fields": {},
+  "mcp_scope": "filtered",
+  "openapi": true
+}

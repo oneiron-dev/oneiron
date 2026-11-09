@@ -1,0 +1,16 @@
+{
+  "name": "vault.skill_hubs.publishers.admit",
+  "description": "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else.",
+  "input": "SkillPublisherRequest",
+  "output": "crate::task_verb::sdk::SkillPublisherAdmission",
+  "call": "crate::task_verb::sdk::skill_publisher_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.admit\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

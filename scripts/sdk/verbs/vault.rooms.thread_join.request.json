@@ -1,0 +1,14 @@
+{
+  "name": "vault.rooms.thread_join.request",
+  "description": "Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it.",
+  "input": "crate::workspace_roster::ThreadJoinRequest",
+  "output": "crate::workspace_roster::ThreadJoinRequestView",
+  "call": "memory.rooms_thread_join_request(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vault.roots.requests.create",
+  "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
+  "input": "crate::task_verb::sdk::RootRequestCreateRequest",
+  "output": "crate::task_verb::sdk::OwnerWorkView",
+  "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

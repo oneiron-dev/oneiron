@@ -1,0 +1,12 @@
+{
+  "name": "vault.campaign.program.create",
+  "description": "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns.",
+  "input": "crate::campaign::surface::CreateCampaignProgramRequest",
+  "output": "crate::campaign::surface::CampaignProgramRecord",
+  "call": "memory.campaign_program_create(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

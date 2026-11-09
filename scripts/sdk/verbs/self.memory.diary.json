@@ -1,0 +1,12 @@
+{
+  "name": "self.memory.diary",
+  "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
+  "input": "DiaryEntryRequest",
+  "output": "crate::task_verb::sdk::DiaryEntryReceipt",
+  "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

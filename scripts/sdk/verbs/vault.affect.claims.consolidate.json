@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.claims.consolidate",
+  "description": "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction.",
+  "input": "crate::memory::affect::AffectClaimConsolidateRequest",
+  "output": "crate::memory::affect::AffectClaimConsolidation",
+  "call": "memory.affect_claim_consolidate_as_owner(&memory.embedded_owner(\"vault.affect.claims.consolidate\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

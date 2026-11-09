@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.checkout.publish",
+  "description": "Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head.",
+  "input": "crate::memory::checkout_doors::CheckoutPublishInput",
+  "output": "crate::memory::checkout_doors::CheckoutPublished",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.publish\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}

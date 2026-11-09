@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.crop",
+  "description": "Crops a held image to a rectangle.",
+  "input": "oneiron_browser::CropInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.crop(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

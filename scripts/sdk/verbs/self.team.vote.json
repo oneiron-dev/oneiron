@@ -1,0 +1,9 @@
+{
+  "name": "self.team.vote",
+  "input": "crate::team::TeamVoteInput",
+  "output": "crate::team::TeamRunAnswer",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Team",
+  "run_surface": "live"
+}

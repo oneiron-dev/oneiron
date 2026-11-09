@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.preferences.set",
+  "description": "The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp.",
+  "input": "SkillOptimizePreferencesSetRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeGoalRevision",
+  "call": "crate::task_verb::sdk::skill_optimize_preferences_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.set\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.demonstration.stop",
+  "description": "Stops a demonstration, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given; it ends before a send, pay, publish, destructive or unknown press.",
+  "input": "crate::task_verb::sdk::BrowserDemonstrationStopInput",
+  "output": "crate::task_verb::sdk::BrowserDemonstrationStopOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_stop(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStopInput>",
+    "description": "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}
