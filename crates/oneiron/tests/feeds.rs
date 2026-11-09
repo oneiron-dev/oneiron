@@ -1,11 +1,12 @@
-//! Change feed subscriptions (untangle slice 6.8a, primitive B), on the public crate surface only:
+//! Change feed subscriptions (untangle slices 6.8a and 6.8b, primitive B), on the public crate surface only:
 //! `Vault`, `ScopedReadActorKey` and `oneiron::feeds`. Run with
 //! `cargo test -p oneiron --all-features --test feeds`.
 
 use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::ScopedReadActorKey;
+use oneiron::edge::EdgeKind;
 use oneiron::feeds::{
-    FeedAckRequest, FeedEntryKind, FeedPage, FeedPosition, FeedReadRequest, FeedSelector,
+    FeedAckRequest, FeedEntryKind, FeedOp, FeedPage, FeedPosition, FeedReadRequest, FeedSelector,
     FeedSource, FeedStart, FeedSubscribeRequest,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -320,4 +321,75 @@ fn a_selector_names_each_source_once() {
     assert!(vault.feed_subscribe(&lane, &request).is_err());
     request.selector.sources = vec![FeedSource::Changes, FeedSource::Changes];
     assert!(vault.feed_subscribe(&lane, &request).is_err());
+}
+
+fn follow_from(
+    vault: &Vault,
+    key: &ScopedReadActorKey,
+    source: FeedSource,
+    start: FeedStart,
+) -> EntityId {
+    vault
+        .feed_subscribe(
+            &vault.scoped_read(key.clone()),
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![source],
+                    kinds: Vec::new(),
+                    entity_types: Vec::new(),
+                    predicates: Vec::new(),
+                },
+                start,
+            },
+        )
+        .expect("subscribe")
+        .subscription
+}
+
+fn edge_ops(page: &FeedPage, from: EntityId, to: EntityId, kind: &str) -> Vec<FeedOp> {
+    page.entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .edge
+                .as_ref()
+                .is_some_and(|edge| edge.source == from && edge.target == to && edge.kind == kind)
+        })
+        .map(|entry| entry.op)
+        .collect()
+}
+
+/// Untangle slice 6.8b: while nothing follows edges, an edge write leaves no edge feed row, so a
+/// subscription made afterwards from the feed's beginning finds none; once one follows, an edge
+/// reaches it as it is added and as it is removed.
+#[test]
+fn an_edge_is_fed_only_while_edges_are_followed() {
+    let (_dir, vault) = open();
+    let key = owner_key(&vault);
+    let (from, to) = (put_person(&vault), put_person(&vault));
+    vault
+        .put_edge(&from, EdgeKind::Mentions, &to, 0.5)
+        .expect("edge before any follower");
+
+    let subscription = follow_from(&vault, &key, FeedSource::Edges, FeedStart::Beginning);
+    let page = read(&vault, &key, subscription);
+    assert!(
+        edge_ops(&page, from, to, "mentions").is_empty(),
+        "no follower, no edge feed row: {page:?}"
+    );
+
+    vault
+        .put_edge(&from, EdgeKind::Supports, &to, 0.5)
+        .expect("edge");
+    assert!(
+        vault
+            .delete_edge(&from, EdgeKind::Supports, &to)
+            .expect("delete")
+    );
+    let page = read(&vault, &key, subscription);
+    assert_eq!(
+        edge_ops(&page, from, to, "supports"),
+        vec![FeedOp::EdgeAdded, FeedOp::EdgeRemoved],
+        "{page:?}"
+    );
 }
