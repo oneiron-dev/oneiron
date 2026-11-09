@@ -40,25 +40,12 @@ fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("test id")
 }
 
-/// A vault with no stored policy manifest, as the gate tests' `temp_vault`
-/// leaves it. A fresh vault stores one, the seeded default, and it goes
-/// through the production deindex (`batch::deindex_entity`); the gate tests'
-/// `#[cfg(test)]` helper `batch::deindex_entity_for_test` no longer compiles.
+/// A fresh vault. It holds one policy manifest, the seeded default;
+/// [`checker_vault`] writes its manifest over that row.
 fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault =
         crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
-    let id = default_policy_manifest_id().expect("default policy manifest id");
-    vault
-        .with_write_txn(|wtxn| {
-            crate::batch::deindex_entity(
-                &crate::secret_custody::CustodyWrite::of(&vault),
-                wtxn,
-                &id,
-            )?;
-            Ok(())
-        })
-        .expect("clear default policy manifest");
     (tmp, vault)
 }
 
@@ -226,12 +213,19 @@ fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
 
 /// A vault whose only policy manifest is [`checker_manifest`], naming the
 /// host checker `knob` when one is given.
+///
+/// The gate tests' `temp_vault` cleared the seeded default and stored this
+/// manifest at its own id. The deindex door refuses a policy manifest entity,
+/// and every stored manifest folds into the policy, so the seed cannot stay
+/// beside it. The manifest is written over the seeded default at its id: a
+/// local write there clears the seed mark, so the fold sees one trusted,
+/// locally written manifest, as the gate tests did.
 pub(crate) fn checker_vault(knob: Option<&str>) -> Result<(tempfile::TempDir, crate::Vault)> {
     let (tmp, vault) = temp_vault();
     let extra = knob.map(checker_entry).into_iter().collect();
     crate::test_support::put_policy_manifest_bytes(
         &vault,
-        test_id(0x22),
+        default_policy_manifest_id()?,
         &checker_manifest(extra),
     )?;
     Ok((tmp, vault))
