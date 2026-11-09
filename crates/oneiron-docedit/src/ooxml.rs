@@ -403,7 +403,10 @@ mod tests {
             b"<a>text</a>tail",
             b"<a b=\"1\" b=\"2\"/>",
         ] {
-            assert!(XmlTree::parse(bad, LIMITS).is_err(), "{bad:?}");
+            assert!(
+                XmlTree::parse(bad, &Resources::measuring()).is_err(),
+                "{bad:?}"
+            );
         }
         let deep = "<a>".repeat(17) + &"</a>".repeat(17);
         assert_eq!(

@@ -2,19 +2,15 @@
     clippy::disallowed_methods,
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
-use oneiron_docedit::retained_opc::{Editability, Error, Limits, Package, XmlLimits};
+use oneiron_docedit::resource::Resources;
+use oneiron_docedit::retained_opc::{Editability, Error, Limits, Package};
 const PART: &str = "word/document.xml";
 const PATH: &[&str] = &["root", "item"];
 fn limits() -> Limits {
     Limits {
         archive_bytes: 16 * 1024 * 1024,
-        entries: 1000,
         part_bytes: 4 * 1024 * 1024,
         expanded_bytes: 8 * 1024 * 1024,
-        xml: XmlLimits {
-            max_depth: 128,
-            max_nodes: 10_000,
-        },
     }
 }
 
@@ -28,7 +24,8 @@ fn invalid_references_and_namespace_bindings_refuse_exactly() {
         include_bytes!("fixtures/breaker/reserved_xmlns_binding.zip").as_slice(),
         include_bytes!("fixtures/breaker/prefixed_xmlns_attribute.zip").as_slice(),
     ] {
-        let mut package = Package::open(input, limits()).expect("ZIP opens");
+        let mut package =
+            Package::open(input, limits(), &Resources::measuring()).expect("ZIP opens");
         let prior = package.part(PART).expect("part");
         assert!(
             matches!(
@@ -52,7 +49,8 @@ fn bom_and_valid_namespace_edits_keep_every_other_byte() {
         include_bytes!("fixtures/breaker/valid_namespace_undeclaration.zip").as_slice(),
         include_bytes!("fixtures/breaker/valid_high_codepoint_reference.zip").as_slice(),
     ] {
-        let mut package = Package::open(input, limits()).expect("ZIP opens");
+        let mut package =
+            Package::open(input, limits(), &Resources::measuring()).expect("ZIP opens");
         let original = package.part(PART).expect("part").expect("document");
         let untouched: Vec<_> = package
             .names()
@@ -64,7 +62,7 @@ fn bom_and_valid_namespace_edits_keep_every_other_byte() {
             .replace_text(PART, PATH, "old", "changed")
             .expect("valid leaf edit");
         let exported = package.export().expect("write");
-        let reopened = Package::open(&exported, limits()).expect("reopen");
+        let reopened = Package::open(&exported, limits(), &Resources::measuring()).expect("reopen");
         let xml = reopened.part(PART).expect("part").expect("document");
         let at = original
             .windows(3)
@@ -92,7 +90,8 @@ fn deep_subprocess(name: &str, input: &[u8], edit: bool) {
             max_depth: 8,
             max_nodes: 10_000,
         };
-        let mut package = Package::open(input, policy).expect("bounded ZIP open");
+        let mut package =
+            Package::open(input, policy, &Resources::measuring()).expect("bounded ZIP open");
         assert_eq!(package.export().expect("no-op"), input);
         if edit {
             assert_eq!(package.editability(), Editability::Unsigned);
@@ -145,11 +144,11 @@ fn configured_node_and_depth_limits_apply_at_both_xml_doors() {
         max_depth: 2,
         max_nodes: 2,
     };
-    let mut meta = Package::open(metadata, small).expect("ZIP opens");
+    let mut meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
     assert_eq!(meta.editability(), Editability::MetadataUnsupported);
     assert!(meta.replace_text(PART, PATH, "old", "new").is_err());
     assert_eq!(meta.export().expect("no-op"), metadata);
-    let mut doc = Package::open(touched, small).expect("ZIP opens");
+    let mut doc = Package::open(touched, small, &Resources::measuring()).expect("ZIP opens");
     assert_eq!(doc.editability(), Editability::Unsigned);
     assert!(matches!(
         doc.replace_text(PART, PATH, "old", "new"),
@@ -157,17 +156,17 @@ fn configured_node_and_depth_limits_apply_at_both_xml_doors() {
     ));
     assert_eq!(doc.export().expect("no-op"), touched);
     small.xml.max_nodes = 4;
-    let mut doc = Package::open(touched, small).expect("ZIP opens");
+    let mut doc = Package::open(touched, small, &Resources::measuring()).expect("ZIP opens");
     doc.replace_text(PART, PATH, "old", "new")
         .expect("boundary admitted");
-    let mut meta = Package::open(metadata, small).expect("ZIP opens");
+    let mut meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
     assert_eq!(
         meta.editability(),
         Editability::MetadataUnsupported,
         "depth still bounds metadata"
     );
     small.xml.max_depth = 3;
-    meta = Package::open(metadata, small).expect("ZIP opens");
+    meta = Package::open(metadata, small, &Resources::measuring()).expect("ZIP opens");
     assert_eq!(
         meta.editability(),
         Editability::Unsigned,
@@ -178,7 +177,7 @@ fn configured_node_and_depth_limits_apply_at_both_xml_doors() {
 #[test]
 fn refusal_after_prior_checked_edit_keeps_the_candidate_exact() {
     let input = include_bytes!("fixtures/adversarial/plain.zip");
-    let mut package = Package::open(input, limits()).expect("ZIP opens");
+    let mut package = Package::open(input, limits(), &Resources::measuring()).expect("ZIP opens");
     package
         .replace_text(PART, PATH, "old", "changed")
         .expect("first checked patch");
@@ -191,7 +190,7 @@ fn refusal_after_prior_checked_edit_keeps_the_candidate_exact() {
     assert_eq!(package.export().expect("no partial change"), prior);
     let mut tight = limits();
     tight.part_bytes = 1024;
-    let mut tiny = Package::open(input, tight).expect("ZIP still opens");
+    let mut tiny = Package::open(input, tight, &Resources::measuring()).expect("ZIP still opens");
     assert!(
         tiny.replace_text(PART, PATH, "old", &"x".repeat(1024))
             .is_err()
@@ -204,7 +203,8 @@ fn checked_patch_rejects_archive_budget_before_state_changes() {
     let input = include_bytes!("fixtures/adversarial/plain.zip");
     let mut policy = limits();
     policy.archive_bytes = input.len();
-    let mut package = Package::open(input, policy).expect("archive at exact input ceiling");
+    let mut package = Package::open(input, policy, &Resources::measuring())
+        .expect("archive at exact input ceiling");
     assert!(matches!(
         package.replace_text(PART, PATH, "old", &"&".repeat(100)),
         Err(Error::Edit("edited archive size limit"))

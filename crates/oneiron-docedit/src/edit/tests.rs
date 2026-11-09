@@ -10,6 +10,7 @@ use crate::design_plan::MediaType;
 use crate::emit::tests::{png, record};
 use crate::graphic::Origin;
 use crate::ooxml::XmlTree;
+use crate::resource::Resources;
 
 pub(super) const SLIDE: &str = "ppt/slides/slide1.xml";
 const SECOND: &str = "ppt/slides/slide2.xml";
@@ -263,11 +264,16 @@ fn parts() -> Vec<(&'static str, String)> {
 
 /// The fixture deck, with a real PNG as the existing picture's media.
 pub(super) fn deck() -> Package {
-    let mut package = Package::open(&archive(&parts()), limits()).unwrap();
+    let mut package = Package::open(&archive(&parts()), limits(), &Resources::measuring()).unwrap();
     package
         .add_part(OLD_MEDIA, "image/png", png(4, 2, [10, 20, 30]))
         .unwrap();
-    Package::open(&package.export().unwrap(), limits()).unwrap()
+    Package::open(
+        &package.export().unwrap(),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap()
 }
 
 pub(super) fn target<'a>(package: &Package, slide: &'a str, shape: u32) -> Target<'a> {
@@ -319,7 +325,7 @@ pub(super) fn part(package: &Package, name: &str) -> String {
 /// The shape's source XML.
 pub(super) fn shape_xml(package: &Package, slide: &str, id: u32) -> String {
     let source = part(package, slide);
-    let tree = XmlTree::parse(source.as_bytes(), limits().xml).unwrap();
+    let tree = XmlTree::parse(source.as_bytes(), &Resources::measuring()).unwrap();
     let at = find_shape(&tree, id).unwrap();
     source[tree.nodes[at].span.clone()].to_owned()
 }
@@ -884,8 +890,14 @@ fn pptarena(case: &str) -> (Package, Package) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(case);
-    let open =
-        |name: &str| Package::open(&std::fs::read(dir.join(name)).unwrap(), limits()).unwrap();
+    let open = |name: &str| {
+        Package::open(
+            &std::fs::read(dir.join(name)).unwrap(),
+            limits(),
+            &Resources::measuring(),
+        )
+        .unwrap()
+    };
     (open("original.pptx"), open("ground_truth.pptx"))
 }
 
@@ -1155,7 +1167,7 @@ pub(super) fn with_notes_master(deck: &mut Package) {
 #[ignore = "writes the Office-oracle candidate to $ONEIRON_EDIT_CANDIDATE"]
 fn office_oracle_candidate() {
     let base = crate::emit::tests::oracle_deck().bytes;
-    let mut deck = Package::open(&base, limits()).unwrap();
+    let mut deck = Package::open(&base, limits(), &Resources::measuring()).unwrap();
     with_notes_master(&mut deck);
     let slide = |n: u32| format!("ppt/slides/slide{n}.xml");
     let (one, two, four, eight, nine) = (slide(1), slide(2), slide(4), slide(8), slide(9));
