@@ -1,0 +1,16 @@
+{
+  "name": "vault.shape.apply",
+  "description": "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan.",
+  "input": "crate::vault_shape::ShapeApplyRequest",
+  "output": "crate::vault_shape::ShapeApplyReceipt",
+  "call": "memory.shape_apply(&input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

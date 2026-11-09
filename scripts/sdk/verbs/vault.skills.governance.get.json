@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.governance.get",
+  "description": "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.",
+  "input": "HubSkillRequest",
+  "output": "crate::task_verb::sdk::SkillGovernanceView",
+  "call": "crate::task_verb::sdk::skill_governance_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.get\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

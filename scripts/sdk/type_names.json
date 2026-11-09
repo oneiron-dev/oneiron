@@ -1,0 +1,21 @@
+{
+  "oneiron::booking::agent_api::TimeRangeWire": "TimeRangeWire",
+  "oneiron::booking::constraint::TimeRangeWire": "ConstraintTimeRangeWire",
+  "oneiron::claim::learning_evidence::Observation": "Observation",
+  "oneiron::learning::doors::LearningCellView": "LearningCellView",
+  "oneiron::learning::doors::LearningEvidenceView": "LearningEvidenceView",
+  "oneiron::receipt::task_type_ref::TypeRef": "TaskTypeRefTypeRef",
+  "oneiron::skill_optimize::offer::snapshot::OfferAnswer": "OfferAnswer",
+  "oneiron::skill_optimize::offer_doors::OfferAnswerRequest": "OfferAnswerRequest",
+  "oneiron::task_verb::brief::TypeRef": "TypeRef",
+  "oneiron::team::doors::LearningCellView": "DoorsLearningCellView",
+  "oneiron::team::doors::LearningEvidenceView": "DoorsLearningEvidenceView",
+  "oneiron::workspace_roster::rooms::offer_settle::OfferAnswer": "OfferSettleOfferAnswer",
+  "oneiron::workspace_roster::rooms::offer_settle::OfferAnswerRequest": "OfferSettleOfferAnswerRequest",
+  "oneiron_authority::federation::scope::Scope": "Scope",
+  "oneiron_base::learning_estimate::Window": "LearningEstimateWindow",
+  "oneiron_browser::verbs::Observation": "VerbsObservation",
+  "oneiron_model::llm::scope::Scope": "ScopeScope",
+  "oneiron_store::key_custody::protocol::EvidenceKind": "ProtocolEvidenceKind",
+  "oneiron_store::write_envelope::claim_body::evidence_refs::EvidenceKind": "EvidenceKind"
+}

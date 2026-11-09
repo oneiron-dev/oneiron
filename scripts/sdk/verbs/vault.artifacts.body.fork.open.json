@@ -1,0 +1,33 @@
+{
+  "name": "vault.artifacts.body.fork.open",
+  "description": "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own.",
+  "refs": [
+    "/artifact_ref",
+    "/proposal_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyForkOpenRequest",
+  "output": "crate::office_body::OfficeBodyFork",
+  "call": "memory.artifacts_body_fork_open(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Opens a fork of the live body for machine work.\n",
+      "ts": "/** Opens a fork of the live body for machine work. */",
+      "py": "Opens a fork of the live body for machine work."
+    }
+  }
+}

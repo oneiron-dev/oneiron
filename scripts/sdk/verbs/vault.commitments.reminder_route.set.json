@@ -1,0 +1,16 @@
+{
+  "name": "vault.commitments.reminder_route.set",
+  "description": "Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged.",
+  "input": "crate::memory::commitment_doors::CommitmentReminderRouteSetRequest",
+  "output": "crate::memory::commitment_doors::CommitmentReminderRouteReply",
+  "call": "memory.commitments_reminder_route_set_as(&memory.embedded_owner(\"vault.commitments.reminder_route.set\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

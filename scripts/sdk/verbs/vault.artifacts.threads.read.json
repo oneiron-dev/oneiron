@@ -1,0 +1,19 @@
+{
+  "name": "vault.artifacts.threads.read",
+  "description": "Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::anchored_annotation::AnnotationThreadRequest",
+  "output": "Option<crate::anchored_annotation::AnnotationThreadView>",
+  "call": "memory.artifacts_threads_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "openapi": true
+}

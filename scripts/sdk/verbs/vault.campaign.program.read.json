@@ -1,0 +1,12 @@
+{
+  "name": "vault.campaign.program.read",
+  "description": "One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now.",
+  "input": "crate::campaign::surface::CampaignProgramReadRequest",
+  "output": "crate::campaign::surface::CampaignProgramReadResult",
+  "call": "memory.campaign_program_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

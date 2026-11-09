@@ -1,0 +1,17 @@
+{
+  "name": "vault.questions.outcomes.project",
+  "description": "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label.",
+  "input": "crate::receipt::QuestionOutcomesProjectRequest",
+  "output": "crate::receipt::QuestionOutcomesProjected",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes.project\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

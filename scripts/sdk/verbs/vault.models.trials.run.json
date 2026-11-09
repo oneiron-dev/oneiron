@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.trials.run",
+  "description": "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome.",
+  "input": "crate::llm::catalog_doors::ModelTrialRef",
+  "output": "crate::llm::catalog_doors::ModelTrialView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.trials.run\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

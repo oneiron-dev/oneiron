@@ -1,0 +1,17 @@
+{
+  "name": "vault.writes.critical_confirm.receipt",
+  "description": "The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim.",
+  "input": "crate::memory::CriticalWriteConfirmReceiptRequest",
+  "output": "crate::memory::CriticalWriteConfirmReceipt",
+  "call": "memory.critical_write_confirm_receipt_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.receipt\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

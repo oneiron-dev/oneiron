@@ -1,0 +1,17 @@
+{
+  "name": "vault.runs.review",
+  "description": "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer.",
+  "input": "crate::memory::run_review::RunReviewRequest",
+  "output": "crate::memory::run_review::RunReview",
+  "call": "memory.review_run_as_owner(&memory.embedded_owner(\"vault.runs.review\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

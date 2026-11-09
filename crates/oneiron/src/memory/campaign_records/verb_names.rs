@@ -57,7 +57,7 @@ pub const VAULT_CAMPAIGN_PROGRAM_ARCHIVE: &str = "vault.campaign.program.archive
 
 /// The campaign program verbs, in dispatch order.
 ///
-/// They are SDK rows (`scripts/sdk/agent-verbs.json`), so the verb table
+/// They are SDK rows (`scripts/sdk/verbs/`), so the verb table
 /// lists them to MCP, code mode and discovery; this door serves them to the
 /// resource routes. They are not in [`CAMPAIGN_SELF_VERBS`], which discovery
 /// advertises as bare code-mode tokens.

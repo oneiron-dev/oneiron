@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.web_connector",
+  "description": "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::web_connector::WebConnectorSetting",
+  "call": "crate::task_verb::sdk::read_web_connector_setting(memory)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

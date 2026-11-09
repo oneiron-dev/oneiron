@@ -1,0 +1,19 @@
+{
+  "name": "vault.search.temporal",
+  "description": "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.",
+  "input": "crate::memory::TemporalSearchRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>",
+  "call": "memory.query_temporal(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

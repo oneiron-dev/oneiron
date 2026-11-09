@@ -1,0 +1,16 @@
+{
+  "name": "vault.standing_blocks.get",
+  "description": "The owner reads one agent's configured standing block in one world: its handle, name and token floor.",
+  "input": "crate::task_verb::sdk::StandingBlockRequest",
+  "output": "crate::task_verb::sdk::StandingBlockView",
+  "call": "crate::task_verb::sdk::read_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.get\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

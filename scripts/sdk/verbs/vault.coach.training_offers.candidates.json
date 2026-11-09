@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.candidates",
+  "description": "Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination.",
+  "input": "crate::skill_optimize::offer_pilot::OfferCandidateQuery",
+  "output": "Vec<crate::skill_optimize::offer_pilot::OfferCandidateRecord>",
+  "call": "crate::skill_optimize::offer_pilot::candidates(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

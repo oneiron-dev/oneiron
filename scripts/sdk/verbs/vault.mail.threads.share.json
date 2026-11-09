@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.threads.share",
+  "description": "Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox.",
+  "input": "crate::mail_pack::MailThreadShareRequest",
+  "output": "crate::mail_pack::MailThreadShareReceipt",
+  "call": "memory.mail_threads_share(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.views.materialize",
+  "description": "Materialize a private linked working view from verified tested file frontiers in the authenticated owner account.",
+  "input": "crate::memory::code_view_doors::CodeViewMaterializeRequest",
+  "output": "crate::memory::code_view_doors::CodeWorkingView",
+  "call": "memory.code_view_materialize_as(&memory.embedded_owner(\"vault.code.views.materialize\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

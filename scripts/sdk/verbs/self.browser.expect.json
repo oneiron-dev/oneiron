@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.expect",
+  "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
+  "input": "crate::task_verb::sdk::BrowserExpectInput",
+  "output": "crate::task_verb::sdk::BrowserExpectOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.expect(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
+    "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

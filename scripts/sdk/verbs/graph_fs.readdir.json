@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.readdir",
+  "description": "List one directory at the mounted reference under the caller read gate, with a sealed continuation.",
+  "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsDirectoryView",
+  "call": "memory.graph_fs_readdir(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

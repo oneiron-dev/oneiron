@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.born_from",
+  "description": "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made.",
+  "input": "crate::blob_artifact::BornFromRequest",
+  "output": "crate::blob_artifact::BornFromView",
+  "call": "memory.artifacts_born_from(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// The artifacts and versions a task, ask, run, skill or agent run produced.\n",
+      "ts": "/** The artifacts and versions a task, ask, run, skill or agent run produced. */",
+      "py": "The artifacts and versions a task, ask, run, skill or agent run produced."
+    }
+  }
+}

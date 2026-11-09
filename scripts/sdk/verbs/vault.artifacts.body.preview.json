@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.body.preview",
+  "description": "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyPreviewRequest",
+  "output": "crate::office_body::XlsxPreview",
+  "call": "memory.artifacts_body_preview(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// The workbook an XLSX export would land now, recalculated.\n",
+      "ts": "/** The workbook an XLSX export would land now, recalculated. */",
+      "py": "The workbook an XLSX export would land now, recalculated."
+    }
+  }
+}

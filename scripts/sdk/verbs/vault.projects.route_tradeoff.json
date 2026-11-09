@@ -1,0 +1,14 @@
+{
+  "name": "vault.projects.route_tradeoff",
+  "description": "Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room.",
+  "input": "ProjectTradeoffRouteRequest",
+  "output": "crate::task_verb::TaskAskReceipt",
+  "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

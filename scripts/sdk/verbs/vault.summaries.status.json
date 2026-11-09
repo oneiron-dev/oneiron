@@ -1,0 +1,23 @@
+{
+  "name": "vault.summaries.status",
+  "description": "Reads the calling principal's own summary declaration and its retained completion or failure.",
+  "input": "crate::scope_summary::SummaryStatusRequest",
+  "output": "crate::scope_summary::ScopeSummaryStatus",
+  "call": "memory.summary_status(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryStatusRequest",
+        "field": "$"
+      }
+    ]
+  }
+}
