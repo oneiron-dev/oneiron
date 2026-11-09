@@ -504,6 +504,8 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
 // channel}) -> {credential, applied, records}, and self.credential.attenuate for
 // a narrower ceiling. A record's band is its kind, so a claim and a message
 // sit at two distinct positions without any extra world or facet setup.
+// Not proved here: a record stamped at a bottom position (no public writer
+// makes one), and the same comparison through recall and hydrate.
 suite.test(test, "AUTHORITY-06", "Scope position and ceiling should work", async () => {
   const engine = await EngineFixture.start({ id: "AUTHORITY-06", profile });
   const at = Date.parse("2026-10-01T09:00:00Z") / 1000;
