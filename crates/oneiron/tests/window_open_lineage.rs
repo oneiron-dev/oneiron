@@ -44,8 +44,7 @@ fn open_over(rows: &[(EntityId, u8)]) -> Vec<String> {
     for (id, entity_type) in rows {
         // A TURN's body is the map its readers decode; a PERSON's is free.
         let body = if *entity_type == ENTITY_TYPE_TURN {
-            rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "user")]))
-                .unwrap()
+            rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "user")])).unwrap()
         } else {
             b"learned this month".to_vec()
         };
@@ -87,9 +86,15 @@ fn a_window_opens_over_a_person_learned_in_its_month() {
 #[test]
 fn a_window_opens_over_several_rows_learned_in_its_month() {
     let rows = [
-        (EntityId::from_bytes([0x61; 16]).unwrap(), ENTITY_TYPE_PERSON),
+        (
+            EntityId::from_bytes([0x61; 16]).unwrap(),
+            ENTITY_TYPE_PERSON,
+        ),
         (EntityId::from_bytes([0x62; 16]).unwrap(), ENTITY_TYPE_TURN),
-        (EntityId::from_bytes([0x64; 16]).unwrap(), ENTITY_TYPE_PERSON),
+        (
+            EntityId::from_bytes([0x64; 16]).unwrap(),
+            ENTITY_TYPE_PERSON,
+        ),
     ];
     let carried = open_over(&rows);
     assert_eq!(

@@ -86,12 +86,7 @@ pub(super) fn window_packing_excludes_entity_with(
         |rtxn| {
             Ok(
                 crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
-                    || crate::settings::device_only_withholds(
-                        &vault.store,
-                        rtxn,
-                        device_only,
-                        id,
-                    )?,
+                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?,
             )
         },
     )? {
