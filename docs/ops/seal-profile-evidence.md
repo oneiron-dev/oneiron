@@ -143,8 +143,9 @@ The rule, by cause:
   forged response that claims any of these is unverifiable, never a failure.
   A failure outranks every unresolved result.
 - What genuine material says no to counts only when it is about the signer's
-  chains: a CRL whose signer is the issuer of a covered non-anchor certificate,
-  by key or by a key a trust anchor vouches for under that issuer's name, or an
+  chains: a CRL whose signer has revocation authority over a covered non-anchor
+  certificate (it issued it, or holds a key that certificate's own issuer
+  certified: a separate CRL-signing key or a rollover's link certificate), or an
   OCSP SingleResponse whose issuer and serial name a covered non-anchor
   certificate. Anything else claims nothing: an unrelated CA's stale CRL, an
   extra certificate revoking itself, or a responder's no about a certificate
@@ -161,9 +162,11 @@ or covered chain certificate issued a certificate for them. A CA's separate
 CRL-signing key, a key rollover's link certificate and a same-subject anchored
 CA are vouched for, so they are never shadows. A shadow reports possible
 tampering wherever the result would otherwise be unavailable or unknown; beside
-complete genuine coverage it is disregarded, and the material passes. A vouched
-key's CRL is about the chain it vouches for: its listing of a covered certificate
-is a revocation, and fails.
+complete genuine coverage it is disregarded, and the material passes. A key the
+certificate's own issuer certified is that issuer's revocation authority: its
+listing of the certificate is a revocation, and fails. A same-subject CA that
+only another trust anchor vouches for is no shadow, but two CAs may share a name
+(RFC 5280 §8): its CRL claims nothing about the other CA's certificates.
 
 Validation material decides only B-LT and B-LTA. A failed or `not_run`
 validation-material check never takes away the B-B or B-T profile the signature
