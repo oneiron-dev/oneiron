@@ -73,7 +73,7 @@ pub(super) fn project_goal_in_txn(
     let binding: ProjectGoalBinding =
         rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL))?;
     let (goal_claim, record) = vault
-        .project_intake_goal_in_txn(txn, binding.project)?
+        .project_intake_goal_for_coach_in_txn(txn, binding.project)?
         .ok_or(invalid("the skill's project has no readable goal record"))?;
     Ok(Some(ProjectGoalJoin {
         project: binding.project,
