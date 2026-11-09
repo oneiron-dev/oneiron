@@ -245,7 +245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/cancel/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | ONE-1896 two-rung graceful-cancel and LANDING protocol |
 | `src/attempt_queue/cancel/ops.rs` | src | m | 6 fn · 7 crate-vis | — | RUNG 1 of the graceful-cancel protocol plus the landing reserve dial |
 | `src/attempt_queue/cancel/terminal.rs` | src | m | 5 fn · 5 crate-vis | — | Landing completion, the hard cancel rung, and the runtime's warning doors |
-| `src/attempt_queue/cancel/types.rs` | src | m | 1 struct · 20 fn · 4 const · 2 re-export · 5 crate-vis | ForceCancelAuthority | Durable wire types of the ONE-1896 two-rung graceful-cancel protocol |
+| `src/attempt_queue/cancel/types.rs` | src | m | 1 struct · 17 fn · 4 const · 2 re-export · 5 crate-vis | ForceCancelAuthority | Durable wire types of the ONE-1896 two-rung graceful-cancel protocol |
 | `src/attempt_queue/cancel/verbs.rs` | src | s | 13 struct · 7 enum | AcceptAttemptLanding, AttemptLeaseWarningReport, CancelRejectionOutcome, CancelRequestOutcome, DialLandingReserve, FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel +12 | Verb inputs and typed outcomes for the ONE-1896 graceful-cancel doors |
 | `src/attempt_queue/companion_task.rs` | src | s | 7 struct · 5 enum · 2 fn | ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionTask, CompanionTaskStatus, CompleteCompanionTask, CompleteCompanionTaskOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome +4 | Companion task payload and durable queue result values |
 | `src/attempt_queue/completion.rs` | src | s | 3 crate-vis | — | Attempt completion inside a caller-owned transaction |
@@ -2489,7 +2489,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 2 enum · 4 fn · 8 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind, ReflectionGapScan | Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions |
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
-| `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
+| `src/dreamer_consolidation/kept_ask.rs` | src | s | 1 re-export · 2 crate-vis | — | The ask a kept decision went up as, kept actor-free (FIX 4591) |
 | `src/dreamer_consolidation/mod.rs` | src | s | 5 mod · 25 re-export · 33 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 19 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/memberships.rs` | src | s | 5 crate-vis | — | Relationship units named by a listed PERSON's admitted membership claims |
@@ -2515,7 +2515,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/person_about/claim_hooks.rs` | src | s | 3 crate-vis | — | The PEOPLE `about` hooks the CLAIM doors call, each in the door's own transaction before the row changes: a… |
 | `src/dreamer_consolidation/person_about/sources.rs` | src | s | 1 fn · 1 crate-vis | — | The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515) |
-| `src/dreamer_consolidation/provenance.rs` | src | m | 4 struct · 2 trait · 8 fn · 4 re-export · 9 crate-vis | ConsolidationSink, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | Consolidation lineage: provenance hops, kept decisions and evidence envelopes |
+| `src/dreamer_consolidation/provenance.rs` | src | m | 3 struct · 2 trait · 5 fn · 5 re-export · 9 crate-vis | ConsolidationSink, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | Consolidation lineage: provenance hops, kept decisions and evidence envelopes |
 | `src/dreamer_consolidation/provenance/verified_citations.rs` | src | s | 2 crate-vis | — | Strict decoding of parent-verified citation locators on attachments |
 | `src/dreamer_consolidation/recipe_failure.rs` | src | s | 3 crate-vis | — | What a failed consolidation recipe step parks as (OF-193a, Engine 10-21) |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 15 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
@@ -2645,7 +2645,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
 | `src/dreamer_promotion/writer.rs` | src | m | 8 crate-vis | — | The one-candidate promotion writer and its landed re-read |
 | `src/dreamer_runner/admission/buckets.rs` | src | s | 2 fn · 1 crate-vis | — | MACRO admission shares the queue's leases: one attempt per partition |
-| `src/dreamer_runner/admission/budget_line.rs` | src | s | 4 crate-vis | — | The original line established by a successful native admission |
+| `src/dreamer_runner/admission/budget_line.rs` | src | s | 2 crate-vis | — | The original line established by a successful native admission |
 | `src/dreamer_runner/admission/mod.rs` | src | L | 19 fn · 7 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
 | `src/dreamer_runner/admission/requester.rs` | src | s | 1 crate-vis | — | Terminal end of a queued TASK realization its requester withdrew (FIX 11687): the Dreamer lane's mirror of… |
 | `src/dreamer_runner/admission/settlement.rs` | src | s | 8 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
@@ -2848,16 +2848,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/program/types.rs` | src | m | 7 struct · 1 enum · 1 fn · 14 crate-vis | ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain, TurnProgramRegistration | The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting… |
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
 | `src/dreamer_runner/program/withdrawn.rs` | src | s | 6 crate-vis | — | A turn program whose original authorization was positively withdrawn ends, never held (FIX 11593, ruling… |
-| `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 5 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
+| `src/dreamer_runner/progress.rs` | src | m | 3 struct · 1 enum · 8 fn · 2 const · 1 re-export · 5 crate-vis | DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
 | `src/dreamer_runner/shadow_values.rs` | src | m | 12 struct · 10 enum · 7 fn · 1 const · 1 crate-vis | ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef, ShadowBridgeWindow, ShadowIsolation, ShadowIsolationRequired +14 | Immutable shadow-run artifact, request-part and evidence vocabulary |
 | `src/dreamer_runner/step_replay.rs` | src | m | 10 struct · 4 enum · 6 fn · 5 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot, ExecutorStepStart, ExposureKind, ExposureSlot +6 | — |
 | `src/dreamer_runner/store.rs` | src | L | 1 struct · 19 fn · 32 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tables.rs` | src | m | — | — | The side tables `dreamer_runner` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
-| `src/dreamer_runner/types.rs` | src | m | 24 struct · 12 enum · 17 fn · 3 re-export · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptProgressState +28 | Dreamer runner request/outcome vocabulary and its pure impls |
+| `src/dreamer_runner/types.rs` | src | m | 24 struct · 11 enum · 16 fn · 4 re-export · 3 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptProgressState +27 | Dreamer runner request/outcome vocabulary and its pure impls |
 | `src/dreamer_runner/types/park.rs` | src | s | 1 struct | ParkDreamerAttempt | Parking a Dreamer attempt in local runner state |
-| `src/dreamer_runner/types/retry_policy.rs` | src | s | 5 fn · 3 crate-vis | — | How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own… |
+| `src/dreamer_runner/types/retry_policy.rs` | src | s | 3 fn · 3 crate-vis | — | How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own… |
 | `src/dreamer_runner/wake_park.rs` | src | s | 1 struct · 1 fn | DreamerCheckpointDue | The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the… |
 | `src/dreamer_tournament/evidence.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | DreamerTournamentEvidenceStore | Branch-evidence and critique-artifact rows: keyspace, codec, and the read/write store |
 | `src/dreamer_tournament/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | OF-366 tournament claim-authoring runner primitives |
@@ -2867,7 +2867,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_tournament/types.rs` | src | m | 14 struct · 3 enum · 12 fn · 4 const · 9 crate-vis | DreamerTournamentAuthorFork, DreamerTournamentBlindJudgeContext, DreamerTournamentBordaBallot, DreamerTournamentBranch, DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict, DreamerTournamentCandidate, DreamerTournamentCandidateIdentity +9 | Tournament wire types, their validating constructors, and the pinned bounds |
 | `src/dreamer_tournament/validate.rs` | src | m | 19 crate-vis | — | Every structural predicate the tournament refuses on, and the one error constructor |
 | `src/dreamer_wake/arc_backstop.rs` | src | s | 1 fn · 3 crate-vis | — | The Arc backstop (FIX 7509 P8, ARCH-0026: "The nightly sweep is the backstop only"): Arcs aged a nightly… |
-| `src/dreamer_wake/deadline.rs` | src | s | 2 struct · 18 fn · 3 const · 5 crate-vis | WakeCancellation, WakePassDeadline | Monotonic wake-pass clock and cooperative cancellation flag |
+| `src/dreamer_wake/deadline.rs` | src | s | 1 fn · 2 const · 1 re-export · 1 crate-vis | — | Monotonic wake-pass clock and cooperative cancellation flag |
 | `src/dreamer_wake/driver.rs` | src | m | 1 struct · 11 fn · 5 const · 1 re-export · 2 crate-vis | DreamerWakeDriver | The wake loop: admit, warn, dispatch under panic containment, stop conditions |
 | `src/dreamer_wake/driver/admission.rs` | src | s | 1 crate-vis | — | The priority admission of one wake-pass iteration: cleanup, note review, free time, resident dreaming, skill… |
 | `src/dreamer_wake/driver/attribution.rs` | src | s | 2 crate-vis | — | One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended… |
@@ -2896,7 +2896,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/nightly/things/slices.rs` | src | s | 1 crate-vis | — | A nightly thing's children: one per project (FIX 8724) |
 | `src/dreamer_wake/observation.rs` | src | m | 10 re-export · 11 crate-vis | — | The wake observation (DOOR-144): what one wake pass recorded of itself |
 | `src/dreamer_wake/observation/checkpoint.rs` | src | m | 6 crate-vis | — | The wake observation's Checkpoint half: the cut a park's own write records, the check the deadline lane arms… |
-| `src/dreamer_wake/observation/live.rs` | src | m | 18 crate-vis | — | The live half of the wake observation: the passes and admitted calls running on one open vault |
+| `src/dreamer_wake/observation/live.rs` | src | s | 13 crate-vis | — | The live half of the wake observation: the passes and admitted calls running on one open vault |
 | `src/dreamer_wake/observation/read.rs` | src | s | 1 fn · 9 re-export | — | The wake observation's typed read: an attempt's or a pass's durable rows from one snapshot, one page at a… |
 | `src/dreamer_wake/owed.rs` | src | s | 5 crate-vis | — | The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled |
 | `src/dreamer_wake/policy.rs` | src | m | 4 struct · 2 enum · 8 fn · 2 re-export · 7 crate-vis | WakeIdleState, WakePolicyDecision, WakePolicyOutcome, WakePolicyTimerLease, WakePolicyTrigger, WakeRecipe | Row-backed wake admission |
@@ -2906,28 +2906,28 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/program/lapsed_sends.rs` | src | s | 1 crate-vis | — | The sends of a try that ended on its authority (FIX 11130) |
 | `src/dreamer_wake/projector.rs` | src | L | 1 struct · 2 fn · 17 crate-vis | ProjectorPolicy | The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the… |
 | `src/dreamer_wake/projector/erasure.rs` | src | s | 2 crate-vis | — | Erasure and demotion of TURNs out of the projection: the rounds a removed turn gave words to are retired… |
-| `src/dreamer_wake/read_phase.rs` | src | s | 1 fn · 11 crate-vis | — | A Dreamer pass's read phase and its short write (FIX 11568) |
+| `src/dreamer_wake/read_phase.rs` | src | s | 1 fn · 8 crate-vis | — | A Dreamer pass's read phase and its short write (FIX 11568) |
 | `src/dreamer_wake/recipe.rs` | src | m | 2 struct · 1 trait | WeaveRecipeDraft, WeaveRecipeExecutor, WeaveRecipeRuntime | Host-interpreted workflow skill at the Dreamer wake boundary |
 | `src/dreamer_wake/recipe/landing.rs` | src | s | 2 crate-vis | — | Where a recipe's output lands (FIX 8725, FIX 8726) |
 | `src/dreamer_wake/recipe/tests.rs` | test | m | — | — | Recipe read, trust and commit-to-settlement recovery regressions |
 | `src/dreamer_wake/recipe_wake.rs` | src | s | 1 crate-vis | — | The wake policy's recipe lane (ARCH-0026 #wake) |
-| `src/dreamer_wake/recipes.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | WakeRecipePolicy | Row-backed spending for the three wake recipes |
+| `src/dreamer_wake/recipes.rs` | src | s | 2 fn · 1 re-export · 3 crate-vis | — | Row-backed spending for the three wake recipes |
 | `src/dreamer_wake/refusal_dial.rs` | src | s | 1 fn | — | An agent's diary notes a change of its refusal dial (OF-533) |
 | `src/dreamer_wake/scheduling.rs` | src | m | 1 enum · 6 fn · 6 crate-vis | WakeTurnSubject | The host-facing enqueue doors; the engine owns no timer |
 | `src/dreamer_wake/settlement.rs` | src | m | 9 crate-vis | — | What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish |
-| `src/dreamer_wake/sieve/audit_windows.rs` | src | m | 5 struct · 2 enum · 2 fn · 9 crate-vis | SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding, SieveAuditWindow, SieveUnlocatedCause, SieveUnlocatedDiscovery, SieveWindowAudit | The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so… |
-| `src/dreamer_wake/sieve/audit_windows/finding_identity.rs` | src | s | 3 fn · 1 crate-vis | — | A window audit's discovery identity (FIX 7903) |
+| `src/dreamer_wake/sieve/audit_windows.rs` | src | m | 1 re-export · 9 crate-vis | — | The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so… |
+| `src/dreamer_wake/sieve/audit_windows/finding_identity.rs` | src | s | 1 crate-vis | — | A window audit's discovery identity (FIX 7903) |
 | `src/dreamer_wake/sieve/chunks.rs` | src | s | 10 crate-vis | — | A TURN's words as the sieve reads them: one chunk per source row, each with the digest that versions it… |
 | `src/dreamer_wake/sieve/evidence.rs` | src | s | 3 struct · 2 fn | SieveEvidenceCursor, SieveEvidenceRequest, SieveEvidenceView | Identity-preserving replay of a stored TURN through the continuous sieve |
 | `src/dreamer_wake/sieve/follower.rs` | src | s | 12 crate-vis | — | The sieve's half of its follower session (FIX 7510): what the follower captures of a TURN the sieve reads… |
-| `src/dreamer_wake/sieve/mod.rs` | src | m | 4 struct · 4 enum · 2 fn · 1 mod · 4 re-export · 8 crate-vis | SievePass, SieveQueue, SieveRung, SieveSkipped, SieveSpan, SpanBand, SpanKind, SpanOrigin | The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local… |
+| `src/dreamer_wake/sieve/mod.rs` | src | m | 3 struct · 2 fn · 1 mod · 5 re-export · 8 crate-vis | SievePass, SieveQueue, SieveSkipped | The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local… |
 | `src/dreamer_wake/sieve/policy.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | SievePolicy | The sieve's policy row: how much one pass reads, how interesting each kind of span is, how sure each rule… |
 | `src/dreamer_wake/sieve/read.rs` | src | m | 3 crate-vis | — | One turn's read: a whole read from its rows, a read that goes on where the text bound stopped it, and the… |
-| `src/dreamer_wake/sieve/recipes.rs` | src | m | 2 struct · 1 enum · 7 fn · 27 crate-vis | SieveAudit, SieveAuditRecord, SieveConsumeReceipt | Durable model-rung inputs, queue spending and unbiased retained-span samples |
-| `src/dreamer_wake/sieve/recipes/audit_erase.rs` | src | s | 3 crate-vis | — | Candidate refs in retained audit decisions, scrubbed with their saved copies |
+| `src/dreamer_wake/sieve/recipes.rs` | src | m | 3 fn · 1 re-export · 26 crate-vis | — | Durable model-rung inputs, queue spending and unbiased retained-span samples |
+| `src/dreamer_wake/sieve/recipes/audit_erase.rs` | src | s | 1 crate-vis | — | Candidate refs in retained audit decisions, scrubbed with their saved copies |
 | `src/dreamer_wake/sieve/recipes/consumption.rs` | src | s | 2 crate-vis | — | Who carries a spent span (FIX 7498): the nightly child whose branch holds the span's TURN, never the nightly… |
 | `src/dreamer_wake/sieve/recipes/typing_batch.rs` | src | s | 8 crate-vis | — | Typing-only rungs read per TURN (FIX 14711) |
-| `src/dreamer_wake/sieve/rules.rs` | src | m | 1 enum · 13 crate-vis | RuleClass | The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class… |
+| `src/dreamer_wake/sieve/rules.rs` | src | m | 1 re-export · 12 crate-vis | — | The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class… |
 | `src/dreamer_wake/sieve/tests.rs` | test | L | — | — | The sieve against the packet's checks (gate 3, ARCH-0026 Continuous): a turn chunk with a date and a name… |
 | `src/dreamer_wake/sieve/texts.rs` | src | m | 10 crate-vis | — | The sieve pass's read phase (FIX 11568): its text reads, made in a read snapshot before its writer opens… |
 | `src/dreamer_wake/sieve/words.rs` | src | m | 8 crate-vis | — | The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana… |
@@ -2938,7 +2938,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
 | `src/dreamer_wake/tests/coach_tune.rs` | test | s | — | — | The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake runs it on the Dreamer's runner… |
-| `src/dreamer_wake/types.rs` | src | m | 7 struct · 3 enum · 1 trait · 6 fn · 1 re-export · 6 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport +3 | Wake request and outcome vocabulary plus the executor contract |
+| `src/dreamer_wake/types.rs` | src | s | 1 struct · 1 trait · 4 fn · 3 re-export · 4 crate-vis | DreamerAttemptExecutor, WakeAttemptContext | Wake request and outcome vocabulary plus the executor contract |
 | `src/edge_regeneration.rs` | src | s | 3 crate-vis | — | The `regenerates` link proofs over stored rows (FIX 5972) |
 | `src/edit_distance.rs` | src | L | 4 struct · 1 enum · 11 fn · 3 const · 11 mod · 1 re-export · 6 crate-vis | FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `src/edit_distance/attribution/audit.rs` | src | s | 2 struct · 5 fn | AmendmentAuditFixture, AmendmentAuditRecord | Held-out judge audit (Blind Curator guard) |
@@ -4069,7 +4069,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
 | `src/llm/decision/slides_policy.rs` | src | s | 1 re-export | — | Defined below the model invocation layer |
 | `src/llm/decision/tests.rs` | test | m | — | — | — |
-| `src/llm/decision/types.rs` | src | s | 5 struct · 2 fn · 1 re-export · 3 crate-vis | DecisionReceipt, ImagePin, ReceiptAnswerer, ReceiptAsk, TypedDecision | Closed answer contracts and engine-owned decision receipts |
+| `src/llm/decision/types.rs` | src | s | 2 fn · 2 re-export · 3 crate-vis | — | Closed answer contracts and engine-owned decision receipts |
 | `src/llm/defaults.rs` | src | s | 4 fn · 1 re-export · 3 crate-vis | — | Vault-local inference defaults: the stored, owner-editable purpose-default table and the vault doors that… |
 | `src/llm/defaults/submit.rs` | src | s | 1 struct · 3 enum · 4 fn | PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission, PurposeDefaultSubmitter | The raw replacement of the inference defaults under the vault's policy power (FIX 8211) |
 | `src/llm/defaults/tests.rs` | test | m | — | — | Purpose policy and binding regressions |
@@ -4231,7 +4231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/asset_resolve/mod.rs` | src | m | 2 struct · 3 fn · 2 re-export · 6 crate-vis | ImageHandle, ImagePick | Generated images and the form each consumer reads (OF-328, OF-329) |
 | `src/memory/asset_resolve/reads.rs` | src | m | 4 fn · 3 crate-vis | — | Asset reads through a caller's lane |
 | `src/memory/asset_resolve/serving.rs` | src | s | 3 fn · 2 crate-vis | — | Asset serving through the bound actor's lane |
-| `src/memory/asset_resolve/types.rs` | src | s | 6 struct · 2 enum · 1 fn | AssetConsumer, HydratedAsset, ImageViewRequest, LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm | Asset resolution types |
+| `src/memory/asset_resolve/types.rs` | src | s | 5 struct · 2 enum · 1 fn · 1 re-export | AssetConsumer, HydratedAsset, ImageViewRequest, LandedImage, PulledImage, ResolvedAsset, ServedAssetForm | Asset resolution types |
 | `src/memory/authorship.rs` | src | m | 1 enum · 1 fn · 17 crate-vis | MemoryAuthoringAction | Actor-bound authorship checks |
 | `src/memory/birth_position.rs` | src | s | 1 fn · 1 crate-vis | — | Where a host binds a writer's TASKs to be born |
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
@@ -4563,7 +4563,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/usage_repair.rs` | src | m | 8 struct · 5 enum · 7 fn | UndecodableUsageList, UndecodableUsageReason, UndecodableUsageRow, UsageRepairAuthority, UsageRepairCaller, UsageRepairListRequest, UsageRepairReason, UsageRepairReceipt +5 | The authority seam of a host's usage repair (FIX 6476) |
 | `src/memory/vault_standing.rs` | src | s | 1 crate-vis | — | The owner or administrator standing a room reader presents |
 | `src/memory/voice_actor.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 5 crate-vis | VoiceBankActor, VoiceCreator | Credential-bound voice actors and their transaction-local proof values |
-| `src/memory/wake_observation.rs` | src | s | 13 struct · 4 enum · 3 fn · 2 const | ClaimAuthoringFallback, WakeCallState, WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector +9 | Durable and live wake-observation read vocabulary |
+| `src/memory/wake_observation.rs` | src | s | 12 struct · 3 enum · 1 fn · 2 const · 1 re-export | WakeCallState, WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector, WakeObservedAttempt +7 | Durable and live wake-observation read vocabulary |
 | `src/memory/web_fetch.rs` | src | m | 2 fn | — | Actor-bound web acquisition and import |
 | `src/memory/wellness_doors.rs` | src | s | 3 struct · 4 fn | WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
 | `src/memory/witness/archive.rs` | src | m | 8 crate-vis | — | Archive restore of witnessed MESSAGE rows (FIX 7777) |
@@ -4657,7 +4657,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/types.rs` | src | s | 3 struct · 1 enum · 1 trait · 3 fn · 1 re-export | CheckInvocation, CheckPhase, MergeBatch, MergeLanding, TestedBatch | Core half of `merge_queue::types`: its store-layer items live in `oneiron_store::merge_queue::types` and are… |
 | `src/model_decision/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Model-independent typed decision vocabulary and pure policy values |
 | `src/model_step_context.rs` | src | s | 1 struct · 1 enum · 1 re-export · 1 crate-vis | DurableStepContext, StepOutcome | Caller-owned model-step context and terminal outcomes |
-| `src/model_step_effect.rs` | src | s | 1 struct · 3 crate-vis | StepEffectBinding | Durable model-step identity frozen into outbound effects |
+| `src/model_step_effect.rs` | src | s | 1 re-export · 1 crate-vis | — | Durable model-step identity frozen into outbound effects |
 | `src/model_step_error.rs` | src | s | 1 enum · 2 type · 1 crate-vis | DurableStepError | Durable model-step failure and reply-check contracts |
 | `src/note.rs` | src | m | 21 re-export · 59 crate-vis | — | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `src/note/adapter_tests.rs` | test | m | — | — | Canonical program adapter laws; no native snapshot grants authority |
@@ -6047,7 +6047,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings.rs` | src | m | 7 struct · 2 enum · 13 fn · 3 const · 1 mod · 7 re-export · 10 crate-vis | AccentLayer, CustomizationLayer, CustomizationLayerValue, CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate, ModeLayer, TypeLayer +1 | Persisted customization settings and client-visible change events |
 | `src/settings/backup.rs` | src | s | 2 fn · 1 re-export | — | Core half of `settings::backup`: its store-layer items live in `oneiron_store::settings::backup` and are… |
 | `src/settings/board_layout.rs` | src | s | 2 struct · 6 fn · 1 const · 2 crate-vis | AgentBoardLayoutOverride, BoardLayoutSettings | The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: "better to just set the cap and… |
-| `src/settings/destination.rs` | src | m | 2 struct · 4 enum · 15 fn · 6 crate-vis | CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold | Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh… |
+| `src/settings/destination.rs` | src | m | 1 struct · 4 enum · 9 fn · 1 re-export · 5 crate-vis | CallerLocality, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold | Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh… |
 | `src/settings/device_local.rs` | src | s | 10 fn · 7 crate-vis | — | Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on… |
 | `src/settings/device_only.rs` | src | m | 11 crate-vis | — | What a world flagged device-only keeps on this device, row by row (DEC-0005) |
 | `src/settings/models.rs` | src | s | 4 fn · 1 crate-vis | — | The owner's model settings (OF-305): the standing quota fallbacks |
@@ -6407,7 +6407,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/asset_body/spool.rs` | src | s | 7 crate-vis | — | The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one… |
 | `src/store/asset_body/stage.rs` | src | L | 15 crate-vis | — | Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into… |
 | `src/store/attempt_archive_mark.rs` | src | s | 6 crate-vis | — | Core half of `store::attempt_archive_mark`: its store-layer items live in… |
-| `src/store/attempt_cancel.rs` | src | s | 7 struct · 5 enum · 1 const | AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding, AttemptLandingReserve, AttemptResumePoint +4 | The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume… |
+| `src/store/attempt_cancel.rs` | src | s | 6 struct · 4 enum · 1 const · 1 re-export | AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding, AttemptLandingReserve, CancelMode +2 | The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume… |
 | `src/store/attempt_id.rs` | src | s | 1 re-export | — | Stable queued-attempt identifiers: defined in `oneiron-store` with their side-table key and raw codecs, and… |
 | `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
 | `src/store/attempt_operations.rs` | src | s | 2 crate-vis | — | The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and… |
