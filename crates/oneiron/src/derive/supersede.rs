@@ -49,8 +49,10 @@ pub(super) fn stage_in_txn(
         Ok(allowance) => allowance,
         Err(refusal) => return refuse(vault, txn, context, old, refusal.token()),
     };
-    let (Some(new_body), Some(old_body)) = (claim_body_in(vault, txn, new)?, claim_body_in(vault, txn, old)?)
-    else {
+    let (Some(new_body), Some(old_body)) = (
+        claim_body_in(vault, txn, new)?,
+        claim_body_in(vault, txn, old)?,
+    ) else {
         return refuse(vault, txn, context, old, SUPERSEDE_LIFECYCLE);
     };
     if Vault::require_source_trust_supersession_rights(&new_body, &old_body).is_err() {

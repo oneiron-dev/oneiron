@@ -61,5 +61,8 @@ fn an_agents_derived_claim_citing_a_live_turn_passes_the_derivation_floor() {
     let landed = write_derived_claim(&vault, agent, person, &[turn])
         .expect("the write door answers")
         .unwrap_or_else(|codes| panic!("a derived claim citing a live TURN lands: {codes:?}"));
-    assert!(vault.get(&landed).expect("read").is_some(), "the claim is stored");
+    assert!(
+        vault.get(&landed).expect("read").is_some(),
+        "the claim is stored"
+    );
 }

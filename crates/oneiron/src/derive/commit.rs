@@ -70,9 +70,14 @@ impl ItemContext<'_> {
     pub(super) fn resolve(&self, named: &ItemRef) -> Result<EntityId> {
         match named {
             ItemRef::Stored(id) => Ok(*id),
-            ItemRef::Local(name) => self.landed.get(name).copied().ok_or(
-                crate::error::Error::InvariantViolation("a derivation item names an unlanded item"),
-            ),
+            ItemRef::Local(name) => {
+                self.landed
+                    .get(name)
+                    .copied()
+                    .ok_or(crate::error::Error::InvariantViolation(
+                        "a derivation item names an unlanded item",
+                    ))
+            }
         }
     }
 }
@@ -122,6 +127,9 @@ impl Vault {
                     DerivationItem::Settle(settle) => {
                         super::settle::stage_in_txn(self, txn, &context, settle)?
                     }
+                    DerivationItem::Archive(archive) => {
+                        super::archive::stage_in_txn(self, txn, &context, archive)?
+                    }
                 }
             };
             match &outcome {
@@ -140,7 +148,12 @@ impl Vault {
                 outcome,
             });
         }
-        put_batch_in_txn(self, txn, context.batch, &batch_record(stamp, context.now, &items))?;
+        put_batch_in_txn(
+            self,
+            txn,
+            context.batch,
+            &batch_record(stamp, context.now, &items),
+        )?;
         Ok(DerivationReceipt {
             batch: context.batch,
             items,

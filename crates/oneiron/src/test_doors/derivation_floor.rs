@@ -82,8 +82,14 @@ pub fn write_derived_claim(
         WriteActor::new(agent, EdgeActorClass::Agent),
         ClaimSource::Generated,
         WriteProvenance::new(rmpv::Value::Map(vec![
-            (rmpv::Value::from("surface"), rmpv::Value::from("vault.derive")),
-            (rmpv::Value::from("run"), rmpv::Value::from("derivation-floor")),
+            (
+                rmpv::Value::from("surface"),
+                rmpv::Value::from("vault.derive"),
+            ),
+            (
+                rmpv::Value::from("run"),
+                rmpv::Value::from("derivation-floor"),
+            ),
         ]))?,
         ClaimApprovalStatus::Proposed,
     );
@@ -91,15 +97,26 @@ pub fn write_derived_claim(
     let written = vault.with_write_txn_grouped(|txn| {
         vault
             .batch_in()
-            .claim_candidate(&id, candidate, &envelope, TimeRange { start: now, end: now }, now)
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
             .apply_recording_gate_decisions(txn)
     });
     match written {
         Ok(()) => Ok(Ok(id)),
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => Ok(Err(reason_codes
-            .iter()
-            .map(|code| (*code).to_owned())
-            .collect())),
+        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+            Ok(Err(reason_codes
+                .iter()
+                .map(|code| (*code).to_owned())
+                .collect()))
+        }
         Err(error) => Err(error),
     }
 }

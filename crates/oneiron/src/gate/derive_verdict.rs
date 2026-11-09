@@ -167,7 +167,8 @@ fn reaches_target(
     else {
         return Ok(false);
     };
-    let Some(mut record) = crate::federation::record_scope::scope_for_blob(store, txn, target, &raw)?
+    let Some(mut record) =
+        crate::federation::record_scope::scope_for_blob(store, txn, target, &raw)?
     else {
         return Ok(false);
     };

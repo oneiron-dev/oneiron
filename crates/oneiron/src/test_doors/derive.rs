@@ -2,9 +2,10 @@
 //! claims as an actor, read its batch record back, and ask the derive
 //! verdict.
 
+use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimSource;
 use crate::derive::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSettle,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedArchive, DerivedClaim, DerivedSettle,
     DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
 };
 use crate::error::Result;
@@ -58,12 +59,21 @@ pub struct Settle {
     pub settlement: Settlement,
 }
 
+/// An archive for a door batch: `claim` at `score`.
+#[derive(Debug, Clone)]
+pub struct Archive {
+    pub local: &'static str,
+    pub claim: Named,
+    pub score: f64,
+}
+
 /// One item of a door batch.
 #[derive(Debug, Clone)]
 pub enum Derived {
     Claim(Claim),
     Supersede(Supersede),
     Settle(Settle),
+    Archive(Archive),
 }
 
 /// One item's outcome, as the commit answered it or the batch record keeps
@@ -121,9 +131,26 @@ pub fn commit(
     run: &str,
     items: &[Derived],
 ) -> Result<Committed> {
+    commit_in_attempt(vault, actor, class, run, None, items)
+}
+
+/// [`commit`] in the attempt `attempt`.
+///
+/// # Errors
+///
+/// The commit's: a malformed batch or a storage error.
+pub fn commit_in_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    attempt: Option<AttemptId>,
+    items: &[Derived],
+) -> Result<Committed> {
     let stamp = DerivationStamp {
         actor: WriteActor::new(actor, class),
         run: Some(run.to_owned()),
+        attempt,
         lineage: SourceLineage::of(ClaimSource::Generated),
     };
     let batch = DerivationBatch {
@@ -142,6 +169,17 @@ pub fn commit(
                     local: supersede.local.to_owned(),
                     new: named(&supersede.new),
                     old: named(&supersede.old),
+                }),
+                Derived::Archive(archive) => DerivationItem::Archive(DerivedArchive {
+                    local: archive.local.to_owned(),
+                    claim: named(&archive.claim),
+                    signals: crate::dreamer_consolidation::selection::StrengthSignals {
+                        type_prior: 0.1,
+                        frequency: 0.1,
+                        recency: 0.1,
+                        diversity: 0.1,
+                    },
+                    score: archive.score,
                 }),
                 Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
                     local: settle.local.to_owned(),
@@ -208,7 +246,9 @@ pub fn claim_lifecycle(vault: &Vault, id: EntityId) -> Result<Option<String>> {
 pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<EntityId> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource};
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
-    let raw = vault.get(&new)?.ok_or(crate::error::Error::EntityNotFound)?;
+    let raw = vault
+        .get(&new)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
     let body = crate::claim::decode_claim_body(&raw, true)?;
     let envelope = WriteEnvelope::new(
         vault.dreamer_authority()?,
@@ -223,19 +263,37 @@ pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<Enti
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         let mut envelope = marker.envelope.clone();
-        vault.sign_retained_machine_claim_in_txn(txn, &marker.id, &marker.candidate, &mut envelope)?;
+        vault.sign_retained_machine_claim_in_txn(
+            txn,
+            &marker.id,
+            &marker.candidate,
+            &mut envelope,
+        )?;
         vault
             .batch_in()
             .claim_candidate(
                 &marker.id,
                 marker.candidate.clone(),
                 &envelope,
-                crate::TimeRange { start: now, end: now },
+                crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
                 now,
             )
             .apply_recording_gate_decisions(txn)
     })?;
     Ok(marker.id)
+}
+
+/// Whether the row `id` is live: an archived claim is not.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn row_live(vault: &Vault, id: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::vault::live_entity_row_in_txn(&vault.store, &txn, &id)?.is_live())
 }
 
 /// The items of the committed batch `batch`, as its record keeps them.
@@ -275,11 +333,7 @@ pub fn batches_of(vault: &Vault, actor: EntityId) -> Result<Vec<EntityId>> {
 /// # Errors
 ///
 /// The vault's.
-pub fn refusal_receipt(
-    vault: &Vault,
-    batch: EntityId,
-    local: &str,
-) -> Result<Option<Vec<String>>> {
+pub fn refusal_receipt(vault: &Vault, batch: EntityId, local: &str) -> Result<Option<Vec<String>>> {
     let Some(record) = vault.derive_batch(batch)? else {
         return Ok(None);
     };
