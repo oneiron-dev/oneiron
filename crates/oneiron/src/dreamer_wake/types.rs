@@ -8,21 +8,22 @@ use crate::Vault;
 use crate::attempt_queue::{
     AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, LandingTrigger,
 };
-#[cfg(feature = "sync")]
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::Result;
 use crate::model_step_context::StepEffectBinding;
 use crate::settings::ReadDestination;
-#[cfg(feature = "sync")]
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron_model::llm::{BudgetGuard, WorkCancel};
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
+#[cfg(feature = "sync")]
+#[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_wake::types::WakeProgressLane;
 #[doc(hidden)]
 pub use oneiron_wake_contract::dreamer_wake::types::{
     DreamerAttemptExecution, LandingRequestNotice, RunWakePass, WakeAttemptMeter,
-    WakeMilestoneAuthor, WakePassReport, WakePassStop, WakeProgressLane, WakeTrigger,
+    WakeMilestoneAuthor, WakePassReport, WakePassStop, WakeTrigger,
 };
 #[doc(hidden)]
 pub(super) use oneiron_wake_contract::dreamer_wake::types::{LandingRequest, ProgressKind};
