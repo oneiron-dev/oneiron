@@ -1,7 +1,7 @@
 use super::*;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
-use oneiron::memory::caps::{MAX_BATCH_ENTITIES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES};
+use oneiron::memory::caps::{MAX_BATCH_ENTITIES, MAX_ENTITY_PAYLOAD_BYTES};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -88,11 +88,6 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
             "messages",
         ),
         ("claim_upsert", claim, "claim payload"),
-        (
-            "recall",
-            json!({"query": "x".repeat(MAX_QUERY_BYTES + 1)}),
-            "query",
-        ),
     ];
     for (verb, payload, label) in requests {
         let response = app
@@ -142,6 +137,28 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
             .expect("receipts"),
         before
     );
+    // Ruled refusal removed (FIX55, #4909): the recall query's 8 KiB refusal
+    // is retired; the full text is served and measured against its byte row.
+    const REMOVED_QUERY_CAP: usize = 8 * 1024;
+    let response = app
+        .clone()
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server,
+            &slip,
+            &holder,
+            Request::builder()
+                .method("POST")
+                .uri("/v1/core/facade/recall")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({"query": "x".repeat(REMOVED_QUERY_CAP + 1)}))
+                        .expect("request JSON"),
+                ))
+                .expect("request"),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK, "recall");
 }
 
 #[tokio::test]

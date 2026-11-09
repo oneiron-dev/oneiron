@@ -75,15 +75,15 @@ use clap::Parser;
 use oneiron_server::config::{ServeArgs, SyncServerConfig};
 use oneiron_server::managed::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, HYPNOS_LISTEN_FD, LEDGER_REV_KEY,
-    ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState, ServeListener,
-    WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
+    LedgerSnapshot, ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState,
+    ServeListener, WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
     read_managed_credentials, serve_managed,
 };
 use oneiron_server::server::{OversightStartError, SyncServer};
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, read_credentials, validate_wake_entries,
-    write_credentials,
+    CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck,
+    LedgerPageRequest, LedgerReportHead, LedgerUpdate, MAX_CTL_LINE, READY_BYTE, Schedule,
+    TOKEN_LEN, TokenHex, read_credentials, validate_wake_entries, write_credentials,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
@@ -314,8 +314,10 @@ fn ctl_response(line: &str) -> CtlResponse {
 }
 
 /// A supervisor that answers on its ledger socket. The first `silent_attempts`
-/// connections are closed with no ack; the rest are acked. Returns the raw
-/// lines it received, so a caller can validate what the engine actually sent.
+/// connections are closed with no ack; the rest are acked, page by page, each
+/// ack naming its page's report and offset and the last one committed (FIX
+/// 9549). Returns the raw lines it received, so a caller can validate what the
+/// engine actually sent.
 fn spawn_mock_supervisor(
     listener: tokio::net::UnixListener,
     silent_attempts: usize,
@@ -329,19 +331,42 @@ fn spawn_mock_supervisor(
             };
             let (reader, mut writer) = stream.into_split();
             let mut reader = tokio::io::BufReader::new(reader);
-            let mut line = String::new();
-            if reader.read_line(&mut line).await.is_ok() {
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
                 lines.push(line.trim().to_owned());
-            }
-            if attempt >= silent_attempts {
+                if attempt < silent_attempts {
+                    break;
+                }
+                let Ok(update) = serde_json::from_str::<LedgerUpdate>(line.trim()) else {
+                    break;
+                };
+                let page = &update.page;
+                let last = page.offset
+                    + page.entries.len() as u64
+                    + page.artifact_origins.len() as u64
+                    >= page.total + page.artifact_origins_total;
                 let ack = serde_json::to_string(&LedgerAck {
                     ok: true,
                     error: None,
+                    report: Some(LedgerReportHead {
+                        rev: page.rev,
+                        report_digest: page.report_digest.clone(),
+                        total: page.total,
+                        artifact_origins_total: page.artifact_origins_total,
+                    }),
+                    offset: Some(page.offset),
+                    committed: last,
                 })
                 .unwrap();
                 let _ = writer.write_all(ack.as_bytes()).await;
                 let _ = writer.write_all(b"\n").await;
                 let _ = writer.flush().await;
+                if last {
+                    break;
+                }
             }
         }
         lines
@@ -773,7 +798,7 @@ fn a_markerless_vault_is_refused_as_a_real_tenant() {
     assert!(
         matches!(
             &error,
-            ManagedError::ManagedRealTenantRefused { vault, marker }
+            ManagedError::ManagedRealTenantRefused { vault, marker, .. }
                 if vault == VAULT_NAME && *marker == CANARY_MARKER_KEY
         ),
         "unexpected: {error}"
@@ -785,7 +810,7 @@ fn a_markerless_vault_is_refused_as_a_real_tenant() {
     assert!(
         matches!(
             &error,
-            ManagedError::ManagedRealTenantRefused { vault, marker }
+            ManagedError::ManagedRealTenantRefused { vault, marker, .. }
                 if vault == VAULT_NAME && *marker == CANARY_MARKER_KEY
         ),
         "unexpected: {error}"
@@ -895,6 +920,7 @@ async fn ctl_socket_answers_the_contract_verbs() {
             vault,
             pid,
             contract_version,
+            ..
         } => {
             assert!(ok);
             assert_eq!(vault, VAULT_NAME);
@@ -908,17 +934,28 @@ async fn ctl_socket_answers_the_contract_verbs() {
     fixture.state.guard_write().unwrap();
 
     match ctl_response(&ctl_roundtrip(&fixture.ctl_path, r#"{"op":"prepare_reap"}"#).await) {
-        CtlResponse::PrepareReap {
-            quiescent,
-            ledger_rev,
-            next_wake,
-        } => {
+        CtlResponse::PrepareReap { quiescent, ledger } => {
             assert!(
                 quiescent,
                 "a drained lease table on an idle vault is quiescent"
             );
-            assert!(ledger_rev >= 1, "the freeze export advances the revision");
-            validate_wake_entries(&next_wake).unwrap();
+            assert!(ledger.rev >= 1, "the freeze export advances the revision");
+            // The wake entries ride the frozen report's pages (FIX 9549).
+            let request = LedgerPageRequest {
+                vault: VAULT_NAME.to_owned(),
+                token: TokenHex::from_token(&[0x22; TOKEN_LEN]),
+                rev: ledger.rev,
+                report_digest: ledger.report_digest.clone(),
+                offset: 0,
+            };
+            let mut line = serde_json::to_value(&request).unwrap();
+            line["op"] = serde_json::json!("ledger_page");
+            match ctl_response(&ctl_roundtrip(&fixture.ctl_path, &line.to_string()).await) {
+                CtlResponse::LedgerPage { ledger_page } => {
+                    validate_wake_entries(&ledger_page.entries).unwrap();
+                }
+                other => panic!("expected a ledger_page reply, got {other:?}"),
+            }
         }
         other => panic!("expected a prepare_reap reply, got {other:?}"),
     }
@@ -1034,13 +1071,13 @@ async fn ledger_rev_persists_across_a_restart() {
     let ledger = wake_ledger(&vault, &sup, &creds);
     assert_eq!(ledger.rev(), 0);
 
-    let (rev, entries) = ledger.export_at_freeze(&server).await.unwrap();
-    assert_eq!(rev, 1);
-    validate_wake_entries(&entries).unwrap();
+    let frozen = ledger.export_at_freeze(&server).await.unwrap();
+    assert_eq!(frozen.head.rev, 1);
+    validate_wake_entries(&frozen.snapshot.entries).unwrap();
 
     // The same entries again are not a change, so the revision does not churn.
-    let (again, _) = ledger.export_at_freeze(&server).await.unwrap();
-    assert_eq!(again, 1);
+    let again = ledger.export_at_freeze(&server).await.unwrap();
+    assert_eq!(again.head.rev, 1);
     drop(ledger);
 
     // Restart: a new ledger over the same vault resumes the supervisor's
@@ -1081,7 +1118,7 @@ async fn an_on_change_push_validates_and_honours_the_ack() {
     update.validate().unwrap();
     assert_eq!(update.op, "ledger_update");
     assert_eq!(update.vault, VAULT_NAME);
-    assert_eq!(update.rev, 1);
+    assert_eq!(update.page.rev, 1);
     // The token authenticates the push; it must never reach a diagnostic.
     assert!(!format!("{:?}", update.token).contains(update.token.expose()));
     assert!(!format!("{ledger:?}").contains(update.token.expose()));
@@ -1122,7 +1159,12 @@ async fn a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline() {
     });
 
     let ledger = wake_ledger(&vault, &sup, &creds);
-    let outcome = tokio::time::timeout(NO_HANG_BOUND, ledger.push_once(11, &[]))
+    let empty = LedgerSnapshot {
+        entries: Vec::new(),
+        training: ledger.training().unwrap(),
+        artifact_origins: Vec::new(),
+    };
+    let outcome = tokio::time::timeout(NO_HANG_BOUND, ledger.push_once(11, &empty))
         .await
         .expect("a silent supervisor must not hold the push open");
     let Err(error) = outcome else {
@@ -1135,7 +1177,7 @@ async fn a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline() {
 
     // And the retry policy still ends: one retry over the same silence, then
     // proceed without the supervisor.
-    let proceeded = tokio::time::timeout(NO_HANG_BOUND, ledger.push_with_retry(11, &[]))
+    let proceeded = tokio::time::timeout(NO_HANG_BOUND, ledger.push_with_retry(11, &empty))
         .await
         .expect("the retry policy must not hold the exit open either");
     assert!(!proceeded, "a push nobody acked is not accepted");
@@ -1188,15 +1230,15 @@ async fn the_final_push_advances_the_rev_when_the_entries_moved() {
     let boot: LedgerUpdate = serde_json::from_str(&lines[0]).unwrap();
     let shutdown: LedgerUpdate = serde_json::from_str(&lines[1]).unwrap();
     assert_ne!(
-        shutdown.entries, boot.entries,
+        shutdown.page.entries, boot.page.entries,
         "this row is only meaningful while the shutdown entries differ"
     );
     assert!(
-        shutdown.rev > boot.rev,
+        shutdown.page.rev > boot.page.rev,
         "the shutdown snapshot rode rev {} against an acked rev {}, so a \
          rev-ordered supervisor drops it",
-        shutdown.rev,
-        boot.rev
+        shutdown.page.rev,
+        boot.page.rev
     );
 }
 
@@ -1385,18 +1427,14 @@ async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
     );
 
     match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
-        CtlResponse::PrepareReap {
-            quiescent,
-            ledger_rev,
-            ..
-        } => {
+        CtlResponse::PrepareReap { quiescent, ledger } => {
             assert!(
                 !quiescent,
                 "a sync session upgraded before the freeze can still commit, so this is not quiescent"
             );
             // The freeze still happened and the ledger still exported: this is
             // a narrower claim, not a failed verb.
-            assert!(ledger_rev >= 1, "the freeze still exports a revision");
+            assert!(ledger.rev >= 1, "the freeze still exports a revision");
         }
         other => panic!("expected a prepare_reap reply, got {other:?}"),
     }
