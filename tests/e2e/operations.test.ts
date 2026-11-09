@@ -76,7 +76,9 @@ async function witnessedMemory(engine: EngineFixture, content: string, at: numbe
     conversation_ref: conversation.id, occurred_at: at,
     messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
   });
-  await engine.awaitReceipt(witnessed.receipt_ref);
+  // The answer carries a write marker, not a gate receipt: read the message back.
+  expect(witnessed.message_short_ids).toHaveLength(1);
+  expect((await engine.client.call("vault.get", { entity_ref: witnessed.message_short_ids[0]! })).value).not.toBeNull();
 }
 async function recalls(engine: EngineFixture, query: string, content: string): Promise<void> {
   await awaitPublic(() => engine.client.call("vault.recall", { query, effort: "light", limit: 10 }),
@@ -208,7 +210,8 @@ suite.todo(test, "OPERATIONS-02",
  *
  * Written by OPUS-E2E-2 on main e79eb76df3e through report, vault.reports.*,
  * feedback.preview/.send and vault.receipts.get, against a loopback [feedback]
- * collector. Not proved here: the tool-first MCP leg (the CLI is the second
+ * collector, after the owner's external:send grant on its channel (a send
+ * before the grant is held). Not proved here: the tool-first MCP leg (the CLI is the second
  * surface), consent/provenance receipt reads for the approval, and an
  * unrelated publisher trying to spend it (a changed digest is tested).
  */
@@ -229,6 +232,29 @@ function feedbackCollector(): { endpoint: string; posts: FeedbackPost[] } {
   ownResource(() => server.stop(true));
   if (!server.port) throw new Error("Feedback collector bound no port");
   return { endpoint: `http://127.0.0.1:${server.port}/feedback`, posts };
+}
+
+/** Appends the owner's grant of external:send on the feedback collector
+ * channel to the default policy manifest, under its body-hash check. */
+async function grantFeedbackChannel(engine: EngineFixture): Promise<void> {
+  const owner = engine.pairedActor.principalRef;
+  const policy = await engine.client.call("vault.gate.policy.get", {});
+  const view = policy.manifests.find(entry => entry.manifest_ref === policy.default_manifest_ref);
+  if (!view) throw new Error("Default policy manifest is absent");
+  const grant: Facade.PolicyScopedGrantRow = {
+    actor_ref: owner, effector: "external:send",
+    scope: { worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" }, audience: { kind: "all" },
+      verbs: { kind: "some", values: ["effect"] }, sensitivity: { kind: "all" } },
+    selectors: { kind: "map", value: [{ key: { kind: "string", value: "channel" },
+      value: { kind: "string", value: "feedback_collector" } }] },
+    receipt_required: false,
+  };
+  const ceilings = view.manifest.actor_ceilings.some(row => row.actor_ref === owner) ? view.manifest.actor_ceilings
+    : [...view.manifest.actor_ceilings, { actor_class: "human", actor_ref: owner, ceiling: "auto" } as Facade.ActorCeiling];
+  await engine.client.call("vault.gate.policy.put", {
+    manifest_ref: view.manifest_ref, expected_body_hash: view.body_hash,
+    manifest: { ...view.manifest, actor_ceilings: ceilings, scoped_grants: [...(view.manifest.scoped_grants ?? []), grant] },
+  });
 }
 
 suite.test(test, "OPERATIONS-03", "Feedback with and without vault text should work", async () => {
@@ -273,6 +299,15 @@ suite.test(test, "OPERATIONS-03", "Feedback with and without vault text should w
   expect(waiting.payload?.disclosed).toBeNull();
   expect(JSON.stringify(waiting)).not.toContain(quotedNote);
   expect(JSON.stringify(waiting)).not.toContain(subject);
+
+  // Until the owner's policy grants the feedback channel, an approved send is
+  // held and nothing reaches the publisher.
+  const ungranted = await engine.client.call("feedback.preview", { issue_ref: first.issue_ref, category: "bug" });
+  const held = await engine.client.call("feedback.send", { issue_ref: first.issue_ref, category: "bug",
+    digest: ungranted.digest, approval: ungranted.approval, previewed_at: ungranted.previewed_at });
+  expect(held.outcome).toBe("held");
+  expect(bundles()).toHaveLength(0);
+  await grantFeedbackChannel(engine);
 
   // Metadata-only feedback: the preview shows the bytes, the send ships them once.
   const plain = await engine.client.call("feedback.preview", { issue_ref: first.issue_ref, category: "bug" });
@@ -582,7 +617,8 @@ suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery shoul
   const invoke = (verb: string, input: unknown, key: string) =>
     engine.client.raw<{ error?: { code: string } }>("POST", `/v1/core/facade/${verb}`, input, { "x-oneiron-invocation": key });
   const address = { namespace: ["operations-06"], key: "burst" };
-  const put = { ...address, value: "accepted once", request_id: "operations-06-put" };
+  const accepted = { text: "accepted once" };
+  const put = { ...address, value: accepted, request_id: "operations-06-put" };
   expect((await invoke("vault.kv.put", put, intent.put)).status).toBe(200);
   expect((await invoke("vault.get", { entity_ref: "not a ref" }, intent.refused)).status).toBe(400);
   const held = invoke("ai.steps.submit", stepSubmit("operations-06-held-step"), intent.held);
@@ -608,6 +644,9 @@ suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery shoul
   // The host dies with the model step in flight. After restart that intent
   // is reported interrupted; every other outcome stands; nothing replays it.
   await engine.kill();
+  // Its requester is dead: let the scripted provider finish its held answer
+  // while the fixture is still open, then restart.
+  providers.releaseBarrier(barrier);
   await engine.restart();
   const recovered = await reconcile();
   expect(recovered.map(row => row.intent_key)).toEqual(authored);
@@ -615,7 +654,7 @@ suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery shoul
   expect((recovered[0]!.state as { result_digest?: string }).result_digest).toBe(putDigest);
   expect(recovered[2]).toMatchObject({ verb: "ai.steps.submit" });
   expect((recovered[2]!.state as { reason?: string }).reason).toMatch(/^host restarted before settlement was observed/);
-  expect((await engine.client.call("vault.kv.get", address))?.value).toBe("accepted once");
+  expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(accepted);
   expect(await engine.client.call("vault.wire_health.thresholds.get", {})).toEqual(low);
   expect(providers.seenFixtureCalls).toHaveLength(1);
   // Malformed keys and an empty set are refused.
