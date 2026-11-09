@@ -1,10 +1,19 @@
 import { afterAll, expect, test } from "bun:test";
 import { verify } from "node:crypto";
-import { EngineFixture } from "./support/engine.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { loadFixtures, ownerBaseClaimScope as models09OwnerBaseClaimScope } from "./support/fixtures.ts";
 import type { Profile } from "./support/fixtures.ts";
-import type { PublicHttpClient, WireReply } from "./support/clients.ts";
+import type { PublicHttpClient, WireReply, WsClient, McpClient } from "./support/clients.ts";
 import { defineFile } from "./support/run.ts";
+import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import type { LlmRequest, LlmStreamEvent, LlmUsage } from "@oneiron/client/facade-types";
+import { PublicHttpError, McpRpcError } from "./support/clients.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import type { Json, ProviderStep, StreamPart, ProviderResponse } from "./support/providers.ts";
+import { createServer } from "node:net";
+import type { PairedActor } from "./support/engine.ts";
+import { blake3 as models09Blake3 } from "@noble/hashes/blake3";
+import type * as Models09Facade from "@oneiron/client/facade-types";
 
 const profile: Profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -146,44 +155,847 @@ function expectUnrecorded(reply: WireReply<UsageRecordResult | UsageApiError>, s
  */
 suite.todo(test, "MODELS-01", "waits on typed model-manifest and independent slot-route read/replace calls with role receipts");
 
+interface Models02Scenario {
+  id: string;
+  contract: { events: LlmStreamEvent[] };
+  expected: { producerCalls: number; usage: LlmUsage };
+}
+function models02Chunk(id: string, delta: Json, barrier?: string): StreamPart {
+  return { id, data: `data: ${JSON.stringify({ model: "test-model",
+    choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
+    ...(barrier ? { barrier } : {}) };
+}
+function models02Step(origin: string, parts: StreamPart[]): ProviderStep {
+  return { id: `models02-${origin}`, origin, role: "generative_reasoner",
+    purpose: `models02-${origin}`, request: { method: "POST", path: "/v1/chat/completions",
+      model: "test-model", fields: { stream: true, stream_options: { include_usage: true } } },
+    response: { kind: "stream", contentType: "text/event-stream", parts } };
+}
+// One silent 16-bit mono sample at 8 kHz, encoded as a complete RIFF/WAVE clip.
+function models02Wav(): string {
+  const bytes = Buffer.alloc(46);
+  bytes.write("RIFF", 0); bytes.writeUInt32LE(38, 4); bytes.write("WAVEfmt ", 8);
+  bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(8000, 24); bytes.writeUInt32LE(16000, 28);
+  bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34);
+  bytes.write("data", 36); bytes.writeUInt32LE(2, 40);
+  return bytes.toString("base64");
+}
+function models02Request(provider: string, text: string): LlmRequest {
+  return { model: `${provider}/test-model@rev-a`, envelope: { purpose: "answer_gen",
+    class: { kind: "best_effort" }, tier: { global_default: "fixture-pinned" },
+    response_format: { format: "text" }, locality: "own_server" },
+    messages: [{ role: "user", content: [{ kind: "text", text }] }] };
+}
+async function models02PollEvents(
+  read: () => Promise<FacadeResult<"ai.streams.events">>,
+  events: LlmStreamEvent[],
+  ready: (page: FacadeResult<"ai.streams.events">, all: LlmStreamEvent[]) => boolean,
+  label: string,
+) {
+  return awaitPublic(async () => {
+    const page = await read();
+    events.push(...page.events);
+    return page;
+  }, page => ready(page, events), { label });
+}
+async function models02HttpRefusal<V extends FacadeVerb>(
+  engine: EngineFixture, client: PublicHttpClient, verb: V, input: FacadeInput<V>,
+  status: number, code: string,
+) {
+  let failure: unknown;
+  try { await client.call(verb, input); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error(`Expected public refusal for ${verb}`);
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+  if (typeof receiptRef !== "string") throw new Error(`Missing refusal receipt for ${verb}`);
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await awaitPublic(
+    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null, { label: `models02 refusal receipt ${verb}` });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+    verb: `v1/core/facade/${verb}`, outcome: { refused: { code } } });
+  return { failure, receipt };
+}
+
 /* MODELS-02 Typed multimodal streaming should work.
  * Canon: ARCH-0036 #model-line, ARCH-0026 #run-tree; OF-126/136.
- * ContentPart is tagged by kind; LlmStreamEvent is tagged by event. Preserve
- * {event:"text_delta"|"reasoning_delta",part_id,text}, image start/delta/end,
- * and Done {message:{role,content:ContentPart[]},usage,finish_reason}.
- * Subscribe HTTP+WS before one generation, correlate interleaved part IDs,
- * detach only the slow subscriber at the fixture barrier, and reopen the
- * one durable terminal after restart. Audio is input evidence, not an
- * invented audio_* stream event. scenarios.json pins every part and usage.
- * Current chat emits text-only ChatLine deltas and has no typed attach to
- * the same producer; two raw /v1/llm/stream POSTs would make two producers.
+ * Partial: one multimodal-input producer fans correlated reasoning/text to
+ * HTTP and WS RPC polls. Detach loses only the slow handle; abort retains
+ * delivered parts. A post-delta stall fails within its provider budget.
+ * Finished terminals survive restart without another provider request;
+ * release clears transient handles/replay, not the durable terminal.
+ * waits on an image-output-capable provider adapter behind owner-authorized
+ * ai.streams.open, with image events/ContentPart through events/terminal.
+ * WS push remains unproved: ai.streams.events is RPC polling, not push.
+ * Audio is input evidence, never an invented audio_* event. scenarios.json
+ * supplies content and numeric usage; the chat decoder supplies part IDs.
  */
-suite.todo(test, "MODELS-02", "waits on typed shared model-stream subscribe/detach and durable ContentPart terminal read over HTTP and WS");
+suite.test(test, "MODELS-02", "Shared multimodal-input text/reasoning stream reaches HTTP and WS subscribers, detaches one, and retains its terminal across restart", async () => {
+  const catalog = await loadFixtures();
+  const document = await catalog.readJson<{ scenarios: Models02Scenario[] }>("models-scenarios");
+  const facts = document.scenarios.find(row => row.id === "MODELS-02");
+  if (!facts) throw new Error("Missing MODELS-02 fixture");
+  const fixtureDone = facts.contract.events.find(event => event.event === "done");
+  const fixtureImage = facts.contract.events.find(event => event.event === "image_end");
+  if (!fixtureDone || fixtureDone.event !== "done" || !fixtureImage || fixtureImage.event !== "image_end"
+      || fixtureImage.image.source !== "base64")
+    throw new Error("MODELS-02 needs authored content and image evidence");
+  const imageData = fixtureImage.image.data;
+  const expectedContent = fixtureDone.message.content.filter(part => part.kind === "reasoning" || part.kind === "text");
+  const reasoning = expectedContent.find(part => part.kind === "reasoning");
+  const answer = expectedContent.find(part => part.kind === "text");
+  if (!reasoning || reasoning.kind !== "reasoning" || !answer || answer.kind !== "text")
+    throw new Error("MODELS-02 needs reasoning and text facts");
+  expect(reasoning.text).toBe("Read fixture evidence.");
+  expect(answer.text).toBe("Fixture answer.");
+  const request = models02Request("chat", reasoning.text);
+  request.messages[0]!.content.push(
+    { kind: "image", media_type: fixtureImage.media_type, image: fixtureImage.image },
+    { kind: "audio", media_type: "audio/wav", data: models02Wav() },
+  );
+  const sharedKey = "models02-shared";
+  const cancelKey = "models02-cancel";
+  const slowKey = "models02-slow";
+  const cancelRequest = models02Request("cancel", "Cancel after delivered parts.");
+  const slowRequest = models02Request("slow", "Stop waiting after the first delta.");
+  const providers = await ScriptedProviders.start({ id: "MODELS-02", steps: [
+    models02Step("chat", [
+      models02Chunk("models02-reason-first", { reasoning_content: "Read fixture " }),
+      models02Chunk("models02-text-first", { content: "Fixture " }, "models02-first-part"),
+      models02Chunk("models02-reason-last", { reasoning_content: "evidence." }),
+      models02Chunk("models02-text-last", { content: "answer." }),
+      { id: "models02-stop", barrier: "models02-before-done", data:
+        'data: {"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' },
+      { id: "models02-usage", data: `data: ${JSON.stringify({ model: "test-model", choices: [], usage: {
+        prompt_tokens: facts.expected.usage.input.total, completion_tokens: facts.expected.usage.output.total,
+        prompt_tokens_details: { cached_tokens: facts.expected.usage.input.cache_read },
+        completion_tokens_details: { reasoning_tokens: facts.expected.usage.output.reasoning },
+      } })}\n\n` },
+      { id: "models02-done", data: "data: [DONE]\n\n" },
+    ]),
+    models02Step("cancel", [
+      models02Chunk("models02-cancel-reason", { reasoning_content: "Cancellation evidence." }),
+      models02Chunk("models02-cancel-text", { content: "Delivered partial." }),
+      models02Chunk("models02-cancel-undelivered", { content: " Must not be delivered." }, "models02-cancel-held"),
+    ]),
+    models02Step("slow", [
+      models02Chunk("models02-slow-text", { content: "Before timeout." }),
+      models02Chunk("models02-slow-undelivered", { content: " Must not be delivered." }, "models02-slow-held"),
+    ]),
+  ] });
+  let engine: EngineFixture | undefined;
+  let ws: WsClient | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "MODELS-02", profile, serverConfig: `
+[models]
+default = "chat:test-model"
+[models.providers.chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "rev-a"
+request_compression = false
+timeout_secs = 10
+capabilities = ["streaming", "json_response", "reasoning", "image_input", "audio_input"]
+[models.providers.cancel]
+kind = "local-openai-compat"
+base_url = "${providers.urls.cancel}"
+revision = "rev-a"
+request_compression = false
+timeout_secs = 10
+[models.providers.slow]
+kind = "local-openai-compat"
+base_url = "${providers.urls.slow}"
+revision = "rev-a"
+request_compression = false
+timeout_secs = 1
+[models.roles.local_reasoner]
+model = "cancel:test-model"
+[models.roles.checker]
+model = "slow:test-model"
+[models.dreamer]
+enabled = false
+` });
+    const owner = engine.client;
+    ws = await engine.websocket();
+    const fast = await owner.call("ai.streams.subscribe", { stream_key: sharedKey });
+    const slow = (await ws.call("ai.streams.subscribe", { stream_key: sharedKey })).value;
+    expect(fast.status).toBe("pending");
+    expect(slow).toMatchObject({ stream_ref: fast.stream_ref, stream_key: sharedKey, status: "pending" });
+    expect(slow.handle).not.toBe(fast.handle);
+    expect(providers.seenFixtureCalls).toHaveLength(0);
+    const opened = await owner.call("ai.streams.open", { stream_key: sharedKey, request });
+    expect(opened).toEqual({ stream_ref: fast.stream_ref, stream_key: sharedKey,
+      model: request.model, status: "live" });
+    await providers.awaitBarrier("models02-first-part");
+    const fastEvents: LlmStreamEvent[] = [];
+    const fastRead = () => owner.call("ai.streams.events", { stream_key: sharedKey, handle: fast.handle, limit: 512 });
+    await models02PollEvents(fastRead, fastEvents,
+      (_page, all) => all.some(event => event.event === "reasoning_delta"), "models02 first HTTP reasoning");
+    const slowEvents: LlmStreamEvent[] = [];
+    await models02PollEvents(async () => (await ws!.call("ai.streams.events", {
+      stream_key: sharedKey, handle: slow.handle, limit: 512 })).value, slowEvents,
+      (_page, all) => all.some(event => event.event === "reasoning_delta"), "models02 first WS reasoning");
+    expect(slowEvents).toEqual(fastEvents);
+    expect(fastEvents.map(event => event.event)).toEqual(["reasoning_start", "reasoning_delta"]);
+    expect(await owner.call("ai.streams.open", { stream_key: sharedKey, request })).toEqual(opened);
+    expect(providers.seenFixtureCalls).toHaveLength(facts.expected.producerCalls);
+    expect((await ws.call("ai.streams.detach", { stream_key: sharedKey, handle: slow.handle })).value)
+      .toEqual({ stream_ref: fast.stream_ref, stream_key: sharedKey, handle: slow.handle, detached: true });
+    // Read through HTTP after the WS mutation; the other handle remains usable.
+    await models02HttpRefusal(engine, owner, "ai.streams.events", {
+      stream_key: sharedKey, handle: slow.handle }, 404, "NOT_FOUND");
+    providers.releaseBarrier("models02-first-part");
+    await providers.awaitBarrier("models02-before-done");
+    await models02PollEvents(fastRead, fastEvents, (_page, all) =>
+      all.filter(event => event.event === "text_delta").length === 2
+      && all.filter(event => event.event === "reasoning_delta").length === 2, "models02 continued HTTP delivery");
+    expect((await fastRead()).closed).toBe(false);
+    providers.releaseBarrier("models02-before-done");
+    const closed = await models02PollEvents(fastRead, fastEvents, page => page.closed, "models02 successful close");
+    expect(closed.status).toBe("finished");
+    expect(fastEvents.map(event => event.event)).toEqual([
+      "reasoning_start", "reasoning_delta", "text_start", "text_delta", "reasoning_delta", "text_delta",
+      "reasoning_end", "text_end", "done",
+    ]);
+    for (const event of fastEvents) {
+      if (event.event.startsWith("reasoning_") && "part_id" in event) expect(event.part_id).toBe("reasoning-0");
+      if (event.event.startsWith("text_") && "part_id" in event) expect(event.part_id).toBe("text-0");
+    }
+    expect(fastEvents.filter(event => event.event === "reasoning_delta").map(event => event.text))
+      .toEqual(["Read fixture ", "evidence."]);
+    expect(fastEvents.filter(event => event.event === "text_delta").map(event => event.text))
+      .toEqual(["Fixture ", "answer."]);
+    const done = fastEvents.find(event => event.event === "done");
+    if (!done || done.event !== "done") throw new Error("Missing typed Done");
+    expect(done.message.role).toBe("assistant");
+    expect(done.message.content).toHaveLength(2);
+    expect(done.message.content).toMatchObject(expectedContent);
+    expect(done.finish_reason).toBe("stop");
+    expect(done.usage.input).toEqual(facts.expected.usage.input);
+    expect(done.usage.output).toEqual(facts.expected.usage.output);
+    const terminal = await owner.call("ai.streams.terminal", { stream_key: sharedKey });
+    expect(terminal).toMatchObject({ stream_ref: fast.stream_ref, stream_key: sharedKey,
+      model: request.model, status: "finished", response: {
+        message: done.message, usage: done.usage, finish_reason: done.finish_reason } });
+    expect(terminal.failure ?? null).toBeNull();
+    expect(providers.seenFixtureCalls).toHaveLength(1);
+    const providerBody = providers.seenFixtureCalls[0]!.body;
+    expect(providerBody).toMatchObject({ model: "test-model", stream: true,
+      stream_options: { include_usage: true }, messages: [{ role: "user", content: [
+        { type: "text", text: reasoning.text },
+        { type: "image_url", image_url: { url: `data:image/png;base64,${imageData}` } },
+        { type: "input_audio", input_audio: { data: models02Wav(), format: "wav" } },
+      ] }] });
+
+    const agentRef = "b202b202b202b202b202b202b202b202";
+    await owner.call("vault.agents.create", { agent_def_ref: agentRef, definition: {
+      agent_id: "models02-non-owner", display_name: "Models stream non-owner",
+      desc: "Inert principal for owner-only stream refusals", version: "1" } });
+    expect((await owner.call("vault.get", { entity_ref: agentRef })).value?.kind).toBe("AGENT_DEF");
+    const agent = await engine.pairActor({ principalRef: agentRef, actorClass: "agent" });
+    expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+    const cancelUsage: LlmUsage = { input: { total: 0, cache_read: 0, cache_write: 0 },
+      output: { total: 0, text: 0, reasoning: 0 }, raw_provider: { fixture: "models02-cancel" } };
+    const models02RefuseOwner = async <V extends FacadeVerb>(verb: V, input: FacadeInput<V>) => {
+      const { failure, receipt } = await models02HttpRefusal(engine!, agent.client, verb, input, 403, "FORBIDDEN");
+      expect(failure.error?.message).toBe(`${verb} is the vault owner's`);
+      expect(receipt).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+    };
+    await models02RefuseOwner("ai.streams.open", { stream_key: sharedKey, request });
+    await models02RefuseOwner("ai.streams.subscribe", { stream_key: sharedKey });
+    await models02RefuseOwner("ai.streams.events", { stream_key: sharedKey, handle: fast.handle });
+    await models02RefuseOwner("ai.streams.detach", { stream_key: sharedKey, handle: fast.handle });
+    await models02RefuseOwner("ai.streams.abort", { stream_key: sharedKey, usage: cancelUsage });
+    await models02RefuseOwner("ai.streams.terminal", { stream_key: sharedKey });
+    await models02RefuseOwner("ai.streams.release", { stream_key: sharedKey });
+    expect(await owner.call("ai.streams.terminal", { stream_key: sharedKey })).toEqual(terminal);
+    expect(await fastRead()).toMatchObject({ events: [], closed: true, status: "finished" });
+    expect(providers.seenFixtureCalls).toHaveLength(1);
+
+    const cancelSub = await owner.call("ai.streams.subscribe", { stream_key: cancelKey });
+    await owner.call("ai.streams.open", { stream_key: cancelKey, request: cancelRequest });
+    await providers.awaitBarrier("models02-cancel-held");
+    const cancelEvents: LlmStreamEvent[] = [];
+    const cancelRead = () => owner.call("ai.streams.events", { stream_key: cancelKey, handle: cancelSub.handle });
+    await models02PollEvents(cancelRead, cancelEvents, (_page, all) =>
+      all.some(event => event.event === "text_delta"), "models02 delivered before abort");
+    const cancelled = await owner.call("ai.streams.abort", { stream_key: cancelKey, usage: cancelUsage });
+    expect(cancelled).toMatchObject({ status: "finished", response: { finish_reason: "cancelled",
+      message: { role: "assistant", content: [
+        { kind: "reasoning", text: "Cancellation evidence." }, { kind: "text", text: "Delivered partial." },
+      ] }, usage: cancelUsage } });
+    expect(cancelled.response?.message.content).toHaveLength(2);
+    expect(await owner.call("ai.streams.terminal", { stream_key: cancelKey })).toEqual(cancelled);
+    await models02PollEvents(cancelRead, cancelEvents, page => page.closed, "models02 cancelled subscriber close");
+    const cancelledDone = cancelEvents.find(event => event.event === "done");
+    if (!cancelledDone || cancelledDone.event !== "done") throw new Error("Abort omitted Done");
+    expect(cancelledDone.message).toEqual(cancelled.response?.message);
+    expect(cancelledDone.finish_reason).toBe("cancelled");
+    expect(cancelledDone.usage).toEqual(cancelUsage);
+    expect(cancelEvents.filter(event => event.event === "done")).toHaveLength(1);
+    providers.releaseBarrier("models02-cancel-held");
+    expect(await owner.call("ai.streams.open", { stream_key: cancelKey, request: cancelRequest }))
+      .toMatchObject({ stream_ref: cancelSub.stream_ref, status: "finished" });
+    expect(await owner.call("ai.streams.terminal", { stream_key: cancelKey })).toEqual(cancelled);
+    expect(providers.seenFixtureCalls.filter(call => call.origin === "cancel")).toHaveLength(1);
+
+    const slowSub = await owner.call("ai.streams.subscribe", { stream_key: slowKey });
+    await owner.call("ai.streams.open", { stream_key: slowKey, request: slowRequest });
+    await providers.awaitBarrier("models02-slow-held");
+    const slowFailureEvents: LlmStreamEvent[] = [];
+    const slowRead = () => owner.call("ai.streams.events", { stream_key: slowKey, handle: slowSub.handle });
+    await models02PollEvents(slowRead, slowFailureEvents, (_page, all) =>
+      all.some(event => event.event === "text_delta"), "models02 delivered before timeout");
+    await models02PollEvents(slowRead, slowFailureEvents, page => page.closed, "models02 provider timeout closes bus");
+    const failed = await awaitPublic(() => owner.call("ai.streams.terminal", { stream_key: slowKey }),
+      value => value.status === "failed", { label: "models02 durable timeout failure" });
+    expect(failed).toMatchObject({ stream_ref: slowSub.stream_ref, model: slowRequest.model, status: "failed" });
+    expect(failed.response ?? null).toBeNull();
+    expect(failed.failure).toEqual(expect.any(String));
+    expect(failed.failure!.length).toBeGreaterThan(0);
+    expect(slowFailureEvents.map(event => event.event)).toEqual(["text_start", "text_delta"]);
+    expect(slowFailureEvents[1]).toMatchObject({ part_id: "text-0", text: "Before timeout." });
+    providers.releaseBarrier("models02-slow-held");
+    expect(providers.seenFixtureCalls.filter(call => call.origin === "slow")).toHaveLength(1);
+
+    ws.close(); ws = undefined;
+    await engine.kill();
+    await engine.restart();
+    expect(await owner.call("ai.streams.terminal", { stream_key: sharedKey })).toEqual(terminal);
+    expect(await owner.call("ai.streams.terminal", { stream_key: cancelKey })).toEqual(cancelled);
+    expect(await owner.call("ai.streams.terminal", { stream_key: slowKey })).toEqual(failed);
+    await models02HttpRefusal(engine, owner, "ai.streams.events", {
+      stream_key: sharedKey, handle: fast.handle }, 404, "NOT_FOUND");
+    const retained = await owner.call("ai.streams.subscribe", { stream_key: sharedKey });
+    expect(retained).toMatchObject({ stream_ref: terminal.stream_ref, status: "finished" });
+    expect(await owner.call("ai.streams.events", { stream_key: sharedKey, handle: retained.handle }))
+      .toMatchObject({ events: [], closed: true, status: "finished" });
+    expect(await owner.call("ai.streams.release", { stream_key: sharedKey }))
+      .toEqual({ stream_ref: terminal.stream_ref, stream_key: sharedKey, status: "finished", released: true });
+    await models02HttpRefusal(engine, owner, "ai.streams.events", {
+      stream_key: sharedKey, handle: retained.handle }, 404, "NOT_FOUND");
+    expect(await owner.call("ai.streams.terminal", { stream_key: sharedKey })).toEqual(terminal);
+    const afterRelease = await owner.call("ai.streams.subscribe", { stream_key: sharedKey });
+    expect(await owner.call("ai.streams.events", { stream_key: sharedKey, handle: afterRelease.handle }))
+      .toMatchObject({ stream_ref: terminal.stream_ref, events: [], closed: true, status: "finished" });
+    expect(await owner.call("ai.streams.open", { stream_key: sharedKey, request }))
+      .toMatchObject({ stream_ref: terminal.stream_ref, status: "finished" });
+    expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual([
+      "models02-chat", "models02-cancel", "models02-slow",
+    ]);
+  } finally {
+    for (const barrier of ["models02-first-part", "models02-before-done", "models02-cancel-held", "models02-slow-held"])
+      providers.releaseBarrier(barrier);
+    ws?.close();
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});
+
+type ModelSubmit = FacadeInput<"ai.steps.submit">;
+type ModelReceipt = FacadeResult<"ai.steps.receipt">;
+type ModelFailure = Extract<NonNullable<ModelReceipt["result"]>, { status: "failed" }>["failure"];
+type ModelStepVerb = "ai.steps.submit" | "ai.steps.receipt";
+interface ModelTerminal { input: ModelSubmit; receipt: ModelReceipt }
+interface ModelOffer { name: string; url: string; nativeJson: boolean }
+interface ModelFailureScenario {
+  id: string;
+  sequences: {
+    fatalWithoutFallback: { status: number; body: Json }[];
+    fatalWithDeclaredFallback: { status: number; body: Json }[];
+  };
+  expected: { fatalAttempts: number; fallbackValue: { outcome: string; reason: string } };
+}
+async function modelScenario<T extends { id: string }>(id: string): Promise<T> {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<{ scenarios: T[] }>("models-scenarios");
+  const selected = data.scenarios.find(row => row.id === id);
+  if (!selected) throw new Error(`Missing model scenario ${id}`);
+  return selected;
+}
+function modelStepConfig(offers: readonly ModelOffer[]): string {
+  return `[models.dreamer]\nenabled = false\n` + offers.map(offer => `
+[models.providers.${offer.name}]
+kind = "local-openai-compat"
+base_url = ${JSON.stringify(offer.url)}
+revision = "rev-a"
+timeout_secs = 1
+request_compression = false
+capabilities = ${offer.nativeJson ? '["json_response"]' : '[]'}
+`).join("") + `\n[models.roles.generative_reasoner]\nrungs = [\n` +
+    offers.map(offer => `  { model = "${offer.name}:reasoner" }`).join(",\n") + "\n]\n";
+}
+function modelStepInput(step_key: string, provider: string,
+  response_format: ModelSubmit["request"]["envelope"]["response_format"] = { format: "text" },
+  callClass: ModelSubmit["request"]["envelope"]["class"] = { kind: "best_effort" },
+  max_attempts = 1): ModelSubmit {
+  return {
+    step_key, retry: { max_attempts },
+    request: {
+      model: `${provider}/reasoner@rev-a`,
+      envelope: { purpose: "answer_gen", class: callClass,
+        tier: { global_default: "fixture" }, response_format, locality: "own_server" },
+      messages: [{ role: "user", content: [{ kind: "text", text: "Return the fixture result." }] }],
+      params: { temperature: 0, max_tokens: 32 },
+    },
+  };
+}
+function modelProviderStep(origin: string, id: string, response: ProviderResponse,
+  fields: Record<string, Json> = {}, barrier?: string): ProviderStep {
+  return { id, origin, role: "generative_reasoner", purpose: "answer_gen",
+    request: { method: "POST", path: "/v1/chat/completions", model: "reasoner",
+      fields: { stream: false, temperature: 0, max_tokens: 32, ...fields } },
+    response, ...(barrier === undefined ? {} : { barrier }) };
+}
+function modelCallCount(providers: ScriptedProviders, origin: string): number {
+  return providers.seenFixtureCalls.filter(call => call.origin === origin).length;
+}
+function expectModelIdentity(receipt: ModelReceipt, input: ModelSubmit): void {
+  expect(receipt.step_ref).toMatch(/^[a-f0-9]{32}$/);
+  expect(receipt.step_hash).toMatch(/^[a-f0-9]{64}$/);
+  expect(receipt.model).toBe(input.request.model);
+  expect(receipt.retry).toEqual(input.retry);
+}
+function expectModelFinished(receipt: ModelReceipt, json: unknown) {
+  expect(receipt.progression).toBe("finished");
+  expect(receipt.result?.status).toBe("finished");
+  if (receipt.result?.status !== "finished") throw new Error("Model step did not finish");
+  const result = receipt.result;
+  expect(result.json ?? null).toEqual(json);
+  expect(result.claim_ref).toMatch(/^[a-f0-9]{32}$/);
+  expect(result.response.message.role).toBe("assistant");
+  const text = result.response.message.content.flatMap(part => part.kind === "text" ? [part.text] : []).join("");
+  expect(text.trim().length).toBeGreaterThan(0);
+  return result;
+}
+function expectModelFailed(receipt: ModelReceipt, failureClass: ModelFailure["class"],
+  llm?: NonNullable<ModelFailure["llm"]>): ModelFailure {
+  expect(receipt.result?.status).toBe("failed");
+  if (receipt.result?.status !== "failed") throw new Error("Expected a failed model-step receipt");
+  const result = receipt.result;
+  expect(result.failure.class).toBe(failureClass);
+  expect(result.failure.message.trim().length).toBeGreaterThan(0);
+  if (llm !== undefined) expect(result.failure.llm).toMatchObject(llm);
+  expect(result).not.toHaveProperty("response");
+  expect(result).not.toHaveProperty("json");
+  expect(result).not.toHaveProperty("fallback_source");
+  return result.failure;
+}
+function expectModelReplay(original: ModelReceipt, current: ModelReceipt, submitted = false): void {
+  if (original.result?.status === "finished") {
+    expect(current).toEqual({ ...original, result: { ...original.result,
+      memoized: submitted ? true : original.result.memoized } });
+  } else {
+    expect(current).toEqual(original);
+  }
+}
+async function observeModelTerminal(engine: EngineFixture, input: ModelSubmit,
+  receipt: ModelReceipt): Promise<ModelTerminal> {
+  expectModelIdentity(receipt, input);
+  expect(["finished", "failed"]).toContain(receipt.result?.status);
+  const stored = await engine.client.call("ai.steps.receipt", { step_key: input.step_key });
+  expectModelReplay(receipt, stored);
+  return { input, receipt: stored };
+}
+async function modelRefusalAgent(engine: EngineFixture, id: string): Promise<PairedActor> {
+  const created = await engine.client.call("vault.agents.create", {
+    agent_def_ref: id,
+    definition: { agent_id: "models-non-owner", display_name: "Models non-owner",
+      desc: "Inert model-step refusal principal", version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(id);
+  const entity = await engine.client.call("vault.get", { entity_ref: id });
+  expect(entity.value?.kind).toBe("AGENT_DEF");
+  const actor = await engine.pairActor({ principalRef: id, actorClass: "agent" });
+  const identity = await actor.client.call("self.actor", {});
+  expect(identity.actor_ref).toBe(id);
+  expect(identity.actor_class).toBe("agent");
+  return actor;
+}
+async function modelHttpError(operation: () => Promise<unknown>, status: number,
+  code: string, message: string): Promise<PublicHttpError> {
+  let caught: unknown;
+  try { await operation(); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(PublicHttpError);
+  if (!(caught instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  expect(caught.reply.status).toBe(status);
+  expect(caught.error?.code).toBe(code);
+  expect(caught.error?.message).toBe(message);
+  return caught;
+}
+async function observeModelCallRefusal(engine: EngineFixture, receiptRef: unknown,
+  actor: PairedActor, transport: "http_facade" | "mcp", code: string): Promise<void> {
+  expect(typeof receiptRef).toBe("string");
+  if (typeof receiptRef !== "string") throw new Error("Refusal omitted its call receipt");
+  expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+  // Call receipts commit asynchronously; only this public read is repeated.
+  const receipt = await awaitPublic(
+    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null, { label: "model-step refusal call receipt" });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport,
+    actor_ref: actor.principalRef, actor_class: "agent", outcome: { refused: { code } } });
+}
+async function expectModelOwnerRefusals(engine: EngineFixture, actor: PairedActor,
+  existing: ModelSubmit): Promise<void> {
+  const refusedInput = { ...existing, step_key: `${existing.step_key}-agent-refused` };
+  const operations: { verb: ModelStepVerb; call: () => Promise<unknown> }[] = [
+    { verb: "ai.steps.submit", call: () => actor.client.call("ai.steps.submit", refusedInput) },
+    { verb: "ai.steps.receipt", call: () => actor.client.call("ai.steps.receipt", { step_key: existing.step_key }) },
+  ];
+  for (const operation of operations) {
+    const error = await modelHttpError(operation.call, 403, "FORBIDDEN", `${operation.verb} is the vault owner's`);
+    expect(error.error?.suggestions).toContain("Present the owner's own verified, unattenuated credential.");
+    await observeModelCallRefusal(engine, error.error?.receiptRef, actor, "http_facade", "FORBIDDEN");
+  }
+}
+async function refusedModelOrigin(): Promise<string> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No reserved loopback port");
+    return `http://127.0.0.1:${address.port}`;
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
 
 /* MODELS-03 One retry authority and explicit failure should work.
  * Canon: ARCH-0026 #run-tree, ARCH-0036 #model-line; OF-130/140.
- * The typed outcome distinguishes Retryable, Fatal and BudgetDenied; the
- * durable step retains Started/ResponseReceived/Logged/Finished checkpoints.
- * scenarios.json declares 503->success (2 attempts), 3 exhausted attempts,
- * and fatal with/without a declared deterministic non-model fallback.
- * Assert exact external call counts and typed nonempty terminal failures.
- * Offer fallback within one call is not a second durable retry authority.
- * A raw request has no durable step identity, retry policy or fallback DTO;
- * private call_as_step is not a public submission or receipt door.
+ * Partial: fatal/no fallback, declared deterministic fallback, four isolated
+ * provider faults, Started serialization, owner refusal and terminal replay.
+ * 503 recovery and exhaustion stay unproved under FIX 11226: health/probation
+ * rest must park the durable step without spending a declared attempt; the
+ * public receipt must expose that park and resume it when the offer is due.
+ * Only Started and terminal Finished are observed, not checkpoint history.
  */
-suite.todo(test, "MODELS-03", "waits on typed durable model-step submission with declared retries, deterministic fallback and inspectable step receipt");
+suite.test(test, "MODELS-03", "Fatal model failure is explicit, declared deterministic fallback and terminal replay survive restart", async () => {
+  const facts = await modelScenario<ModelFailureScenario>("MODELS-03");
+  const fatal = facts.sequences.fatalWithoutFallback[0]!;
+  const fallbackFatal = facts.sequences.fatalWithDeclaredFallback[0]!;
+  const providers = await ScriptedProviders.start({ id: "MODELS-03", steps: [
+    modelProviderStep("m03-fatal", "m03-fatal-400", { kind: "json", status: fatal.status, body: fatal.body }),
+    modelProviderStep("m03-fallback", "m03-fallback-400", { kind: "json", status: fallbackFatal.status, body: fallbackFatal.body }),
+    modelProviderStep("m03-slow", "m03-timeout", openaiText("m03-late", "reasoner", "Too late", { inputTokens: 4, outputTokens: 2 }), {}, "m03-timeout-reply"),
+    modelProviderStep("m03-garbage", "m03-not-json", { kind: "bytes", contentType: "text/plain", body: new TextEncoder().encode("not-json") }),
+    modelProviderStep("m03-empty", "m03-empty-choices", { kind: "json", body: { choices: [] } }),
+    modelProviderStep("m03-started", "m03-started-answer", openaiText("m03-started", "reasoner", "completed", { inputTokens: 4, outputTokens: 2 }), {}, "m03-started-reply"),
+  ] });
+  try {
+    const origin = await refusedModelOrigin();
+    const offers: ModelOffer[] = Object.entries(providers.urls).map(([name, url]) => ({ name, url, nativeJson: name === "m03-fallback" }));
+    offers.push({ name: "m03-refused", url: origin, nativeJson: false });
+    const engine = await EngineFixture.start({ id: "MODELS-03", profile, serverConfig: modelStepConfig(offers) });
+    try {
+      const terminals: ModelTerminal[] = [];
+      const fatalDetail = { InvalidRequestDetail: { message: "fixture fatal" } };
+      const fatalInput = modelStepInput("MODELS-03-fatal-v1", "m03-fatal", { format: "text" }, { kind: "best_effort" }, 3);
+      const fatalReceipt = await engine.client.call("ai.steps.submit", fatalInput);
+      expectModelFailed(fatalReceipt, "fatal", { Fatal: fatalDetail });
+      expect(modelCallCount(providers, "m03-fatal")).toBe(facts.expected.fatalAttempts);
+      terminals.push(await observeModelTerminal(engine, fatalInput, fatalReceipt));
+
+      const value = facts.expected.fallbackValue;
+      const fallbackSchema: Json = { type: "object", properties: {
+        outcome: { type: "string", const: value.outcome }, reason: { type: "string", const: value.reason },
+      }, required: ["outcome", "reason"], additionalProperties: false };
+      const fallbackInput = modelStepInput("MODELS-03-fallback-v1", "m03-fallback", { format: "json", schema: fallbackSchema },
+        { kind: "durable", fallback: { name: "json_rules_v1", config: {
+          version: 1, rows: [{ failure: "invalid_request", value }],
+        } } }, 3);
+      const fallbackReceipt = await engine.client.call("ai.steps.submit", fallbackInput);
+      const fallback = expectModelFinished(fallbackReceipt, value);
+      expect(fallback.memoized).toBe(false);
+      expect(fallback.fallback_source).toMatchObject(fatalDetail);
+      expect(modelCallCount(providers, "m03-fallback")).toBe(facts.expected.fatalAttempts);
+      terminals.push(await observeModelTerminal(engine, fallbackInput, fallbackReceipt));
+
+      const refusedInput = modelStepInput("MODELS-03-refused-v1", "m03-refused");
+      const callsBeforeConnectionFault = providers.seenFixtureCalls;
+      const refusedReceipt = await engine.client.call("ai.steps.submit", refusedInput);
+      expectModelFailed(refusedReceipt, "retryable", { Retryable: "StreamCut" });
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeConnectionFault);
+      terminals.push(await observeModelTerminal(engine, refusedInput, refusedReceipt));
+
+      const slowInput = modelStepInput("MODELS-03-timeout-v1", "m03-slow");
+      const pendingSlow = engine.client.call("ai.steps.submit", slowInput);
+      void pendingSlow.catch(() => {});
+      try {
+        await providers.awaitBarrier("m03-timeout-reply");
+        // Keep the reply held until the real provider timeout has returned.
+        const receipt = await pendingSlow;
+        expectModelFailed(receipt, "retryable", { Retryable: "Timeout" });
+        expect(modelCallCount(providers, "m03-slow")).toBe(1);
+        terminals.push(await observeModelTerminal(engine, slowInput, receipt));
+      } finally {
+        providers.releaseBarrier("m03-timeout-reply");
+        await pendingSlow.catch(() => {});
+      }
+      for (const fault of [
+        { name: "garbage", provider: "m03-garbage", failureClass: "retryable", llm: { Retryable: "ServerError" } },
+        { name: "empty", provider: "m03-empty", failureClass: "fatal", llm: { Fatal: "EmptyResponse" } },
+      ] satisfies { name: string; provider: string; failureClass: ModelFailure["class"]; llm: NonNullable<ModelFailure["llm"]> }[]) {
+        const input = modelStepInput(`MODELS-03-${fault.name}-v1`, fault.provider);
+        const receipt = await engine.client.call("ai.steps.submit", input);
+        expectModelFailed(receipt, fault.failureClass, fault.llm);
+        expect(modelCallCount(providers, fault.provider)).toBe(1);
+        terminals.push(await observeModelTerminal(engine, input, receipt));
+      }
+
+      const agent = await modelRefusalAgent(engine, "03030303030303030303030303030303");
+      const callsBeforeRefusal = providers.seenFixtureCalls;
+      await expectModelOwnerRefusals(engine, agent, fatalInput);
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeRefusal);
+
+      const startedInput = modelStepInput("MODELS-03-started-v1", "m03-started");
+      const pendingStarted = engine.client.call("ai.steps.submit", startedInput);
+      void pendingStarted.catch(() => {});
+      try {
+        await providers.awaitBarrier("m03-started-reply");
+        const started = await engine.client.call("ai.steps.receipt", { step_key: startedInput.step_key });
+        expectModelIdentity(started, startedInput);
+        expect(started.progression).toBe("started");
+        expect(started.result).toBeNull();
+        const busy = await engine.client.call("ai.steps.submit", startedInput);
+        expect(busy).toEqual(started);
+        expect(modelCallCount(providers, "m03-started")).toBe(1);
+      } finally {
+        providers.releaseBarrier("m03-started-reply");
+        await pendingStarted.catch(() => {});
+      }
+      const completed = await pendingStarted;
+      const completedResult = expectModelFinished(completed, null);
+      expect(completedResult.fallback_source ?? null).toBeNull();
+      expect(completedResult.memoized).toBe(false);
+      expect(completedResult.response.message.content).toEqual([{ kind: "text", text: "completed" }]);
+      terminals.push(await observeModelTerminal(engine, startedInput, completed));
+      expect(providers.seenFixtureCalls).toHaveLength(6);
+      expect(providers.seenFixtureCalls.every(call => call.fixtureId !== null)).toBe(true);
+
+      const callsBeforeReplay = providers.seenFixtureCalls;
+      for (const terminal of terminals) {
+        const replay = await engine.client.call("ai.steps.submit", terminal.input);
+        expectModelReplay(terminal.receipt, replay, true);
+      }
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+      // Terminal reads above, rather than provider arrival, establish durability.
+      await engine.kill();
+      await engine.restart();
+      for (const terminal of terminals) {
+        const stored = await engine.client.call("ai.steps.receipt", { step_key: terminal.input.step_key });
+        expectModelReplay(terminal.receipt, stored);
+        const replay = await engine.client.call("ai.steps.submit", terminal.input);
+        expectModelReplay(terminal.receipt, replay, true);
+      }
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+    } finally { await engine.close(); }
+  } finally {
+    providers.releaseBarrier("m03-timeout-reply");
+    providers.releaseBarrier("m03-started-reply");
+    await providers.close();
+  }
+});
+
+// Shared model-step helpers and imports are supplied by MODELS-03.ts.
+interface ModelSchemaScenario {
+  id: string;
+  contract: { responseFormat: { format: "json"; schema: Json }; validValue: { count: number } };
+  sequences: { native: string[]; shim: string[]; exhausted: string[] };
+  expected: { nativeAttempts: number; shimAttempts: number; exhaustedAttempts: number };
+}
+function modelSchemaSteps(origin: string, texts: readonly string[], schema: Json,
+  native: boolean): ProviderStep[] {
+  return texts.map((text, index) => {
+    const roles = ["system", "user", ...Array.from({ length: index }, () => ["assistant", "user"]).flat()];
+    const fields: Record<string, Json> = native
+      ? { response_format: { type: "json_schema", json_schema: { name: "oneiron_response", schema } } }
+      : { messages: roles.map(role => ({ role })) };
+    return modelProviderStep(origin, `${origin}-${index + 1}`,
+      openaiText(`${origin}-answer-${index + 1}`, "reasoner", text, { inputTokens: 4, outputTokens: 2 }), fields);
+  });
+}
+function expectModelCorrectionFeedback(providers: ScriptedProviders, origin: string,
+  expectedAttempts: number, schema: Json): void {
+  const calls = providers.seenFixtureCalls.filter(call => call.origin === origin);
+  expect(calls).toHaveLength(expectedAttempts);
+  for (const call of calls.slice(1)) {
+    // Inspect the engine's output wire, not generated diagnostic prose.
+    const body = call.body as { messages: { role: string; content: unknown }[] };
+    const last = body.messages.at(-1);
+    expect(last?.role).toBe("user");
+    expect(typeof last?.content).toBe("string");
+    if (typeof last?.content !== "string") throw new Error("Correction has no JSON feedback string");
+    const feedback = JSON.parse(last.content) as { required_schema: unknown; schema_validation_errors: unknown };
+    expect(feedback.required_schema).toEqual(schema);
+    expect(Array.isArray(feedback.schema_validation_errors)).toBe(true);
+    if (!Array.isArray(feedback.schema_validation_errors)) throw new Error("Correction omitted validation errors");
+    expect(feedback.schema_validation_errors.length).toBeGreaterThan(0);
+  }
+}
+async function modelMcpSchemas(mcp: McpClient): Promise<Map<string, string>> {
+  await mcp.initialize();
+  const listed = await mcp.request<{ tools: {
+    name: string; inputSchema: { properties: { schema_version: { const: string } } };
+  }[] }>("tools/list");
+  const versions = new Map(listed.tools.map(tool => [tool.name, tool.inputSchema.properties.schema_version.const]));
+  for (const verb of ["ai.steps.submit", "ai.steps.receipt"]) {
+    expect(typeof versions.get(verb)).toBe("string");
+    expect(versions.get(verb)!.length).toBeGreaterThan(0);
+  }
+  return versions;
+}
+function modelMcpArguments<V extends ModelStepVerb>(versions: Map<string, string>, verb: V,
+  input: FacadeInput<V>) {
+  const schemaVersion = versions.get(verb);
+  if (!schemaVersion) throw new Error(`Required public MCP tool not listed: ${verb}`);
+  return { schema_version: schemaVersion,
+    consent: { policy_ref: "policy:models-e2e", purpose: "structured model-step journey" },
+    arguments: { spec: input } };
+}
+async function modelMcpTool<V extends ModelStepVerb>(mcp: McpClient, versions: Map<string, string>,
+  verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+  const reply = await mcp.callTool(verb, modelMcpArguments(versions, verb, input)) as {
+    isError: boolean; structuredContent: { tool: string; output: FacadeResult<V> };
+  };
+  expect(reply.isError).toBe(false);
+  expect(reply.structuredContent.tool).toBe(verb);
+  return reply.structuredContent.output;
+}
+async function expectModelMcpRefusal(engine: EngineFixture, actor: PairedActor,
+  operation: () => Promise<unknown>, verb: ModelStepVerb): Promise<void> {
+  let caught: unknown;
+  try { await operation(); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(McpRpcError);
+  if (!(caught instanceof McpRpcError) || !("error" in caught.response)) throw new Error("Expected an MCP owner refusal");
+  expect(caught.response).not.toHaveProperty("result");
+  expect(caught.response.error).toMatchObject({ code: -32020, data: {
+    kind: "facade_error", error_code: "facade_error", human_message: `${verb} is the vault owner's`,
+  } });
+  const data = caught.response.error.data as { receipt_ref?: unknown };
+  await observeModelCallRefusal(engine, data.receipt_ref, actor, "mcp", "facade_error");
+}
 
 /* MODELS-04 Structured output retries and refusal should work.
  * Canon: ARCH-0036 #model-line, runtime #mint:S4; OF-436.
- * Request ResponseFormat {format:"json",schema}; result is schema-valid
- * {count:2} or typed validation exhaustion, not untyped best-effort text.
- * scenarios.json pins native (1), invalid->valid shim (2), and exhaustion
- * (3 total) attempts. Schema feedback must reach the corrective request.
- * The internal schema shim exists. Neither the HTTP/SDK catalog nor MCP
- * exposes this one-shot engine step. ai.verdict's choice/score question is
- * not an arbitrary JSON-schema request; agent REPL correction is exempt.
+ * Native JSON takes one send; the engine shim corrects once or fails after
+ * three replies. Correction feedback is parsed from the actual provider wire.
+ * Invalid schema sends nothing; zero attempts and non-owner actors are refused.
+ * Fresh MCP execution and cross-transport replay use the listed tool envelope.
+ * Receipt reads and identical submits retain every terminal after SIGKILL.
  */
-suite.todo(test, "MODELS-04", "waits on typed one-shot Json{schema} model-step request/result over HTTP and MCP");
+suite.test(test, "MODELS-04", "Structured output retries and refusal should work", async () => {
+  const facts = await modelScenario<ModelSchemaScenario>("MODELS-04");
+  const format = facts.contract.responseFormat;
+  const providers = await ScriptedProviders.start({ id: "MODELS-04",
+    origins: ["m04-invalid-schema", "m04-zero-attempts"], steps: [
+      ...modelSchemaSteps("m04-native", facts.sequences.native, format.schema, true),
+      ...modelSchemaSteps("m04-shim", facts.sequences.shim, format.schema, false),
+      ...modelSchemaSteps("m04-exhausted", facts.sequences.exhausted, format.schema, false),
+      ...modelSchemaSteps("m04-mcp", facts.sequences.native, format.schema, true),
+    ] });
+  try {
+    const offers: ModelOffer[] = Object.entries(providers.urls).map(([name, url]) => ({ name, url,
+      nativeJson: name !== "m04-shim" && name !== "m04-exhausted" }));
+    const engine = await EngineFixture.start({ id: "MODELS-04", profile, surface: "tool-first",
+      serverConfig: modelStepConfig(offers) });
+    try {
+      const terminals: ModelTerminal[] = [];
+      const nativeInput = modelStepInput("MODELS-04-native-v1", "m04-native", format, { kind: "best_effort" }, 3);
+      const nativeReceipt = await engine.client.call("ai.steps.submit", nativeInput);
+      const native = expectModelFinished(nativeReceipt, facts.contract.validValue);
+      expect(native.memoized).toBe(false);
+      expect(native.fallback_source ?? null).toBeNull();
+      expect(modelCallCount(providers, "m04-native")).toBe(facts.expected.nativeAttempts);
+      terminals.push(await observeModelTerminal(engine, nativeInput, nativeReceipt));
+
+      const shimInput = modelStepInput("MODELS-04-shim-v1", "m04-shim", format, { kind: "best_effort" }, 3);
+      const shimReceipt = await engine.client.call("ai.steps.submit", shimInput);
+      const shim = expectModelFinished(shimReceipt, facts.contract.validValue);
+      expect(shim.memoized).toBe(false);
+      expect(shim.fallback_source ?? null).toBeNull();
+      expectModelCorrectionFeedback(providers, "m04-shim", facts.expected.shimAttempts, format.schema);
+      terminals.push(await observeModelTerminal(engine, shimInput, shimReceipt));
+
+      const exhaustedInput = modelStepInput("MODELS-04-exhausted-v1", "m04-exhausted", format, { kind: "best_effort" }, 3);
+      const exhaustedReceipt = await engine.client.call("ai.steps.submit", exhaustedInput);
+      const exhausted = expectModelFailed(exhaustedReceipt, "schema_validation");
+      expect(exhausted.validation_attempts).toBe(facts.expected.exhaustedAttempts);
+      expect(exhausted.validation_errors.length).toBeGreaterThan(0);
+      expectModelCorrectionFeedback(providers, "m04-exhausted", facts.expected.exhaustedAttempts, format.schema);
+      terminals.push(await observeModelTerminal(engine, exhaustedInput, exhaustedReceipt));
+
+      const callsBeforeInvalid = providers.seenFixtureCalls;
+      const invalidInput = modelStepInput("MODELS-04-invalid-schema-v1", "m04-invalid-schema",
+        { format: "json", schema: { type: 17 } }, { kind: "best_effort" }, 3);
+      const invalidReceipt = await engine.client.call("ai.steps.submit", invalidInput);
+      const invalid = expectModelFailed(invalidReceipt, "schema_validation");
+      expect(invalid.validation_attempts).toBe(0);
+      expect(invalid.validation_errors.length).toBeGreaterThan(0);
+      terminals.push(await observeModelTerminal(engine, invalidInput, invalidReceipt));
+      const zeroInput = modelStepInput("MODELS-04-zero-attempts-v1", "m04-zero-attempts", format, { kind: "best_effort" }, 0);
+      await modelHttpError(() => engine.client.call("ai.steps.submit", zeroInput), 400,
+        "BAD_REQUEST", "max_attempts must be at least one");
+      let missing: unknown;
+      try { await engine.client.call("ai.steps.receipt", { step_key: zeroInput.step_key }); }
+      catch (error) { missing = error; }
+      expect(missing).toBeInstanceOf(PublicHttpError);
+      if (!(missing instanceof PublicHttpError)) throw new Error("Zero attempts admitted a model step");
+      expect(missing.reply.status).toBe(404);
+      expect(missing.error?.code).toBe("NOT_FOUND");
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeInvalid);
+
+      const versions = await modelMcpSchemas(engine.mcp);
+      const mcpInput = modelStepInput("MODELS-04-mcp-fresh-v1", "m04-mcp", format, { kind: "best_effort" }, 3);
+      const mcpReceipt = await modelMcpTool(engine.mcp, versions, "ai.steps.submit", mcpInput);
+      const mcpResult = expectModelFinished(mcpReceipt, facts.contract.validValue);
+      expect(mcpResult.memoized).toBe(false);
+      expect(mcpResult.fallback_source ?? null).toBeNull();
+      expect(modelCallCount(providers, "m04-mcp")).toBe(facts.expected.nativeAttempts);
+      terminals.push(await observeModelTerminal(engine, mcpInput, mcpReceipt));
+      const callsBeforeReplay = providers.seenFixtureCalls;
+      const mcpRead = await modelMcpTool(engine.mcp, versions, "ai.steps.receipt", { step_key: nativeInput.step_key });
+      expectModelReplay(nativeReceipt, mcpRead);
+      const mcpReplay = await modelMcpTool(engine.mcp, versions, "ai.steps.submit", nativeInput);
+      expectModelReplay(nativeReceipt, mcpReplay, true);
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+
+      const agent = await modelRefusalAgent(engine, "04040404040404040404040404040404");
+      await expectModelOwnerRefusals(engine, agent, nativeInput);
+      await agent.mcp.initialize();
+      const refusedInput = { ...nativeInput, step_key: "MODELS-04-mcp-agent-refused" };
+      await expectModelMcpRefusal(engine, agent,
+        () => agent.mcp.callTool("ai.steps.submit", modelMcpArguments(versions, "ai.steps.submit", refusedInput)), "ai.steps.submit");
+      await expectModelMcpRefusal(engine, agent,
+        () => agent.mcp.callTool("ai.steps.receipt", modelMcpArguments(versions, "ai.steps.receipt", { step_key: nativeInput.step_key })), "ai.steps.receipt");
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+      expect(providers.seenFixtureCalls).toHaveLength(7);
+      expect(providers.seenFixtureCalls.every(call => call.fixtureId !== null)).toBe(true);
+
+      for (const terminal of terminals) {
+        const replay = await engine.client.call("ai.steps.submit", terminal.input);
+        expectModelReplay(terminal.receipt, replay, true);
+      }
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+      await engine.kill();
+      await engine.restart();
+      for (const terminal of terminals) {
+        const stored = await engine.client.call("ai.steps.receipt", { step_key: terminal.input.step_key });
+        expectModelReplay(terminal.receipt, stored);
+        const replay = await engine.client.call("ai.steps.submit", terminal.input);
+        expectModelReplay(terminal.receipt, replay, true);
+      }
+      const restartedVersions = await modelMcpSchemas(engine.mcp);
+      const restartedMcpReplay = await modelMcpTool(engine.mcp, restartedVersions, "ai.steps.submit", nativeInput);
+      expectModelReplay(nativeReceipt, restartedMcpReplay, true);
+      expect(providers.seenFixtureCalls).toEqual(callsBeforeReplay);
+    } finally { await engine.close(); }
+  } finally { await providers.close(); }
+});
 
 /* MODELS-05 Budget reserve settle and cached resume should work.
  * Canon: ARCH-0026 #run-tree, runtime #charge-rule; OF-076/127/286/290/319.
@@ -192,11 +1004,16 @@ suite.todo(test, "MODELS-04", "waits on typed one-shot Json{schema} model-step r
  * settles once. A no-usage answer pays its reservation; every failed rung
  * that went out pays its own reservation, even when all rungs fail.
  * scenarios.json pins monetary amounts, concurrency barrier and call count.
- * Restart only after a public settled receipt, not provider arrival alone.
- * The raw process-lifetime token meter and manual /v1/usage/events records
- * cannot substitute for a persisted monetary lease or durable-step resume.
+ * The lease doors (vault.budgets.lease.open/lease/top_up/settlements) and
+ * ai.steps.submit/receipt are real owner doors, but nothing joins them:
+ * ModelStepSubmit has no spend-lease binding (it denies unknown fields), a
+ * step's sends are metered on the process-local raw-inference meter, and
+ * settlements of a fresh served run are not correlated to a step. The
+ * cached-resume promise alone (settled terminal, restart, identical submit,
+ * no new provider call) is proved in MODELS-03; a copy here would add a
+ * case without adding a promise.
  */
-suite.todo(test, "MODELS-05", "waits on typed persisted monetary run lease and durable model-step resume with per-rung settlement receipts");
+suite.todo(test, "MODELS-05", "waits on an owner-authorized spend-lease binding on ai.steps.submit with priced per-rung reservations, and vault.budgets.settlements metering correlated to the step's run");
 
 /* MODELS-06 Graceful budget wrap and hold should work.
  * Canon: ARCH-0079 #work/#budget, ARCH-0026 #run-tree; OF-271/419/496/532.
@@ -205,11 +1022,15 @@ suite.todo(test, "MODELS-05", "waits on typed persisted monetary run lease and d
  * reserve; ordinary work cannot spend it. Top up the held lease and resume
  * the same model and work, never silently choose a cheaper one. A soft
  * share is not a pinned cap, and a hold is neither Done nor abandonment.
- * scenarios.json preserves the fixture policy and expected money facts.
- * Generic run-tree intervene and fanout approval do not expose self.budget,
- * its steering notice, or an owned lease's top-up/resume contract.
+ * self.budget/self.budget.land and vault.budgets.hold/hold.resume/top_up are
+ * real doors, but no public dispatch spends a model budget to a hold on a
+ * fresh vault: self.budget is a dispatched attempt's own read, the workflow
+ * claim never dials the landing reserve, self.budget.land needs the worker's
+ * lease fence that no read exposes, and BudgetGuard's PLAN/LAND steering is
+ * not on any public read. An owner-only hold/top-up/resume round trip or an
+ * absent-hold read keeps no wrap-and-hold promise.
  */
-suite.todo(test, "MODELS-06", "waits on typed agent budget read/notice and persisted landing hold, top-up and resume over HTTP and MCP");
+suite.todo(test, "MODELS-06", "waits on grant-authorized metered task/workflow dispatch bound to an owned lease with a deterministic budget hold, a worker lease-fence read for self.budget.land, and self.budget PLAN/LAND pressure plus a dialed landing reserve over HTTP and MCP");
 
 suite.test(test, "MODELS-07", "Inference mode and usage attribution should work", async () => {
   const catalog = await loadFixtures();
@@ -332,15 +1153,423 @@ suite.test(test, "MODELS-07", "Inference mode and usage attribution should work"
  */
 suite.todo(test, "MODELS-08", "waits on documented official subscription login/callback/logout and typed credential-free seat status with configurable issuer");
 
+interface Models09Facts {
+  id: string;
+  catalogs: { revision: string; offers: { id: string; model: string; priceNanoUsd: number; externalScore: number }[] }[];
+  heldOutLabels: { item: string; label: "yes" | "no" }[];
+  expected: { trialCostNanoUsd: number; approval: string; beforeBinding: string; afterBinding: string;
+    receiptCatalogRevision: string; autoAuthorizedSwap: boolean };
+}
+
+function models09HashJson(value: unknown): string {
+  return Buffer.from(models09Blake3(new TextEncoder().encode(JSON.stringify(value)))).toString("hex");
+}
+
+function models09TeacherApproval(
+  binding: Models09Facade.ModelBinding, floor: Models09Facade.TeacherProbePolicy,
+): Models09Facade.TeacherProbeApproval {
+  // Rust ModelBinding field order; empty route_models, None disposition and false reads_audio are omitted.
+  const bindingJson = { model: binding.model, slot: binding.slot, tier: binding.tier };
+  // Rust resolved TeacherProbePolicy field order; holder_ref=None is omitted, not null.
+  const policyJson = { probe_id: floor.probe_id, vault_min_f1_millionths: floor.min_f1_millionths,
+    min_f1_millionths: floor.min_f1_millionths };
+  return { probe_id: floor.probe_id, model: binding.model, binding_hash: models09HashJson(bindingJson),
+    f1_millionths: 1_000_000, policy_hash: models09HashJson(policyJson) };
+}
+
+function models09InitialManifest(incumbent: string): Models09Facade.ModelManifest {
+  const required = ["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher",
+    "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target",
+    "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision"];
+  const roles: Record<string, Models09Facade.ModelBinding> = {};
+  for (const role of required) roles[role] = { model: incumbent, slot: "llm", tier: "fixture-role" };
+  roles.retrieval_embedder = { model: "models-fixture/embedder@rev-a", slot: "embedder", tier: "fixture-embedder" };
+  roles.extraction_encoder = { model: "models-fixture/encoder@rev-a", slot: "oneironer", tier: "fixture-encoder" };
+  roles.extraction_teacher = { model: "models-fixture/teacher@rev-a", slot: "llm", tier: "fixture-teacher" };
+  return { version: 2, roles, routes: { llm: "own_server", embedder: "own_server", oneironer: "own_server" } };
+}
+
+function models09BackendPin(model: string): Models09Facade.ModelBackendPin {
+  return { model, backend: "models-fixture", serving_revision: "fixture-serving-1",
+    quantization: null, context_window_tokens: 1_048_576 };
+}
+
+function models09RegistryRow(model: string, nanoUsdPerMillion: number): Models09Facade.ModelRegistryRow {
+  // The scenario leaves the price denominator unstated. This fixture uses nano-USD per million tokens.
+  const rate = (nanoUsdPerMillion / 1_000_000_000).toFixed(9);
+  const price: Models09Facade.LlmCatalogCost = { input_per_million: rate, output_per_million: rate,
+    cache_read_per_million: "0", cache_write_per_million: "0", currency: "USD" };
+  return { version: 1, wire: "openai-compat", catalog: { model, display_name: model,
+    locality: "own_server", context_window_tokens: 1_048_576, max_output_tokens: 64,
+    cost: price, capabilities: ["json_response"], metadata: { description: {},
+      backends: [{ pin: models09BackendPin(model), price }] } }, scores: {}, fetched_at: {} };
+}
+
+function models09CatalogImport(
+  facts: Models09Facts, index: number,
+): FacadeInput<"vault.models.catalog.refresh"> {
+  const revision = facts.catalogs[index]!;
+  const offer = revision.offers[0]!;
+  return { revision: revision.revision, expected_revision: index === 0 ? null : facts.catalogs[index - 1]!.revision,
+    catalog: { version: 1, rows: [models09RegistryRow(facts.expected.beforeBinding, 10),
+      models09RegistryRow(offer.model, offer.priceNanoUsd)] },
+    scores: [{ source: "fixture-rank", fetched_at: 1001 + index,
+      observations: [{ model: offer.model, benchmark: "fixture-yes-no", score: offer.externalScore }] }] };
+}
+
+function models09CandidateRow(revision: Models09Facade.ModelCatalogRevision, model: string) {
+  const row = revision.rows.find(value => value.catalog.model === model);
+  if (!row) throw new Error("MODELS-09 catalog lacks candidate row");
+  return row;
+}
+
+function models09PaidArm(id: string, model: string, answer: boolean, probability: number): ProviderStep {
+  return { id, origin: "models-fixture", role: "held-out-trial", purpose: "measured-model-comparison",
+    request: { method: "POST", path: "/v1/chat/completions", model, fields: { stream: false } },
+    response: openaiText(id, model, JSON.stringify({ answer, probability }),
+      { inputTokens: 499_998, outputTokens: 2 }) };
+}
+
+async function models09Refused(
+  engine: EngineFixture, act: () => Promise<unknown>, verb: string,
+  status: number, code: string, actorRef: string, message?: string,
+) {
+  let failure: unknown;
+  try { await act(); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error(`MODELS-09 expected public HTTP refusal: ${verb}`);
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  if (message) expect(failure.error?.message).toContain(message);
+  const receiptRef = failure.error?.receiptRef;
+  // Authenticated facade refusals carry OF-538 call receipts, including owner preflight refusals.
+  expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+  if (typeof receiptRef !== "string") throw new Error("MODELS-09 refusal lacks receiptRef");
+  const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
+  expect(receipt).toMatchObject({ receipt_ref: receiptRef, verb, actor_ref: actorRef,
+    outcome: { refused: { code } } });
+  return receiptRef;
+}
+
 /* MODELS-09 Model registry offers are evidence not permission should work.
  * Canon: ARCH-0036 #model-line, ARCH-0003 #learning; OF-512.
- * Preserve offer=model@where, pinned catalog revision/cost/score evidence,
- * owned held-out labels and a proposed role binding. Refresh/diff, nominate,
- * trial, inspect the proposal, deny it, then call the original role again.
- * The proposal receipt must cite revision and real trial cost; external
- * ranks cannot grant authority. scenarios.json pins both catalog revisions,
- * independent labels and unchanged incumbent binding after denial.
- * ai.options lists current offers. Generic pack/learning-setting mutations
- * are not typed catalog refresh/trial/model-binding approval operations.
+ * Imported catalog revisions pin prices and external scores. Public historical
+ * answers and independent authored outcomes feed a priced held-out trial.
+ * Only owner approval admits spend; a completed proposal is denied, survives
+ * restart and leaves both the role receipt and incumbent wire route unchanged.
+ * A candidate 503 retains an interrupted unknown arm, not a binding proposal.
+ * Unproved: registry fetching, real teacher quality, inferred confidence
+ * intervals, certified family independence and settlement without token usage.
+ * Full-case TODO: waits on owner-gated vault.models.catalog.refresh fetching
+ * a configured registry origin with a documented response schema and bounded
+ * typed failure that preserves the incumbent binding.
  */
-suite.todo(test, "MODELS-09", "waits on typed model catalog refresh/diff, held-out trial and proposed role-binding approval/denial calls");
+suite.test(test, "MODELS-09", "Owner denial preserves incumbent routing after a measured held-out model trial", async () => {
+  const catalog = await loadFixtures();
+  const document = await catalog.readJson<{ scenarios: Models09Facts[] }>("models-scenarios");
+  const facts = document.scenarios.find(value => value.id === "MODELS-09");
+  if (!facts) throw new Error("MODELS-09 fixture is absent");
+  expect(facts.catalogs).toHaveLength(2);
+  expect(facts.heldOutLabels.map(value => value.label)).toEqual(["yes", "no"]);
+  expect(facts.expected.approval).toBe("deny");
+  expect(facts.expected.autoAuthorizedSwap).toBe(false);
+  const candidate = facts.catalogs[1]!.offers[0]!.model;
+  expect(candidate).toBe("models-fixture/candidate@rev-a");
+  expect(facts.expected.beforeBinding).toBe("models-fixture/incumbent@rev-a");
+  expect(facts.expected.afterBinding).toBe(facts.expected.beforeBinding);
+  const providers = await ScriptedProviders.start({ id: "MODELS-09", steps: [
+    models09PaidArm("models09-trial-1-incumbent", "incumbent", true, 0.8),
+    models09PaidArm("models09-trial-1-candidate", "candidate", true, 0.9),
+    models09PaidArm("models09-trial-2-incumbent", "incumbent", false, 0.2),
+    models09PaidArm("models09-trial-2-candidate", "candidate", false, 0.1),
+    { id: "models09-denial-probe", origin: "models-fixture", role: "generative_reasoner", purpose: "incumbent-after-denial",
+      request: { method: "POST", path: "/v1/chat/completions", model: "incumbent", fields: { stream: false } },
+      response: openaiText("models09-denial-probe", "incumbent", "incumbent-after-denial",
+        { inputTokens: 10, outputTokens: 2 }) },
+  ] });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "MODELS-09", profile, serverConfig: `
+[models]
+raw_budget_units = 10000000
+[models.providers.models-fixture]
+kind = "local-openai-compat"
+base_url = ${JSON.stringify(providers.urls["models-fixture"])}
+revision = "rev-a"
+timeout_secs = 1
+request_compression = false
+context_tokens = 1048576
+max_output_tokens = 64
+[models.roles.generative_reasoner]
+model = "models-fixture:incumbent"
+[models.roles.checker]
+model = "models-fixture:candidate"
+[models.decisions.big]
+role = "generative_reasoner"
+version = "fixture-big-v1"
+wording = "Answer the fixture yes/no question with its probability."
+reply = "json"
+budget_units = 10000000
+[models.dreamer]
+enabled = false
+` });
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const policy = await owner.call("vault.gate.policy.get", {});
+    const defaultPolicy = policy.manifests.find(value => value.manifest_ref === policy.default_manifest_ref);
+    expect(defaultPolicy?.trusted).toBe(true);
+    expect(defaultPolicy?.quarantined).toBe(false);
+    const floor = defaultPolicy?.manifest.teacher_probe;
+    if (!floor) throw new Error("MODELS-09 trusted teacher-probe policy is absent");
+    expect(floor).toMatchObject({ probe_id: "oneiron-conll-bio-v1", min_f1_millionths: 800_000 });
+    expect(floor.holders ?? []).toEqual([]);
+    const manifest = models09InitialManifest(facts.expected.beforeBinding);
+    // External operator fixture evidence, not a teacher benchmark run or a signature.
+    await owner.call("vault.models.manifest.replace", { manifest,
+      teacher_approval: models09TeacherApproval(manifest.roles.extraction_teacher!, floor) });
+    expect(await owner.call("vault.models.manifest.read", {})).toMatchObject(manifest);
+    const before = await owner.call("vault.models.bindings.read", { role: "generative_reasoner" });
+    expect(before).toEqual(manifest.roles.generative_reasoner!);
+
+    const agentRef = "09000000000000000000000000000001";
+    await owner.call("vault.agents.create", { agent_def_ref: agentRef, definition: {
+      agent_id: "models09-observer", desc: "Model catalog observer without owner authority", version: "1",
+    } });
+    expect((await owner.call("vault.get", { entity_ref: agentRef })).value?.kind).toBe("AGENT_DEF");
+    const agent = await engine.pairActor({ principalRef: agentRef, actorClass: "agent",
+      scope: ["core:read", "core:write", "core:propose"] });
+    expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+
+    const importA = models09CatalogImport(facts, 0);
+    const importB = models09CatalogImport(facts, 1);
+    await owner.call("vault.models.catalog.refresh", importA);
+    const revisionA = await owner.call("vault.models.catalog.get", { revision: importA.revision });
+    expect(revisionA.revision).toBe(importA.revision);
+    const rowA = models09CandidateRow(revisionA, candidate);
+    expect(rowA.catalog.cost).toEqual(importA.catalog.rows[1]!.catalog.cost);
+    expect(rowA.catalog.metadata?.backends).toEqual(importA.catalog.rows[1]!.catalog.metadata?.backends);
+    expect(rowA.scores?.["fixture-rank"]?.["fixture-yes-no"]).toBe(facts.catalogs[0]!.offers[0]!.externalScore);
+    expect(rowA.fetched_at?.["fixture-rank"]).toBe(1001);
+    await models09Refused(engine, () => agent.client.call("vault.models.catalog.refresh", importB),
+      "vault.models.catalog.refresh", 403, "FORBIDDEN", agentRef, "is the vault owner's");
+    expect((await owner.call("vault.models.catalog.get", {})).revision).toBe(importA.revision);
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    await owner.call("vault.models.catalog.refresh", importB);
+    const revisionB = await owner.call("vault.models.catalog.get", { revision: importB.revision });
+    expect(revisionB.previous_revision).toBe(importA.revision);
+    expect(revisionB.score_diffs).toEqual([{ model: candidate, source: "fixture-rank", benchmark: "fixture-yes-no",
+      previous: facts.catalogs[0]!.offers[0]!.externalScore, score: facts.catalogs[1]!.offers[0]!.externalScore, fetched_at: 1002 }]);
+    const rowB = models09CandidateRow(revisionB, candidate);
+    expect(rowB.catalog.cost).toEqual(importB.catalog.rows[1]!.catalog.cost);
+    expect(rowB.catalog.metadata?.backends).toEqual(importB.catalog.rows[1]!.catalog.metadata?.backends);
+    expect(rowB.scores?.["fixture-rank"]?.["fixture-yes-no"]).toBe(facts.catalogs[1]!.offers[0]!.externalScore);
+    expect(rowB.fetched_at?.["fixture-rank"]).toBe(1002);
+    expect(await owner.call("vault.models.catalog.diff", { from: importA.revision, to: importB.revision }))
+      .toEqual({ from: importA.revision, to: importB.revision, changes: [{ model: candidate, previous: rowA, current: rowB }] });
+    expect(await owner.call("vault.models.catalog.get", { revision: importA.revision })).toEqual(revisionA);
+    expect((await owner.call("vault.models.catalog.get", {})).revision).toBe(importB.revision);
+    const roleBefore = await owner.call("vault.models.roles.read", { role: "generative_reasoner" });
+    expect(roleBefore).toMatchObject({ model: before.model, provider: "models-fixture", revision: "rev-a",
+      route: "own_server", slot: "llm", tier: before.tier });
+
+    const scope = await models09OwnerBaseClaimScope(owner, ownerRef);
+    const witness = await owner.call("vault.witness", { conversation_ref: "models09-history", occurred_at: 1_800_000_000,
+      messages: [{ author: "user", message_type: "dialogue", content: "Two independent model evaluation items.",
+        is_visible: true, order: 0 }] });
+    const turn = (await owner.call("vault.get", { entity_ref: witness.turn_short_id })).value;
+    if (!turn) throw new Error("MODELS-09 witnessed turn is not readable");
+    expect(turn.kind).toBe("TURN");
+    const units = ["09000000000000000000000000000002", "09000000000000000000000000000003"];
+    for (const [index, unit] of units.entries()) {
+      const claim = await owner.call("vault.claims.upsert", { id: unit, subject_ref: turn.id_hex,
+        predicate: `fixture.item.${index === 0 ? "a" : "b"}`, value: facts.heldOutLabels[index]!.item,
+        confidence: 1, source: "user_stated", scope, occurred_at: 1_800_000_000 });
+      expect(claim.approval).toBe("auto");
+      expect((await owner.call("vault.get", { entity_ref: claim.claim_short_id })).value?.id_hex).toBe(unit);
+    }
+    const question = await owner.call("vault.questions.create", { definition: {
+      question: { text: "Will this fixture item resolve yes?", class: "judgment", contract: { kind: "noul" }, accept_type: false },
+      adapter: "graph", units, recipe: "explicit", profile: "fixture",
+      dial: { first: "big", ceiling: "big", band: { low: 0.35, high: 0.65 } },
+      activation: "standing", refresh: { on_arrival: false, every_seconds: null }, delivery: "fixture",
+      learning: true, deadline_ms: 2000, binding: { source: { kind: "claim", predicate: "fixture.outcome" },
+        horizon: 315_360_000, mapping: { yes: true, no: false }, noise_weight: 1 },
+    } });
+    const questionId = question.definition.question.id;
+    expect(question.definition.question.version).toBe(1);
+    expect(question.principal).toBe(ownerRef);
+    expect(await owner.call("vault.questions.read", { id: questionId })).toEqual(question);
+    const answers: Models09Facade.AnswerRecord[] = [];
+    const heldOut: Models09Facade.HeldOutSelection[] = [];
+    for (const [index, unit] of units.entries()) {
+      const input = { unit, evidence: [] };
+      const prepared = await owner.call("vault.questions.prepare", { id: questionId, expected_version: 1, input });
+      expect(prepared.sources.map(value => value.id)).toEqual([unit]);
+      const answer = await owner.call("vault.questions.admit", { id: questionId, expected_version: 1, input,
+        source_frontier: prepared.source_frontier,
+        // Authored historical prediction; the paid comparison below must still call both real wire arms.
+        decision: { answer: { kind: "noul", value: true }, probability: 0.7, evidence: [], in_band: false,
+          receipt: { question: questionId, question_version: 1, principal: prepared.principal,
+            providers: [{ rung: "big", model: "fixture-provider/fixture-model", version: "fixture-v1" }],
+            band: { low: 0.35, high: 0.65 }, evidence_versions: prepared.sources.map(source => ({
+              id: source.id, body_hash: Buffer.from(source.hash).toString("hex"),
+            })) } } });
+      answers.push(answer);
+      const factId = index === 0 ? "09000000000000000000000000000004" : "09000000000000000000000000000005";
+      const fact = await owner.call("vault.claims.upsert", { id: factId, subject_ref: unit,
+        predicate: "fixture.outcome", value: facts.heldOutLabels[index]!.label,
+        confidence: 1, source: "user_stated", scope, occurred_at: answer.answered_at });
+      expect(fact.approval).toBe("auto");
+      const factRead = (await owner.call("vault.get", { entity_ref: fact.claim_short_id })).value;
+      expect(factRead?.id_hex).toBe(factId);
+      heldOut.push({ answer: answer.claim, fact: factRead!.id_hex, source_family: facts.heldOutLabels[index]!.item });
+    }
+    const answerRead = await owner.call("vault.questions.answers", { id: questionId });
+    const answerRows = Array.isArray(answerRead) ? answerRead : answerRead.answers;
+    expect(answerRows).toHaveLength(2);
+    for (const answer of answers) expect(answerRows).toContainEqual({ ...answer, kind: "graph" });
+    await owner.call("vault.questions.outcomes.project", { id: questionId });
+    const outcomes = await owner.call("vault.questions.outcomes", { id: questionId });
+    expect(outcomes.calibration).toHaveLength(2);
+    for (const [index, selection] of heldOut.entries()) {
+      expect(outcomes.calibration).toContainEqual(expect.objectContaining({ question_version: 1,
+        outcome: expect.objectContaining({ answer: selection.answer, fact: selection.fact,
+          label: facts.heldOutLabels[index]!.label === "yes", noise_weight: 1 }) }));
+    }
+    expect(providers.seenFixtureCalls).toEqual([]);
+    const usage: Models09Facade.LlmUsage = { input: { total: 499_998, cache_read: 0, cache_write: 0 },
+      output: { total: 2, text: 2, reasoning: 0 }, raw_provider: {} };
+    const set = { id: "models-held-out", version: 1, rubric_version: "models-yes-no-v1" };
+    const nominate: FacadeInput<"vault.models.trials.nominate"> = { catalog_revision: importB.revision,
+      request: { principal: ownerRef, question: questionId, question_version: 1, goal: ownerRef,
+        incumbent: models09BackendPin(before.model), candidate: models09BackendPin(candidate),
+        source: "fixture-rank", benchmark: "fixture-yes-no", set, held_out: heldOut,
+        incumbent_usage_bound: usage, candidate_usage_bound: usage, future_units: 1000,
+        policy: { exploration_remaining: 0, vault_cost_cap: 0.00003, project_cost_cap: 0.00003,
+          auto_approve: false, candidate_needs_download: false } } };
+    const nominated = await owner.call("vault.models.trials.nominate", nominate);
+    const ref = { question: questionId, trial: nominated.id };
+    expect(await owner.call("vault.models.trials.get", ref)).toEqual(nominated);
+    expect(nominated).toMatchObject({ admission: "ask_exploration", execution: "not_started", arms_total: 4,
+      arms_completed: 0, arms_unknown: 0, catalog_revision: importB.revision, nominated_score: 0.99, score_fetched_at: 1002 });
+    expect(nominated.request).toEqual(nominate.request);
+    expect(nominated.incumbent).toEqual({ pin: nominate.request.incumbent, price: importB.catalog.rows[0]!.catalog.cost });
+    expect(nominated.candidate).toEqual({ pin: nominate.request.candidate, price: importB.catalog.rows[1]!.catalog.cost });
+    const expectedCost = facts.expected.trialCostNanoUsd / 1_000_000_000;
+    expect(nominated.estimated_cost).toBeCloseTo(expectedCost, 15);
+    for (const [index, trialCase] of nominated.cases.entries()) {
+      const label = outcomes.calibration.find(value => value.outcome.answer === heldOut[index]!.answer)!.outcome;
+      expect(trialCase).toMatchObject({ selection: heldOut[index], unit: units[index], label: label.label,
+        fact_value_hash: label.fact_value_hash, noise_weight: 1, source_frontier: answers[index]!.frontier });
+    }
+    const proposedBinding = { ...before, model: candidate };
+    await models09Refused(engine, () => owner.call("vault.models.bindings.propose", {
+      ...ref, role: "generative_reasoner", binding: proposedBinding,
+    }), "vault.models.bindings.propose", 400, "BAD_REQUEST", ownerRef, "completed held-out trial offer");
+    expect(await owner.call("vault.models.trials.get", ref)).toEqual(nominated);
+    expect(await owner.call("vault.models.trials.run", ref)).toEqual(nominated);
+    expect(providers.seenFixtureCalls).toEqual([]);
+    await models09Refused(engine, () => agent.client.call("vault.models.trials.approve", ref),
+      "vault.models.trials.approve", 403, "FORBIDDEN", agentRef, "is the vault owner's");
+    expect((await owner.call("vault.models.trials.get", ref)).admission).toBe("ask_exploration");
+    await owner.call("vault.models.trials.approve", ref);
+    expect((await owner.call("vault.models.trials.get", ref)).admission).toBe("ready");
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    expect(providers.seenFixtureCalls).toEqual([]);
+    await owner.call("vault.models.trials.run", ref);
+    const measured = await owner.call("vault.models.trials.get", ref);
+    expect(measured).toMatchObject({ execution: "measured", arms_total: 4, arms_completed: 4, arms_unknown: 0,
+      evidence: { independent_families: 2, unknown_arms: 0, resent_unknown_arms: 0 } });
+    expect(providers.seenFixtureCalls.map(value => value.fixtureId)).toEqual([
+      "models09-trial-1-incumbent", "models09-trial-1-candidate", "models09-trial-2-incumbent", "models09-trial-2-candidate",
+    ]);
+    const evidence = measured.evidence;
+    if (!evidence) throw new Error("MODELS-09 measured trial lacks evidence");
+    expect(evidence.measurements_hash).toHaveLength(32);
+    expect(evidence.incumbent_loss!).toBeCloseTo(0.04, 12);
+    expect(evidence.candidate_loss!).toBeCloseTo(0.01, 12);
+    expect(evidence.trial_cost).toBeCloseTo(expectedCost, 15);
+    expect(evidence.incumbent_cost_per_thousand).toBeCloseTo(0.000005, 15);
+    expect(evidence.candidate_cost_per_thousand).toBeCloseTo(0.00002, 15);
+    await owner.call("vault.models.trials.complete", { ...ref, assessment: { set,
+      measurements_hash: evidence.measurements_hash, paired_gain: { low: 0.02, high: 0.04 }, retest_noise: 0.01,
+      stricter_margin: null, required_families: 2, rare_slices_sufficient: true, versions_match: true, canary_diverged: false } });
+    const completed = await owner.call("vault.models.trials.get", ref);
+    expect(completed.receipt).toMatchObject({ quality: "better", action: "offer",
+      assessment: { set, measurements_hash: evidence.measurements_hash } });
+    expect(completed.evidence).toEqual(evidence);
+    expect(await owner.call("vault.models.roles.read", { role: "generative_reasoner" })).toEqual(roleBefore);
+    const proposal = await owner.call("vault.models.bindings.propose", { ...ref,
+      role: "generative_reasoner", binding: proposedBinding });
+    const proposalRef = { proposal: proposal.id };
+    const proposalRead = await owner.call("vault.models.bindings.get", proposalRef);
+    expect(proposalRead).toEqual(proposal);
+    expect(proposalRead).toMatchObject({ status: "proposed", previous: before, proposed: proposedBinding,
+      trial: { catalog_revision: facts.expected.receiptCatalogRevision, evidence, receipt: completed.receipt } });
+    expect(proposalRead.trial.evidence!.trial_cost).toBeCloseTo(expectedCost, 15);
+    await models09Refused(engine, () => agent.client.call("vault.models.bindings.accept", proposalRef),
+      "vault.models.bindings.accept", 403, "FORBIDDEN", agentRef, "is the vault owner's");
+    expect(await owner.call("vault.models.bindings.get", proposalRef)).toEqual(proposalRead);
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    await owner.call("vault.models.bindings.deny", proposalRef);
+    const denied = await owner.call("vault.models.bindings.get", proposalRef);
+    expect(denied).toMatchObject({ status: "denied", previous: before, proposed: proposedBinding, trial: proposalRead.trial });
+    expect(denied.settled_at).toBeNumber();
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    expect(await owner.call("vault.models.roles.read", { role: "generative_reasoner" })).toEqual(roleBefore);
+    await engine.restart();
+    expect(await owner.call("vault.models.bindings.get", proposalRef)).toEqual(denied);
+    expect(await owner.call("vault.models.trials.get", ref)).toEqual(completed);
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    expect(await owner.call("vault.models.roles.read", { role: "generative_reasoner" })).toEqual(roleBefore);
+    expect(providers.seenFixtureCalls).toHaveLength(4);
+    const invocation = await owner.call("vault.models.roles.invoke", { role: "generative_reasoner",
+      input: { kind: "generate", request: { model: before.model,
+        envelope: { purpose: "eval", class: { kind: "best_effort" }, tier: { global_default: before.tier },
+          response_format: { format: "text" }, locality: "own_server" },
+        messages: [{ role: "user", content: [{ kind: "text", text: "incumbent denial probe" }] }],
+        tools: [], params: {}, provider_options: {} } } });
+    expect(invocation.receipt).toEqual(roleBefore);
+    expect(invocation.output.kind).toBe("generated");
+    if (invocation.output.kind !== "generated") throw new Error("MODELS-09 role did not generate");
+    expect(invocation.output.response.message.content).toContainEqual({ kind: "text", text: "incumbent-after-denial" });
+    expect(providers.seenFixtureCalls.map(value => value.fixtureId)).toEqual([
+      "models09-trial-1-incumbent", "models09-trial-1-candidate", "models09-trial-2-incumbent", "models09-trial-2-candidate", "models09-denial-probe",
+    ]);
+    expect(providers.seenFixtureCalls.slice(4).map(value => value.body)).toEqual([
+      expect.objectContaining({ model: "incumbent", stream: false }),
+    ]);
+
+    // New set version, same public history; fail last so candidate cooldown cannot mask the clean trial.
+    providers.enqueue(models09PaidArm("models09-fault-incumbent", "incumbent", true, 0.8));
+    providers.enqueue({ id: "models09-fault-candidate", origin: "models-fixture", role: "held-out-trial",
+      purpose: "candidate-unavailable", request: { method: "POST", path: "/v1/chat/completions", model: "candidate", fields: { stream: false } },
+      response: { kind: "json", status: 503, body: { error: { type: "server_error", message: "fixture candidate down" } } } });
+    const interrupted = await owner.call("vault.models.trials.nominate", { ...nominate,
+      request: { ...nominate.request, set: { ...set, version: 2 } } });
+    const failedRef = { question: questionId, trial: interrupted.id };
+    expect((await owner.call("vault.models.trials.get", failedRef)).admission).toBe("ask_exploration");
+    await owner.call("vault.models.trials.approve", failedRef);
+    expect((await owner.call("vault.models.trials.get", failedRef)).admission).toBe("ready");
+    await models09Refused(engine, () => owner.call("vault.models.trials.run", failedRef),
+      "vault.models.trials.run", 400, "BAD_REQUEST", ownerRef);
+    const failureRead = await owner.call("vault.models.trials.get", failedRef);
+    expect(failureRead).toMatchObject({ execution: "interrupted", arms_completed: 1, arms_unknown: 1, arms_total: 4,
+      unknown_arms: [{ answer: heldOut[0]!.answer, arm: "candidate" }] });
+    expect(failureRead.evidence ?? null).toBeNull();
+    expect(failureRead.receipt ?? null).toBeNull();
+    await models09Refused(engine, () => owner.call("vault.models.bindings.propose", {
+      ...failedRef, role: "generative_reasoner", binding: proposedBinding,
+    }), "vault.models.bindings.propose", 400, "BAD_REQUEST", ownerRef, "completed held-out trial offer");
+    expect(await owner.call("vault.models.bindings.get", proposalRef)).toEqual(denied);
+    expect(await owner.call("vault.models.bindings.read", { role: "generative_reasoner" })).toEqual(before);
+    expect(await owner.call("vault.models.roles.read", { role: "generative_reasoner" })).toEqual(roleBefore);
+    expect(providers.seenFixtureCalls.map(value => value.fixtureId)).toEqual([
+      "models09-trial-1-incumbent", "models09-trial-1-candidate", "models09-trial-2-incumbent", "models09-trial-2-candidate",
+      "models09-denial-probe", "models09-fault-incumbent", "models09-fault-candidate",
+    ]);
+    await engine.artifacts.json("models09-evidence.json", { revisionA, revisionB, outcomes, measured, completed,
+      denied, invocation, failureRead, providerCalls: providers.seenFixtureCalls });
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+});
