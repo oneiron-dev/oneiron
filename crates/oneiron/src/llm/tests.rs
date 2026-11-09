@@ -77,6 +77,7 @@ fn sample_request() -> LlmRequest {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: "You classify memory writes.".to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
@@ -84,6 +85,7 @@ fn sample_request() -> LlmRequest {
                 content: vec![
                     ContentPart::Text {
                         text: "Classify this claim.".to_owned(),
+                        signature: None,
                     },
                     ContentPart::Image {
                         media_type: "image/png".to_owned(),
@@ -203,6 +205,7 @@ fn semantic_mutations(request: &LlmRequest) -> Vec<(&'static str, LlmRequest)> {
     let mut message = request.clone();
     message.messages[1].content[0] = ContentPart::Text {
         text: "Classify a different claim.".to_owned(),
+        signature: None,
     };
     mutations.push(("messages", message));
 
@@ -272,6 +275,7 @@ fn sample_envelope() -> CallEnvelope {
             vault_policy: Some(ModelTierRef("cheap".to_owned())),
             purpose_default: Some(ModelTierRef("tiny".to_owned())),
             global_default: ModelTierRef("standard".to_owned()),
+            seat: None,
         },
         response_format: ResponseFormat::Json {
             schema: json!({
@@ -283,5 +287,7 @@ fn sample_envelope() -> CallEnvelope {
             }),
         },
         locality: ModelLocality::ThirdParty,
+        host_keyless: false,
+        host_paid: false,
     }
 }

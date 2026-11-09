@@ -54,19 +54,19 @@ pub(super) fn forged_over(
     sign: impl FnOnce(&CapabilitySlip, &[u8]) -> Result<Vec<u8>>,
 ) -> Result<super::super::revision::ProjectRevision> {
     let slip = CapabilitySlip::from_token(&slip_wire)?;
-    let anchor = base.anchor();
+    let anchor = base.anchor()?;
     let signed_at = slip.claims.issued_at;
     let challenge = row.authority_at(ProjectProofVersion::V3).write_challenge(
         id,
         ProjectProofVersion::V3,
         signed_at,
-        Some(&anchor),
+        &anchor,
     )?;
     row.write_proof = Some(ProjectWriteProof {
         holder_signature: sign(&slip, &challenge)?,
         slip_wire,
         signed_at,
-        anchor: Some(Box::new(anchor)),
+        anchor,
         version: ProjectProofVersion::V3,
     });
     let chain = super::super::revision::revisions_of_row(id, &row)?;
@@ -220,7 +220,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     let mut deposed = root.clone();
     deposed.leader = EntityId::now().to_hex();
     deposed.roster.push(deposed.leader.clone());
-    sign_with(&d, root_id, &mut deposed, None, Some(root.anchor()), None)?;
+    sign_with(&d, root_id, &mut deposed, None, Some(root.anchor()?), None)?;
     d.put_project(root_id, &deposed, 20)?;
     assert!(d.project(id)?.is_none());
 
