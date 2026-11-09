@@ -99,6 +99,30 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         },
     },
     Emitter {
+        name: "facade_dispatch",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            let texts = crate::generate::emit_server::facade_dispatch(generator, &facade_rows)?;
+            Ok(Value::List(vec![
+                Value::Str(texts.routes),
+                Value::Str(texts.dispatch),
+            ]))
+        },
+        files: |value| {
+            let mut files = item_file(
+                "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
+                value,
+                0,
+            );
+            files.extend(item_file(
+                "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
+                value,
+                1,
+            ));
+            files
+        },
+    },
+    Emitter {
         name: "mcp_dispatch",
         run: |generator, _| crate::generate::emit_mcp::mcp_dispatch(generator).map(Value::Str),
         // generate.py:2525: the file is HEADER, `use super::*;` and the dispatch.
