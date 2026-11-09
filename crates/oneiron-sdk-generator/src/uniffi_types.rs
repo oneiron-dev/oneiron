@@ -1084,6 +1084,220 @@ impl Tarjan<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::py::value::Dict;
+
+    /// An inventory over a tree with no sources: no declarations, no variants.
+    fn empty_inventory() -> Inventory {
+        let root = std::env::temp_dir().join("oneiron-sdk-generator-uniffi-types-no-tree");
+        Inventory::with_type_names(&root, &[], &Value::Dict(Dict::new()))
+            .expect("an inventory over no sources")
+    }
+
+    // `<workspace>/.claude/jobs/51b185fd/tmp/g3/probe_types.py`, run from the checkout on nelly (Python 3.14.7) as
+    // `python3 -I - < probe_types.py`: UniffiTypes built over an inventory with no declarations, then
+    //   err(t.fields, 'Owner', ('object', [('a', ('lit', 'x'), False), ('b', ('lit', 'y'), False)], None), {}, True)
+    //   err(t.fields, 'Owner', ('and', []), {}, True)
+    // No tree reaches the first: facade_types builds at most one `lit` field per object (facade_types.py:858, 911,
+    // 957-958) and `enum` strips the internally tagged marker before `fields` (uniffi_types.py:389-390).
+    #[test]
+    fn fields_refuse_a_second_tag_field() {
+        let mut inventory = empty_inventory();
+        let mut types =
+            UniffiTypes::new(&mut inventory, &IndexSet::new()).expect("no declarations");
+        let lit = |label: &str| Ir::Lit(Value::Str(label.to_owned()));
+        let two = Ir::Object(
+            vec![
+                Field::new("a", lit("x"), false),
+                Field::new("b", lit("y"), false),
+            ],
+            None,
+        );
+        let refused = |body: &Ir, types: &mut UniffiTypes<'_>| {
+            types
+                .fields("Owner", body, &Subst::new(), true)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            refused(&two, &mut types),
+            Err("ValueError: Owner: two tag fields".to_owned())
+        );
+        assert_eq!(
+            refused(&Ir::And(Vec::new()), &mut types),
+            Err("IndexError: list index out of range".to_owned())
+        );
+    }
+
+    // probe_types.py: print(repr(node), err(t.rt, node, subst, f'W{i}')) for each case, then the leaves, the tuple
+    // cache and the items in order; `mangle` of seven values; `allocate` of eight names in a row.
+    #[test]
+    fn rt_mangle_and_allocate_are_pythons() {
+        let mut inventory = empty_inventory();
+        let mut types =
+            UniffiTypes::new(&mut inventory, &IndexSet::new()).expect("no declarations");
+        let int = |width: Option<&str>| Ir::Prim(Prim::Int, width.map(str::to_owned));
+        let prim = |kind| Ir::Prim(kind, None);
+        let boxed = |node: Ir| Box::new(node);
+        let cases: Vec<(Ir, &str)> = vec![
+            (int(None), "i64"),
+            (int(Some("u128")), WIRE),
+            (int(Some("NonZeroUsize")), "u64"),
+            (prim(Prim::Null), WIRE),
+            (prim(Prim::String), "String"),
+            (prim(Prim::Float), "f64"),
+            (prim(Prim::Bool), "bool"),
+            (Ir::Opaque, WIRE),
+            (Ir::Param("T".to_owned()), WIRE),
+            (Ir::Array(boxed(int(Some("u8")))), "Vec<u8>"),
+            (
+                Ir::Option(boxed(Ir::Option(boxed(prim(Prim::Bool))))),
+                "Option<bool>",
+            ),
+            (
+                Ir::Map(boxed(prim(Prim::String))),
+                "std::collections::HashMap<String, String>",
+            ),
+            (Ir::Union(Vec::new()), WIRE),
+            (Ir::Unknown("x".to_owned()), WIRE),
+            (Ir::Never, WIRE),
+            (Ir::Lit(Value::Str("x".to_owned())), WIRE),
+            (Ir::Partial(boxed(prim(Prim::Bool))), WIRE),
+            (Ir::And(Vec::new()), WIRE),
+            (Ir::Object(Vec::new(), None), WIRE),
+            (Ir::Tuple(vec![prim(Prim::Bool)]), WIRE),
+            (
+                Ir::Tuple(vec![
+                    prim(Prim::Bool),
+                    int(Some("i64")),
+                    Ir::Opaque,
+                    prim(Prim::Null),
+                ]),
+                WIRE,
+            ),
+            (
+                Ir::Tuple(vec![prim(Prim::Bool), Ir::Array(boxed(int(Some("u16"))))]),
+                "TupleBoolU16List",
+            ),
+            (
+                Ir::Tuple(vec![prim(Prim::Bool), Ir::Array(boxed(int(Some("u16"))))]),
+                "TupleBoolU16List",
+            ),
+            (
+                Ir::Tuple(vec![
+                    Ir::Param("T".to_owned()),
+                    Ir::Option(boxed(Ir::Map(boxed(prim(Prim::Float))))),
+                ]),
+                "TupleStringOptionalFloatMap",
+            ),
+        ];
+        for (i, (node, expected)) in cases.iter().enumerate() {
+            let mut subst = Subst::new();
+            if i == 23 {
+                subst.insert("T".to_owned(), prim(Prim::String));
+            }
+            assert_eq!(
+                types.rt(node, &subst, &format!("W{i}")).as_deref(),
+                Ok(*expected),
+                "case {i}"
+            );
+        }
+        let mut leaves: Vec<(&str, &str)> = types
+            .leaves
+            .iter()
+            .map(|(at, why)| (at.as_str(), why.as_str()))
+            .collect();
+        // sorted(t.leaves.items()): the keys are unique.
+        leaves.sort();
+        assert_eq!(
+            leaves,
+            [
+                ("W1", "a 128-bit integer"),
+                ("W12", "an untyped union"),
+                ("W13", "a shape the inventory could not read"),
+                ("W14", "an enum with no variants"),
+                ("W15", "an inline lit"),
+                ("W16", "an inline partial"),
+                ("W17", "an inline and"),
+                ("W18", "an inline object"),
+                ("W19", "a tuple"),
+                ("W20", "a tuple"),
+                ("W3", "a unit value"),
+                ("W8", "a shape the inventory could not read"),
+            ]
+        );
+        let tuples: Vec<(&str, &str)> = types
+            .tuples
+            .iter()
+            .map(|(key, name)| (key.as_str(), name.as_str()))
+            .collect();
+        assert_eq!(
+            tuples,
+            [
+                (
+                    "[('prim', 'bool'), ('array', ('prim', 'int', 'u16'))]",
+                    "TupleBoolU16List"
+                ),
+                (
+                    "[('prim', 'string'), ('option', ('map', ('prim', 'float')))]",
+                    "TupleStringOptionalFloatMap"
+                ),
+            ]
+        );
+        assert_eq!(
+            types.items,
+            [
+                "/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.\n#[derive(Clone, Debug, PartialEq, uniffi::Record)]\npub struct TupleBoolU16List {\n    pub item0: bool,\n    pub item1: Vec<u16>,\n}\nimpl serde::Serialize for TupleBoolU16List {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)\n    }\n}\nimpl<'de> serde::Deserialize<'de> for TupleBoolU16List {\n    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })\n    }\n}\n",
+                "/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.\n#[derive(Clone, Debug, PartialEq, uniffi::Record)]\npub struct TupleStringOptionalFloatMap {\n    pub item0: String,\n    pub item1: Option<std::collections::HashMap<String, f64>>,\n}\nimpl serde::Serialize for TupleStringOptionalFloatMap {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)\n    }\n}\nimpl<'de> serde::Deserialize<'de> for TupleStringOptionalFloatMap {\n    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })\n    }\n}\n",
+            ]
+        );
+        let mangles: Vec<(Ir, &str)> = vec![
+            (
+                Ir::Array(boxed(Ir::Option(boxed(Ir::Map(boxed(int(Some("u32")))))))),
+                "OptionalU32MapList",
+            ),
+            (int(None), "I64"),
+            (int(Some("u128")), "Int"),
+            (Ir::Opaque, "Json"),
+            (
+                Ir::Tuple(vec![prim(Prim::String), prim(Prim::Null)]),
+                "TupleStringUnit",
+            ),
+            (Ir::Union(Vec::new()), "Value"),
+            (prim(Prim::Float), "Float"),
+        ];
+        for (node, expected) in &mangles {
+            assert_eq!(types.mangle(node).as_deref(), Ok(*expected));
+        }
+        let mut inventory = empty_inventory();
+        let mut types =
+            UniffiTypes::new(&mut inventory, &IndexSet::new()).expect("no declarations");
+        let allocated: Vec<String> = [
+            "Option",
+            "option",
+            "Thing",
+            "Thing",
+            "WireThing",
+            "Thing",
+            "straße",
+            "STRASSE",
+        ]
+        .iter()
+        .map(|base| types.allocate(base))
+        .collect();
+        assert_eq!(
+            allocated,
+            [
+                "WireOption",
+                "Wireoption2",
+                "Thing",
+                "WireThing",
+                "WireWireThing",
+                "WireThing2",
+                "straße",
+                "WireSTRASSE"
+            ]
+        );
+    }
 
     // Printed by Python 3.14.7 on nelly from the uniffi_types.py definitions copied verbatim
     // (`<workspace>/.claude/jobs/51b185fd/tmp/g3/probe_uniffi.py`, `ssh nelly python3 -I - < probe_uniffi.py`):
