@@ -237,10 +237,23 @@ pub(crate) fn admit_wake_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     if wake_key(row.key()) != map_key {
         return Err(refused("filed under another wake"));
     }
-    if let WakeRow::Owed(wake) = &row
-        && (!wake.authority.rides_to_home() || wake.held.is_some())
-    {
-        return Err(refused("a wake that does not ride"));
+    if let WakeRow::Owed(wake) = &row {
+        if !wake.authority.rides_to_home() {
+            return Err(refused("a wake that does not ride"));
+        }
+        // A wake held on its lapsed slip rides with its hold (a home that
+        // held it, then lost the election, hands it to the next): only the
+        // lapse's own hold, never past the wake's own expiry.
+        if let Some(held) = &wake.held
+            && (held.reason != super::admit::AUTHORITY_LAPSED
+                || held.expires_at
+                    > wake
+                        .turn
+                        .landed_at
+                        .saturating_add(super::admit::LAPSED_WAKE_HOLD_SECS))
+        {
+            return Err(refused("a hold that is not a lapsed slip's"));
+        }
     }
     Ok(())
 }
@@ -305,9 +318,10 @@ pub(crate) fn merge_arming_row_in_txn(
 
 /// Merges one carried wake row, in the caller's writer. An `Owed` row is
 /// owed here on the elected home alone, when its arming is held here and
-/// wakes on it and neither the wake nor its admission is; before its arming
-/// arrives it is left in the window. An `Admitted` row consumes the riding
-/// wake this machine recorded under its key, on any machine.
+/// wakes on it and neither the wake nor its admission is; before its
+/// arming, its pinned SKILL and its TURN arrive it is left in the window,
+/// and a held row keeps its hold. An `Admitted` row consumes the riding wake
+/// this machine recorded under its key, on any machine.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -347,6 +361,19 @@ pub(crate) fn merge_wake_row_in_txn(
     };
     if arming.revision != wake.revision || !arming.wakes_on(&wake.authority, &wake.turn) {
         return Ok(RowMerge::Refused("its arming here does not wake on it"));
+    }
+    // Every record the admission reads must have arrived here first: the
+    // pinned SKILL and the TURN that owes the wake. Each syncs in its own
+    // window, and a record not here yet is no moved pin and no missing turn:
+    // the wake waits in the window and merges on a later pass. A record here
+    // and since deleted is the admission's to judge.
+    for record in [arming.definition.skill, wake.turn.turn] {
+        if matches!(
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, &record)?,
+            crate::vault::LiveEntityRow::Absent
+        ) {
+            return Ok(RowMerge::Held);
+        }
     }
     WAKE.put(vault, txn, &wake.key(), &wake)?;
     super::index::index_wake_in_txn(vault, txn, actor, wake.key())?;
@@ -483,7 +510,9 @@ pub(crate) fn arming_row_outranked_here_in_txn(
 
 /// The `Owed` rows TURN `turn`'s base window carries from this machine's
 /// state: each riding wake it owes for the turn, unless this machine is the
-/// home, which admits its own.
+/// home, which admits its own. A wake held on its lapsed slip rides with its
+/// hold: one this machine held while it was the home goes to the home
+/// elected since, which admits it at its rebind or its expiry.
 pub(crate) fn turn_wake_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -495,7 +524,7 @@ pub(crate) fn turn_wake_rows_in_txn(
     let mut rows = Vec::new();
     for row in WAKE.iter_from(vault, txn, turn.as_bytes())? {
         let (_, wake) = row?;
-        if wake.held.is_none() && wake_rides_in_txn(vault, txn, &wake)? {
+        if wake_rides_in_txn(vault, txn, &wake)? {
             rows.push((wake_key(wake.key()), encode(&WakeRow::Owed(wake))?));
         }
     }

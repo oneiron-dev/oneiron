@@ -28,11 +28,11 @@ use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
 const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
-const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
+pub(super) const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
 const PIN_MOVED: &str = "the pinned program changed since it was armed";
 /// How long after its turn landed a wake whose sealed slip lapsed stays
 /// owed for its rebind (FIX 12058): the wake's own expiry.
-const LAPSED_WAKE_HOLD_SECS: u64 = 7 * 86_400;
+pub(super) const LAPSED_WAKE_HOLD_SECS: u64 = 7 * 86_400;
 
 /// What one admission's writer did with an owed wake.
 #[allow(clippy::large_enum_variant)]
