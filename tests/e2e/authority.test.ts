@@ -213,7 +213,8 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const owner = engine.pairedActor;
   const { bearer, seed } = credentialParts(owner.credential);
   const address = { namespace: ["authority-01"], key: "slip-proof" };
-  await engine.client.call("vault.kv.put", { ...address, value: "vault-bound", request_id: "authority-01-seed" });
+  const seeded = { text: "vault-bound" };
+  await engine.client.call("vault.kv.put", { ...address, value: seeded, request_id: "authority-01-seed" });
   const unauthorized = { status: 401, code: "UNAUTHORIZED" };
 
   // One holder proof admits one request. The identical replay, header for
@@ -223,12 +224,12 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const anonymous = new PublicHttpClient(engine.url, { artifacts: engine.artifacts });
   const admitted = await anonymous.raw<FacadeResult<"vault.kv.get">>("POST", "/v1/core/facade/vault.kv.get", address, replay);
   expect(admitted.status).toBe(200);
-  expect(admitted.body?.value).toBe("vault-bound");
+  expect(admitted.body?.value).toEqual(seeded);
   expect(await refusal(anonymous, "vault.kv.get", address, replay)).toEqual(unauthorized);
   const replayedUpgrade = await anonymous.raw("GET", "/ws", undefined, { ...proof, ...upgradeHeaders() });
   expect(replayedUpgrade.status).toBe(401);
   // A fresh proof from the same holder is still admitted.
-  expect((await engine.client.call("vault.kv.get", address))?.value).toBe("vault-bound");
+  expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(seeded);
 
   // The slip alone proves nothing: the same bearer under another holder key.
   const strangerSeed = secretHex();
@@ -257,9 +258,9 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   expect(child.binding_key).toEqual(holderPublicKey(seed));
   const childCredential = holderCredential(child.token, seed);
   const childClient = new PublicHttpClient(engine.url, { credential: childCredential, artifacts: engine.artifacts });
-  expect((await childClient.call("vault.kv.get", address))?.value).toBe("vault-bound");
+  expect((await childClient.call("vault.kv.get", address))?.value).toEqual(seeded);
   expect((await childClient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
-  const childWrite = { ...address, value: "child-widened", request_id: "authority-01-child-write" };
+  const childWrite = { ...address, value: { text: "child-widened" }, request_id: "authority-01-child-write" };
   expect(await refusal(childClient, "vault.kv.put", childWrite)).toEqual({ status: 403, code: "FORBIDDEN" });
 
   // The child asks for every verb back. The meet keeps it read-only.
@@ -282,7 +283,7 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   expect(moved.binding_key).toEqual(holderPublicKey(recipientSeed));
   const recipient = new PublicHttpClient(engine.url,
     { credential: holderCredential(moved.token, recipientSeed), artifacts: engine.artifacts });
-  expect((await recipient.call("vault.kv.get", address))?.value).toBe("vault-bound");
+  expect((await recipient.call("vault.kv.get", address))?.value).toEqual(seeded);
   expect((await recipient.call("vault.scope.ceiling", {})).scope.verbs).toEqual(readOnly.verbs);
   const formerHolder = new PublicHttpClient(engine.url,
     { credential: holderCredential(moved.token, seed), artifacts: engine.artifacts });
@@ -291,8 +292,9 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const after = await auditRows(engine.client);
   expect(after.map(row => row.entry_hash).sort()).toEqual(before.map(row => row.entry_hash).sort());
   // The parent credential keeps its own authority.
-  await engine.client.call("vault.kv.put", { ...address, value: "owner-writes", request_id: "authority-01-owner-write" });
-  expect((await recipient.call("vault.kv.get", address))?.value).toBe("owner-writes");
+  const ownerWrite = { text: "owner-writes" };
+  await engine.client.call("vault.kv.put", { ...address, value: ownerWrite, request_id: "authority-01-owner-write" });
+  expect((await recipient.call("vault.kv.get", address))?.value).toEqual(ownerWrite);
 
   // A slip is bound to the vault that minted it. One server at a time, as
   // this file's one slot schedules: stop this vault, then present both
