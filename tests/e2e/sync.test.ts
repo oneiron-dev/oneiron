@@ -1,9 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import type { DevicePeer } from "./support/engine.ts";
 import { PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
+import { SyncLinkProxy } from "./support/sync_link.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -76,26 +78,168 @@ afterAll(suite.flush);
  * be equally wrong. No whole-text rewrite or private Loro edit substitutes
  * for anchored concurrent edits. WS app RPC alone does not establish sync.
  */
-/* SYNC-01 — decision: TODO (Engine rulings 23:09 and 23:15; reason names NOTE SYNC-PEER-OPTION).
- * Promise: two replicas of ONE vault converge on the authored note text and
- *   claim set under partition, both delivery orders and redelivery, keeping
- *   the original paired writers as authors.
- * Doors that exist today: vault.notes.read / vault.notes.history (live text,
- *   stable anchors, actor-attributed operations), vault.notes.edit
- *   replace_span, vault.claims.upsert / list, and the sync door the Engine
- *   confirmed at 23:15: CLI token pair --machine yours, then device enrol on
- *   an EMPTY vault (empty-vault join merged), then serve.
- * Unproved and why: EngineFixture.start runs `token bootstrap` on every vault,
- *   peers included, so no fixture vault can be that empty enrolling device;
- *   and there is no support-side link relay to partition, reorder and
- *   duplicate the device's /ws traffic. Both are requested from OPUS-E2E-1
- *   as EngineFixture.startDevicePeer and SyncLinkProxy. Federation Connect
- *   export/rejoin, the only cross-vault door between independent fixture
- *   vaults, lands a FOREIGN world copy under the guest actor, ledger window
- *   only: it cannot show one vault's replicas converging with the paired
- *   writers as authors. A one-vault restart subset is excluded by the brief.
+interface Sync01Scenario {
+  readonly id: string;
+  readonly inputs: {
+    readonly note: { readonly base: string };
+    readonly edits: readonly { readonly replace: string; readonly with: string }[];
+    readonly claims: readonly { readonly label: string; readonly value: string }[];
+  };
+  readonly expected: { readonly noteText: string };
+}
+type Sync01Span = NonNullable<FacadeInput<"vault.notes.read">["spans"]>[number];
+type Sync01Client = EngineFixture["client"];
+
+async function sync01Scenario(): Promise<Sync01Scenario> {
+  const fixture = await (await loadFixtures()).readJson<{ readonly scenarios: readonly Sync01Scenario[] }>("sync-scenarios");
+  const scenario = fixture.scenarios.find(row => row.id === "SYNC-01");
+  if (!scenario || scenario.inputs.edits.length !== 2 || scenario.inputs.claims.length !== 2)
+    throw new Error("sync-scenarios has no two-edit, two-claim SYNC-01");
+  return scenario;
+}
+/** The device's own MACHINE id: `device enrol` prints it as enrolment.machine. */
+function sync01DeviceMachine(device: DevicePeer): string {
+  const shown = device.enrolment["enrolment"];
+  const machine = typeof shown === "object" && shown !== null && "machine" in shown ? shown.machine : undefined;
+  if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("device enrol printed no enrolment.machine");
+  return machine;
+}
+/** Half-open Unicode-scalar span of the one occurrence of `word` (the authored note is ASCII). */
+function sync01Span(text: string, word: string): Sync01Span {
+  const start = text.indexOf(word);
+  if (start < 0 || text.indexOf(word, start + 1) >= 0) throw new Error(`"${word}" must occur exactly once in the authored note`);
+  return { start, end: start + word.length };
+}
+function sync01Predicate(label: string): string {
+  return `observatory.${label.replace(/-/g, "_")}`;
+}
+async function sync01Facts(client: Sync01Client, predicates: readonly string[]): Promise<FacadeResult<"vault.claims.list">["value"][]> {
+  const out: FacadeResult<"vault.claims.list">["value"][] = [];
+  for (const predicate of predicates) out.push((await client.call("vault.claims.list", { predicate, limit: 10 })).value);
+  return out;
+}
+
+/* SYNC-01 — decision: WRITTEN (partial).
+ * Promise: two machines of one vault, partitioned, each write; after the link
+ *   heals (through a duplicated replay and a reconnect) both machines hold the
+ *   authored note text and the authored claim set, each claim once, authored
+ *   by the owner, not by a machine.
+ * Doors: EngineFixture.startDevicePeer + SyncLinkProxy (cut, duplicate, heal,
+ *   counts, awaitSeen); on the device vault.residence.mode (all),
+ *   vault.notes.read, vault.get, vault.claims.upsert / list; on the home
+ *   vault.notes.create / read / edit (replace_span) / history,
+ *   vault.claims.upsert / list.
+ * Unproved and why: anchored NOTE edits written ON THE DEVICE (vault.notes.edit
+ *   on a device replica refuses "replica NOTE edits require authenticated
+ *   authority", note/operations.rs:493-495; the replica request path
+ *   DocumentRegistry::submit_note has no public door), so both edits are the
+ *   home's and only the ledger is written on both sides; two distinct paired
+ *   writers (both machines carry the one owner credential); messages; the
+ *   two opposite delivery orders on fresh replica pairs (one pair per case
+ *   fits the 30 s flow); in-socket drop and reorder (no recovery promise).
  */
-suite.todo(test, "SYNC-01", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION) for a same-vault replica pair; independent peers and Connect copies are not replicas");
+suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchored note edits and on a claim written on each side, once each and authored by the owner, after a partition, a duplicated replay and a reconnect", async () => {
+  const scenario = await sync01Scenario();
+  const { note: authored, edits, claims } = scenario.inputs;
+  const [northEdit, southEdit] = edits;
+  const [northFact, southFact] = claims;
+  if (!northEdit || !southEdit || !northFact || !southFact) throw new Error("SYNC-01 inputs are incomplete");
+  const predicates = [sync01Predicate(northFact.label), sync01Predicate(southFact.label)] as const;
+
+  const home = await EngineFixture.start({ id: "SYNC-01", profile });
+  const owner = home.pairedActor.principalRef;
+  const link = await SyncLinkProxy.start({ target: home.url });
+  // Fixture kind "annotation" is not a shipped NOTE kind; "research" is (vault-readable, durable).
+  const note = await home.client.call("vault.notes.create", { kind: "research", markdown: authored.base });
+  const device = await home.startDevicePeer({ id: "SYNC-01-device", homeOrigin: link.url });
+  const machine = sync01DeviceMachine(device);
+  // The device's own residence act, on the device: hold every body, so its claims can name local rows.
+  const mode = await device.client.call("vault.residence.mode", { machine, mode: "all" });
+  if (mode.state !== "applied") throw new Error(`device residence switch answered ${mode.state}`);
+  expect(mode.mode).toBe("all");
+  await awaitPublic(() => device.client.call("vault.notes.read", { note_ref: note.id_hex }),
+    read => read.value?.markdown === authored.base && read.value.source === "local",
+    { label: "device holds the authored note", timeoutMs: 15_000 });
+  const scope = await ownerBaseClaimScope(home.client, owner);
+  await awaitPublic(() => device.client.call("vault.get", { entity_ref: scope.scope_facet_id }),
+    read => read.value?.kind === "FACET", { label: "device holds the owner's substrate facet" });
+  const born = await home.client.call("vault.notes.history", { note_ref: note.id_hex });
+  const birthOperations = new Set((born.value?.operations ?? []).map(row => row.operation));
+
+  // Failure step: partition. Each machine writes while the link is down.
+  link.cut();
+  const anchors = await home.client.call("vault.notes.read", {
+    note_ref: note.id_hex, spans: [sync01Span(authored.base, northEdit.replace), sync01Span(authored.base, southEdit.replace)],
+  });
+  expect(anchors.value?.markdown).toBe(authored.base);
+  const [northSpan, southSpan] = anchors.value?.spans ?? [];
+  if (!northSpan || !southSpan) throw new Error("Home returned no stable anchors");
+  for (const { span, text } of [{ span: northSpan, text: northEdit.with }, { span: southSpan, text: southEdit.with }]) {
+    const edited = await home.client.call("vault.notes.edit", {
+      note_ref: note.id_hex, edit: { kind: "replace_span", start: span.start, end: span.end, text },
+    });
+    expect(edited.outcome).toBe("edited");
+  }
+  const northWrite = await home.client.call("vault.claims.upsert", {
+    predicate: predicates[0], subject_ref: note.id_hex, value: northFact.value, confidence: 0.9, source: "user_stated", scope,
+  });
+  const southWrite = await device.client.call("vault.claims.upsert", {
+    predicate: predicates[1], subject_ref: note.id_hex, value: southFact.value, confidence: 0.9, source: "user_stated", scope,
+  });
+  expect(northWrite.approval).toBe("auto");
+  expect(southWrite.approval).toBe("auto");
+  // The partition is real: neither machine holds the other's write yet.
+  expect((await device.client.call("vault.notes.read", { note_ref: note.id_hex })).value?.markdown).toBe(authored.base);
+  expect((await home.client.call("vault.claims.list", { predicate: predicates[1], limit: 10 })).value).toEqual([]);
+  expect((await device.client.call("vault.claims.list", { predicate: predicates[0], limit: 10 })).value).toEqual([]);
+
+  // Fault on the rejoin: the device's first message is delivered twice. The
+  // protocol promises recovery by reconnect, not in-socket repair, so the
+  // faulted session is cut and the link healed again before any assertion.
+  const seenBefore = link.counts("to_home").seen;
+  link.duplicate("to_home", 1);
+  link.heal();
+  await link.awaitSeen("to_home", seenBefore + 1);
+  expect(link.counts("to_home").duplicated).toBe(1);
+  link.cut();
+  link.heal();
+
+  for (const side of [home.client, device.client]) {
+    await awaitPublic(() => side.call("vault.notes.read", { note_ref: note.id_hex }),
+      read => read.value?.markdown === scenario.expected.noteText, { label: "converged note text", timeoutMs: 15_000 });
+    await awaitPublic(() => sync01Facts(side, predicates), facts => facts.every(rows => rows.length === 1),
+      { label: "both claims on this machine", timeoutMs: 15_000 });
+  }
+  // Barrier after the replay: a later home write reaching the device orders after it.
+  await home.client.call("vault.claims.upsert", {
+    predicate: "observatory.reconnect_witness", subject_ref: note.id_hex, value: "SYNC-01 reconnect witness",
+    confidence: 0.9, source: "user_stated", scope,
+  });
+  await awaitPublic(() => device.client.call("vault.claims.list", { predicate: "observatory.reconnect_witness", limit: 10 }),
+    page => page.value.length === 1, { label: "post-replay witness on the device", timeoutMs: 15_000 });
+
+  const homeFacts = await sync01Facts(home.client, predicates);
+  const deviceFacts = await sync01Facts(device.client, predicates);
+  for (const [index, fact] of [northFact, southFact].entries()) {
+    const onHome = homeFacts[index] ?? [];
+    const onDevice = deviceFacts[index] ?? [];
+    expect(onHome).toHaveLength(1);
+    expect(onDevice).toHaveLength(1);
+    expect(onDevice[0]?.claim_ref).toBe(onHome[0]?.claim_ref);
+    for (const view of [...onHome, ...onDevice]) {
+      expect(view.value).toEqual(fact.value);
+      expect(view.made_by?.process.actor).toBe(owner);
+    }
+  }
+  for (const side of [home.client, device.client]) {
+    expect((await side.call("vault.notes.read", { note_ref: note.id_hex })).value?.markdown).toBe(scenario.expected.noteText);
+  }
+  const history = await home.client.call("vault.notes.history", { note_ref: note.id_hex });
+  expect(history.value?.complete).toBe(true);
+  const edited = (history.value?.operations ?? []).filter(row => !birthOperations.has(row.operation));
+  expect(edited).toHaveLength(2);
+  for (const row of edited) expect(row.actor).toBe(owner);
+});
 
 /* SYNC-02 — One selector governs ledger and text should work.
  * Rows: OF-475, OF-152. Canon: ARCH-0023b #two-planes,
@@ -186,28 +330,157 @@ suite.todo(test, "SYNC-03", "waits on an independent native EphemeralStore wire 
  * Revoke the reader's grant; fresh remote search/open must not fetch new bytes.
  * Already disclosed copies are not asserted to disappear by cryptography.
  */
-/* SYNC-04 — decision: TODO (Engine rulings 23:09 and 23:15; reason names NOTE SYNC-PEER-OPTION).
- * Promise: a non-home device of the same vault holds only a thin index,
- *   opens exactly one item (readable offline afterwards, its neighbour not),
- *   searches unopened bodies through its caller-bound home route with an
- *   explicit source/completeness, and stops fetching after revocation.
- * Doors that exist today: vault.residence.index / open / mode (open returns
- *   typed NOTE text with source local|home), GET /api/search/text with its
- *   residence block, vault.notes.read, CLI token pair --machine yours and
- *   device enrol (empty-vault join merged).
- * Unproved and why: residence acts address an enrolled MACHINE of the same
- *   vault and act through its live sync connection; independent fixture
- *   peers are separately bootstrapped vaults with no machine link; the
- *   enrolled empty-vault device and its cuttable /ws link are requested from
- *   OPUS-E2E-1 as EngineFixture.startDevicePeer and SyncLinkProxy. Federation
- *   Connect moves a foreign world copy, which has no residence mode at all.
- *   Separately, vault.notes.create takes only {kind, markdown} and stamps the
- *   live clock, so the fixture's 2026-01 / 2026-10 windows cannot be authored
- *   without a fixture revision or a NOTE birth door that takes learned_at.
- *   Sol's subset (local note text plus residence target refusals on one
- *   vault) is a single-vault restart and an absence check: excluded.
+interface Sync04Scenario {
+  readonly id: string;
+  readonly inputs: {
+    readonly items: readonly { readonly label: string; readonly text: string }[];
+    readonly open: string;
+    readonly searchQueries: readonly string[];
+  };
+  readonly expected: { readonly openedBody: string };
+}
+type Sync04Windows = Extract<FacadeResult<"vault.residence.index">, { state: "applied" }>["windows"];
+/** The residence block GET /api/search/text adds for an opened machine. */
+interface Sync04Search {
+  readonly residence?: {
+    readonly source: string; readonly complete: boolean;
+    readonly hits: readonly { readonly id: string; readonly window: string }[];
+  };
+}
+
+async function sync04Scenario(): Promise<Sync04Scenario> {
+  const fixture = await (await loadFixtures()).readJson<{ readonly scenarios: readonly Sync04Scenario[] }>("sync-scenarios");
+  const scenario = fixture.scenarios.find(row => row.id === "SYNC-04");
+  if (!scenario) throw new Error("sync-scenarios has no SYNC-04");
+  return scenario;
+}
+function sync04Text(scenario: Sync04Scenario, label: string): string {
+  const item = scenario.inputs.items.find(row => row.label === label);
+  if (!item) throw new Error(`SYNC-04 has no item ${label}`);
+  return item.text;
+}
+/** The device's own MACHINE id: `device enrol` prints it as enrolment.machine. */
+function sync04DeviceMachine(device: DevicePeer): string {
+  const shown = device.enrolment["enrolment"];
+  const machine = typeof shown === "object" && shown !== null && "machine" in shown ? shown.machine : undefined;
+  if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("device enrol printed no enrolment.machine");
+  return machine;
+}
+async function sync04Refusal(attempt: Promise<unknown>): Promise<PublicHttpError> {
+  try {
+    await attempt;
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error;
+    throw error;
+  }
+  throw new Error("expected a public refusal; the call succeeded");
+}
+function sync04Lists(windows: Sync04Windows, ids: readonly string[]): boolean {
+  return ids.every(id => windows.some(slot => slot.items.some(item => item.entity_id === id)));
+}
+async function sync04Search(device: DevicePeer, query: string): Promise<Sync04Search> {
+  return (await device.client.request<Sync04Search>("GET", `/api/search/text?query=${encodeURIComponent(query)}`)).body;
+}
+
+/* SYNC-04 — decision: WRITTEN (partial).
+ * Promise: a device in the default opened mode holds only metadata for the
+ *   current window; opening one item fetches exactly that body from home,
+ *   which then stays readable with the home link cut and across a device
+ *   restart, while its never-opened neighbour is neither local nor fetchable
+ *   offline; text search reaches unopened bodies through the device's
+ *   caller-bound home route and says when it could not.
+ * Doors: EngineFixture.startDevicePeer + SyncLinkProxy (cut, heal); on the
+ *   device vault.residence.index / open, vault.notes.read and GET
+ *   /api/search/text; on the home vault.notes.create; device kill + restart.
+ * Unproved and why: the January ("old-unopened", quartz) window, because
+ *   vault.notes.create takes {kind, markdown} only and stamps the live clock
+ *   (a NOTE birth door with learned_at, or a fixture revision, is missing);
+ *   the private-project canary and grant revocation, because the device
+ *   carries only the owner's credential (a narrow reader paired on the home
+ *   and a public own-device grant revocation are not set up); the exact hit
+ *   set of "opal lantern" (lexical search may also rank other "lantern" items).
  */
-suite.todo(test, "SYNC-04", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION) for an enrolled non-home device, and on a NOTE birth door or fixture revision for the authored 2026-01/2026-10 windows");
+suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens one item from home that stays readable offline and across a restart while its unopened neighbour stays remote, and searches unopened text through home", async () => {
+  const scenario = await sync04Scenario();
+  const openedText = sync04Text(scenario, scenario.inputs.open);
+  const unopenedText = sync04Text(scenario, "new-unopened");
+  expect(openedText).toBe(scenario.expected.openedBody);
+  const query = scenario.inputs.searchQueries.find(text => unopenedText.includes(text));
+  if (!query) throw new Error("SYNC-04 has no query naming the unopened item");
+
+  const home = await EngineFixture.start({ id: "SYNC-04", profile });
+  const link = await SyncLinkProxy.start({ target: home.url });
+  // Created before the device joins: its first connection fetches the current
+  // thin index. Fixture kind is not given; "research" is a shipped kind.
+  const opened = await home.client.call("vault.notes.create", { kind: "research", markdown: openedText });
+  const unopened = await home.client.call("vault.notes.create", { kind: "research", markdown: unopenedText });
+  const device = await home.startDevicePeer({ id: "SYNC-04-device", homeOrigin: link.url });
+  const machine = sync04DeviceMachine(device);
+
+  // Thin listing: both current items, metadata only, no body on the device.
+  const index = await awaitPublic(() => device.client.call("vault.residence.index", { machine }),
+    answer => answer.state === "applied" && sync04Lists(answer.windows, [opened.id_hex, unopened.id_hex]),
+    { label: "device thin index lists both items", timeoutMs: 15_000 });
+  if (index.state !== "applied") throw new Error("thin index was not applied");
+  const windowOf = new Map<string, string>();
+  for (const slot of index.windows) {
+    for (const item of slot.items) {
+      expect(Object.keys(item).every(key => ["entity_id", "title", "learned_at"].includes(key))).toBe(true);
+      windowOf.set(item.entity_id, slot.window);
+    }
+  }
+  const openedWindow = windowOf.get(opened.id_hex);
+  const unopenedWindow = windowOf.get(unopened.id_hex);
+  if (!openedWindow || !unopenedWindow) throw new Error("thin index names no window for the items");
+  for (const note of [opened, unopened]) {
+    expect((await device.client.call("vault.notes.read", { note_ref: note.id_hex })).value).toBeNull();
+  }
+
+  // Open exactly one item: its body comes from home; the neighbour stays remote.
+  const first = await device.client.call("vault.residence.open", { machine, window: openedWindow, item: opened.id_hex });
+  if (first.state !== "applied") throw new Error(`first open answered ${first.state}`);
+  expect(first.item).toBe(opened.id_hex);
+  expect(first.source).toBe("home");
+  expect(first.note?.markdown).toBe(openedText);
+  expect((await device.client.call("vault.notes.read", { note_ref: unopened.id_hex })).value).toBeNull();
+
+  // Search for unopened text goes to home through the device's own route.
+  const remote = await sync04Search(device, query);
+  expect(remote.residence?.source).toBe("home");
+  expect(typeof remote.residence?.complete).toBe("boolean");
+  expect(remote.residence?.hits.map(hit => hit.id)).toContain(unopened.id_hex);
+
+  // Failure step: cut the home link.
+  link.cut();
+  const offline = await device.client.call("vault.residence.open", { machine, window: openedWindow, item: opened.id_hex });
+  if (offline.state !== "applied") throw new Error(`offline open answered ${offline.state}`);
+  expect(offline.source).toBe("local");
+  expect(offline.note?.markdown).toBe(openedText);
+  const neighbour = await sync04Refusal(device.client.call("vault.residence.open", { machine, window: unopenedWindow, item: unopened.id_hex }));
+  expect(neighbour.reply.status).toBe(400);
+  expect(neighbour.error?.code).toBe("BAD_REQUEST");
+  const cutSearch = await sync04Search(device, query);
+  expect(cutSearch.residence?.source).toBe("localOnly");
+  expect(cutSearch.residence?.complete).toBe(false);
+  expect(cutSearch.residence?.hits.map(hit => hit.id) ?? []).not.toContain(unopened.id_hex);
+
+  // Crash while cut: the opened copy is durable on the device, the neighbour still remote.
+  await device.kill();
+  await device.restart();
+  const restarted = await device.client.call("vault.residence.open", { machine, window: openedWindow, item: opened.id_hex });
+  if (restarted.state !== "applied") throw new Error(`open after restart answered ${restarted.state}`);
+  expect(restarted.source).toBe("local");
+  expect(restarted.note?.markdown).toBe(openedText);
+  const stillRemote = await sync04Refusal(device.client.call("vault.residence.open", { machine, window: unopenedWindow, item: unopened.id_hex }));
+  expect(stillRemote.reply.status).toBe(400);
+  expect(stillRemote.error?.code).toBe("BAD_REQUEST");
+
+  // Heal: the home route answers again.
+  link.heal();
+  const healed = await sync04Search(device, query);
+  expect(healed.residence?.source).toBe("home");
+  expect(healed.residence?.hits.map(hit => hit.id)).toContain(unopened.id_hex);
+});
 
 /* SYNC-05 — Sync-all switch retains public semantics should work.
  * Rows: OF-534, OF-536. Canon: ARCH-0023b #partial-sync, #two-planes.
@@ -230,26 +503,135 @@ suite.todo(test, "SYNC-04", "waits on EngineFixture.startDevicePeer and SyncLink
  * no extra record/message/effect is added. Do not infer residence or durable
  * settlement from a byte count, private sync queue, log line or sleep.
  */
-/* SYNC-05 — decision: TODO (Engine ruling 23:15; reason names NOTE SYNC-PEER-OPTION).
- * Promise: switching an enrolled device to sync-all makes authorized
- *   unopened bodies readable with the home link cut, never the private
- *   canary, merges the device's offline edit with the home's disjoint edit
- *   under both writers, and leaves claim source/approval unchanged.
- * Doors that exist today: vault.residence.mode (applied when called on the
- *   device itself), vault.residence.open, vault.notes.read / history / edit
- *   replace_span, vault.claims.upsert / list, and the sync door the Engine
- *   confirmed: token pair --machine yours, device enrol on an empty vault,
- *   serve.
- * Unproved and why: (1) support: no fixture vault can be the empty enrolling
- *   device (EngineFixture always bootstraps) and nothing relays and cuts the
- *   device's home link; requested as EngineFixture.startDevicePeer and
- *   SyncLinkProxy. (2) engine: the canon's first offline edit lands on an
- *   opened (thin) NOTE, and only SyncConnection::edit_opened_item promotes a
- *   thin window before a write; it has no caller, and vault.notes.edit
- *   refuses thin ids. Sol's one-vault subset (two anchored edits survive a
- *   restart) is a single-vault restart: excluded.
+interface Sync05Scenario {
+  readonly id: string;
+  readonly inputs: {
+    readonly base: string;
+    readonly homeEdit: { readonly replace: string; readonly with: string };
+    readonly otherAllowedBody: string;
+  };
+  readonly expected: { readonly offlineAllowedBody: string };
+}
+type Sync05Span = NonNullable<FacadeInput<"vault.notes.read">["spans"]>[number];
+
+async function sync05Scenario(): Promise<Sync05Scenario> {
+  const fixture = await (await loadFixtures()).readJson<{ readonly scenarios: readonly Sync05Scenario[] }>("sync-scenarios");
+  const scenario = fixture.scenarios.find(row => row.id === "SYNC-05");
+  if (!scenario) throw new Error("sync-scenarios has no SYNC-05");
+  return scenario;
+}
+/** The device's own MACHINE id: `device enrol` prints it as enrolment.machine. */
+function sync05DeviceMachine(device: DevicePeer): string {
+  const shown = device.enrolment["enrolment"];
+  const machine = typeof shown === "object" && shown !== null && "machine" in shown ? shown.machine : undefined;
+  if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("device enrol printed no enrolment.machine");
+  return machine;
+}
+/** Half-open Unicode-scalar span of the one occurrence of `word` (the authored note is ASCII). */
+function sync05Span(text: string, word: string): Sync05Span {
+  const start = text.indexOf(word);
+  if (start < 0 || text.indexOf(word, start + 1) >= 0) throw new Error(`"${word}" must occur exactly once in the authored note`);
+  return { start, end: start + word.length };
+}
+async function sync05LocalBody(device: DevicePeer, noteRef: string): Promise<string | undefined> {
+  const read = await device.client.call("vault.notes.read", { note_ref: noteRef });
+  return read.value?.source === "local" ? read.value.markdown : undefined;
+}
+async function sync05Standing(client: EngineFixture["client"], predicate: string) {
+  const [row, ...others] = (await client.call("vault.claims.list", { predicate, limit: 10 })).value;
+  return { count: others.length + (row ? 1 : 0), claim_ref: row?.claim_ref, value: row?.value, source: row?.source, approval: row?.approval, lifecycle: row?.lifecycle };
+}
+
+/* SYNC-05 — decision: WRITTEN (partial).
+ * Promise: switching an enrolled device from opened to sync-all (its own act,
+ *   on the device) makes every authorized body local, so both bodies the
+ *   device never opened are readable with the home link cut and after a
+ *   device crash; the switch changes no claim's source or approval; and the
+ *   home's disjoint edit made during the cut reaches the device on rejoin.
+ * Doors: EngineFixture.startDevicePeer + SyncLinkProxy (cut, heal); on the
+ *   device vault.residence.index / mode, vault.notes.read, vault.claims.list;
+ *   on the home vault.notes.create / read / edit (replace_span),
+ *   vault.claims.upsert / list; device kill + restart.
+ * Unproved and why: the device's own acknowledged offline edit and the merged
+ *   two-writer note: in opened mode the only thin-item promotion before a
+ *   write, SyncConnection::edit_opened_item, has no caller, and in all mode
+ *   vault.notes.edit on the device replica refuses "replica NOTE edits require
+ *   authenticated authority" (note/operations.rs:493-495); the private canary
+ *   for a narrow reader (the device carries only the owner credential);
+ *   repeated reconnects adding nothing (covered for claims by SYNC-01).
  */
-suite.todo(test, "SYNC-05", "waits on EngineFixture.startDevicePeer and SyncLinkProxy (NOTE SYNC-PEER-OPTION), and on a public door that promotes an opened thin NOTE for its first offline edit");
+suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authorized body local, readable with the home link cut and after a crash, leaves claim source and approval unchanged, and receives the home's offline-time edit on rejoin", async () => {
+  const scenario = await sync05Scenario();
+  const { base, homeEdit, otherAllowedBody } = scenario.inputs;
+  expect(otherAllowedBody).toBe(scenario.expected.offlineAllowedBody);
+  const homeEdited = base.replace(homeEdit.replace, homeEdit.with);
+  const predicate = "inventory.crate_contents";
+
+  const home = await EngineFixture.start({ id: "SYNC-05", profile });
+  const owner = home.pairedActor.principalRef;
+  const link = await SyncLinkProxy.start({ target: home.url });
+  // Fixture kind is not given; "research" is a shipped kind (vault-readable, durable).
+  const inventory = await home.client.call("vault.notes.create", { kind: "research", markdown: base });
+  const crate = await home.client.call("vault.notes.create", { kind: "research", markdown: otherAllowedBody });
+  const scope = await ownerBaseClaimScope(home.client, owner);
+  await home.client.call("vault.claims.upsert", {
+    predicate, subject_ref: crate.id_hex, value: otherAllowedBody, confidence: 0.9, source: "user_stated", scope,
+  });
+  const atHome = await sync05Standing(home.client, predicate);
+  expect(atHome.count).toBe(1);
+  expect(atHome.source).toBe("user_stated");
+
+  const device = await home.startDevicePeer({ id: "SYNC-05-device", homeOrigin: link.url });
+  const machine = sync05DeviceMachine(device);
+  // Opened mode (the default): the device knows both items but holds neither body.
+  await awaitPublic(() => device.client.call("vault.residence.index", { machine }),
+    answer => answer.state === "applied"
+      && answer.windows.flatMap(slot => slot.items.map(item => item.entity_id)).includes(inventory.id_hex)
+      && answer.windows.flatMap(slot => slot.items.map(item => item.entity_id)).includes(crate.id_hex),
+    { label: "opened device lists both items", timeoutMs: 15_000 });
+  for (const note of [inventory, crate]) {
+    expect((await device.client.call("vault.notes.read", { note_ref: note.id_hex })).value).toBeNull();
+  }
+
+  const switched = await device.client.call("vault.residence.mode", { machine, mode: "all" });
+  if (switched.state !== "applied") throw new Error(`device residence switch answered ${switched.state}`);
+  expect(switched.mode).toBe("all");
+  await awaitPublic(() => sync05LocalBody(device, inventory.id_hex), body => body === base,
+    { label: "inventory body local on the device", timeoutMs: 15_000 });
+  await awaitPublic(() => sync05LocalBody(device, crate.id_hex), body => body === otherAllowedBody,
+    { label: "crate body local on the device", timeoutMs: 15_000 });
+  await awaitPublic(() => sync05Standing(device.client, predicate), standing => standing.count === 1,
+    { label: "home claim held on the device" });
+  expect(await sync05Standing(device.client, predicate)).toEqual(atHome);
+
+  // Failure step: cut the home link. Every authorized body is still local.
+  link.cut();
+  expect(await sync05LocalBody(device, inventory.id_hex)).toBe(base);
+  expect(await sync05LocalBody(device, crate.id_hex)).toBe(otherAllowedBody);
+  // The home writes a disjoint anchored edit while the device is cut off.
+  const anchors = await home.client.call("vault.notes.read", { note_ref: inventory.id_hex, spans: [sync05Span(base, homeEdit.replace)] });
+  const [span] = anchors.value?.spans ?? [];
+  if (!span) throw new Error("Home returned no stable anchor");
+  const edited = await home.client.call("vault.notes.edit", {
+    note_ref: inventory.id_hex, edit: { kind: "replace_span", start: span.start, end: span.end, text: homeEdit.with },
+  });
+  expect(edited.outcome).toBe("edited");
+  expect(await sync05LocalBody(device, inventory.id_hex)).toBe(base);
+
+  // Rejoin: the home's edit arrives; nothing about the claim changes.
+  link.heal();
+  await awaitPublic(() => sync05LocalBody(device, inventory.id_hex), body => body === homeEdited,
+    { label: "home edit reached the device", timeoutMs: 15_000 });
+  expect(await sync05Standing(device.client, predicate)).toEqual(atHome);
+
+  // Crash while cut off again: the sync-all copies are durable, not a live view.
+  link.cut();
+  await device.kill();
+  await device.restart();
+  expect(await sync05LocalBody(device, inventory.id_hex)).toBe(homeEdited);
+  expect(await sync05LocalBody(device, crate.id_hex)).toBe(otherAllowedBody);
+  expect(await sync05Standing(device.client, predicate)).toEqual(atHome);
+});
 
 /* SYNC-06 — Single Dreamer home leadership should work.
  * Rows: OF-147, OF-195. Canon: ARCH-0026 #wake-model and MACRO home-node
@@ -379,6 +761,35 @@ async function sync07Evidence(engine: EngineFixture, claimRef: string): Promise<
   return row;
 }
 
+/** The foreign row's public standing: its listed claim fields, its evidence
+ * verdict and its whole delivery history, read through two doors. */
+interface Sync07ForeignState {
+  readonly claim: {
+    readonly claim_ref: string; readonly value: unknown; readonly source: string | null | undefined;
+    readonly lifecycle: string; readonly world_ref: string | null | undefined;
+  };
+  readonly evidence: {
+    readonly foreign_world_ref: string | null | undefined; readonly source: string | null | undefined;
+    readonly first_party_corroboration: boolean; readonly writer_ref: string | null | undefined;
+  };
+  readonly history: readonly NonNullable<Sync07Evidence["delivery_history"]>[number][];
+}
+async function sync07ForeignState(engine: EngineFixture, claimRef: string): Promise<Sync07ForeignState> {
+  const listed = await engine.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 });
+  const [row, ...others] = listed.value.filter(claim => claim.claim_ref === claimRef);
+  if (!row) throw new Error(`Claim ${claimRef} is not listed`);
+  expect(others).toEqual([]);
+  const evidence = await sync07Evidence(engine, claimRef);
+  return {
+    claim: { claim_ref: row.claim_ref, value: row.value, source: row.source, lifecycle: row.lifecycle, world_ref: row.world_ref },
+    evidence: {
+      foreign_world_ref: evidence.foreign_world_ref, source: evidence.source,
+      first_party_corroboration: evidence.first_party_corroboration, writer_ref: evidence.writer_ref,
+    },
+    history: evidence.delivery_history ?? [],
+  };
+}
+
 /* SYNC-07 — decision: WRITTEN (partial).
  * Promise: a claim delivered from a connected vault enters the receiving vault
  *   only under that vault's own source-trust rule, and there it stays foreign
@@ -477,16 +888,25 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
     .value.find(row => row.claim_ref !== foreignClaim.claim_ref);
   if (!ownClaim) throw new Error("Receiver's own claim missing");
 
-  const foreignEvidence = await sync07Evidence(receiver, foreignClaim.claim_ref);
-  expect(foreignEvidence.foreign_world_ref).toBe(foreignWorld);
-  expect(foreignEvidence.source).toBe("imported");
-  expect(foreignEvidence.first_party_corroboration).toBe(false);
-  expect(foreignEvidence.writer_ref ?? null).not.toBe(receiver.pairedActor.principalRef);
-  const origin = (foreignEvidence.delivery_history ?? []).find(row => row.delivering_pact === pact.pact);
-  expect(origin).toBeDefined();
-  expect(origin?.source_vault).toBe(pact.sharerVault);
-  expect(origin?.grant_ref).toBe(pact.receiverGrant.grant);
-  expect(origin?.consent_epoch).toBe(delivery.body.epoch);
+  // The foreign row's public standing, saved once: every later check compares
+  // the same claim ref against this whole snapshot, never a count or a match.
+  const saved = await sync07ForeignState(receiver, foreignClaim.claim_ref);
+  expect(saved.claim).toEqual({
+    claim_ref: foreignClaim.claim_ref, value: evidenceText, source: "imported", lifecycle: "active", world_ref: foreignWorld,
+  });
+  expect(saved.evidence.foreign_world_ref).toBe(foreignWorld);
+  expect(saved.evidence.source).toBe("imported");
+  expect(saved.evidence.first_party_corroboration).toBe(false);
+  expect(saved.evidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+  expect(saved.history).toHaveLength(1);
+  const [origin] = saved.history;
+  if (!origin) throw new Error("Delivered claim has no delivery origin");
+  expect(origin.source_ref).toBe(foreignClaim.claim_ref);
+  expect(origin.delivering_pact).toBe(pact.pact);
+  expect(origin.consent_epoch).toBe(delivery.body.epoch);
+  expect(origin.grant_ref).toBe(pact.receiverGrant.grant);
+  expect(origin.source_vault).toBe(pact.sharerVault);
+  expect(origin.delivered_row_hash).toMatch(/^[0-9a-f]{64}$/);
   const ownEvidence = await sync07Evidence(receiver, ownClaim.claim_ref);
   expect(ownEvidence.foreign_world_ref ?? null).toBeNull();
   expect(ownEvidence.source).toBe("user_stated");
@@ -499,26 +919,25 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
   }));
   expect(tampered.reply.status).toBe(400);
   expect(tampered.error?.code).toBe("BAD_REQUEST");
+  expect(await sync07ForeignState(receiver, foreignClaim.claim_ref)).toEqual(saved);
   const relabelled = await sync07Refusal(receiver.client.call("vault.federation.connect.rejoin", {
     ...delivery, body: { ...delivery.body, source_vault: pact.receiverVault },
   }));
   expect(relabelled.reply.status).toBe(400);
   expect(relabelled.error?.code).toBe("BAD_REQUEST");
+  expect(await sync07ForeignState(receiver, foreignClaim.claim_ref)).toEqual(saved);
 
-  // Crash, then the same delivery again: still one foreign row, still foreign.
+  // Crash: the landed row survives on its own, before any redelivery.
   await receiver.kill();
   await receiver.restart();
+  expect(await sync07ForeignState(receiver, foreignClaim.claim_ref)).toEqual(saved);
+  // The same delivery again: the same single row, the same single origin.
   const replayed = await receiver.client.call("vault.federation.connect.rejoin", delivery);
   expect(replayed.status).toBe("imported");
   expect(replayed.world_ref).toBe(foreignWorld);
+  expect(await sync07ForeignState(receiver, foreignClaim.claim_ref)).toEqual(saved);
   const afterReplay = await receiver.client.call("vault.claims.list", { predicate: SYNC07_PREDICATE, limit: 10 });
-  expect(afterReplay.value.filter(row => row.world_ref === foreignWorld)).toHaveLength(1);
-  expect(afterReplay.value).toHaveLength(2);
-  const restarted = await sync07Evidence(receiver, foreignClaim.claim_ref);
-  expect(restarted.foreign_world_ref).toBe(foreignWorld);
-  expect(restarted.first_party_corroboration).toBe(false);
-  expect((restarted.delivery_history ?? []).some(row => row.delivering_pact === pact.pact
-    && row.source_vault === pact.sharerVault && row.grant_ref === pact.receiverGrant.grant)).toBe(true);
+  expect(afterReplay.value.map(row => row.claim_ref).sort()).toEqual([foreignClaim.claim_ref, ownClaim.claim_ref].sort());
 });
 
 /* SYNC-08 — Mesh admission follows pairing should work.
