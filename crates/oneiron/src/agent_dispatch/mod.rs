@@ -161,6 +161,7 @@ pub use self::spend_record::{
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
 };
+pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
     decode_agent_dispatch_input, encode_agent_dispatch_input,

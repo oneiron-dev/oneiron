@@ -937,6 +937,7 @@
      "path": "src/agent_dispatch/budget_hold.rs",
      "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 4
@@ -1184,7 +1185,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
       "re-export": 30
      }
@@ -2381,7 +2382,7 @@
      "path": "src/anchored_annotation/recovery.rs",
      "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 4,
       "struct": 2
      }
@@ -2955,7 +2956,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append mutation doors",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -3095,6 +3096,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/hold_override.rs",
+     "purpose": "RUN-HOLD (lead 18:5x, shape agreed 20:44): the hold follows the override",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/hook_hold.rs",
      "purpose": "Lease-fenced verb-hook pauses: a workflow's, whose transcript its checkpoint writer retains in the same…",
      "surface": {
@@ -3154,7 +3165,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "mod": 9,
       "re-export": 12
      }
@@ -47901,7 +47912,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 210,
+      "mod": 211,
       "re-export": 105
      }
     },
@@ -88783,7 +88794,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 22,
       "enum": 1,
       "struct": 1
      }
@@ -88815,7 +88826,7 @@
      "path": "src/task_verb/fanout_launch/hold.rs",
      "purpose": "Held fan-out ask admission and release records",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -89156,7 +89167,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 67,
+      "crate-vis": 69,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -90326,6 +90337,26 @@
      "surface": {
       "enum": 1,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/mod.rs",
+     "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/run_hold.rs",
+     "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -99047,6 +99078,32 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold/fixture.rs",
+     "purpose": "The RUN-HOLD tests' shared fixture (`run_hold_override.rs`, `run_hold_doors.rs`): a vault, the queue calls…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_doors.rs",
+     "purpose": "RUN-HOLD through the test doors (`oneiron::test_doors::run_hold`): - a hook hold's override releases the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_override.rs",
+     "purpose": "RUN-HOLD (lead 18:5x, shape agreed 20:44): a generic Resume of a row an engine hold paused moves the hold's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99084,6 +99141,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/step_claim_audience.rs",
+     "purpose": "A `dreamer.step` claim holds its call's raw response, so it carries the call's exposure (S63E-RULED, live…",
      "surface": {}
     },
     {
@@ -99208,7 +99273,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100586,6 +100651,13 @@
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
+    "test_doors": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)"
+    },
     "test_support": {
      "files": 1,
      "impl_vault": false,
@@ -100750,8 +100822,8 @@
    },
    "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7245,
-   "test_files": 899
+   "source_files": 7248,
+   "test_files": 903
   },
   "oneiron-android": {
    "files": [

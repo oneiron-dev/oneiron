@@ -122,6 +122,7 @@ pub(super) fn record_dispatched_check_in(
                 pause: None,
                 check_row: None,
                 held_attempts: Vec::new(),
+                resumed_by_override: Vec::new(),
                 dispatched_at: None,
                 task_refs: Vec::new(),
                 denied: false,
@@ -169,7 +170,7 @@ pub(super) fn settle_held_attempts_in(
         if !record.fanout_hold_for(launch.launch_ref) {
             continue;
         }
-        queue.intervene_in_txn(
+        queue.release_hold_in_txn(
             txn,
             InterveneAttempt {
                 id: *id,

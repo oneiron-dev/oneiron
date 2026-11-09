@@ -68,7 +68,7 @@ use crate::outbound_chokepoint::{
     admit_fanout_with_history, answer_fanout_width_check, approve_and_resume_fanout,
     fanout_estimate, fanout_plan_digest, fanout_width_check_row,
 };
-use crate::receipt::ReceiptRecord;
+use crate::receipt::{ERASED_CALL_IDENTITY, ReceiptRecord};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::wave_orchestration::{
     ValidatedWavePlan, WAVE_PLAN_SCHEMA_VERSION, WavePlan, WaveTaskWrite,
@@ -84,8 +84,9 @@ pub(super) use self::ask_auto::AskAutoGate;
 use self::checks::settle_held_attempts_in;
 pub(super) use self::checks::{AskCheck, WaveCheck, record_ask_check_in, record_wave_check_in};
 pub(super) use self::hold::{
-    AskHold, ReleasedAsk, ask_launch_needs_approval, held_ask_owner_in, held_ask_receipt_in,
-    hold_ask_in, hold_planning_attempt_in, mark_launched_in,
+    AskHold, ReleasedAsk, ask_launch_needs_approval, complete_overridden_planner_in,
+    held_ask_owner_in, held_ask_receipt_in, hold_ask_in, hold_planning_attempt_in,
+    mark_launched_in,
 };
 use self::hold::{launch_role_is_held_in, require_holder_launch_choice};
 pub(super) use self::scrub::{
@@ -359,6 +360,11 @@ pub(super) struct StoredLaunch {
     check_row: Option<FanoutApprovalRow>,
     /// Planning attempts parked under the fan-out hold for this launch.
     pub(super) held_attempts: Vec<AttemptId>,
+    /// RUN-HOLD: planning attempts a generic Resume released from this
+    /// launch's hold. The launch's next apply completes such an attempt
+    /// instead of parking it again; the cut still waits for the approval.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) resumed_by_override: Vec<FanoutHoldOverride>,
     pub(super) dispatched_at: Option<u64>,
     pub(super) task_refs: Vec<EntityId>,
     denied: bool,
@@ -378,7 +384,23 @@ pub(super) struct StoredLaunch {
     pub(super) recipient_scrub: Option<FanoutRecipientScrub>,
 }
 
+/// One planning attempt a generic Resume released from a launch's hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct FanoutHoldOverride {
+    pub(super) attempt: AttemptId,
+    /// The Resume's actor.
+    pub(super) actor: String,
+    pub(super) at: u64,
+}
+
 impl StoredLaunch {
+    /// Whether a generic Resume released `attempt` from this launch's hold.
+    pub(super) fn released_by_override(&self, attempt: AttemptId) -> bool {
+        self.resumed_by_override
+            .iter()
+            .any(|released| released.attempt == attempt)
+    }
+
     fn class(&self) -> MemoryResult<EdgeActorClass> {
         EdgeActorClass::try_from_u8(self.actor_class)
             .ok_or_else(|| Error::CorruptedIndex("fan-out launch actor class").into())
@@ -442,6 +464,74 @@ fn load_launch(
 
 fn save_launch(vault: &Vault, txn: &mut heed::RwTxn<'_>, launch: &StoredLaunch) -> Result<()> {
     FANOUT_LAUNCHES.put(&vault.store, txn, &HexId(launch.launch_ref), launch)
+}
+
+/// RUN-HOLD: a generic Resume released `attempt` from the fan-out hold of
+/// `launch_ref`, in that Resume's transaction. The planning attempt leaves
+/// the launch's held list and is recorded as resumed by override, so the
+/// launch's next apply completes it instead of parking it again. The launch
+/// stays held: only the owner's approval launches the cut.
+pub(crate) fn follow_fanout_hold_override_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    launch_ref: EntityId,
+    attempt: AttemptId,
+    actor: &str,
+    now: u64,
+) -> Result<()> {
+    let Some(mut launch) = load_launch(vault, txn, launch_ref)? else {
+        return Ok(());
+    };
+    launch.held_attempts.retain(|held| *held != attempt);
+    if !launch.released_by_override(attempt) {
+        launch.resumed_by_override.push(FanoutHoldOverride {
+            attempt,
+            actor: actor.to_owned(),
+            at: now,
+        });
+    }
+    save_launch(vault, txn, &launch)
+}
+
+/// The actors of the planner releases recorded on `launch_ref`, in order.
+#[cfg(oneiron_test_support)]
+pub(crate) fn launch_override_actors_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    launch_ref: EntityId,
+) -> Result<Vec<String>> {
+    Ok(load_launch(vault, txn, launch_ref)?
+        .map(|launch| {
+            launch
+                .resumed_by_override
+                .into_iter()
+                .map(|released| released.actor)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// The override pass of an actor's erase over the launches (RUN-HOLD): each
+/// planner release `actor_hex` made reads as made by an erased actor. The
+/// release stands.
+pub(super) fn erase_launch_override_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor_hex: &str,
+) -> Result<()> {
+    for (key, mut launch) in FANOUT_LAUNCHES.scan(&vault.store, txn)? {
+        let mut named = false;
+        for released in &mut launch.resumed_by_override {
+            if released.actor == actor_hex {
+                released.actor = ERASED_CALL_IDENTITY.to_owned();
+                named = true;
+            }
+        }
+        if named {
+            FANOUT_LAUNCHES.put(&vault.store, txn, &key, &launch)?;
+        }
+    }
+    Ok(())
 }
 
 /// The ref of `actor`'s launch of the cut named `plan_ref`.
@@ -719,6 +809,7 @@ pub(super) fn admit_wave_launch_in(
         pause: None,
         check_row: None,
         held_attempts: Vec::new(),
+        resumed_by_override: Vec::new(),
         dispatched_at: None,
         task_refs: Vec::new(),
         denied: false,
