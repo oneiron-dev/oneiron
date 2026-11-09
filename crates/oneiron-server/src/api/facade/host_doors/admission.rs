@@ -700,6 +700,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultNotesHistoryPurgeExecute
         | Row::VaultNotesHistoryPurgeReceipts
         | Row::VaultRunsProgramHoldRelease
+        | Row::VaultRunsParksRelease
         | Row::AiVoiceAsrOpen
         | Row::AiVoiceAsrHypothesis
         | Row::AiVoiceAsrFinalize

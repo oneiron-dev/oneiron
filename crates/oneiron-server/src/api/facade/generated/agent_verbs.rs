@@ -1283,6 +1283,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.runs.program_step", post(facade_route))
         .route("/vault.runs.program_checkpoint", post(facade_route))
         .route("/vault.runs.program_hold.release", post(facade_route))
+        .route("/vault.runs.parks.release", post(facade_route))
         .route("/vault.consolidation.home.get", post(facade_route))
         .route("/vault.consolidation.home.pick", post(facade_route))
         .route("/vault.consolidation.lineage", post(facade_route))

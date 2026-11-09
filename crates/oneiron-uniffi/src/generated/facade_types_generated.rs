@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1353 facade rows, 4778 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1286.
+// UniFFI census: 1354 facade rows, 4780 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1287.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), vault.packs.connector.grants.get (result), vault.connectors.slates.scope_outcome (result), vault.connectors.slates.revision_offers (result), vault.connectors.slates.accept_revision (result), vault.consent.registry (result), vault.consent.active_bypass_grants (result), vault.gate.policy.get (result), vault.voices.inspect (result), vault.voices.lineage (result), vault.decisions.asks.answer (result), vault.decisions.asks.confirm_grant (result), self.decisions.asks (result), self.skills.call (result), vault.consent.create_bypass_grant (input), vault.voices.packs.put (input), vault.packs.connector.grants.put (input and result), vault.consent.bypass_grant_warning (input and result), vault.gate.policy.put (input and result), vault.gate.policy.propose (input and result), vault.voices.render_consent (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -68392,6 +68392,33 @@ pub struct ProgramHoldReleaseView {
     pub state: String,
     #[serde(rename = "effected")]
     pub effected: bool,
+}
+
+/// `oneiron::dreamer_runner::park_release::ReleaseParkedAttemptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseParkedAttemptRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "parked_at")]
+    pub parked_at: u64,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::park_release::ParkReleaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ParkReleaseView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "released")]
+    pub released: String,
+    #[serde(rename = "cause")]
+    pub cause: String,
+    #[serde(rename = "state")]
+    pub state: String,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode`.

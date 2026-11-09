@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1407 code-mode rows (1364 host rows, 43 run rows), 4919 declarations.
-// Replies: 1200 fully typed, 189 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1408 code-mode rows (1365 host rows, 43 run rows), 4921 declarations.
+// Replies: 1201 fully typed, 189 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: AskEffect.catastrophe, BypassGrantBoundRequest.classes, BypassGrantBoundRequest.scope, CodeConsentSettlementRow.eligible, ConnectorConsentRowView.grant_ceiling, ConnectorPackGrantRow.ceiling, ConnectorScopeExceed.PayloadClass.ceiling, ConnectorScopeExceed.PayloadClass.requested, ConsentRegistryRow.bypass, ConsentRegistryRow.status, VoiceBankPackPutRequest.origin, VoiceIdentityView.subject_kind, VoicePackSummary.origin, VoiceRenderConsentReceipt.state, VoiceRenderConsentRequest.basis, VoiceRenderConsentRequest.state, VoiceRenderConsentRequest.subject_kind, VoiceRenderConsentView.basis, VoiceRenderConsentView.state, VoiceRenderConsentView.subject_kind.
 declare namespace Sdk {
@@ -4397,6 +4397,8 @@ declare namespace Sdk {
   type ProgramHoldReleaseAction = "stop" | "resume_validated";
   type ReleaseTurnProgramHoldRequest = { attempt: string; reason: string; parked_at: number; action: ProgramHoldReleaseAction; note?: string | null };
   type ProgramHoldReleaseView = { attempt: string; action: ProgramHoldReleaseAction; released: string; state: string; effected: boolean };
+  type ReleaseParkedAttemptRequest = { attempt: string; reason: string; parked_at: number; note?: string | null };
+  type ParkReleaseView = { attempt: string; released: string; cause: string; state: string };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
@@ -7853,6 +7855,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    parks: {
+      /** The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release. */
+      release(input: Sdk.ReleaseParkedAttemptRequest): Promise<Sdk.ParkReleaseView | StoredResult>;
+    };
     /** Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused. */
     pause(input: Sdk.RunControlRequest): Promise<Sdk.RunControlReceipt | StoredResult>;
     /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */

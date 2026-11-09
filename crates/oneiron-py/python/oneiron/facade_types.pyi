@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1353 facade rows, 4860 declarations.
-Inputs: 1273 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1167 of 1353 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Census: 1354 facade rows, 4862 declarations.
+Inputs: 1274 of 1354 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1168 of 1354 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 20.
 """
 
@@ -22533,6 +22533,16 @@ class ProgramHoldReleaseView(TypedDict):
     released: str
     state: str
     effected: bool
+class ReleaseParkedAttemptRequest(TypedDict):
+    attempt: str
+    reason: str
+    parked_at: int
+    note: NotRequired[str | None]
+class ParkReleaseView(TypedDict):
+    attempt: str
+    released: str
+    cause: str
+    state: str
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):

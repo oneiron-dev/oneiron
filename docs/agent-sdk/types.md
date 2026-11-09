@@ -3821,6 +3821,8 @@ class Oneiron:
             """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
         @property
         def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs": ...
+        @property
+        def parks(self) -> "Oneiron._VaultRunsParksVerbs": ...
         def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
         def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
@@ -3833,6 +3835,9 @@ class Oneiron:
     class _VaultRunsProgramHoldVerbs:
         def release(self, spec: Facade.ReleaseTurnProgramHoldRequest) -> Facade.ProgramHoldReleaseView:
             """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
+    class _VaultRunsParksVerbs:
+        def release(self, spec: Facade.ReleaseParkedAttemptRequest) -> Facade.ParkReleaseView:
+            """The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release."""
     class _VaultConsultsVerbs:
         def get(self, spec: Facade.ConsultReadRequest) -> Facade.ConsultInspection:
             """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""
