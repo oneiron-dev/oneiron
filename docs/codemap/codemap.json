@@ -15877,7 +15877,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 8
      }
     },
@@ -16193,7 +16193,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 6,
       "re-export": 1
      }
@@ -41640,6 +41640,41 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "FeedAckRequest",
+      "FeedEntry",
+      "FeedEntryKind",
+      "FeedOp",
+      "FeedPage",
+      "FeedPosition",
+      "FeedReadRequest",
+      "FeedSelector",
+      "FeedSource",
+      "FeedStart",
+      "FeedSubscribeRequest",
+      "FeedSubscription"
+     ],
+     "path": "src/feeds/mod.rs",
+     "purpose": "Change feeds (untangle slice 6.8, primitive B; ARCH-0080 §4 Sources and cursors)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 8,
+      "enum": 4,
+      "fn": 6,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feeds/tables.rs",
+     "purpose": "The side tables `feeds` keeps (untangle slice 6.8): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -47669,7 +47704,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 211,
+      "mod": 212,
       "re-export": 105
      }
     },
@@ -69536,7 +69571,7 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 19,
       "mod": 3,
       "re-export": 12
      }
@@ -69836,7 +69871,7 @@
      "purpose": "Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors)",
      "surface": {
       "const": 2,
-      "crate-vis": 24,
+      "crate-vis": 27,
       "enum": 3,
       "fn": 9,
       "re-export": 1,
@@ -98150,6 +98185,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/feeds.rs",
+     "purpose": "Change feed subscriptions (untangle slice 6.8a, primitive B), on the public crate surface only: `Vault`…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -99637,6 +99680,13 @@
      "layout": "dir",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export"
     },
+    "feeds": {
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "Change feeds (untangle slice 6.8, primitive B; ARCH-0080 §4 Sources and cursors)"
+    },
     "file_secret_marks": {
      "files": 1,
      "impl_vault": false,
@@ -100604,10 +100654,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7232,
-   "test_files": 899
+   "source_files": 7234,
+   "test_files": 900
   },
   "oneiron-agent-runtime": {
    "files": [
