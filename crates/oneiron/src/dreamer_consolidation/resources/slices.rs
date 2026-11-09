@@ -226,11 +226,13 @@ impl BranchResources<'_> {
         let vault = self.read.vault();
         let txn = vault.store.env.read_txn()?;
         let mut bound: Option<BTreeSet<EntityId>> = None;
+        // The MESSAGEs whose words the transcript shows, not every pinned
+        // child: a hidden or unfinished one is read by no call, so its label
+        // binds nothing (review round 1 of #6903).
         let messages = turns
             .iter()
             .filter_map(|id| self.texts.get(id))
-            .flat_map(TurnText::versions)
-            .map(|(message, _)| message);
+            .flat_map(TurnText::projection);
         for message in messages {
             let Some(raw) = vault.get_raw_in(&txn, &message)? else {
                 continue;
