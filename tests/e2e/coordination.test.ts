@@ -563,17 +563,119 @@ suite.test(test, "COORDINATION-02", "A thread reply never moves the trunk HEAD a
  * participation and consent doors are present; do not bypass their provenance
  * by minting arbitrary people, grants or agents.
  */
-/* COORDINATION-03 — decision: written, kept off this branch (engine DEFECT).
- * The case is on branch opus-e2e-3/coordination-03-defect and fails today:
- *   vault.agents.create gives every custom AGENT_DEF a derived agent PERSON
- *   anchor (context_board/people.rs:491-516, called from
- *   agent_def/doors.rs:313-334), and rooms read any PERSON anchor as "a
- *   person's pen" (workspace_roster/rooms/participation.rs:253-275), so the
- *   offer mint refuses every custom agent (rooms/offers.rs:434-442). That
- *   contradicts the participation comment ("an unanchored team lead or
- *   worker is an agent") and OF-530. FIX-LIST [AGENT-PERSON-ANCHOR-ROOM-OFFER].
+interface Coordination03Scenario {
+  id: "COORDINATION-03";
+  inputs: { offer: { what: string; artifact: string } };
+  expected: { offerTurnsBeforeAcceptance: number; cardsPerAgentPerBranch: number; unrelatedActorSatisfiesConsent: boolean;
+    missingRequiredConsentAdmits: boolean; acceptedTurns: number; replayAddsTurns: number };
+}
+const COORDINATION03_AT = 1769947200; // Public setup input, never an engine clock override.
+const COORDINATION03_ADMISSION = "only the room's owner, a delegated host or its nearest project leader answers its admission";
+
+async function coordination03Scenario(): Promise<Coordination03Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(row => row.id === "COORDINATION-03");
+  if (!row) throw new Error("coordination-scenarios has no COORDINATION-03");
+  return row as Coordination03Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+function coordination03InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:${label}`).digest("hex").slice(0, 32);
+}
+async function coordination03Refused(call: Promise<unknown>, status: number, code: string, reason: string): Promise<void> {
+  let refusal: PublicHttpError | undefined;
+  try { await call; } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    refusal = error;
+  }
+  if (!refusal) throw new Error(`Expected HTTP ${status} ${code} (${reason}); the call succeeded`);
+  expect(refusal.reply.status).toBe(status);
+  expect(refusal.error?.code).toBe(code);
+  expect(refusal.error?.message ?? "").toContain(reason);
+}
+
+/* COORDINATION-03 promise: an agent asks to join a room by an offer card, never a turn; only the room's
+ *   host admits it, the agent itself and an unrelated agent cannot, and the accepted join lands once.
+ * Doors: typed HTTP facade vault.conversations.create / vault.agents.create / vault.rooms.offer /
+ *   vault.rooms.offers / vault.rooms.consent / vault.rooms.offer.answer / vault.get; pairActor for both agents.
+ * DEFECT (expected FAIL today, at the first offer): vault.agents.create anchors every custom AGENT_DEF to a
+ *   model PERSON (agent_def/doors.rs:313-334, context_board/people.rs:491-521), the join subject then reads it
+ *   as a person's pen (join_consent.rs:439-453, rooms/participation.rs:268-275), and the mint refuses it:
+ *   400 "a person's pen joins by writing as its person, not by an offer card" (rooms/offers.rs:434-442).
+ * Unproved: thread cards and the human "wrote" cause (vault.rooms.speak threads need a project home room,
+ *   rooms/mod.rs:185-201); mention and TASK causes (no public bind door); paid offers and payer consent;
+ *   companion membership; nearest-leader hosting and Dreamer never hosting; not_now's diary record.
  */
-suite.todo(test, "COORDINATION-03", "waits on the fix for custom AGENT_DEFs reading as a person's pen in rooms (FIX AGENT-PERSON-ANCHOR-ROOM-OFFER): every vault.agents.create agent gets a derived PERSON anchor, so no agent can be offered into a room");
+suite.test(test, "COORDINATION-03", "An agent joins a room only through an offer card that the room's host accepts, and the accepted join lands once", async () => {
+  const scenario = await coordination03Scenario();
+  const engine = await EngineFixture.start({ id: "COORDINATION-03", profile, serverConfig: "[models.dreamer]\nenabled = false\n" });
+  try {
+    const client = engine.client;
+    const owner = engine.pairedActor.principalRef;
+    const room = (await client.call("vault.conversations.create", {
+      body: { v: 1, kind: "group", member_ids: [owner], title: "COORDINATION-03 visitor route" },
+      occurred_start: COORDINATION03_AT, occurred_end: COORDINATION03_AT, learned_at: COORDINATION03_AT })).id;
+    const agents = new Map<string, string>();
+    for (const label of ["companion", "worker-a"]) {
+      const ref = coordination03InputId(`COORDINATION-03:${label}`);
+      const created = await client.call("vault.agents.create", { agent_def_ref: ref,
+        definition: { agent_id: label, display_name: label, desc: `COORDINATION-03 ${label}`, version: "1" } });
+      expect(created.agent_def_ref).toBe(ref);
+      agents.set(label, ref);
+    }
+    const companionRef = agents.get("companion")!;
+    const companion = await engine.pairActor({ principalRef: companionRef, actorClass: "agent" });
+    const unrelated = await engine.pairActor({ principalRef: agents.get("worker-a")!, actorClass: "agent" });
+    expect(await client.call("vault.rooms.offers", { room })).toMatchObject({ rows: [] });
+
+    // The agent's ask is a card: it waits on the host's admission and carries no turn.
+    const draft: FacadeInput<"vault.rooms.offer"> = { room, branch: null, agent: companionRef,
+      what: scenario.inputs.offer.what, artifact_ref: scenario.inputs.offer.artifact, intent_key: "coordination03-offer-1" };
+    const card = await companion.client.call("vault.rooms.offer", draft);
+    expect(card.offer_id).toMatch(/^[a-f0-9]{64}$/);
+    expect(card).toMatchObject({ room, agent: companionRef, what: scenario.inputs.offer.what, artifact_ref: scenario.inputs.offer.artifact });
+    expect(card.state).toEqual({ kind: "open", needs: [{ part: "admission", party: { room_host: { room } } }] });
+    const listed = await client.call("vault.rooms.offers", { room });
+    expect(listed.rows.filter(row => row.agent === companionRef)).toHaveLength(scenario.expected.cardsPerAgentPerBranch);
+    expect(listed.rows[0]?.offer_id).toBe(card.offer_id);
+    expect(scenario.expected.offerTurnsBeforeAcceptance).toBe(0);
+
+    // Refused: the agent cannot admit itself, and an unrelated agent cannot answer the host's part.
+    expect(scenario.expected.unrelatedActorSatisfiesConsent).toBe(false);
+    await coordination03Refused(companion.client.call("vault.rooms.offer.answer",
+      { offer_id: card.offer_id, action: "join", intent_key: "coordination03-self-admit" }), 403, "FORBIDDEN", COORDINATION03_ADMISSION);
+    await coordination03Refused(unrelated.client.call("vault.rooms.consent",
+      { join_ref: card.join_ref, part: "admission", grant: true }), 403, "FORBIDDEN", COORDINATION03_ADMISSION);
+    // Missing the required consent still admits nothing.
+    expect(scenario.expected.missingRequiredConsentAdmits).toBe(false);
+    const stillOpen = await client.call("vault.rooms.offers", { room });
+    expect(stillOpen.rows.find(row => row.offer_id === card.offer_id)?.state).toEqual(card.state);
+
+    // The room's host accepts: exactly one turn, bylined to the agent, with the join's receipt.
+    const accepted = await client.call("vault.rooms.offer.answer",
+      { offer_id: card.offer_id, action: "join", intent_key: "coordination03-answer-1" });
+    expect(accepted.offer_id).toBe(card.offer_id);
+    if (accepted.state.kind !== "joined") throw new Error(`Offer not joined: ${JSON.stringify(accepted.state)}`);
+    expect(accepted.turn_ref).toBe(accepted.state.turn);
+    expect(accepted.state.receipt_ref.length).toBeGreaterThan(0);
+    expect(accepted.join?.decision.state).toBe("ready");
+    const turn = await client.call("vault.get", { entity_ref: accepted.state.turn });
+    expect(turn.value?.kind).toBe("TURN");
+    expect(scenario.expected.acceptedTurns).toBe(1);
+
+    // Exact replays land nothing new: the same answer and the same card.
+    expect(await client.call("vault.rooms.offer.answer",
+      { offer_id: card.offer_id, action: "join", intent_key: "coordination03-answer-1" })).toEqual(accepted);
+    const replayed = await companion.client.call("vault.rooms.offer", draft);
+    expect(replayed.offer_id).toBe(card.offer_id);
+    expect(replayed.state).toEqual(accepted.state);
+    expect(scenario.expected.replayAddsTurns).toBe(0);
+    const after = await client.call("vault.rooms.offers", { room });
+    expect(after.rows.filter(row => row.agent === companionRef)).toHaveLength(1);
+    expect(after.rows.find(row => row.offer_id === card.offer_id)?.state).toEqual(accepted.state);
+  } finally {
+    await engine.close();
+  }
+});
 
 /* COORDINATION-04 — Recursive leader never widens its slice should work.
  * Rows: OF-389, OF-497, OF-180. Canon: ARCH-0079 #work, #stacking;
