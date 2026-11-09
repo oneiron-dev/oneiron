@@ -264,6 +264,8 @@ impl oneiron::LlmBackend for McpFixtureCodeBackend {
                 },
                 usage: oneiron::LlmUsage::zero(),
                 finish_reason: oneiron::FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
