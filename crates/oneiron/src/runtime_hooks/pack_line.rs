@@ -46,6 +46,6 @@ impl Vault {
     /// request.
     #[must_use]
     pub fn hook_pack_line(&self, context: &HookVerdictContext) -> BudgetGuard {
-        self.verb_hook_state.pack_lines.line(context)
+        self.runtime().verb_hook_state().pack_lines.line(context)
     }
 }
