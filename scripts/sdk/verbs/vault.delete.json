@@ -1,0 +1,24 @@
+{
+  "name": "vault.delete",
+  "description": "Deletes one entity under a named reason; an owner verb that only a verified human may call.",
+  "refs": [
+    "/entity_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "entity_ref": "String",
+      "reason": "SafeDeleteReason"
+    },
+    "output": "DeleteReceipt"
+  },
+  "input": "SafeDeleteRequest",
+  "output": "crate::memory::DeleteReceipt",
+  "call": "memory.safe_delete(&input.entity_ref, input.reason)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

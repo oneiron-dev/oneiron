@@ -1,7 +1,7 @@
 /**
  * `@oneiron/client` — the one thin typed client for the Oneiron API.
  *
- * The verb table (`scripts/sdk/agent-verbs.json`) is the contract; this
+ * The verb table (`scripts/sdk/verbs/`) is the contract; this
  * package is convenience over it and never a second one. Its facade is
  * GENERATED from that table (`./facade.ts`, `./facade-types.ts`): every verb
  * a typed method at its SDK path, its input and result typed from the Rust

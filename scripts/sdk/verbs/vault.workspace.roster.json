@@ -1,0 +1,16 @@
+{
+  "name": "vault.workspace.roster",
+  "description": "The owner reads the workspace house and companion roster with their actor, subject and facet refs.",
+  "input": "crate::task_verb::sdk::WorkspaceRosterRequest",
+  "output": "Vec<crate::workspace_roster::WorkspaceRosterEntry>",
+  "call": "crate::task_verb::sdk::read_workspace_roster_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.roster\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

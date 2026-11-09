@@ -1,0 +1,16 @@
+{
+  "name": "vault.connectors.slates.defer_revision",
+  "description": "The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant.",
+  "input": "ConnectorSlateRevisionDeferRequest",
+  "output": "crate::task_verb::sdk::ConnectorRevisionSnoozeView",
+  "call": "crate::task_verb::sdk::defer_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.defer_revision\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

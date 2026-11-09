@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.zoom",
+  "description": "Zooms into a rectangle of a held image.",
+  "input": "oneiron_browser::ZoomInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.zoom(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

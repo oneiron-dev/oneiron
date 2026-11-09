@@ -1,0 +1,17 @@
+{
+  "name": "self.off_record.waits.get",
+  "description": "The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered.",
+  "input": "crate::task_verb::sdk::OffRecordWaitRequest",
+  "output": "crate::task_verb::sdk::OffRecordWaitView",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.get\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

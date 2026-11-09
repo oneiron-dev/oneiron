@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.web_connector.replace",
+  "description": "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector.",
+  "input": "crate::web_connector::WebConnectorSetting",
+  "output": "crate::web_connector::WebConnectorSetting",
+  "call": "crate::task_verb::sdk::replace_web_connector_setting(memory, input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

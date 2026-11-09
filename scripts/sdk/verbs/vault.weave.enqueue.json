@@ -1,0 +1,17 @@
+{
+  "name": "vault.weave.enqueue",
+  "description": "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion.",
+  "input": "crate::task_verb::sdk::WeaveEnqueueRequest",
+  "output": "crate::memory::DreamerAttemptRef",
+  "call": "crate::task_verb::sdk::weave_enqueue(memory, &memory.embedded_owner(\"vault.weave.enqueue\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

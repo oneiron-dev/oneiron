@@ -1,0 +1,16 @@
+{
+  "name": "calendar.connector.pull",
+  "description": "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+  "output": "crate::calendar::CalendarSyncOutcome",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.pull\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

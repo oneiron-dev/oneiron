@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.burst.ingress",
+  "description": "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt.",
+  "input": "crate::task_verb::sdk::ConnectDelivery",
+  "output": "crate::sync::federation_burst::FederationBurstReceipt",
+  "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.ingress\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

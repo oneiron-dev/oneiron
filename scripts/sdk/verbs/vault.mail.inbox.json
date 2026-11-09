@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.inbox",
+  "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
+  "input": "crate::mail_pack::MailInboxRequest",
+  "output": "crate::mail_pack::MailInboxPage",
+  "call": "memory.mail_inbox(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

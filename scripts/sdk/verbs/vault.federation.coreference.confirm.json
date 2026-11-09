@@ -1,0 +1,16 @@
+{
+  "name": "vault.federation.coreference.confirm",
+  "description": "The owner atomically confirms cross-vault identity without changing either person or their claims.",
+  "input": "crate::task_verb::sdk::CoreferencePairRequest",
+  "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+  "call": "crate::task_verb::sdk::confirm_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.confirm\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

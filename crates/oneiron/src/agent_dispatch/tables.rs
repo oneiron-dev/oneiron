@@ -12,7 +12,8 @@ crate::side_table::side_tables! {
         => crate::agent_dispatch::erase_comm_widen_actor_in_txn;
     /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::agent_dispatch::erase_plan_hold_actor_in_txn;
     /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).

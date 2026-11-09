@@ -1,0 +1,16 @@
+{
+  "name": "vault.trusted_contacts.revoke",
+  "description": "Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close.",
+  "input": "crate::task_verb::sdk::TrustedContactRevokeRequest",
+  "output": "crate::counterparty_contact::TrustedContact",
+  "call": "crate::task_verb::sdk::revoke_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.revoke\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

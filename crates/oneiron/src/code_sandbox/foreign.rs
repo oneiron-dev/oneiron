@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use super::guest_error::{GuestErrorMask, GuestProgramError};
 use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
-    MicroVmBackend, MicroVmSandboxAdapter, select_backend_for_tier,
+    MicroVmBackend, MicroVmSandboxAdapter, SandboxBackends, select_backend_for_tier,
 };
 use super::source::PreparedSource;
 use super::{
@@ -42,12 +42,14 @@ pub struct ForeignCodeOutcome {
 /// whose original that door keeps and checks (FIX 10389): nothing here
 /// prepares or checks it again. A failed program's own error comes back
 /// with each value `mask` knows replaced, then the shape sanitizer, the
-/// existing cut and its TypeScript position (FIX 9209).
+/// existing cut and its TypeScript position (FIX 9209). The program runs on
+/// the isolating backend `backends` carries for the Foreign tier.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is a separate authority the admitting door lends"
 )]
 pub fn execute_foreign_code(
+    backends: &dyn SandboxBackends,
     prepared: &PreparedSource<'_>,
     mounts: SandboxMountTable,
     artifact: ForeignCodeArtifact<'_>,
@@ -62,7 +64,7 @@ pub fn execute_foreign_code(
     {
         return Err(invalid("foreign QuickJS component pin mismatch"));
     }
-    let backend = select_backend_for_tier(SandboxGuestTier::Foreign)?
+    let backend = select_backend_for_tier(backends, SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
     // The shared launch below runs what it is given, as the runtime's own
     // isolated lane hands it an already prepared one.
@@ -91,7 +93,7 @@ pub fn execute_foreign_code(
     clippy::too_many_arguments,
     reason = "the host supplies each isolated execution axis"
 )]
-pub(crate) fn execute_foreign_code_on(
+pub fn execute_foreign_code_on(
     source: &str,
     tier: SandboxGuestTier,
     mounts: SandboxMountTable,

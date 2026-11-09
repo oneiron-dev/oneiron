@@ -68,7 +68,7 @@ pub(super) fn put_created_in_txn(
 }
 
 /// Deletes every entry of a deleted `record`: its kind, task, retry-child, parent-child and
-/// hold entries.
+/// hold entries, and its hold override record (RUN-HOLD).
 pub(super) fn delete_deleted_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -85,6 +85,7 @@ pub(super) fn delete_deleted_in_txn(
         PARENT_CHILD.delete(store, wtxn, &(parent, record.id))?;
     }
     ANNOTATION_HOLD.delete(store, wtxn, &record.id)?;
+    super::hold_override::delete_hold_override_in_txn(store, wtxn, record.id)?;
     crate::dreamer_consolidation::delete_lineage_origin_in_txn(store, wtxn, record.id)?;
     crate::dreamer_consolidation::branch_scope::delete_selection_scope_in_txn(
         store, wtxn, record.id,

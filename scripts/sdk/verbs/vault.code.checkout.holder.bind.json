@@ -1,0 +1,19 @@
+{
+  "name": "vault.code.checkout.holder.bind",
+  "description": "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted.",
+  "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
+  "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+  "call": "memory.repo_checkout_bind_for_holder(input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "openapi": true,
+  "host_door_proof": "checkout_holder"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "vault.notes.editor.close",
+  "description": "Closes one live NOTE editor held by this caller; a binding id alone grants no authority.",
+  "input": "crate::note::NoteEditorCloseRequest",
+  "output": "crate::note::NoteEditorClosed",
+  "call": "memory.close_note_editor(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "section": false,
+  "openapi": true
+}

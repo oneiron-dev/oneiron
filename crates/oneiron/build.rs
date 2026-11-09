@@ -44,6 +44,16 @@ const CODECS: [&str; 5] = [
 ];
 
 fn main() {
+    // The SDK outputs this crate includes, generated at build time (crates/oneiron-sdk-build).
+    oneiron_sdk_build::generate(&[
+        "crates/oneiron/src/verbs/generated/verb_catalog.rs",
+        "crates/oneiron/src/verbs/generated/run_verb_catalog.rs",
+        "crates/oneiron/src/verbs/generated/sdk_generated.rs",
+        "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
+        "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
+        "crates/oneiron/src/verbs/generated/code-mode.d.ts",
+        "crates/oneiron/src/generated/core_verb_names.rs",
+    ]);
     let manifest =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
     let src = manifest.join("src");

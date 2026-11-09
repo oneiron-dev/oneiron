@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.burst.baseline",
+  "description": "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context.",
+  "input": "crate::sync::federation_burst::FederationBurstPeerRequest",
+  "output": "crate::sync::federation_burst::FederationBurstBaselineState",
+  "call": "crate::task_verb::sdk::federation_burst_baseline_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.baseline\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

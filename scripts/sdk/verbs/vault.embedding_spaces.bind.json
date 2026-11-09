@@ -1,0 +1,16 @@
+{
+  "name": "vault.embedding_spaces.bind",
+  "description": "Binds one kind slot to a declared space, or returns it to its default when no space is named.",
+  "input": "crate::task_verb::sdk::EmbeddingSpaceBindRequest",
+  "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+  "call": "crate::task_verb::sdk::bind_embedding_slot_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.bind\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

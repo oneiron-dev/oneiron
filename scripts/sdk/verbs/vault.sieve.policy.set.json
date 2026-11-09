@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.policy.set",
+  "description": "The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given.",
+  "input": "crate::dreamer_wake::sieve_doors::SievePolicySetRequest",
+  "output": "crate::dreamer_wake::SievePolicy",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "vault.edges.put",
+  "input": "crate::code_run::MemoryEdgeInput",
+  "output": "crate::code_run::MemoryEdgeOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "MemoryPutEdge",
+  "run_surface": "memory"
+}

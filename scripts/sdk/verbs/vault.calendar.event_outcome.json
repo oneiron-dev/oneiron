@@ -1,0 +1,14 @@
+{
+  "name": "vault.calendar.event_outcome",
+  "description": "Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show.",
+  "input": "crate::calendar::meeting::CalendarMeetingRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>",
+  "call": "memory.calendar_event_outcome(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

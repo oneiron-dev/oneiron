@@ -1,0 +1,19 @@
+{
+  "name": "vault.calendar.transcript.ingest",
+  "description": "Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate.",
+  "refs": [
+    "/source_blob_ref"
+  ],
+  "input": "crate::calendar::transcript::TranscriptFileDropInput",
+  "output": "crate::calendar::transcript::TranscriptIngestOutcome",
+  "call": "memory.calendar_transcript_ingest(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "source_blob_ref"
+    ]
+  },
+  "section": false,
+  "openapi": true
+}

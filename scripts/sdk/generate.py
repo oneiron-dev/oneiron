@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-'Generate agent SDK transports from agent-verbs.json; --check never writes.'
+'''Generate agent SDK transports from the verb table (scripts/sdk/verbs/); --check never writes; --out-dir writes
+every output under a directory (build scripts read the build-time outputs from there).'''
 import argparse
 import functools
 import json
@@ -7,12 +8,13 @@ import keyword
 import re
 import subprocess
 import sys
+from verb_table import load_verbs
 from facade_types import Inventory
 from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text())
+MANIFEST = {'verbs': load_verbs()}
 # Run and browser rows may expose a typed host door beside their code-mode
 # shape. The host projection adds the caller's credential-bound live-run
 # attachment; code mode keeps the original input and run-owned resource.
@@ -27,7 +29,7 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi'}
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'host_door_proof', 'openapi'}
             or ('output' in host and row.get('context') != 'board')
             or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi') if key in host)):
         raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags')
@@ -43,6 +45,7 @@ def host_synthetic(row):
      # `MaybeListed` as an explicit host row does.
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
      'host_door_precheck': row['host'].get('host_door_precheck', True),
+     **({'host_door_proof': row['host']['host_door_proof']} if 'host_door_proof' in row['host'] else {}),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
@@ -54,12 +57,28 @@ BOARD_HOST_NAMES = {row['name'] for row in BOARD_HOST_ROWS}
 DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row and 'host' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
+# VERB-METADATA (untangle slice 4.1): a verb's roles are fields on its own row, never names in a
+# handwritten list: `custody` (the input member holding a secret's value or sealed input),
+# `overlay_write` (a session-bound run stages it in its room), `session_read` (the room's read it is,
+# a `SessionRead` variant; never "every verb that writes nothing"), `run_surface` (a run row the action
+# registry serves: `memory` needs no live run, `live` acts on the caller's live run) and
+# `host_door_proof` (the proof `door_admits` runs before a checked host door's hooks).
+SESSION_READS = ('Get', 'Hydrate', 'RefsResolve', 'SearchBm25', 'Receipts')
+for row in MANIFEST['verbs']:
+    if 'custody' in row and (row.get('scope') != 'Write' or not isinstance(row['custody'], str)):
+        raise ValueError(f'{row["name"]}: `custody` names the input member of a Write row')
+    if 'overlay_write' in row and (row['overlay_write'] is not True or row.get('scope') != 'Write'):
+        raise ValueError(f'{row["name"]}: `overlay_write` is `true` on a Write row')
+    if 'session_read' in row and (row['session_read'] not in SESSION_READS or row.get('scope') != 'Read'):
+        raise ValueError(f'{row["name"]}: `session_read` is one of {SESSION_READS} on a Read row')
+    if 'run_surface' in row and (row['run_surface'] not in ('memory', 'live') or row.get('context') != 'run'):
+        raise ValueError(f'{row["name"]}: `run_surface` is `memory` or `live` on a run row')
 # Code mode always reads the run/browser input; the served schema reads its host input.
 CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + HOST_BOARD_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
-    if set(row) - {'output', 'outputs_by_input', 'host'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
+    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output, per-input outputs and run surface, and nothing else')
 # `outputs_by_input` maps an input field, by its wire name, to the reply code
 # mode answers when that field is present and not null (`describe({fold})`
 # answers the fold, `tasks.update({resultRef})` the reader's report). Each type
@@ -316,7 +335,7 @@ for row in MANIFEST['verbs']:
 def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
-HEADER = '// Generated by scripts/sdk/generate.py; edit agent-verbs.json instead.\n'
+HEADER = '// Generated by scripts/sdk/generate.py; edit the verb table (scripts/sdk/verbs/) instead.\n'
 FACADE_ROWS = [row for row in ROWS if row.get('context', 'memory') == 'memory'] + BOARD_HOST_ROWS
 # OF-246: the wire types every facade row's input and result reach, read from
 # the Rust sources the rows name. Every TypeScript and Python projection below
@@ -728,13 +747,13 @@ def python_verb(row, stub=False, name=None):
 def python_namespace_class(path):
     return '_' + ''.join(part.title() for part in '_'.join(path).split('_')) + 'Verbs'
 
-def python_class_verbs(tree, stub=False):
-    'The facade class body: a bare verb is a method, a namespace a property whose class nests in it.'
+def python_class_verbs(tree, stub=False, owner='Oneiron'):
+    'The facade class body: a bare verb is a method, a namespace a property whose class nests in it, under `owner`.'
     members, classes = '', ''
     def accessor(name, path):
         cls = python_namespace_class(path)
-        body = ' ...' if stub else f'\n        return Oneiron.{cls}(self._client)'
-        return f'    @property\n    def {name}(self) -> "Oneiron.{cls}":{body}\n'
+        body = ' ...' if stub else f'\n        return {owner}.{cls}(self._client)'
+        return f'    @property\n    def {name}(self) -> "{owner}.{cls}":{body}\n'
     def namespace(path, node):
         nonlocal classes
         body = '' if stub else '    def __init__(self, client: _NativeClient) -> None:\n        self._client = client\n'
@@ -749,6 +768,79 @@ def python_class_verbs(tree, stub=False):
         else:
             members += accessor(name, [name]); namespace([name], node)
     return members + ''.join('    ' + line + '\n' if line else '\n' for line in classes.splitlines())
+
+FACADE_VERBS_TS_DOC = """// The facade verbs of `Oneiron` (untangle slice 4.3): its verb namespaces, made per
+// handle, and its top-level verbs, installed on its prototype. Both reach the
+// native client through the handle's `facadeCall`, which turns a native throw
+// into `OneironError`, and its `facadeClient`.
+"""
+
+def ts_facade_module(tree):
+    'The facade verbs as a module `Oneiron` imports: namespaces per handle, top-level verbs on its prototype.'
+    namespaces, methods = '', ''
+    for name, node in tree.items():
+        members = ts_members(node['children'], 3)
+        if node['row'] and not node['children']:
+            doc, params, output, body = ts_verb(node['row'])
+            params = 'this: FacadeHost' + (', ' + params if params else '')
+            methods += ('  ' + doc + '\n' if doc else '') + f'  {name}({params}): {output} {{ return this.#call(() => {body}) }},\n'
+        elif node['row']:
+            doc, params, output, body = ts_verb(node['row'])
+            namespaces += ('    ' + doc + '\n' if doc else '') + f'    {name}: Object.assign(({params}): {output} => this.#call(() => {body}), {{\n{members}    }}),\n'
+        else:
+            namespaces += f'    {name}: {{\n{members}    }},\n'
+    namespaces = namespaces.replace('this.#call(', 'host[facadeCall](').replace('this.#client.', 'host[facadeClient].')
+    methods = methods.replace('this.#call(', 'this[facadeCall](').replace('this.#client.', 'this[facadeClient].')
+    body = namespaces + methods
+    used = set(re.findall(r'\b([A-Z]\w*)\b', body))
+    sources = []
+    for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./key-value.js', 'packages/oneiron/src/key-value.ts')]:
+        names = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', (ROOT/path).read_text(), re.M)))
+        used -= set(names)
+        if names: sources.append((module, names))
+    agent = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', AGENT_VERBS_TS, re.M)))
+    if agent: sources.append(('./agent-verbs.js', agent))
+    out = HEADER + FACADE_VERBS_TS_DOC + 'import type * as Facade from "./facade-types.js"\nimport type { NativeClient } from "./native.js"\n'
+    out += ''.join(f'import type {{ {", ".join(names)} }} from "{module}"\n' for module, names in sources)
+    helpers = sorted(set(re.findall(r'(?<![\w.])(\w+)\(', body))
+                     & set(re.findall(r'^export function (\w+)', (ROOT/'packages/oneiron/src/key-value.ts').read_text(), re.M)))
+    if helpers: out += f'import {{ {", ".join(helpers)} }} from "./key-value.js"\n'
+    out += '\n/** A handle\'s guarded call: runs `operation` and turns a native throw into `OneironError`. */\n'
+    out += 'export const facadeCall: unique symbol = Symbol("oneiron.facadeCall")\n'
+    out += '/** A handle\'s native client. */\nexport const facadeClient: unique symbol = Symbol("oneiron.facadeClient")\n\n'
+    out += '/** What the facade verbs need of a handle. */\nexport interface FacadeHost {\n'
+    out += '  [facadeCall]<T>(operation: () => T): T\n  readonly [facadeClient]: NativeClient\n}\n\n'
+    out += '/** One handle\'s verb namespaces, made when the handle is. */\nexport function facadeNamespaces(host: FacadeHost) {\n  return {\n' + namespaces + '  }\n}\n'
+    out += 'export type FacadeNamespaces = Readonly<ReturnType<typeof facadeNamespaces>>\n\n'
+    out += '/** The top-level verbs, installed on the handle\'s prototype. */\nexport const facadeMethods = {\n' + methods + '}\n'
+    out += 'export type FacadeMethods = typeof facadeMethods\n'
+    return out
+
+def ts_native_module(signatures, facade_types):
+    'The native client\'s generated verb signatures, as the interface `NativeClient` extends.'
+    used = set(re.findall(r'\b([A-Z]\w*)\b', signatures))
+    out = HEADER
+    # The hand-written types first, as native.ts named them; a facade type of the same name is not imported twice.
+    for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./facade-types.js', None)]:
+        text = facade_types if path is None else (ROOT/path).read_text()
+        declared = set(re.findall(r'^export (?:type|interface) (\w+)', text, re.M))
+        names = sorted(used & declared)
+        used -= set(names)
+        if names: out += f'import type {{ {", ".join(names)} }} from "{module}"\n'
+    return out + '\n/** The native client\'s generated verb methods, as napi-rs exposes them. */\nexport interface NativeAgentVerbs {\n' + signatures + '\n}\n'
+
+def python_facade_module(tree, stub):
+    'The facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from.'
+    body = python_class_verbs(tree, stub, '_FacadeVerbs')
+    out = HEADER.replace('//', '#') + '"""The facade verbs of ``Oneiron`` (untangle slice 4.3), as the mixin it derives from."""\n\n'
+    out += 'from __future__ import annotations\n\n'
+    if stub:
+        names = sorted(set(re.findall(r'\b([A-Z]\w*)\b', body)) & hand_declared('py'))
+        out += 'from typing import Any, overload\n\nfrom . import facade_types as Facade\n'
+        if names: out += 'from . import ' + ', '.join(names) + '\n'
+    else:
+        out += 'import json\nfrom typing import Any\n\n# Defined in the package before it imports this module.\nfrom . import _NativeClient, _translate\n'
+    return out + '\n\nclass _FacadeVerbs:\n' + body
 
 def ts_native_signature(row):
     binding = native_binding(row); method = js_method(row['name'])
@@ -910,7 +1002,7 @@ def mcp_input_dispatch(row):
         surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
-        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
+        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, &oneiron::verbs::VERB_TABLE, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
         paced_arg = 'super::mcp_paced_call(actor, &memory), ' if row.get('host_door_paced') else ''
         door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
@@ -1505,6 +1597,11 @@ def run_catalog():
     out += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r['name']) + ',\n' for r in RUN_ROWS) + '} }\n'
     writes = ['Self::' + variants[r['name']] for r in RUN_ROWS if r['scope'] == 'Write']
     out += 'pub const fn writes(self) -> bool { matches!(self, ' + (' | '.join(writes) if writes else '_ if false') + ') }\n'
+    for const, surface, doc in [
+            ('MEMORY_RUN', 'memory', 'The run rows the action registry serves on ordinary storage: they need no live run.'),
+            ('LIVE_RUN', 'live', 'The run rows that act on their caller\'s live agent run, served only under that run\'s lease.')]:
+        selected = ['Self::' + variants[r['name']] for r in RUN_ROWS if r.get('run_surface') == surface]
+        out += f'/// {doc} (`run_surface: "{surface}"` on the row.)\npub const {const}: [Self; {len(selected)}] = [' + ','.join(selected) + '];\n'
     out += 'pub const fn effect(self) -> crate::code_run::SelfEffect { match self {\n'
     out += ''.join('Self::' + variants[r['name']] + ' => crate::code_run::SelfEffect::' + r['effect'] + ',\n' for r in RUN_ROWS) + '} }\n'
     return out + '}\n'
@@ -1533,6 +1630,95 @@ def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
     return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
 
+# Untangle slice 5.0a (S5-2): the rows core reads by name, the count defaults it applies, the section verbs
+# and the custody rows. They are written to core's own table (`crate::verb_names`), so no core module names the
+# runtime's catalog; the catalog asserts at compile time that the table is its own rows.
+CORE_VERB_NAMES = [
+    'cancel',
+    'describe',
+    'tasks.create',
+    'tasks.update',
+    'reveal.wait',
+    'self.use',
+    'vault.calendar.check_in.answer',
+    'vault.calendar.transcript.ingest',
+    'vault.channel_identities.provision',
+    'vault.channel_identities.bind',
+    'vault.channel_identities.rotate',
+    'vault.channel_identities.release',
+    'vault.channel_identities.route_inbound',
+]
+CORE_COUNT_DEFAULTS = ['VAULT_RECALL_LIMIT_DEFAULT', 'VAULT_RECEIPTS_LIMIT_DEFAULT']
+CORE_VERB_NAMES_PATH = 'crates/oneiron/src/generated/core_verb_names.rs'
+
+def core_name_const(name):
+    'The core constant that holds one row name.'
+    return name.replace('.', '_').upper()
+
+def count_defaults():
+    'Every usize binding default the verb table states, by its engine constant.'
+    return {default_const(r, a): (r, a) for r in ROWS for a in r.get('binding', {}).get('args', [])
+            if 'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize'}
+
+def check_core_verb_names():
+    'Fails the run when core\'s table lists a row or a default the verb table does not have.'
+    names = {r['name'] for r in ROWS}
+    missing = [name for name in CORE_VERB_NAMES if name not in names]
+    if missing:
+        raise SystemExit(f'CORE_VERB_NAMES names rows the verb table does not have: {missing}')
+    defaults = count_defaults()
+    missing = [const for const in CORE_COUNT_DEFAULTS if const not in defaults]
+    if missing:
+        raise SystemExit(f'CORE_COUNT_DEFAULTS names defaults the verb table does not state: {missing}')
+    return defaults
+
+def core_verb_names(custody):
+    'Core\'s table: `crate::verb_names`, included from OUT_DIR.'
+    defaults = check_core_verb_names()
+    text = HEADER
+    for name in CORE_VERB_NAMES:
+        text += f'/// The `{name}` row.\npub const {core_name_const(name)}: &str = {json.dumps(name)};\n'
+    for const in CORE_COUNT_DEFAULTS:
+        r, a = defaults[const]
+        text += f"/// `{r['name']}`'s `{a['name']}` when a caller names none.\npub const {const}: usize = {a['default']};\n"
+    section = [r['name'] for r in ROWS if r['section']]
+    text += '/// The rows a context board section may advertise (`section` on the row), in catalog order.\n'
+    text += f'pub const SECTION_VERBS: [&str; {len(section)}] = [' + ', '.join(json.dumps(name) for name in section) + '];\n'
+    text += "/// The custody rows, whose input carries a secret's value or its sealed input. The action registry\n/// offers none of them: an action keeps its whole input in its replay record.\n"
+    text += f'pub const CUSTODY_VALUE_ROWS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['name']) for r in custody) + '];\n'
+    text += "/// The member of each [`CUSTODY_VALUE_ROWS`] row's input that holds the secret's value or its sealed\n/// input (`custody` on the row), in the same order.\n"
+    text += f'pub const CUSTODY_VALUE_MEMBERS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['custody']) for r in custody) + '];\n'
+    text += "/// The member of custody row `verb`'s input that holds the secret's value or its sealed input; `None`\n/// for any other row.\n"
+    text += "#[must_use]\npub fn custody_member(verb: &str) -> Option<&'static str> {\n"
+    text += '    CUSTODY_VALUE_ROWS.iter().position(|row| *row == verb).map(|at| CUSTODY_VALUE_MEMBERS[at])\n}\n'
+    return text
+
+def core_verb_names_check(variants, custody):
+    'The catalog\'s compile-time check that core\'s table (`crate::verb_names`) holds its own rows.'
+    check_core_verb_names()
+    section = [r for r in ROWS if r['section']]
+    text = "// Core reads these rows by name from `crate::verb_names` (untangle slice 5.0a). A name, section verb\n"
+    text += "// or custody member there that is not this catalog's does not compile.\n"
+    text += 'const _: () = {\n'
+    text += 'const fn same(left: &str, right: &str) -> bool {\n'
+    text += 'let (left, right) = (left.as_bytes(), right.as_bytes());\n'
+    text += 'if left.len() != right.len() { return false; }\n'
+    text += 'let mut at = 0;\nwhile at < left.len() { if left[at] != right[at] { return false; } at += 1; }\ntrue\n}\n'
+    for name in CORE_VERB_NAMES:
+        text += f'assert!(same(crate::verb_names::{core_name_const(name)}, AgentVerb::{variants[name]}.as_str()));\n'
+    text += 'let mut sections = 0;\nlet mut at = 0;\n'
+    text += 'while at < AgentVerb::ALL.len() { if AgentVerb::ALL[at].is_section() { sections += 1; } at += 1; }\n'
+    text += 'assert!(sections == crate::verb_names::SECTION_VERBS.len());\n'
+    for at, r in enumerate(section):
+        variant = variants[r['name']]
+        text += f'assert!(AgentVerb::{variant}.is_section() && same(crate::verb_names::SECTION_VERBS[{at}], AgentVerb::{variant}.as_str()));\n'
+    for at, r in enumerate(custody):
+        variant = variants[r['name']]
+        text += f'assert!(same(crate::verb_names::CUSTODY_VALUE_ROWS[{at}], AgentVerb::{variant}.as_str()));\n'
+        text += f'assert!(matches!(AgentVerb::{variant}.custody_member(), Some(member) if same(member, crate::verb_names::CUSTODY_VALUE_MEMBERS[{at}])));\n'
+    text += '};\n'
+    return text
+
 # OF-489 socket-first: one admission and one typed call per facade row, which
 # every server transport runs. A transport hands the row a `FacadeCall` (the
 # credential it is bound to, and what it carried beside the input) and the
@@ -1543,12 +1729,12 @@ def default_const(row, arg):
 # for the socket's send-time release (DEC-0005); a door that opens handles of
 # its own names none, and says so. Board, browser and run rows are refused by
 # the context each needs: no facade transport carries it.
-DISPATCH_DOC = '''//! The facade's one admission and typed call per verb-table row (OF-489).
-//! Every server transport runs a facade verb here: each HTTP route through
-//! `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
-//! transport hands a row its [`FacadeCall`] and the input as it decoded it;
-//! the row admits the call and runs it, and its answer names the rows it was
-//! derived from.
+DISPATCH_DOC = '''// The facade's one admission and typed call per verb-table row (OF-489).
+// Every server transport runs a facade verb here: each HTTP route through
+// `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
+// transport hands a row its [`FacadeCall`] and the input as it decoded it;
+// the row admits the call and runs it, and its answer names the rows it was
+// derived from.
 '''
 DISPATCH_SIGNATURE = "server: &Arc<SyncServer>, call: &FacadeCall<'_>, input: Result<serde_json::Value, FacadeApiError>"
 
@@ -1934,12 +2120,11 @@ match verb {{
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
-HOST_DOOR_ROWS_DOC = '''//! The host-door rows whose door checks its caller before the row's verb
-//! hooks run (FIX 1763), one variant each, named as `AgentVerb` names it.
-//! `host_doors::door_admits` matches every one with no catch-all arm, so a
-//! new host door fails to compile until it names its check there. A row
-//! whose table entry says `"host_door_precheck": false` checks nothing
-//! before its hooks; those rows:
+HOST_DOOR_ROWS_DOC = '''// The host-door rows whose door checks its caller before the row's verb
+// hooks run (FIX 1763), one variant each, named as `AgentVerb` names it, and
+// the proof each names (`host_door_proof`), which `host_doors::door_admits`
+// matches with no catch-all arm. A row whose table entry says
+// `"host_door_precheck": false` checks nothing before its hooks; those rows:
 '''
 
 def host_door_rows(facade_rows):
@@ -1947,7 +2132,7 @@ def host_door_rows(facade_rows):
     variant = lambda r: ''.join(part.title() for part in r['name'].replace('.', '_').split('_'))
     doors = [r for r in facade_rows if r.get('host_door')]
     checked = [r for r in doors if r.get('host_door_precheck', True)]
-    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'//! - `{r["name"]}`\n' for r in doors if r not in checked)
+    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'// - `{r["name"]}`\n' for r in doors if r not in checked)
     out += '/// A host-door row whose door checks its caller first.\n'
     out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorRow {\n'
     out += ''.join(f'    {variant(r)},\n' for r in checked) + '}\n'
@@ -1955,6 +2140,20 @@ def host_door_rows(facade_rows):
     out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
     out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
     out += '            _ => return None,\n        })\n    }\n}\n'
+    # VERB-METADATA (untangle slice 4.1): every checked row names the proof its door runs first, and a new
+    # proof kind fails to compile until `door_admits` has its arm (FIX 1763).
+    unnamed = [r['name'] for r in checked if not r.get('host_door_proof')]
+    if unnamed:
+        raise ValueError(f'checked host doors without `host_door_proof`: {unnamed}')
+    proof_variant = lambda kind: ''.join(part.title() for part in kind.split('_'))
+    kinds = list(dict.fromkeys(r['host_door_proof'] for r in checked))
+    out += '/// The proof a checked host door runs before its hooks (`host_door_proof` on the row).\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorProof {\n'
+    out += ''.join(f'    {proof_variant(kind)},\n' for kind in kinds) + '}\n'
+    out += 'impl HostDoorRow {\n    /// The proof this row\'s door runs first.\n'
+    out += '    pub(in crate::api::facade) const fn proof(self) -> HostDoorProof {\n        match self {\n'
+    out += ''.join(f'            Self::{variant(r)} => HostDoorProof::{proof_variant(r["host_door_proof"])},\n' for r in checked)
+    out += '        }\n    }\n}\n'
     # FIX 4794: the MCP rows whose handler takes the caller's credential
     # before it runs, as `mcp_input_dispatch` emits them, so the hook
     # admission refuses a call with none before the row's pre hooks. Most are
@@ -1989,6 +2188,56 @@ def core_cfg(row):
     feature = row.get('rust_feature')
     return f'#[cfg(feature = "{feature}")] ' if feature else ''
 
+# Untangle slice 4.3 (S4-2 G1): these outputs are produced at build time by crates/oneiron-sdk-build, which
+# runs `--out-dir` once per input digest and copies each crate's own into its OUT_DIR. They are not in git:
+# the default run neither writes nor checks them in the tree.
+BUILD_TIME_OUTPUTS = {
+    'crates/oneiron-py/src/generated/agent_verbs.rs',
+    'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs',
+    'crates/oneiron-remote/src/generated/agent_verbs.rs',
+    'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs',
+    'crates/oneiron-server/src/api/facade/generated/dispatch.rs',
+    'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs',
+    'crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs',
+    'crates/oneiron-uniffi/src/generated/facade_generated.rs',
+    'crates/oneiron-uniffi/src/generated/facade_types_generated.rs',
+    'crates/oneiron/src/verbs/generated/catalog_fragment.d.ts',
+    'crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs',
+    'crates/oneiron/src/verbs/generated/code-mode.d.ts',
+    'crates/oneiron/src/verbs/generated/run_verb_catalog.rs',
+    'crates/oneiron/src/verbs/generated/sdk_generated.rs',
+    'crates/oneiron/src/verbs/generated/verb_catalog.rs',
+    'crates/oneiron/src/generated/core_verb_names.rs',
+}
+# Untangle slice 4.3: the package outputs are not in git either. Each package's build writes its own
+# (`--package <name>`): the npm packages' scripts, oneiron-py's build script, and the docs job. A run with no
+# flags writes them all, for a local tree.
+PACKAGE_OUTPUTS = {
+    'oneiron': [
+        'packages/oneiron/src/facade-types.ts',
+        'packages/oneiron/src/agent-verbs.ts',
+        'packages/oneiron/src/facade-verbs.ts',
+        'packages/oneiron/src/native-verbs.ts',
+    ],
+    'oneiron-client': [
+        'packages/oneiron-client/src/facade.ts',
+        'packages/oneiron-client/src/facade-types.ts',
+    ],
+    'oneiron-py': [
+        'crates/oneiron-py/python/oneiron/_facade_verbs.py',
+        'crates/oneiron-py/python/oneiron/_facade_verbs.pyi',
+        'crates/oneiron-py/python/oneiron/facade_types.pyi',
+    ],
+    'docs': [
+        'docs/agent-sdk/facade-types.md',
+        'docs/agent-sdk/types.md',
+        'docs/agent-sdk/verbs.md',
+    ],
+}
+PACKAGE_PATHS = {path for paths in PACKAGE_OUTPUTS.values() for path in paths}
+# rustfmt shapes the committed outputs; a build-time run (`--out-dir`) leaves them as emitted.
+FORMAT = True
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
@@ -1998,6 +2247,9 @@ def outputs():
     for r in ROWS:
         for a in r.get('binding', {}).get('args', []):
             if 'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize':
+                if default_const(r, a) in CORE_COUNT_DEFAULTS:
+                    core += f"pub use crate::verb_names::{default_const(r, a)};\n"
+                    continue
                 core += f"/// `{r['name']}`'s `{a['name']}` when a caller names none.\npub const {default_const(r, a)}: usize = {a['default']};\n"
     core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n"
     # GLOBAL STATE: these schemas depend only on compiled verb types, never vault or actor data.
@@ -2073,7 +2325,7 @@ def outputs():
     # hooks can retain even a hash or an ask containing the anonymous input.
     core += 'if verb == "ai.anonymous_chat" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
-    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {\n"
+    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, &VERB_TABLE, verb, value, |value| match verb {\n"
     invokers = ''
     for r in facade_rows:
         method = r['name'].replace('.', '_')
@@ -2198,7 +2450,7 @@ def outputs():
     # `#[napi]` copies a method's attributes onto the glue it generates, where
     # the lint never fires, so a long verb's expectation sits on the module.
     long_napi = any(len(native_args(r)) + 1 > 7 for r in facade_rows)
-    napi = HEADER + (f'#![{LONG_SIGNATURE}]\n' if long_napi else '') + 'use super::*;\n#[napi]\nimpl NativeClient {\n'
+    napi = HEADER + 'use super::*;\n' + (f'#[{LONG_SIGNATURE}]\n' if long_napi else '') + '#[napi]\nimpl NativeClient {\n'
     py = ''
     for r in facade_rows:
         method=r['name'].replace('.','_')
@@ -2227,6 +2479,7 @@ def outputs():
         ('proposes', lambda r: r.get('proposes', False)),
         ('is_task_work', lambda r: r.get('task_work', False)),
         ('takes_task_decisions', takes_task_decisions),
+        ('overlay_write', lambda r: r.get('overlay_write', False)),
     ]:
         selected = ['Self::' + variants[r['name']] for r in ROWS if select(r)]
         catalog += f'pub const fn {method}(self) -> bool {{ matches!(self, ' + (' | '.join(selected) if selected else '_ if false') + ') }\n'
@@ -2241,7 +2494,18 @@ def outputs():
     catalog += "pub const fn description(self) -> &'static str { match self {\n"
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r.get('description', '')) + ',\n' for r in ROWS)
     catalog += '} }\n'
+    custody = [r for r in ROWS if 'custody' in r]
+    catalog += "/// The member of a custody row's input that holds the secret's value or its sealed input (`custody` on the row).\n"
+    catalog += "pub const fn custody_member(self) -> Option<&'static str> { match self {\n"
+    catalog += ''.join('Self::' + variants[r['name']] + ' => Some(' + json.dumps(r['custody']) + '),\n' for r in custody)
+    catalog += '_ => None,\n} }\n'
+    catalog += '/// The read a run bound to a session serves through its room\'s view (`session_read` on the row).\n'
+    catalog += 'pub(crate) const fn session_read(self) -> Option<crate::memory::SessionRead> { match self {\n'
+    catalog += ''.join('Self::' + variants[r['name']] + ' => Some(crate::memory::SessionRead::' + r['session_read'] + '),\n' for r in ROWS if 'session_read' in r)
+    catalog += '_ => None,\n} }\n'
     catalog += '}\n'
+    catalog += 'pub use crate::verb_names::CUSTODY_VALUE_ROWS;\n'
+    catalog += core_verb_names_check(variants, custody)
     uniffi, uniffi_types = uniffi_facade(facade_rows)
     http = http_facade()
     files = {
@@ -2251,6 +2515,7 @@ def outputs():
         'crates/oneiron-uniffi/src/generated/facade_types_generated.rs': uniffi_types,
         'crates/oneiron/src/verbs/generated/sdk_generated.rs':core,
         'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
+        CORE_VERB_NAMES_PATH: core_verb_names(custody),
         'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
         'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
         'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs':host_door_rows(facade_rows),
@@ -2259,6 +2524,11 @@ def outputs():
         # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.
         'crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs': HEADER + 'use super::*;\n' + mcp_dispatch(),
         'packages/oneiron/src/agent-verbs.ts':ts,
+        # Untangle slice 4.3 (S4-3): what were marked blocks are whole files their hosts import.
+        'packages/oneiron/src/facade-verbs.ts': ts_facade_module(verb_tree(facade_rows)),
+        'crates/oneiron-py/python/oneiron/_facade_verbs.py': python_facade_module(verb_tree(facade_rows), False),
+        'crates/oneiron-py/python/oneiron/_facade_verbs.pyi': python_facade_module(verb_tree(facade_rows), True),
+        'crates/oneiron-py/src/generated/agent_verbs.rs': HEADER + '#[pymethods]\nimpl NativeClient {\n' + py + '}\n',
     }
     # FIX 8907: the old marked MCP block gives way to the seam that mounts
     # the whole-file dispatch above; once replaced, no marker remains.
@@ -2271,19 +2541,15 @@ def outputs():
         b = mcp_text.index(mcp_end, a) + len(mcp_end)
         seam = (
             'use super::{board_setup, skill_execution, verb_hooks};\n'
-            '#[path = "generated/agent_verb_dispatch.rs"]\n'
-            'mod agent_verb_dispatch;\n'
+            'mod agent_verb_dispatch {\n'
+            '    include!(concat!(env!("OUT_DIR"), "/agent_verb_dispatch.rs"));\n'
+            '}\n'
             'use agent_verb_dispatch::execute_mcp_agent_verb;\n'
             'pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};'
         )
         files[mcp_path] = mcp_text[:a] + seam + mcp_text[b:]
     for path, start, end, body in [
         ('crates/oneiron/src/board_verb.rs', '// BEGIN GENERATED BOARD CATALOG', '// END GENERATED BOARD CATALOG', None),
-        ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows), stub=True)),
-        ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ts_class_verbs(verb_tree(facade_rows))),
-        ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows))),
-        ('crates/oneiron-py/src/lib.rs', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', py),
-        ('packages/oneiron/src/native.ts', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', ts_native),
     ]:
         text=(ROOT/path).read_text()
         if body is None and start not in text: continue
@@ -2310,6 +2576,7 @@ def outputs():
     census = INVENTORY.census(FACADE_ROWS)
     facade_types = INVENTORY.typescript(census)
     files['packages/oneiron/src/facade-types.ts'] = facade_types
+    files['packages/oneiron/src/native-verbs.ts'] = ts_native_module(ts_native, facade_types)
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
@@ -2317,7 +2584,7 @@ def outputs():
     # revision; its own inventory leaves the facade types above as they are.
     files.update(catalog_fragment(ROOT, CODE_MODE_ROWS, HEADER))
     for path, text in list(files.items()):
-        if path.endswith('.rs'):
+        if path.endswith('.rs') and FORMAT:
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
             files[path] = result.stdout
     files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi',
@@ -2659,9 +2926,40 @@ def uniffi_facade(facade_rows):
     return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
+    global FORMAT
+    parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true')
+    parser.add_argument('--out-dir',type=Path,help='write every output under this directory (the build scripts read it)')
+    parser.add_argument('--package',action='append',choices=sorted(PACKAGE_OUTPUTS),help='write this package\'s outputs in the tree')
+    args=parser.parse_args()
+    if args.package:
+        # A package build writes no Rust output, so it needs no rustfmt.
+        FORMAT=False
+        files=outputs()
+        packages=set(args.package)
+        # The docs mirror reads the TypeScript and Python facade outputs.
+        if 'docs' in packages: packages|={'oneiron','oneiron-py'}
+        for name in sorted(packages):
+            for path in PACKAGE_OUTPUTS[name]:
+                if path.startswith('docs/'):continue
+                p=ROOT/path
+                if not p.exists() or p.read_text()!=files[path]:
+                    p.parent.mkdir(parents=True,exist_ok=True);p.write_text(files[path])
+        if 'docs' in packages:
+            subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), '--generated'], check=True)
+        return
+    if args.out_dir is not None:
+        FORMAT=False
+        for path,text in outputs().items():
+            if text is None:continue
+            target=args.out_dir/path
+            target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text)
+        # The agent-SDK reference too, read from the outputs just written: a build keeps a local copy of it.
+        subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), '--from', str(args.out_dir), '--out', str(args.out_dir)], check=True)
+        return
     stale=[]
     for path,text in outputs().items():
+        if path in BUILD_TIME_OUTPUTS:continue
+        if path in PACKAGE_PATHS and args.check:continue
         p=ROOT/path
         if text is None:
             if p.exists():
@@ -2680,6 +2978,7 @@ def main():
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
     # The mirror follows the generated SDK files and checks its authored text too.
-    docs_args = ['--check'] if args.check else []
+    # --check reads the committed mirror files only; a write also writes the generated ones.
+    docs_args = ['--check'] if args.check else ['--generated']
     subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), *docs_args], check=True)
 if __name__=='__main__': main()

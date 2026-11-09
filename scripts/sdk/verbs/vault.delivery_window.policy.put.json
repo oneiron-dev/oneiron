@@ -1,0 +1,16 @@
+{
+  "name": "vault.delivery_window.policy.put",
+  "description": "The owner writes one typed interrupt-only delivery-window policy through the gated claim writer.",
+  "input": "crate::memory::channel_doors::DeliveryWindowPolicyPutRequest",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.delivery_window_put_as(&memory.embedded_owner(\"vault.delivery_window.policy.put\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

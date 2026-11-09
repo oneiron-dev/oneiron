@@ -177,6 +177,7 @@ fn format_txn(block_id: &str, expect: &str) -> EditTransaction {
         steps: vec![EditStep::SetRunFormatting {
             block_id: NodeId::from(block_id),
             expect: expect.to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks,
             style: RunStyleEdit::default(),
@@ -306,6 +307,7 @@ fn multi_step_transaction_yields_empty_pending() {
             EditStep::SetRunFormatting {
                 block_id: NodeId::from("p2"),
                 expect: "epsilon".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 marks: InlineMarkSet {
                     italic: true,

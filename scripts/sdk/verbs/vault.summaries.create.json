@@ -1,0 +1,27 @@
+{
+  "name": "vault.summaries.create",
+  "description": "Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth.",
+  "input": "crate::scope_summary::SummaryCreateRequest",
+  "output": "crate::scope_summary::SummaryQueued",
+  "call": "memory.create_summary(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryCreateRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true
+}
