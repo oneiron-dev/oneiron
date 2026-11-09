@@ -571,8 +571,6 @@ pub(crate) struct SettledFeedFacts {
     pub(crate) facts: Vec<SettledFeedFact>,
     /// The last position scanned, kept or not.
     pub(crate) through: Option<SettlementPosition>,
-    /// The read stopped at its bound before the feed's end.
-    pub(crate) more: bool,
 }
 
 /// Up to `max_entries` settled proposals after `after` (exclusive) in the
@@ -616,11 +614,7 @@ pub(crate) fn settled_feed_facts_after_in_txn(
             point: super::read::fact_point(&entry),
         });
     }
-    Ok(SettledFeedFacts {
-        facts,
-        through,
-        more: batch.more,
-    })
+    Ok(SettledFeedFacts { facts, through })
 }
 
 /// The hook feed rows at or before `floor`, the lowest cursor of every
