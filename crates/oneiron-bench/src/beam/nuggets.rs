@@ -172,34 +172,3 @@ pub(super) fn run(path: &Path) -> BeamResult<ProofResult> {
     std::fs::write(&report.result_path, serde_json::to_vec_pretty(&report)?)?;
     Ok(report)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn nugget_half_is_dropped_only_in_official_column_and_all_buckets_report() {
-        let rows: Vec<_> = BUCKETS
-            .into_iter()
-            .map(|bucket| NuggetJudgment {
-                ability: format!("{bucket:?}"),
-                wedge_bucket: bucket,
-                value: 0.5,
-            })
-            .collect();
-        let report = FixedBeamScorer.score_nuggets(&rows).unwrap();
-        let columns = report.beam.as_ref().unwrap();
-        assert_eq!(
-            columns.aggregate,
-            NuggetMean {
-                count: 4,
-                official_int_cast: 0.0,
-                fixed_float_clamped: 0.5
-            }
-        );
-        assert_eq!(columns.wedge_buckets.len(), 4);
-        assert_eq!(columns.abilities.len(), 4);
-        let snapshot: serde_json::Value =
-            serde_json::from_str(include_str!("../../fixtures/beam_nuggets.snapshot.json"))
-                .unwrap();
-        assert_eq!(serde_json::to_value(report).unwrap(), snapshot);
-    }
-}

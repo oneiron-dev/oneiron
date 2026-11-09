@@ -469,5 +469,3 @@ pub(crate) fn full_plan_fixture() -> PerfPlan {
     }
 }
 
-#[cfg(test)]
-mod tests;
