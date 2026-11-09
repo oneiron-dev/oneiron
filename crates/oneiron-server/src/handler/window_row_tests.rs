@@ -724,6 +724,7 @@ async fn crossing_the_row_asks_its_question_once() {
             &VersionVector::new().encode(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await
         .unwrap();

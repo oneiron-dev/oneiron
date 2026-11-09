@@ -110,8 +110,12 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: now,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

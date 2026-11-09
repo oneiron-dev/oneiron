@@ -99,6 +99,7 @@ fn response(value: serde_json::Value) -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: value.to_string(),
+                signature: None,
             }],
         },
         usage,
@@ -146,7 +147,7 @@ async fn real_admission_exact_bounded_request_empty_signature_and_no_locks_acros
         assert_eq!(call.request.params["max_output_tokens"], json!(512));
         assert!(call.request.tools.is_empty());
         assert!(call.request.provider_options.is_empty());
-        let ContentPart::Text { text: input } = &call.request.messages[1].content[0] else {
+        let ContentPart::Text { text: input, .. } = &call.request.messages[1].content[0] else {
             panic!("text input")
         };
         assert_eq!(
@@ -202,7 +203,7 @@ async fn later_revision_prepared_while_backend_waits_rejects_old_result_before_e
     );
     let (result, ()) = tokio::join!(newer.take().unwrap().run(), async {
         let call = calls.recv().await.unwrap();
-        let ContentPart::Text { text } = &call.request.messages[1].content[0] else {
+        let ContentPart::Text { text, .. } = &call.request.messages[1].content[0] else {
             panic!("input")
         };
         assert_eq!(

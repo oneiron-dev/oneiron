@@ -53,6 +53,7 @@ fn put_claim(server: &SyncServer, world: EntityId) -> String {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     CLAIM.to_owned()
