@@ -204,7 +204,7 @@ mod membership_gate_tests;
 #[cfg(test)]
 mod steward_tests;
 mod system_agent_grant;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub use system_agent_grant::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
