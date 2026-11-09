@@ -33,10 +33,11 @@ export function credentialParts(credential: string): { bearer: string; seed: str
   redactor.add(credential,bearer,seed,match[1]!);
   return {bearer,seed};
 }
-/** Exact public holder transcript: hash canonical token bytes, not locally reconstructed claims. */
-export function boundHeaders(credential: string): Headers {
+/** Exact public holder transcript: hash canonical token bytes, not locally reconstructed claims.
+ * `timestamp` (unix seconds) signs a chosen time, for skew and replay cases; omitted, the proof is signed now. */
+export function boundHeaders(credential: string, timestamp: number = Math.floor(Date.now()/1000)): Headers {
+  if (!Number.isSafeInteger(timestamp)) throw new TypeError("A binding timestamp is whole unix seconds");
   const {bearer,seed} = credentialParts(credential);
-  const timestamp = Math.floor(Date.now()/1000);
   const nonce = secretHex(16);
   const challenge = Buffer.from(`oneiron-request:${timestamp}:${nonce}`);
   const length = Buffer.alloc(8); length.writeBigUInt64BE(BigInt(challenge.length));
@@ -262,7 +263,7 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
-type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "agent-token" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
 export class CliError extends Error {
   override name = "CliError";
   constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
