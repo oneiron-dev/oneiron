@@ -1,11 +1,13 @@
 //! The Dreamer's Steward grant and the strength archive, for integration
 //! tests (untangle 6.3; X02's test pointed at a narrowed Steward grant).
 
+use std::collections::BTreeSet;
+
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::federation::grant_scope;
+use crate::error::{Error, Result};
+use crate::federation::{SystemAgentGrantState, grant_scope};
 use crate::vault::Vault;
 
 /// The Steward's full default verbs.
@@ -122,4 +124,91 @@ pub fn strength_archive_receipts(
             read_frontier_hash: record.read_frontier_hash,
         })
         .collect())
+}
+
+/// Where a base agent's Steward grant stands, as the host's first mint or
+/// the owner's narrowing left it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantMark {
+    /// A grant stands; the verbs it gives while it stands.
+    Minted {
+        /// The grant row.
+        grant: EntityId,
+        /// The verbs the standing grant gives.
+        verbs: BTreeSet<String>,
+    },
+    /// The owner opted out.
+    OptedOut,
+}
+
+/// A vault whose install can carry the embedded owner's signed acts, as a
+/// serving host's: rooted under the test host, the engine's MACHINE writers
+/// provisioned, the embedded owner seeded, and this install's machine
+/// profile enrolled, so the owner's agent-grant act has a carrier.
+///
+/// # Errors
+///
+/// The vault's or the authority log's.
+pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
+    let vault = Vault::open(path, crate::VaultConfig::device())?;
+    let issuer = crate::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
+    vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
+    Ok(vault)
+}
+
+/// The shipped policy with every row naming the Dreamer taken out, as an
+/// owner who removed them before the first mint leaves it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn drop_dreamer_rows(vault: &Vault) -> Result<()> {
+    let dreamer = dreamer(vault)?.to_hex();
+    let names_dreamer = |row: &rmpv::Value| {
+        row.as_map().is_some_and(|fields| {
+            fields.iter().any(|(key, value)| {
+                key.as_str() == Some("actor_ref") && value.as_str() == Some(dreamer.as_str())
+            })
+        })
+    };
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .map_err(|_| Error::InvalidConfig("default policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("default policy is not a map".into()));
+    };
+    for (_, value) in &mut entries {
+        if let rmpv::Value::Array(rows) = value {
+            rows.retain(|row| !names_dreamer(row));
+        }
+    }
+    entries.retain(|(_, value)| !names_dreamer(value));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+/// Where `agent`'s Steward grant stands, or `None` before any mint.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_mark(vault: &Vault, agent: EntityId) -> Result<Option<GrantMark>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(match vault.system_agent_grant_state_in(&txn, agent)? {
+        None => None,
+        Some(SystemAgentGrantState::OptedOut) => Some(GrantMark::OptedOut),
+        Some(SystemAgentGrantState::Minted { grant }) => Some(GrantMark::Minted {
+            grant,
+            verbs: crate::federation::standing_steward_verbs_in(&vault.store, &txn, grant, agent)?,
+        }),
+    })
 }

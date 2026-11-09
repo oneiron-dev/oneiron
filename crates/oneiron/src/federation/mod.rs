@@ -204,7 +204,7 @@ mod membership_gate_tests;
 #[cfg(test)]
 mod steward_tests;
 mod system_agent_grant;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub(crate) use system_agent_grant::{
     holds_system_agent_grant, standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
