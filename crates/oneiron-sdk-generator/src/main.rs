@@ -4,18 +4,47 @@
 //! uncaught exception and for `SystemExit(message)`.
 
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: oneiron-sdk-generator port-harness <subcommand> ...";
+const USAGE: &str = "usage: oneiron-sdk-generator --out-dir <dir> | oneiron-sdk-generator port-harness <subcommand> ...";
 
 /// The generator recurses as deep as the Python, which raised its own limit to 20,000 frames
 /// (`facade_types.py:24`), and a JSON input may nest 50,000 levels: it runs on a thread with a 256 MiB stack, as
 /// the build crate will (brief 2.2).
 const STACK_BYTES: usize = 256 << 20;
 
+/// The repository the generator reads: the current directory or the nearest directory above it that holds
+/// `scripts/sdk/verbs/` (Python's `ROOT` is its own file's repository; a binary has no such file).
+fn root() -> Option<PathBuf> {
+    let here = std::env::current_dir().ok()?;
+    here.ancestors()
+        .find(|dir| dir.join("scripts/sdk/verbs").is_dir())
+        .map(Path::to_path_buf)
+}
+
+/// `--out-dir <dir>` or `--out-dir=<dir>` as the only arguments (argparse's two spellings).
+fn out_dir(args: &[String]) -> Option<&str> {
+    match args {
+        [flag, dir] if flag == "--out-dir" => Some(dir),
+        [flag] => flag.strip_prefix("--out-dir="),
+        _ => None,
+    }
+}
+
 fn dispatch(args: &[String]) -> ExitCode {
-    let result = match args.first().map(String::as_str) {
-        Some("port-harness") => oneiron_sdk_generator::port_harness(&args[1..]),
+    let result = match (args.first().map(String::as_str), out_dir(args)) {
+        (Some("port-harness"), _) => oneiron_sdk_generator::port_harness(&args[1..]),
+        // generate.py --out-dir (G2: the outputs ported so far; G4b: every flag of generate.py's main()).
+        (_, Some(dir)) => {
+            let Some(root) = root() else {
+                eprintln!(
+                    "oneiron-sdk-generator: no scripts/sdk/verbs/ in the current directory or above it"
+                );
+                return ExitCode::from(2);
+            };
+            oneiron_sdk_generator::write_out_dir(&root, Path::new(dir))
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

@@ -22,6 +22,8 @@ path = "src/main.rs"
 # serde_json; declared here, never borrowed transitively.
 indexmap = "2"
 regex = { workspace = true }
+# catalog_fragment.py's revision (SHA-256). Named as crates/oneiron names it; not a workspace dependency.
+sha2 = "0.10"
 
 [lints]
 workspace = true
