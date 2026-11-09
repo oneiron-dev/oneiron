@@ -5,7 +5,7 @@
 //!
 //! Public paths only: the generated engine fns in `oneiron::verbs`.
 
-use oneiron::memory::{Memory, MemoryResult};
+use oneiron::memory::{Memory, MemoryResult, WitnessAssertions};
 use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::snapshot_read::{
     SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage, SnapshotPageRequest,
@@ -81,16 +81,20 @@ fn a_snapshot_pages_versioned_rows_and_marks_the_rows_learned_after_its_open() -
         .witness(&WitnessTurn {
             conversation_ref: String::new(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "hello there".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 900,
+            assertions: WitnessAssertions::default(),
         })?
         .turn_id;
     let before = put_person(&vault, 1)?;
@@ -268,16 +272,20 @@ fn a_caller_is_paged_only_the_rows_it_reads() -> TestResult {
         .witness(&WitnessTurn {
             conversation_ref: String::new(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "the owner's words".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 900,
+            assertions: WitnessAssertions::default(),
         })?;
     let stranger = put_person(&vault, 1)?;
     let theirs = vault.memory(stranger, EdgeActorClass::Human);
