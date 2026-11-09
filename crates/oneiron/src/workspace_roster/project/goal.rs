@@ -366,6 +366,12 @@ impl Vault {
         if crate::federation::steward_grant_of_in(&self.store, txn, coach)?.is_none() {
             return Ok(Some((claim, record)));
         }
+        // A Coach whose grant no longer names `read`, or whose binding is
+        // gone, reads no goal: absent, as documented above. Its scoped read
+        // would refuse the dead credential with an error instead.
+        if !self.system_agent_reads_live_in(txn, coach)? {
+            return Ok(None);
+        }
         let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(
             coach,
             EdgeActorClass::System,
