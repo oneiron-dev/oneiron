@@ -191,6 +191,7 @@ impl SandboxHarness<'_> {
                 source,
                 case,
                 runtime.as_mut(),
+                &oneiron::code_sandbox::SANDBOX_BACKENDS,
                 self.frozen_unix_ms,
             )?;
             passed += u32::from(passes);
