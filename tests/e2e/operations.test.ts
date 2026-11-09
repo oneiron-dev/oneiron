@@ -1,13 +1,89 @@
 import { afterAll, expect, test } from "bun:test";
-import type { Facade, FacadeInput } from "@oneiron/client";
-import { EngineFixture } from "./support/engine.ts";
+import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
+import { PublicHttpClient, credentialParts } from "./support/clients.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile } from "./support/run.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { defineFile, ownResource, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
+
+type Refusal = { status: number; code: string };
+/** A facade call the server must refuse: its status and code. */
+async function refusal(client: PublicHttpClient, verb: string, input: unknown, headers?: HeadersInit): Promise<Refusal> {
+  const reply = await client.raw<{ error: { code: string } }>("POST", `/v1/core/facade/${verb}`, input, headers);
+  expect(reply.status).toBeGreaterThanOrEqual(400);
+  expect(reply.status).toBeLessThan(500);
+  return { status: reply.status, code: reply.body.error.code };
+}
+/** The owner's own slip with one harmless caveat: still the owner, no longer owner grade. */
+async function caveatedOwner(engine: EngineFixture): Promise<PublicHttpClient> {
+  const { seed } = credentialParts(engine.pairedActor.credential);
+  const narrowed = await engine.client.call("self.credential.attenuate", {
+    holder_seed: [...Buffer.from(seed, "hex")], caveat: { ttl_secs: 3600 },
+  });
+  const credential = `v2.cred.${narrowed.token.slice("v2.slip.".length)}.${seed}`;
+  credentialParts(credential);
+  return new PublicHttpClient(engine.url, { credential, artifacts: engine.artifacts });
+}
+const ownerOnly: Refusal = { status: 403, code: "FORBIDDEN" };
+
+// One configured chat model behind the scripted provider, for one durable
+// owner model step held at a barrier. The checker role arms no other seat.
+const STEP_MODEL = "ops-chat";
+const stepConfig = (endpoint: string): string => `
+[models.providers.ops]
+kind = "local-openai-compat"
+base_url = "${endpoint}"
+revision = "e2e-v1"
+[models.roles.checker]
+model = "ops:${STEP_MODEL}"
+`;
+function heldStep(id: string, barrier: string) {
+  return {
+    id, origin: "ops", role: "checker", purpose: "durable owner model step held for operations",
+    request: { method: "POST" as const, path: "/v1/chat/completions", model: STEP_MODEL },
+    barrier,
+    response: openaiText(id, STEP_MODEL, "Held step answered.", { inputTokens: 16, outputTokens: 4 }),
+  };
+}
+function stepSubmit(stepKey: string): FacadeInput<"ai.steps.submit"> {
+  return {
+    step_key: stepKey,
+    request: {
+      model: `ops/${STEP_MODEL}@e2e-v1`,
+      envelope: { purpose: "answer_gen", class: { kind: "best_effort" }, tier: { global_default: "answer" },
+        response_format: { format: "text" }, locality: "own_server" },
+      messages: [{ role: "user", content: [{ kind: "text", text: "Hold this durable step for the operations flow." }] }],
+    },
+    retry: { max_attempts: 1 },
+  };
+}
+async function startHeldProviders(id: string, barrier: string): Promise<ScriptedProviders> {
+  const providers = await ScriptedProviders.start({ id, steps: [heldStep(`${id}-step`, barrier)] });
+  // Released and closed at flow end; close fails on any unscripted or repeated call.
+  ownResource(async () => { providers.releaseBarrier(barrier); await providers.close(); });
+  return providers;
+}
+async function witnessedMemory(engine: EngineFixture, content: string, at: number): Promise<void> {
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: at, occurred_end: at, learned_at: at,
+  });
+  const witnessed = await engine.client.call("vault.witness", {
+    conversation_ref: conversation.id, occurred_at: at,
+    messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
+  });
+  await engine.awaitReceipt(witnessed.receipt_ref);
+}
+async function recalls(engine: EngineFixture, query: string, content: string): Promise<void> {
+  await awaitPublic(() => engine.client.call("vault.recall", { query, effort: "light", limit: 10 }),
+    pack => pack.items.some(item => item.value_text.includes(content)
+      || item.cited_messages?.some(message => message.value_text.includes(content))),
+    { label: `recall ${query}` });
+}
 
 /*
  * Operations and recovery. Binding readback: origin/main and this worktree at
@@ -132,8 +208,120 @@ suite.todo(test, "OPERATIONS-02",
  * accepts no subject_ref, refuses written notes pending in-vault redaction,
  * and is not the agent publisher-send flow. A proposal is no quoted-note bypass.
  */
-suite.todo(test, "OPERATIONS-03",
-  "waits on typed subject-bound feedback.send and scoped quoted-note disclosure HTTP/SDK calls — Feedback with and without vault text should work");
+/* Doors: report, vault.reports.route/.disclosure/.outbound, feedback.preview,
+ * feedback.send, vault.receipts.get. The publisher sink is a loopback
+ * [feedback] collector; HTTP is allowed there only because it is loopback. */
+interface FeedbackPost { bundleDigest: string | null; signatureDigest: string | null; body: Buffer }
+function feedbackCollector(): { endpoint: string; posts: FeedbackPost[] } {
+  const posts: FeedbackPost[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch: async request => {
+      posts.push({ bundleDigest: request.headers.get("x-oneiron-bundle-digest"),
+        signatureDigest: request.headers.get("x-oneiron-signature-digest"), body: Buffer.from(await request.arrayBuffer()) });
+      return new Response(null, { status: 202 });
+    },
+  });
+  ownResource(() => server.stop(true));
+  if (!server.port) throw new Error("Feedback collector bound no port");
+  return { endpoint: `http://127.0.0.1:${server.port}/feedback`, posts };
+}
+
+suite.test(test, "OPERATIONS-03", "Feedback with and without vault text should work", async () => {
+  const collector = feedbackCollector();
+  const engine = await EngineFixture.start({ id: "OPERATIONS-03", profile,
+    serverConfig: `[feedback]\ndestination = "collector"\nendpoint = ${JSON.stringify(collector.endpoint)}\n` });
+  const quotedNote = "Private: the boathouse alarm code is on the blue card behind the clock.";
+  const noteBytes = Buffer.from(quotedNote);
+  const bundles = () => collector.posts.filter(post => post.bundleDigest !== null);
+
+  // A real failed call, and its lasting receipt as the report's subject.
+  const failed = await engine.client.raw<{ error: { code: string; receiptRef?: string } }>(
+    "POST", "/v1/core/facade/vault.get", { entity_ref: "not a ref" });
+  expect(failed.status).toBe(400);
+  const subject = failed.body.error.receiptRef;
+  if (!subject) throw new Error("A refused facade call carried no lasting receipt");
+  await engine.awaitReceipt(subject);
+  expect(await engine.client.call("vault.receipts.get", { receipt_ref: subject })).toMatchObject({
+    receipt_ref: subject, verb: "vault.get", actor_ref: engine.pairedActor.principalRef,
+    transport: "http_facade", outcome: { refused: { code: "BAD_REQUEST" } },
+  });
+
+  // Route the subject to its publisher, then report it once with private text.
+  const publisher = "operations-03-publisher";
+  await engine.client.call("vault.reports.route",
+    { subject_ref: subject, route: { destination: "publisher", publisher_ref: publisher } });
+  const report: FacadeInput<"report"> = { subject_ref: subject, category: "execution_lapse", note: quotedNote };
+  const first = await engine.client.call("report", report);
+  expect(first).toMatchObject({ already_submitted: false, disclosure: "needs_approval",
+    route: { destination: "publisher", publisher_ref: publisher } });
+  // The same actor, subject and category through the CLI is the same issue;
+  // a different note does not edit it.
+  const second = await engine.cli.call("report", { ...report, note: "A second note never edits the first." });
+  expect(second).toMatchObject({ issue_ref: first.issue_ref, already_submitted: true });
+  await engine.restart();
+  expect(await engine.client.call("report", report)).toMatchObject({ issue_ref: first.issue_ref, already_submitted: true });
+  expect(await engine.client.call("vault.receipts.get", { receipt_ref: subject })).toMatchObject({ receipt_ref: subject });
+
+  // While the text waits on disclosure the outbound projection is content-free.
+  const waiting = await engine.client.call("vault.reports.outbound", { issue_ref: first.issue_ref });
+  expect(waiting.payload?.signature).toMatchObject({ issue_ref: first.issue_ref, category: "execution_lapse", kind: "problem" });
+  expect(waiting.payload?.disclosed).toBeNull();
+  expect(JSON.stringify(waiting)).not.toContain(quotedNote);
+  expect(JSON.stringify(waiting)).not.toContain(subject);
+
+  // Metadata-only feedback: the preview shows the bytes, the send ships them once.
+  const plain = await engine.client.call("feedback.preview", { issue_ref: first.issue_ref, category: "bug" });
+  expect(plain).toMatchObject({ issue_ref: first.issue_ref, subject_ref: subject, publisher_ref: publisher,
+    includes_text: false, destination: collector.endpoint });
+  expect(JSON.stringify(plain.bundle)).not.toContain(quotedNote);
+  const plainSend: FacadeInput<"feedback.send"> = { issue_ref: first.issue_ref, category: "bug",
+    digest: plain.digest, approval: plain.approval, previewed_at: plain.previewed_at };
+  const sent = await engine.client.call("feedback.send", plainSend);
+  expect(sent).toMatchObject({ issue_ref: first.issue_ref, outcome: "delivered_to_channel", digest: plain.digest });
+  expect(bundles().map(post => post.bundleDigest)).toEqual([plain.digest]);
+  expect(bundles()[0]!.body.includes(noteBytes)).toBe(false);
+  // The same approved send again is the same one send.
+  expect((await engine.client.call("feedback.send", plainSend)).logical_send_ref).toBe(sent.logical_send_ref);
+  expect(bundles()).toHaveLength(1);
+
+  // The quoted note needs its own disclosure: before approval it never leaves.
+  const textPreview = await engine.client.call("feedback.preview",
+    { issue_ref: first.issue_ref, category: "bug", include_text: true });
+  expect(textPreview).toMatchObject({ includes_text: true, disclosure: "needs_approval" });
+  const textSend = (preview: typeof textPreview): FacadeInput<"feedback.send"> => ({ issue_ref: first.issue_ref,
+    category: "bug", include_text: true, digest: preview.digest, approval: preview.approval, previewed_at: preview.previewed_at });
+  const badRequest: Refusal = { status: 400, code: "BAD_REQUEST" };
+  expect(await refusal(engine.client, "feedback.send", textSend(textPreview))).toEqual(badRequest);
+  expect(bundles()).toHaveLength(1);
+
+  // Approve once: the shown bytes leave once, carrying the original note.
+  const decided = await engine.client.call("vault.reports.disclosure", { issue_ref: first.issue_ref, choice: "approve_once" });
+  expect(decided.disclosure).toBe("approved");
+  expect(decided.request.note).toBe(quotedNote);
+  expect((await engine.client.call("vault.reports.outbound", { issue_ref: first.issue_ref })).payload?.disclosed?.note)
+    .toBe(quotedNote);
+  const shown = await engine.client.call("feedback.preview", { issue_ref: first.issue_ref, category: "bug", include_text: true });
+  expect(shown).toMatchObject({ includes_text: true, disclosure: "approved" });
+  expect(JSON.stringify(shown.bundle)).toContain(quotedNote);
+  // A send naming bytes other than those shown cannot spend the approval.
+  expect(await refusal(engine.client, "feedback.send", { ...textSend(shown), digest: plain.digest })).toEqual(badRequest);
+  const textSent = await engine.client.call("feedback.send", textSend(shown));
+  expect(textSent.outcome).toBe("delivered_to_channel");
+  expect(bundles().map(post => post.bundleDigest)).toEqual([plain.digest, shown.digest]);
+  expect(bundles()[1]!.body.includes(noteBytes)).toBe(true);
+  // Automatic signatures, if any were sent, stay text-free.
+  for (const post of collector.posts.filter(post => post.signatureDigest !== null)) {
+    expect(post.body.includes(noteBytes)).toBe(false);
+  }
+
+  // Only the owner previews, discloses or sends.
+  const caveated = await caveatedOwner(engine);
+  expect(await refusal(caveated, "feedback.preview", { issue_ref: first.issue_ref, category: "bug" })).toEqual(ownerOnly);
+  expect(await refusal(caveated, "vault.reports.disclosure", { issue_ref: first.issue_ref, choice: "deny" })).toEqual(ownerOnly);
+  expect(await refusal(caveated, "feedback.send", plainSend)).toEqual(ownerOnly);
+  expect(bundles()).toHaveLength(2);
+});
 
 /* OPERATIONS-04 — Paused agent resumes from SLIM should work.
  * OF-446, OF-447, OF-467. Canon: ARCH-0019 #storage-invariants,
@@ -157,8 +345,80 @@ suite.todo(test, "OPERATIONS-03",
  * Waiting for an arbitrary timer, sending a private control Shed frame or
  * calling a Rust slim helper cannot substitute for observing the transition.
  */
-suite.todo(test, "OPERATIONS-04",
-  "waits on public SLIM idle policy/state and saved resume-step HTTP/SDK reads — Paused agent resumes from SLIM should work");
+/* Doors: vault.slim.policy, .state, .drop_heavy, .resume_step, .resume, with
+ * ai.steps.submit and ai.steps.receipt for the held durable model step.
+ * RETRIEVAL-08 proves graph parity across SLIM; this case proves the paused
+ * step and the memory survive a restart and nothing is repeated. */
+suite.test(test, "OPERATIONS-04", "Paused agent resumes from SLIM should work", async () => {
+  const barrier = "operations-04-held";
+  const providers = await startHeldProviders("operations-04", barrier);
+  const engine = await EngineFixture.start({ id: "OPERATIONS-04", profile, serverConfig: stepConfig(providers.urls.ops!) });
+  const policy = await engine.client.call("vault.slim.policy", {});
+  expect(policy.exits_on_idle).toBe(false);
+  expect(policy.lazy_rebuild).toBe(true);
+  expect(policy.long_outbound_wait_secs).toBeGreaterThan(0);
+  // With nothing outbound pending, a shed is refused, not queued.
+  const idle = await engine.client.call("vault.slim.drop_heavy", { cause: "memory_pressure", waited_secs: 1 });
+  expect(idle.outcome).toEqual({ status: "refused", blocker: { kind: "no_pending_outbound_step" } });
+
+  const at = Date.parse("2026-10-01T09:00:00Z") / 1000;
+  const content = "operations04lantern: the night ferry keeps its logbook in the wheelhouse drawer.";
+  await witnessedMemory(engine, content, at);
+  await recalls(engine, "operations04lantern wheelhouse logbook", content);
+  const before = await engine.client.call("vault.slim.state", {});
+  expect(before.state).toEqual({ residency: "full" });
+
+  // The agent's durable model step waits on its provider: the one outbound step SLIM keeps.
+  const submit = stepSubmit("operations-04-slim-step");
+  const pending = engine.client.call("ai.steps.submit", submit);
+  void pending.catch(() => {}); // Awaited and asserted after the barrier is released.
+  await providers.awaitBarrier(barrier);
+  const started = Date.now();
+  await awaitPublic(async () => Date.now() - started, elapsed => elapsed >= 1000, { label: "observed held wait" });
+  const waited = Math.floor((Date.now() - started) / 1000);
+  const dropped = await engine.client.call("vault.slim.drop_heavy", { cause: "long_outbound_wait", waited_secs: waited });
+  expect(dropped.process_id).toBe(before.process_id);
+  if (dropped.outcome.status !== "entered") throw new Error(`Expected SLIM entry, got ${dropped.outcome.status}`);
+  const slim = await engine.client.call("vault.slim.state", {});
+  expect(slim.process_id).toBe(before.process_id);
+  if (slim.state.residency !== "slim") throw new Error("Expected the vault in SLIM");
+  const step = slim.state.residue.step;
+  if (step.kind !== "model") throw new Error("Expected the held model step as the SLIM residue");
+  // The same live server still answers health while SLIM.
+  expect((await engine.client.raw("GET", "/api/health")).status).toBe(200);
+  const saved = await engine.client.call("vault.slim.resume_step",
+    { kind: "model", attempt_id: step.attempt_id, step_hash: step.step_hash });
+  expect(saved).toMatchObject({ kind: "model", attempt_id: step.attempt_id, checkpoint: { progression: "started" } });
+  const resumed = await engine.client.call("vault.slim.resume", {});
+  expect(resumed.process_id).toBe(before.process_id);
+  expect(resumed.outcome.status).toBe("resumed");
+  expect((await engine.client.call("vault.slim.resume", {})).outcome).toEqual({ status: "already_full" });
+  await recalls(engine, "operations04lantern wheelhouse logbook", content);
+
+  // The provider answers once; the step finishes once.
+  expect(providers.seenFixtureCalls).toHaveLength(1);
+  providers.releaseBarrier(barrier);
+  const delivered = await pending;
+  expect(delivered).toMatchObject({ step_ref: step.attempt_id, step_hash: step.step_hash, result: { status: "finished" } });
+
+  // After a restart the session, its result and the memory are the same,
+  // and submitting the step again resumes it without a second model call.
+  await engine.restart();
+  const afterRestart = await engine.client.call("vault.slim.state", {});
+  expect(afterRestart.state).toEqual({ residency: "full" });
+  expect(afterRestart.process_id === before.process_id).toBe(false);
+  expect(await engine.client.call("ai.steps.receipt", { step_key: submit.step_key }))
+    .toMatchObject({ step_ref: delivered.step_ref, step_hash: delivered.step_hash, result: { status: "finished" } });
+  expect(await engine.client.call("ai.steps.submit", submit))
+    .toMatchObject({ step_ref: delivered.step_ref, step_hash: delivered.step_hash, result: { status: "finished" } });
+  expect(providers.seenFixtureCalls).toHaveLength(1);
+  await recalls(engine, "operations04lantern wheelhouse logbook", content);
+
+  // Only the owner sheds, reads or resumes residency.
+  const caveated = await caveatedOwner(engine);
+  expect(await refusal(caveated, "vault.slim.drop_heavy", { cause: "memory_pressure", waited_secs: 1 })).toEqual(ownerOnly);
+  expect(await refusal(caveated, "vault.slim.state", {})).toEqual(ownerOnly);
+});
 
 interface TurnFixture {
   conversation_ref: string;
@@ -294,8 +554,72 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
  * settlement; they cannot stand in for observing accepted held work. No
  * high-rate burst is used to reach production-scale default thresholds.
  */
-suite.todo(test, "OPERATIONS-06",
-  "waits on typed durable admission intent and queued/held status receipts — Surface health burst and queue recovery should work");
+/* Doors: vault.wire_health.thresholds.get/.set, self.admission.status and
+ * self.admission.receipts. Each intent is a caller-owned x-oneiron-invocation;
+ * its durable admission receipt is the public handle. A held model step,
+ * then a kill, gives the restart an intent it must report, not drop. */
+suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery should work", async () => {
+  const barrier = "operations-06-held";
+  const providers = await startHeldProviders("operations-06", barrier);
+  const engine = await EngineFixture.start({ id: "OPERATIONS-06", profile, serverConfig: stepConfig(providers.urls.ops!) });
+
+  // A deliberately low detection row: crossings ask health questions, never refuse.
+  const defaults = await engine.client.call("vault.wire_health.thresholds.get", {});
+  const low = { window_secs: 60, per_verb: 1, per_actor: 1 };
+  const installed = await engine.client.call("vault.wire_health.thresholds.set", low);
+  expect(installed).toEqual({ previous: defaults, thresholds: low });
+  expect(await engine.client.call("vault.wire_health.thresholds.get", {})).toEqual(low);
+  expect(await refusal(engine.client, "vault.wire_health.thresholds.set", { ...low, per_verb: 0 }))
+    .toEqual({ status: 400, code: "BAD_REQUEST" });
+
+  // Four authored intents, each under its own invocation id.
+  const intent = { put: secretHex(16), refused: secretHex(16), held: secretHex(16), read: secretHex(16) };
+  const invoke = (verb: string, input: unknown, key: string) =>
+    engine.client.raw<{ error?: { code: string } }>("POST", `/v1/core/facade/${verb}`, input, { "x-oneiron-invocation": key });
+  const address = { namespace: ["operations-06"], key: "burst" };
+  const put = { ...address, value: "accepted once", request_id: "operations-06-put" };
+  expect((await invoke("vault.kv.put", put, intent.put)).status).toBe(200);
+  expect((await invoke("vault.get", { entity_ref: "not a ref" }, intent.refused)).status).toBe(400);
+  const held = invoke("ai.steps.submit", stepSubmit("operations-06-held-step"), intent.held);
+  void held.catch(() => {}); // The server is killed under it below.
+  await providers.awaitBarrier(barrier);
+  expect((await invoke("vault.kv.get", address, intent.read)).status).toBe(200);
+  // A retried intent replays its first answer; it is not a second write.
+  expect((await invoke("vault.kv.put", put, intent.put)).status).toBe(200);
+
+  const status = async (key: string) => (await engine.client.call("self.admission.status", { intent_key: key }))?.state;
+  expect(await status(intent.put)).toMatchObject({ status: "completed" });
+  expect(await status(intent.refused)).toMatchObject({ status: "refused", code: "BAD_REQUEST" });
+  expect(await status(intent.held)).toEqual({ status: "held", reason: null });
+  expect(await status(intent.read)).toMatchObject({ status: "completed" });
+  expect(await engine.client.call("self.admission.status", { intent_key: secretHex(16) })).toBeNull();
+  const authored = [intent.put, intent.refused, intent.held, intent.read];
+  const reconcile = () => engine.client.call("self.admission.receipts",
+    { intent_keys: [...authored, intent.put, secretHex(16)] });
+  const live = await reconcile();
+  expect(live.map(row => row.intent_key)).toEqual(authored);
+  const putDigest = (live[0]!.state as { result_digest?: string }).result_digest;
+
+  // The host dies with the model step in flight. After restart that intent
+  // is reported interrupted; every other outcome stands; nothing replays it.
+  await engine.kill();
+  await engine.restart();
+  const recovered = await reconcile();
+  expect(recovered.map(row => row.intent_key)).toEqual(authored);
+  expect(recovered.map(row => row.state.status)).toEqual(["completed", "refused", "interrupted", "completed"]);
+  expect((recovered[0]!.state as { result_digest?: string }).result_digest).toBe(putDigest);
+  expect(recovered[2]).toMatchObject({ verb: "ai.steps.submit" });
+  expect((recovered[2]!.state as { reason?: string }).reason).toMatch(/^host restarted before settlement was observed/);
+  expect((await engine.client.call("vault.kv.get", address))?.value).toBe("accepted once");
+  expect(await engine.client.call("vault.wire_health.thresholds.get", {})).toEqual(low);
+  expect(providers.seenFixtureCalls).toHaveLength(1);
+  // Malformed keys and an empty set are refused.
+  const badRequest: Refusal = { status: 400, code: "BAD_REQUEST" };
+  expect(await refusal(engine.client, "self.admission.status", { intent_key: "not-an-invocation" })).toEqual(badRequest);
+  expect(await refusal(engine.client, "self.admission.receipts", { intent_keys: [] })).toEqual(badRequest);
+  // Only the owner sets thresholds.
+  expect(await refusal(await caveatedOwner(engine), "vault.wire_health.thresholds.set", low)).toEqual(ownerOnly);
+});
 
 /* OPERATIONS-07 — Automatic failure report contains no real text should work.
  * OF-380/401. Canon: ARCH-0053 #r4-lifecycle, ARCH-0069 #handles,
