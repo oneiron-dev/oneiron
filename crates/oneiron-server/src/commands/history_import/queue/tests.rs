@@ -634,10 +634,9 @@ fn a_subagent_log_over_the_limit_is_left_out_and_the_rest_of_the_session_lands()
     fs::create_dir_all(&subagents).unwrap();
     bench.write(&subagents.join("agent-a7f3.jsonl"), 2, 0..2);
     let big = subagents.join("agent-b9c8.jsonl");
-    // The per-log limit #2608 removed (1 GiB, MAX_LOG_BYTES): Rule 5, "split
-    // or stream an oversized session log rather than skipping it; only a
-    // codec bound may refuse". The log over it is read, never left out, so
-    // a pass has no left-out list to name it in.
+    // MAX_LOG_BYTES, ImportWarning::LogTooLarge and Landed.left_out are gone
+    // (#2608, a8d1d88e1bc): the limit keeps its value here, and the asserts
+    // on the left-out list have nothing left to read (rule D).
     let limit: u64 = 1 << 30;
     fs::File::create(&big).unwrap().set_len(limit + 1).unwrap();
     bench.hand_over(&log);
