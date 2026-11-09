@@ -386,7 +386,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
-                    cause: DreamerParkCause::of_step(&other),
+                    cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),
                 });
             }
         };

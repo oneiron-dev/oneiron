@@ -142,7 +142,10 @@ impl DreamerWakeDriver<'_> {
             // the window settled trips the device work this attempt is
             // about to admit under.
             sync_wake_cancel(cancel, &self.device_cancel);
-            let attempt_deadline = self.deadline.for_admitted(admitted);
+            let attempt_deadline = crate::dreamer_wake::deadline::wake_pass_deadline_for_admitted(
+                &self.deadline,
+                admitted,
+            );
             let mut ctx = WakeAttemptContext {
                 vault: self.vault,
                 deadline: &attempt_deadline,

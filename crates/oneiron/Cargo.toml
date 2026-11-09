@@ -34,6 +34,8 @@ oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
 oneiron-code-source = { version = "0.1.0", path = "../oneiron-code-source" }
 oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+# The Dreamer wake contract (core split slice 3).
+oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 # Consent state (core split slice 2).
 oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
@@ -256,6 +258,7 @@ sync = [
     "oneiron-contracts/sync",
     "oneiron-base/sync",
     "oneiron-store/sync",
+    "oneiron-wake-contract/sync",
     "tokio/net",
     "tokio/time",
     "tokio/rt",

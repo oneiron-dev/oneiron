@@ -68,45 +68,10 @@ pub struct PromotionCandidate {
     pub decisions: Vec<KeptDecision>,
 }
 
-/// One typed question's decision as a consolidation write keeps it: the
-/// ladder's whole decision (all three answers, its pins, evidence versions,
-/// principal and clock) and, when it went up the role chain, that ask.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct KeptDecision {
-    pub decision: crate::llm::decision::TypedDecision,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ask: Option<KeptAsk>,
-}
+#[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_consolidation::provenance::KeptDecision;
 
 pub use super::kept_ask::{KeptAnswer, KeptAsk, KeptRole, KeptRoute};
-
-impl KeptDecision {
-    /// The answer the Dreamer acts on: the holder's when the decision went up
-    /// the role chain, the ladder's otherwise. None while the ask waits.
-    #[must_use]
-    pub fn answer(&self) -> Option<&crate::model_decision::DecisionAnswer> {
-        match &self.ask {
-            Some(ask) => ask.answer.as_ref().map(|answer| &answer.answer),
-            None => Some(&self.decision.answer),
-        }
-    }
-
-    /// How sure the answer acted on is: a holder's answer is the answer.
-    #[must_use]
-    pub fn probability(&self) -> Option<f64> {
-        match &self.ask {
-            Some(ask) => ask.answer.as_ref().map(|_| 1.0),
-            None => self.decision.probability,
-        }
-    }
-
-    /// Whether the work this decides waits on a role's answer.
-    #[must_use]
-    pub fn waiting(&self) -> bool {
-        self.answer().is_none()
-    }
-}
 
 /// `incoming` joined onto `kept`, each decision once.
 pub(crate) fn join_decisions(kept: &mut Vec<KeptDecision>, incoming: &[KeptDecision]) {

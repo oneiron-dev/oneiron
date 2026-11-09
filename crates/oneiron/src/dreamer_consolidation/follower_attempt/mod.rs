@@ -359,7 +359,7 @@ impl ConsolidationExecutor<'_> {
             Err(error) => {
                 return Ok(Some(charges.park_for(
                     "sieve follower step failed",
-                    DreamerParkCause::of_step(&error),
+                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
                 )));
             }
         };
@@ -546,7 +546,7 @@ impl ConsolidationExecutor<'_> {
             Err(DurableStepError::Engine(error)) if charges.units == 0 => Err(error),
             Err(error) => Ok(Some(charges.park_for(
                 "sieve follower keyframe step failed",
-                DreamerParkCause::of_step(&error),
+                crate::dreamer_runner::dreamer_park_cause_of_step(&error),
             ))),
         }
     }
