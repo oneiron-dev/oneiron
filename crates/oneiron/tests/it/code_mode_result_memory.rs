@@ -21,8 +21,6 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use oneiron::code_run::{CodeRunDeterminism, GatedActorWrite};
-use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
-use oneiron::code_sandbox::wasmtime_runtime::ComponentBudget;
 use oneiron::compaction::output::OutputDecayPolicy;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, EngineExecutorStatus, EngineNativeExecutor,
@@ -34,6 +32,8 @@ use oneiron::{
     LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult,
     LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig, WriteActor,
 };
+use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
+use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::ComponentBudget;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 

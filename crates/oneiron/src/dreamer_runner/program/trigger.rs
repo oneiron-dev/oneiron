@@ -246,10 +246,11 @@ impl Vault {
         })
     }
 
-    /// Records the wake each feed program owes while its subscription's cursor stands behind a
-    /// source head (untangle slice 6.8c), on the node that releases due watcher ticks: once per
-    /// set of heads, so a feed that has not moved wakes it once. The program reads its feed under
-    /// its own grant, judged at delivery. Answers how many wakes it recorded;
+    /// Records the wake each feed program owes while its subscription holds an entry its own lane
+    /// shows (untangle slice 6.8c, lead call K), on the node that releases due watcher ticks:
+    /// once per first entry it can see, so a feed that shows it nothing new wakes it once, and a
+    /// change its lane does not show never wakes it. The wake is judged under the authority its
+    /// arming sealed, as the program's own reads are. Answers how many wakes it recorded;
     /// [`Vault::wake_turn_programs`] admits them.
     ///
     /// # Errors
@@ -261,14 +262,40 @@ impl Vault {
             if !crate::runtime_hooks::releases_ticks_here(self, &txn)? {
                 return Ok(0);
             }
-            indexed_in_txn(self, &txn, OccurrenceKind::Feed)?
+            let mut armed = Vec::new();
+            for (actor, registration) in indexed_in_txn(self, &txn, OccurrenceKind::Feed)? {
+                let Some(arming) = ARM.get(self, &txn, &(actor, registration))? else {
+                    armed.push((actor, registration, None));
+                    continue;
+                };
+                let ProgramTrigger::Feed { subscription } = arming.trigger else {
+                    continue;
+                };
+                let key = match &arming.sealed {
+                    Some(authority) => authority.reader_key_in_txn(self, &txn)?,
+                    None => None,
+                };
+                armed.push((actor, registration, key.map(|key| (subscription, key))));
+            }
+            armed
         };
         if armed.is_empty() {
             return Ok(0);
         }
+        // Each mark is read under the program's own lane, outside the write that records it.
+        let mut marks = Vec::with_capacity(armed.len());
+        for (actor, registration, reader) in armed {
+            let mark = match reader {
+                Some((subscription, key)) => {
+                    crate::feeds::feed_wake_mark(self, &self.scoped_read(key), subscription)?
+                }
+                None => None,
+            };
+            marks.push((actor, registration, mark));
+        }
         self.with_write_txn_grouped(|txn| {
             let mut recorded = 0;
-            for (actor, registration) in &armed {
+            for (actor, registration, mark) in &marks {
                 let Some(arming) = ARM.get(self, &*txn, &(*actor, *registration))? else {
                     TRIGGER.delete(
                         self,
@@ -277,23 +304,11 @@ impl Vault {
                     )?;
                     continue;
                 };
-                let ProgramTrigger::Feed { subscription } = arming.trigger else {
+                // A program whose authority no longer stands, or whose lane is shown nothing new,
+                // owes nothing; a subscription gone since arming is refused at admission.
+                let Some(mark) = mark else {
                     continue;
                 };
-                // A subscription gone since arming owes nothing: its admission would refuse it.
-                let Some(heads) =
-                    crate::feeds::heads_behind_in_txn(self, &*txn, arming.actor, subscription)?
-                else {
-                    continue;
-                };
-                if heads.is_empty() {
-                    continue;
-                }
-                let mark = heads
-                    .iter()
-                    .map(|head| head.0.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
                 if record_occurrence_in_txn(
                     self,
                     txn,
