@@ -8,3 +8,4 @@ pub mod consolidation;
 pub mod dag_append;
 pub mod live_run_claim_put;
 pub mod run_hold;
+pub mod scope_summary;

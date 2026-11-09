@@ -412,6 +412,10 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 /// No parts: policy binds this one engine writer.
 pub const ESIGN_SEAL_ACTOR: &[u8] = b"oneiron.esign.seal.actor.v1";
 
+/// The scope summary landing writer (`scope_summary::landing_writer`), distinct
+/// from the summary's requester. No parts: policy binds this one engine writer.
+pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor.v1";
+
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
