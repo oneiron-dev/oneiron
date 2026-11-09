@@ -1002,6 +1002,12 @@ export class Oneiron {
         answer: (input: Facade.AgentRunEffectAnswer): Facade.AgentRunEffectAnswered => this.#call(() => this.#client.vaultAgentRunEffectAnswer(input) as Facade.AgentRunEffectAnswered),
       },
     },
+    agent_health: {
+      /** Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      calls: (input: Facade.AgentHealthCallsRequest): Facade.AgentCallReceipt[] => this.#call(() => this.#client.vaultAgentHealthCalls(input) as Facade.AgentCallReceipt[]),
+      /** Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      cards: (input: Facade.AgentHealthCardsRequest): Facade.AgentHealthCard[] => this.#call(() => this.#client.vaultAgentHealthCards(input) as Facade.AgentHealthCard[]),
+    },
     agents: {
       /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
       base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),
@@ -1984,6 +1990,8 @@ export class Oneiron {
       },
     },
     diagnostics: {
+      /** Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call. */
+      evidence: (input: Facade.DiagnosticEvidenceRequest): Facade.DiagnosticEvidence => this.#call(() => this.#client.vaultDiagnosticsEvidence(input) as Facade.DiagnosticEvidence),
       /** Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt. */
       get: (input: Facade.DiagnosticsGetRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView | null> => this.#call(() => this.#client.vaultDiagnosticsGet(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView | null>),
       /** Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt. */
@@ -2420,7 +2428,7 @@ export class Oneiron {
     learning: {
       /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
       projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
-      /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+      /** The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
       read: (input: Facade.LearningReadRequest): Facade.LearningCellView => this.#call(() => this.#client.vaultLearningRead(input) as Facade.LearningCellView),
     },
     legal_holds: {
@@ -3217,7 +3225,7 @@ export class Oneiron {
       replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
       /** The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none. */
       run: (input: Facade.RetrievalRunRequest): Facade.RetrievalRunEvidence | null => this.#call(() => this.#client.vaultRetrievalRun(input) as Facade.RetrievalRunEvidence | null),
-      /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
+      /** The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
       runs: (input: Facade.RetrievalRunsRequest): Facade.RetrievalRunEvidence[] => this.#call(() => this.#client.vaultRetrievalRuns(input) as Facade.RetrievalRunEvidence[]),
       /** The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults. */
       trace: (input: Facade.RetrievalTraceRequest): Facade.RetrievalTrace | null => this.#call(() => this.#client.vaultRetrievalTrace(input) as Facade.RetrievalTrace | null),
@@ -3421,7 +3429,7 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
-      /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
+      /** The owner, or a holder of engine.controls, reads the learned-setting catalog, each knob's value now, and the seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
         /** The owner clears one learned-setting row of a key, mode and scope. */
         clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
