@@ -23,8 +23,8 @@ import { blake3 } from "@noble/hashes/blake3";
  * decision_host.rs and cli.rs. Runtime OpenAPI is diagnostic, not an oracle.
  *
  * G01: keep a whole scenario BLOCKED when a required typed call is missing.
- * Available verdict/graph/question calls are not being called absent. They
- * cannot substitute for the missing setup, admission or observation below.
+ * Available verdict/graph/question calls drive the active cases below. They
+ * cannot substitute for JUDGMENTS-04's missing saved-query kind registration.
  * No generic facade cast, execute_code, vault.batch body, private storage or
  * Rust oracle is used to manufacture the missing behavior. In particular,
  * saved_query_oracle.rs supplies invariant ideas only, not its Vault seeding.
@@ -36,10 +36,10 @@ import { blake3 } from "@noble/hashes/blake3";
  * Source pins and registry coverage are in the shared suite-plan manifest.
  *
  * fixtures/judgments/manifest.json pins seven independently authored input
- * sets. The shared preflight loads them even though these registrations are
- * TODOs. Their aliases are not entity IDs or seeds: future flows resolve
- * them from public creation receipts. Fixture admission vectors are never
- * presented as actual server receipts. No expected value comes from code
+ * sets. The shared preflight loads them for the active cases and the saved-query
+ * TODO. Aliases resolve through public creation receipts; the parity case maps
+ * its logical question references to wire EntityIds. Fixture admission vectors
+ * are never presented as actual server receipts. No expected value comes from code
  * under test. No new public URL or verb name is invented for a missing door.
  *
  * Activation uses loadFixtures, ScriptedProviders and EngineFixture, fresh
@@ -324,9 +324,24 @@ enabled = false
     const learnedAfterRestart = await owner.call("vault.decisions.bands.read", { ...key, seed: { low: 0.2, high: 0.8 } });
     await checkAuthority();
     // Keep both known-defect observations: the first red must not hide the second.
+    providers.enqueue({
+      ...judg01SystemOne("judg01-selected-first-observation", 0.9),
+      standing: true,
+    });
     const beforeAbsent = providers.seenFixtureCalls.length;
     let absentFailure: unknown;
     try { await owner.call("vault.questions.refresh", { id: absent.id }); } catch (error) { absentFailure = error; }
+    if (absentFailure instanceof PublicHttpError) {
+      const receiptRef = absentFailure.error?.receiptRef;
+      expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+      if (typeof receiptRef !== "string") throw new Error("Missing selected-first refusal receipt");
+      expect(absentFailure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+      const receipt = await awaitPublic(() => owner.call("vault.receipts.get", { receipt_ref: receiptRef }),
+        value => value !== null, { label: "judg01 selected-first refusal receipt" });
+      expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+        verb: "v1/core/facade/vault.questions.refresh", actor_ref: engine.pairedActor.principalRef,
+        actor_class: "human", outcome: { refused: { code: absentFailure.error?.code } } });
+    }
     const absentAnswers = judg01Rows(await owner.call("vault.questions.answers", { id: absent.id }));
     const absentCalls = providers.seenFixtureCalls.slice(beforeAbsent);
     await engine.artifacts.json("judg01-promised-invariants.json", { learnedAfterRestart,
@@ -574,7 +589,13 @@ suite.test(test, "JUDGMENTS-02", "Graph and artifact v1 parity with paired admis
     ["duplicate-provider", "out-of-range", "self-question", "wrong-provider", "zero-version"]);
   expect(fixture.expected.artifactLanding).toContain("source head unchanged");
   expect(fixture.expected.graphLanding).toContain("answer claim");
-  const questionV1: DecisionQuestion = { id: fixture.answeredQuestion, version: 1,
+  // The fixture's IDs are 34 characters; map them to the wire's 32-hex EntityId here.
+  const questionRefs = new Map([
+    [fixture.answeredQuestion, "aa0201".padStart(32, "0")],
+    [fixture.pairedQuestion, "aa0202".padStart(32, "0")],
+  ]);
+  const validPair: PairedReading = { ...fixture.validPair, question: questionRefs.get(fixture.pairedQuestion)! };
+  const questionV1: DecisionQuestion = { id: questionRefs.get(fixture.answeredQuestion)!, version: 1,
     text: fixture.question.text, class: "judgment", contract: { kind: "noul" }, accept_type: false };
   const providers = await ScriptedProviders.start({ id: "JUDGMENTS-02", steps: [
     judg02Step("judg02-graph-v1", openaiText("judg02-graph-v1", judg02WireModel,
@@ -622,8 +643,8 @@ enabled = false
   const withheldRead = await owner.call("vault.notes.read", { note_ref: withheldRef, reason: "judg02 withheld control setup" });
   expect(withheldRead.value).not.toBeNull();
   expect(JSON.stringify(withheldRead.value)).toContain("Parcel R17 is not ready.");
-  const roRef = "0000000000000000000000000000aa02a1";
-  const peerRef = "0000000000000000000000000000aa02a2";
+  const roRef = "00000000000000000000000000aa02a1";
+  const peerRef = "00000000000000000000000000aa02a2";
   await owner.call("vault.agents.create", { agent_def_ref: roRef,
     definition: { agent_id: "judg02-readonly", desc: "Inert read-only refusal principal", version: "1" } });
   await owner.call("vault.agents.create", { agent_def_ref: peerRef,
@@ -665,7 +686,7 @@ enabled = false
     run_ref: "judg02-oneoff-v1", question: questionV1,
     units: { kind: "paragraphs", blocks: [block.id], author: "fixture", labels: judg02Labels },
     unit_budget_ms: 2000, deadline_ms: 8000 };
-  const ownerDecision = judg02Decision(questionV1.id, 1, ownerRef, [fixture.validPair]);
+  const ownerDecision = judg02Decision(questionV1.id, 1, ownerRef, [validPair]);
   const refusalRefs: string[] = [];
   const roAskRefusal = await judg02Error(() => roAgent.client.call("vault.graph.ask", askV1Input), 403, "FORBIDDEN");
   refusalRefs.push(await judg02RefusalReceipt(engine, roAskRefusal, "vault.graph.ask", roRef, "agent", roAgent.client));
@@ -770,8 +791,8 @@ enabled = false
   expect(preparedV1.unit).toBe(noteRef);
   expect(preparedV1.sources[0]!.id).toBe(noteRef);
   expect(preparedV1.source_frontier).toHaveLength(32);
-  const admittedV1Decision: TypedDecision = { ...judg02Decision(standingId, 1, ownerRef, [fixture.validPair]),
-    receipt: { ...judg02Decision(standingId, 1, ownerRef, [fixture.validPair]).receipt,
+  const admittedV1Decision: TypedDecision = { ...judg02Decision(standingId, 1, ownerRef, [validPair]),
+    receipt: { ...judg02Decision(standingId, 1, ownerRef, [validPair]).receipt,
       evidence_versions: preparedV1.sources.map(source => ({ id: source.id, body_hash: judg02Hex(source.hash) })) } };
   const claimsBeforeStanding = await judg02ClaimIds(owner, noteRef);
   const admittedV1 = await owner.call("vault.questions.admit", { id: standingId, expected_version: 1,
@@ -793,21 +814,24 @@ enabled = false
   const preparedV2 = await owner.call("vault.questions.prepare",
     { id: standingId, expected_version: 2, input: { unit: noteRef, evidence: [] } });
   expect(preparedV2.source_frontier).toHaveLength(32);
-  const duplicatePair = { ...fixture.validPair };
-  const admittedV2Shape: TypedDecision = { ...judg02Decision(standingId, 2, ownerRef, [fixture.validPair, duplicatePair]),
-    receipt: { ...judg02Decision(standingId, 2, ownerRef, [fixture.validPair, duplicatePair]).receipt,
+  const duplicatePair = { ...validPair };
+  const admittedV2Shape: TypedDecision = { ...judg02Decision(standingId, 2, ownerRef, [validPair, duplicatePair]),
+    receipt: { ...judg02Decision(standingId, 2, ownerRef, [validPair, duplicatePair]).receipt,
       evidence_versions: preparedV2.sources.map(source => ({ id: source.id, body_hash: judg02Hex(source.hash) })) } };
-  await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 2,
+  const duplicatePairRefusal = await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 2,
     input: { unit: noteRef, evidence: [] }, source_frontier: preparedV2.source_frontier, decision: admittedV2Shape }), 400, "BAD_REQUEST");
+  await judg02RefusalReceipt(engine, duplicatePairRefusal, "vault.questions.admit", ownerRef, "human");
   expect(judg02AnswersList(await owner.call("vault.questions.answers", { id: standingId }))).toEqual([{ ...admittedV1, kind: "graph" }]);
   expect(await judg02ClaimIds(owner, noteRef)).toEqual([...claimsBeforeStanding, admittedV1.claim].sort());
-  await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 1,
+  const staleVersionRefusal = await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 1,
     input: { unit: noteRef, evidence: [] }, source_frontier: preparedV1.source_frontier, decision: admittedV1Decision }), 409, "INVALID_STATE");
+  await judg02RefusalReceipt(engine, staleVersionRefusal, "vault.questions.admit", ownerRef, "human");
   const tampered = [...preparedV2.source_frontier];
   tampered[0] = (tampered[0]! + 1) % 256;
-  await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 2,
+  const alteredFrontierRefusal = await judg02Error(() => owner.call("vault.questions.admit", { id: standingId, expected_version: 2,
     input: { unit: noteRef, evidence: [] }, source_frontier: tampered,
-    decision: { ...admittedV2Shape, receipt: { ...admittedV2Shape.receipt, paired: [fixture.validPair] } } }), 409, "INVALID_STATE");
+    decision: { ...admittedV2Shape, receipt: { ...admittedV2Shape.receipt, paired: [validPair] } } }), 409, "INVALID_STATE");
+  await judg02RefusalReceipt(engine, alteredFrontierRefusal, "vault.questions.admit", ownerRef, "human");
   expect(judg02AnswersList(await owner.call("vault.questions.answers", { id: standingId }))).toEqual([{ ...admittedV1, kind: "graph" }]);
   expect(await judg02ClaimIds(owner, noteRef)).toEqual([...claimsBeforeStanding, admittedV1.claim].sort());
   const claimsBeforeAdmit = await judg02ClaimIds(owner, noteRef);
@@ -816,7 +840,7 @@ enabled = false
   if (graphAdmitted.state !== "done") throw new Error("One-off graph admission failed");
   expect(graphAdmitted.answers).toHaveLength(1);
   const graphAdmittedAnswer = graphAdmitted.answers[0]!;
-  expect(graphAdmittedAnswer.decision.receipt.paired).toEqual([fixture.validPair]);
+  expect(graphAdmittedAnswer.decision.receipt.paired).toEqual([validPair]);
   expect(graphAdmittedAnswer.decision.receipt.providers).toEqual([judg02Pin]);
   expect(graphAdmittedAnswer.decision.receipt.question).toBe(questionV1.id);
   expect(graphAdmittedAnswer.decision.receipt.principal).toBe(ownerRef);
@@ -825,17 +849,18 @@ enabled = false
   expect(await judg02ClaimIds(owner, noteRef)).toEqual([...claimsBeforeAdmit, graphAdmittedAnswer.claim].sort());
   const beforeInvalid = providers.seenFixtureCalls.length;
   const invalidPairs: { id: string; paired: PairedReading[] }[] = [
-    { id: "duplicate-provider", paired: [fixture.validPair, { ...fixture.validPair }] },
+    { id: "duplicate-provider", paired: [validPair, { ...validPair }] },
     { id: "wrong-provider", paired: [{ provider: { rung: "escalation", model: "fixture-unmeasured", version: "e1" },
-      question: fixture.validPair.question, question_version: 1, probability: 0.82 }] },
-    { id: "self-question", paired: [{ ...fixture.validPair, question: questionV1.id }] },
-    { id: "zero-version", paired: [{ ...fixture.validPair, question_version: 0 }] },
-    { id: "out-of-range", paired: [{ ...fixture.validPair, probability: 1.1 }] },
+      question: validPair.question, question_version: 1, probability: 0.82 }] },
+    { id: "self-question", paired: [{ ...validPair, question: questionV1.id }] },
+    { id: "zero-version", paired: [{ ...validPair, question_version: 0 }] },
+    { id: "out-of-range", paired: [{ ...validPair, probability: 1.1 }] },
   ];
   for (const vector of invalidPairs) {
     const claimsBeforeVector = await judg02ClaimIds(owner, noteRef);
-    await judg02Error(() => owner.call("vault.graph.admit", { question: questionV1, unit: noteRef,
+    const invalidPairRefusal = await judg02Error(() => owner.call("vault.graph.admit", { question: questionV1, unit: noteRef,
       decision: { ...ownerDecision, receipt: { ...ownerDecision.receipt, paired: vector.paired } } }), 400, "BAD_REQUEST");
+    await judg02RefusalReceipt(engine, invalidPairRefusal, "vault.graph.admit", ownerRef, "human");
     expect(await judg02ClaimIds(owner, noteRef)).toEqual(claimsBeforeVector);
     expect(providers.seenFixtureCalls).toHaveLength(beforeInvalid);
   }
@@ -848,8 +873,8 @@ enabled = false
   const artifactStanding = await owner.call("vault.questions.create",
     { definition: judg02ArtifactDef(fixture.question.text, artifactRef, [blockHead2.id], v1.criteria) });
   const artifactStandingId = artifactStanding.definition.question.id;
-  expect(artifactStandingId).not.toBe(fixture.answeredQuestion);
-  expect(artifactStandingId).not.toBe(fixture.pairedQuestion);
+  expect(artifactStandingId).not.toBe(questionV1.id);
+  expect(artifactStandingId).not.toBe(validPair.question);
   expect(artifactStanding.definition.adapter).toBe("artifact");
   expect(artifactStanding.definition.units).toEqual([]);
   const artifactRefreshV1 = await owner.call("vault.questions.refresh", { id: artifactStandingId });
@@ -883,8 +908,11 @@ enabled = false
   expect(judgmentV1.comment.split(": ")[1]).toBe("yes");
   const keptAnswersV1 = judg02AnswersList(await owner.call("vault.questions.answers", { id: artifactStandingId }));
   expect(keptAnswersV1).toHaveLength(1);
-  if (keptAnswersV1[0]!.kind !== "artifact") throw new Error("Kept v1 ask did not read back");
-  expect(keptAnswersV1[0].standing).toEqual({ state: "kept", version: 3 });
+  const keptV1Row = keptAnswersV1[0];
+  if (!keptV1Row || keptV1Row.kind !== "artifact") {
+    throw new Error("Kept v1 ask did not read back");
+  }
+  expect(keptV1Row.standing).toEqual({ state: "kept", version: 3 });
   const exportStandingV1 = (await owner.call("vault.artifacts.export", { artifact_ref: artifactRef, version: 3 }))?.content_base64;
   expect(typeof exportStandingV1).toBe("string");
   expect((await owner.call("vault.artifacts.export", { artifact_ref: artifactRef, version: 2 }))?.content_base64).toBe(exportOneOff);
@@ -922,7 +950,7 @@ enabled = false
   expect((await owner.call("vault.artifacts.export", { artifact_ref: artifactRef, version: 2 }))?.content_base64).toBe(exportOneOff);
   expect((await owner.call("vault.artifacts.export", { artifact_ref: artifactRef, version: 3 }))?.content_base64).toBe(exportStandingV1);
   expect(providers.seenFixtureCalls).toHaveLength(4);
-  const artDecision = judg02Decision(questionV1.id, 1, ownerRef, [fixture.validPair]);
+  const artDecision = judg02Decision(questionV1.id, 1, ownerRef, [validPair]);
   const artAdmitAsk: FacadeInput<"vault.artifacts.ask"> = { artifact_ref: artifactRef,
     run_ref: "judg02-admit-v1", question: questionV1,
     units: { kind: "paragraphs", blocks: [blockHead3.id], author: "fixture", labels: judg02Labels },
@@ -939,7 +967,7 @@ enabled = false
     { artifact_ref: artifactRef, proposal_ref: artAdmitted.proposed.proposal_ref });
   expect(keptAdmit.version.version).toBe(4);
   expect(keptAdmit.review?.paragraph_judgments).toHaveLength(1);
-  expect(keptAdmit.review!.paragraph_judgments[0]!.decision.receipt.paired).toEqual([fixture.validPair]);
+  expect(keptAdmit.review!.paragraph_judgments[0]!.decision.receipt.paired).toEqual([validPair]);
   expect(keptAdmit.review!.paragraph_judgments[0]!.decision.receipt.providers).toEqual([judg02Pin]);
   expect(keptAdmit.review!.paragraph_judgments[0]!.decision.answer).toEqual({ kind: "noul", value: true });
   expect(keptAdmit.review!.paragraph_judgments[0]!.decision.receipt.question).toBe(questionV1.id);
@@ -953,9 +981,10 @@ enabled = false
   const artInvalidRuns = ["judg02-admit-dup", "judg02-admit-wrong", "judg02-admit-self", "judg02-admit-zero", "judg02-admit-range"];
   for (let index = 0; index < invalidPairs.length; index++) {
     const vector = invalidPairs[index]!;
-    await judg02Error(() => owner.call("vault.artifacts.admit", { ask: { ...artAdmitAsk, run_ref: artInvalidRuns[index]!,
+    const invalidPairRefusal = await judg02Error(() => owner.call("vault.artifacts.admit", { ask: { ...artAdmitAsk, run_ref: artInvalidRuns[index]!,
         units: { kind: "paragraphs", blocks: [blockHead4.id], author: "fixture", labels: judg02Labels } },
       decisions: [{ ...artDecision, receipt: { ...artDecision.receipt, paired: vector.paired } }] }), 400, "BAD_REQUEST");
+    await judg02RefusalReceipt(engine, invalidPairRefusal, "vault.artifacts.admit", ownerRef, "human");
     expect(providers.seenFixtureCalls).toHaveLength(beforeArtInvalid);
     expect(await owner.call("vault.artifacts.proposals", { artifact_ref: artifactRef })).toEqual([]);
     expect((await owner.call("vault.artifacts.view", { artifact_ref: artifactRef }))?.head).toBe(4);
@@ -1149,8 +1178,8 @@ async function judg03HttpRefusal<V extends FacadeVerb>(
  *
  * Setup the promise needs: the fixture predicate alias is remapped to the
  * author-scoped e2e.judgments.fulfillment the pack contract requires; a
- * separately granted agent asks so the owner can settle its proposals; the
- * outcome fact reuses the answer's own public timestamp, inside its horizon.
+ * separately granted agent asks and reads its Proposed prediction in its own
+ * lane; the outcome fact reuses the answer's public timestamp, inside its horizon.
  * The first rung is a real bound seat, never an absence another rung skips.
  * Not proved (not promised here): a due daily tick (every_seconds is read
  * back, never awaited), a provider-failure refresh, and post-revoke
@@ -1218,7 +1247,7 @@ enabled = false
     const askerRef = judg03EntityId("asker");
     await owner.call("vault.agents.create", { agent_def_ref: askerRef, definition: {
       agent_id: "judg03-asker", display_name: "Standing question asker",
-      desc: "Asks the standing question so the owner can settle its proposals", version: "1" } });
+      desc: "Asks and reads the standing prediction in its own lane", version: "1" } });
     expect((await owner.call("vault.get", { entity_ref: askerRef })).value?.kind).toBe("AGENT_DEF");
     const asker = await engine.pairActor({ principalRef: askerRef, actorClass: "agent" });
     expect(await asker.client.call("self.actor", {})).toMatchObject({ actor_ref: askerRef, actor_class: "agent" });
@@ -1328,23 +1357,18 @@ enabled = false
     expect(scheduleAnswered).toEqual(scheduleBefore);
     expect(scheduleAnswered?.last_refresh ?? null).toBeNull();
     expect(scheduleAnswered?.retry_at ?? null).toBeNull();
-    // The prediction lands proposed; the owner settles it so it can bind.
-    const review = await owner.call("vault.claims.review", { claim_ref: answer.claim });
-    expect(review.claim.approval).toBe("proposed");
-    expect(review.claim.predicate).toBe("judgment.answer");
-    expect(review.claim.subject_ref).toBe(unitId);
-    const settled = await owner.call("vault.claims.settle", {
-      claim_ref: answer.claim, review_id: review.review_id, decision: "approve" });
-    expect(settled.review_id).toBe(review.review_id);
-    expect(settled.proposal_ref).toBe(review.proposal_ref);
-    expect(settled.verdict).toBe("landed");
-    expect(settled.changes).toEqual([{ claim_ref: answer.claim, verdict: "landed" }]);
-    expect(settled.answered_by).toEqual({ kind: "word", person_ref: ownerRef });
-    expect(settled.reason).toBe("gate.claim.settle.approved");
-    const predictionHistory = (await owner.call("vault.claims.history", { claim_ref: answer.claim })).value;
+    // The prediction stays Proposed and readable in the asker's own lane for binding.
+    const predictionHistory = (await asker.client.call("vault.claims.history", {
+      claim_ref: answer.claim,
+    })).value;
     expect(predictionHistory).toHaveLength(1);
-    expect(predictionHistory[0]).toMatchObject({ claim_ref: answer.claim, predicate: "judgment.answer",
-      subject_ref: unitId, approval: "approved", lifecycle: "active" });
+    expect(predictionHistory[0]).toMatchObject({
+      claim_ref: answer.claim,
+      predicate: "judgment.answer",
+      subject_ref: unitId,
+      approval: "proposed",
+      lifecycle: "active",
+    });
     // The later fact reuses the answer's own public timestamp: inside its horizon, no clock of ours.
     const factId = judg03EntityId("outcome-fact");
     const factInput = {
@@ -2189,12 +2213,20 @@ async function judg07Refusal<V extends FacadeVerb>(
     outcome: { refused: { code } } });
   return receiptRef;
 }
-async function judg07Failure(action: () => Promise<unknown>, status: number, code: string): Promise<PublicHttpError> {
+async function judg07Failure(engine: EngineFixture, verb: FacadeVerb, action: () => Promise<unknown>, status: number, code: string): Promise<PublicHttpError> {
   try { await action(); } catch (error) {
     if (!(error instanceof PublicHttpError)) throw error;
     expect(error.reply.status).toBe(status);
     expect(error.error?.code).toBe(code);
-    expect(error.error?.receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+    const receiptRef = error.error?.receiptRef;
+    expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+    if (typeof receiptRef !== "string") throw new Error(`Missing ${verb} refusal receipt`);
+    expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+    const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+      value => value !== null, { label: `judg07 ${verb} failure receipt` });
+    expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+      verb: `v1/core/facade/${verb}`, actor_ref: engine.pairedActor.principalRef,
+      actor_class: "human", outcome: { refused: { code } } });
     return error;
   }
   throw new Error(`Expected HTTP ${status} ${code}`);
@@ -2290,6 +2322,14 @@ async function judg07ReferenceGone(client: PublicHttpClient, reference: string, 
     const code = error.error?.code;
     if (code === undefined) throw error;
     expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(code);
+    const receiptRef = error.error?.receiptRef;
+    expect(receiptRef).toEqual(expect.stringMatching(/^call:[a-f0-9]{32}$/));
+    if (typeof receiptRef !== "string") throw new Error("Missing erased-reference refusal receipt");
+    expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+    const receipt = await awaitPublic(() => client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+      value => value !== null, { label: "judg07 erased-reference refusal receipt" });
+    expect(receipt).toMatchObject({ receipt_ref: receiptRef, transport: "http_facade",
+      verb: "v1/core/facade/vault.refs.resolve", outcome: { refused: { code } } });
   }
 }
 
@@ -2299,8 +2339,9 @@ async function judg07ReferenceGone(client: PublicHttpClient, reference: string, 
  * prospective query over the witnessed source turn; the hint wording finds
  * the source claim through bm25, and the result carries the original turn,
  * message, parent-verified revision and content hash with generated source.
- * Owner-confirmed erase (preview, confirm, audit, sweep, maintain) removes
- * the turn, message, claim and hint hit while the distractor stays readable.
+ * Owner-confirmed source erase (preview, confirm, audit, sweep, maintain)
+ * erases the MESSAGE and TURN and invalidates derived retrieval while the
+ * recorded claims are stale and the distractor stays readable.
  * A paired non-owner is refused on both extraction doors and erase preview,
  * each refusal carrying a readable call receipt; all state is re-read after
  * a restart. Expected red: signed MACHINE promotions land no typed hint
@@ -2309,7 +2350,7 @@ async function judg07ReferenceGone(client: PublicHttpClient, reference: string, 
  * write-authority and corroboration checks unproved. Provider-outage variants
  * are extra coverage; the final restart is this scenario's failure leg.
  */
-suite.test(test, "JUDGMENTS-07", "Extracted query wording finds its generated source claim, then confirmed source erase removes both", async () => {
+suite.test(test, "JUDGMENTS-07", "Extracted query wording finds its generated source claim, then source erase invalidates derived retrieval", async () => {
   const facts = await (await loadFixtures()).readJson<judg07Fixture>("judgments-hints");
   expect(facts.scenario).toBe("JUDGMENTS-07");
   expect(facts.source.text).toBe("I left my Brompton beside rack seventeen.");
@@ -2399,7 +2440,7 @@ enabled = false
       { label: "judg07 distractor text indexed" });
     expect(telescope.value.some(hit => hit.short_id === sourceTurn.messageShort || hit.record?.id === sourceTurn.messageId)).toBe(false);
     expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
-    await judg07Failure(() => owner.call("vault.memory.signal_extraction", { turn_refs: [] }), 400, "BAD_REQUEST");
+    await judg07Failure(engine, "vault.memory.signal_extraction", () => owner.call("vault.memory.signal_extraction", { turn_refs: [] }), 400, "BAD_REQUEST");
     const refusals: string[] = [];
     refusals.push(await judg07Refusal(engine, agent.client, judg07AgentId,
       "vault.memory.signal_extraction", { turn_refs: [sourceTurn.turnId] }, 403, "FORBIDDEN"));
@@ -2475,54 +2516,79 @@ enabled = false
     expect(persons.some(row => row.name === judg07Speaker)).toBe(true);
     for (const row of persons) expect(/bicycle|parking|location/i.test(row.name)).toBe(false);
     const claimRefs = [...new Set(listed.value.map(row => row.claim_ref))];
-    const claimShorts = [...new Set(listed.value.map(row => row.short_ref).filter((ref): ref is string => typeof ref === "string"))];
     // Captured now: the typed-hint assertion runs last so one run exercises
     // the erase, sweep and restart legs even while the engine folds hints.
     const hintRows = meso.prospective_queries;
-    const first = await judg07Erase(owner, sourceTurn.turnId);
-    const redaction = first.receipt_ref;
-    if (!redaction) throw new Error("Erase has no redaction receipt");
-    const erasedIds = [sourceTurn.turnId, sourceTurn.messageId, ...claimRefs];
-    for (const entity_ref of erasedIds) {
+    const erasedSources = [sourceTurn.messageId, sourceTurn.turnId];
+    const sourceErases: { record: string; receiptRef: string }[] = [];
+    for (const record of erasedSources) {
+      const erased = await judg07Erase(owner, record);
+      if (!erased.receipt_ref) throw new Error("Source erase has no redaction receipt");
+      sourceErases.push({ record, receiptRef: erased.receipt_ref });
+    }
+    for (const entity_ref of erasedSources) {
       expect((await owner.call("vault.get", { entity_ref })).value).toBeNull();
     }
-    expect((await owner.call("vault.hydrate", { refs: erasedIds })).value).toEqual([]);
+    expect((await owner.call("vault.hydrate", { refs: erasedSources })).value).toEqual([]);
     expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
     expect((await owner.call("vault.search.bm25", { query: "Brompton", limit: 10 })).value).toEqual([]);
     for (const job_ref of ticket.job_refs) {
-      await judg07Failure(() => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
+      await judg07Failure(engine, "vault.memory.signal_extraction.result", () => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
     }
-    expect((await owner.call("vault.claims.list", { predicate: judg07Predicate, limit: 100 })).value).toEqual([]);
+    const recordedClaims = (await owner.call("vault.claims.list", {
+      predicate: judg07Predicate, limit: 100,
+    })).value;
+    for (const claim_ref of claimRefs) {
+      expect(recordedClaims.find(row => row.claim_ref === claim_ref)).toMatchObject({
+        claim_ref, stale: true,
+      });
+    }
     const forbidden = [facts.source.text, facts.extraction.claimText, facts.query];
-    for (const reference of claimShorts) await judg07ReferenceGone(owner, reference, forbidden);
+    for (const reference of [sourceTurn.messageShort, sourceTurn.turnShort])
+      await judg07ReferenceGone(owner, reference, forbidden);
     const distractorAfter = await owner.call("vault.search.bm25", { query: "telescope", limit: 10 });
     expect(distractorAfter.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId)).toBe(true);
     expect((await owner.call("vault.get", { entity_ref: distractorTurn.turnId })).value?.kind).toBe("TURN");
     expect((await owner.call("vault.get", { entity_ref: distractorTurn.messageId })).value?.body).toMatchObject({ content: facts.distractor.text });
-    const audit = await judg07Audit(owner, redaction, sourceTurn.turnId, forbidden);
-    const sweep = await owner.call("vault.records.erase_sweep", { receipt_ref: redaction });
-    if (!sweep || sweep.deadline_at == null || sweep.sweep_queued_at == null) {
-      throw new Error("Erase has no recorded historical-sweep deadline and queue time");
+    const sourceAudits: judg07RedactionAudit[] = [];
+    for (const { record, receiptRef } of sourceErases) {
+      sourceAudits.push(await judg07Audit(owner, receiptRef, record, forbidden));
+      const sweep = await owner.call("vault.records.erase_sweep", { receipt_ref: receiptRef });
+      if (!sweep || sweep.deadline_at == null || sweep.sweep_queued_at == null) {
+        throw new Error("Erase has no recorded historical-sweep deadline and queue time");
+      }
+      expect(sweep.deadline_at).toBeGreaterThanOrEqual(sweep.requested_at);
     }
-    expect(sweep.deadline_at).toBeGreaterThanOrEqual(sweep.requested_at);
     await judg07Sweep(engine);
     expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
     await engine.artifacts.json("judg07-extraction-erase.json", { claim: meso.claim.claim_ref,
-      shortRef, jobs: ticket.job_refs, erase: redaction, auditAt: audit.requested_at, hintRows: hintRows.length });
+      shortRef, jobs: ticket.job_refs,
+      erases: sourceErases.map((erased, index) => ({ ...erased, auditAt: sourceAudits[index]!.requested_at })),
+      hintRows: hintRows.length });
     await engine.restart();
     expect((await owner.call("vault.search.bm25", { query: facts.query, limit: 10 })).value).toEqual([]);
     const distractorRestarted = await owner.call("vault.search.bm25", { query: "telescope", limit: 10 });
     expect(distractorRestarted.value.some(hit => hit.short_id === distractorTurn.messageShort || hit.record?.id === distractorTurn.messageId)).toBe(true);
     expect((await owner.call("vault.get", { entity_ref: distractorTurn.turnId })).value?.kind).toBe("TURN");
     for (const job_ref of ticket.job_refs) {
-      await judg07Failure(() => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
+      await judg07Failure(engine, "vault.memory.signal_extraction.result", () => owner.call("vault.memory.signal_extraction.result", { job_ref }), 404, "NOT_FOUND");
     }
     for (const receipt_ref of refusals) {
       expect(await owner.call("vault.receipts.get", { receipt_ref })).toMatchObject({
         receipt_ref, actor_class: "agent", outcome: { refused: { code: "FORBIDDEN" } },
       });
     }
-    expect((await owner.call("vault.records.erase_sweep", { receipt_ref: redaction }))?.receipt_ref).toBe(redaction);
+    for (const { record, receiptRef } of sourceErases) {
+      expect((await owner.call("vault.get", { entity_ref: record })).value).toBeNull();
+      await judg07Audit(owner, receiptRef, record, forbidden);
+      expect((await owner.call("vault.records.erase_sweep", { receipt_ref: receiptRef }))?.receipt_ref).toBe(receiptRef);
+    }
+    expect((await owner.call("vault.hydrate", { refs: erasedSources })).value).toEqual([]);
+    const restartedClaims = (await owner.call("vault.claims.list", { predicate: judg07Predicate, limit: 100 })).value;
+    for (const claim_ref of claimRefs)
+      expect(restartedClaims.find(row => row.claim_ref === claim_ref)).toMatchObject({ claim_ref, stale: true });
+    for (const reference of [sourceTurn.messageShort, sourceTurn.turnShort])
+      await judg07ReferenceGone(owner, reference, forbidden);
     // D1, expected red on today's tree: the promise is typed hint rows, not
     // merely folded birth text. Kept whole; the report carries the defect.
     expect(hintRows).toHaveLength(1);
