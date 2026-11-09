@@ -127024,6 +127024,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/off_record_room_paths.rs",
+     "purpose": "The participants' off-record room routes (`/v1/core/off-record`, ARCH-0052 D5): each route takes its verb…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/openai_proxy_paths.rs",
      "purpose": "The OpenAI-compatible memory proxy publishes the verb table's exact DTOs",
      "surface": {
@@ -141295,6 +141305,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/openapi_off_record_rooms.rs",
+     "purpose": "The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -141336,7 +141354,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 765,
+     "files": 766,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -141877,8 +141895,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1825,
-   "test_files": 182
+   "source_files": 1826,
+   "test_files": 183
   },
   "oneiron-skill-attribution": {
    "files": [
