@@ -51,13 +51,14 @@ fn config() -> VaultConfig {
 
 /// One machine: its vault and its live window manager.
 struct Machine {
+    name: &'static str,
     vault: Arc<Vault>,
     manager: Arc<WindowManager>,
     _dir: tempfile::TempDir,
 }
 
 impl Machine {
-    fn open(user: &str) -> Self {
+    fn open(user: &'static str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), config()).unwrap());
         let manager = Arc::new(WindowManager::new(
@@ -66,6 +67,7 @@ impl Machine {
             user,
         ));
         Self {
+            name: user,
             vault,
             manager,
             _dir: dir,
@@ -75,7 +77,7 @@ impl Machine {
     fn doc(&self) -> LoroDoc {
         self.manager
             .open_window(&WindowKey::new(WINDOW))
-            .unwrap()
+            .unwrap_or_else(|error| panic!("{}: the window does not open: {error:?}", self.name))
             .doc
             .clone()
     }
@@ -212,4 +214,38 @@ fn the_home_admits_a_wake_another_machine_recorded_with_no_dreamer_pass() {
     // A second pass on the home decides nothing new: one decision.
     a.housekeeping();
     assert_eq!(doors::wake_decisions_here(&a.vault, turn, registration).unwrap(), 1);
+}
+
+/// A window opens over a TURN learned in its month, with no turn program
+/// anywhere: the open's reverse pass reads the TURN without a second read
+/// transaction on its thread.
+#[test]
+fn a_window_opens_over_a_turn_learned_in_its_month() {
+    let machine = Machine::open("machine-probe");
+    put_turn(&machine);
+    machine
+        .manager
+        .open_window(&WindowKey::new(WINDOW))
+        .expect("the window opens over its TURN");
+}
+
+/// A window opens over a PERSON learned in its month.
+#[test]
+fn a_window_opens_over_a_person_learned_in_its_month() {
+    let machine = Machine::open("machine-probe-person");
+    let person = EntityId::from_bytes([0x63; 16]).unwrap();
+    machine
+        .vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            b"someone",
+        )
+        .unwrap();
+    machine
+        .manager
+        .open_window(&WindowKey::new(WINDOW))
+        .expect("the window opens over its PERSON");
 }
