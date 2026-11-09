@@ -17,6 +17,8 @@ pub mod observation;
 mod outage_due;
 mod owner_doors;
 mod program;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::test_hooks as turn_program_test_hooks;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
