@@ -199,7 +199,7 @@ pub(super) fn anchors(
 /// The covered certificates serve as those roots as they are, never copied
 /// (FIX 12260). Memory its decodes were refused ends it as itself, never as
 /// a failed or malformed DSS.
-fn classify_missing_material_root(
+pub(super) fn classify_missing_material_root(
     doc: &Document,
     covered: &[EmbeddedCert],
     at: u64,
