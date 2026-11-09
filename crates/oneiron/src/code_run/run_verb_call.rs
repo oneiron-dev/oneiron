@@ -18,7 +18,7 @@ use serde_json::Value;
 /// effect and gate the row had as a hand-written import. Every row has its
 /// arm here, so a run row is never served undecoded, and the component
 /// bridge and the action registry decode it the same way.
-pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
+pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
