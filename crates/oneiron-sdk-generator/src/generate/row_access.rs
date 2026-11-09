@@ -194,3 +194,38 @@ pub(crate) fn repr_list(items: &[&str]) -> String {
             .join(", ")
     )
 }
+
+/// `value + '...'` with a `str` on the right: the value's text, or Python's `TypeError` for a value that is no
+/// `str` (a list's own concatenation message, any other type's unsupported operand).
+pub(crate) fn add_str(value: &Value) -> Result<&str, GenerateError> {
+    match value {
+        Value::Str(text) => Ok(text),
+        Value::List(_) => Err(GenerateError::type_error(
+            "can only concatenate list (not \"str\") to list",
+        )),
+        _ => Err(GenerateError::type_error(format!(
+            "unsupported operand type(s) for +: '{}' and 'str'",
+            value.type_name()
+        ))),
+    }
+}
+
+/// `value[0]`: a list's first item, a string's first character, or Python's error for an empty one or a dict.
+pub(crate) fn first(value: &Value) -> Result<Value, GenerateError> {
+    match value {
+        Value::List(items) => items
+            .first()
+            .cloned()
+            .ok_or_else(|| GenerateError::index("list index out of range")),
+        Value::Str(text) => text
+            .chars()
+            .next()
+            .map(|c| Value::Str(c.to_string()))
+            .ok_or_else(|| GenerateError::index("string index out of range")),
+        Value::Dict(_) => Err(GenerateError::exception("KeyError", "0")),
+        _ => Err(GenerateError::type_error(format!(
+            "'{}' object is not subscriptable",
+            value.type_name()
+        ))),
+    }
+}
