@@ -13,19 +13,19 @@
 mod fixture;
 
 use fixture::{
-    KIND, WORKER, annotation_held_row, at, claim, claimed, enqueued, last_note, open, person, read,
+    KIND, WORKER, annotation_held_row, claim, claimed, enqueued, last_note, open, person, read,
     resume, unix_now,
 };
+use oneiron::EdgeActorClass;
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease, BudgetHoldState};
 use oneiron::attempt_queue::{
     AttemptInterventionEffect, AttemptQueue, AttemptResumePoint, AttemptState, ClaimOutcome,
     EnqueueAttempt, PauseKind, RunState,
 };
-use oneiron::registry::ENTITY_TYPE_TASK;
+use oneiron::task_verb::TaskCreateSpec;
 use oneiron::wave_orchestration::{
     PlannedTask, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION, WaveApplyOutcome, WavePlan,
 };
-use oneiron::{EdgeActorClass, EntityId};
 
 /// The audit's case: a person resumes a run the spend cap parked. The plan
 /// hold reads Resumed under that person and owes no held Ask any more.
@@ -71,12 +71,6 @@ fn raw_resume_of_budget_hold_does_not_diverge_hold_record() {
     let resumed = resume(&queue, row.id, &operator, now + 3);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
     assert_eq!(resumed.record.state, AttemptState::Queued);
-    assert_eq!(
-        last_note(&resumed.record),
-        Some("override of the budget hold"),
-        "the Resume event names the override"
-    );
-
     let hold = dispatcher
         .plan_hold(row.id)
         .expect("plan hold")
@@ -96,6 +90,11 @@ fn raw_resume_of_budget_hold_does_not_diverge_hold_record() {
             .is_none(),
         "no held Ask goes out after the override"
     );
+    assert_eq!(
+        last_note(&resumed.record),
+        Some("override of the budget hold"),
+        "the Resume event names the override"
+    );
 }
 
 /// A person resumes a comment's task that the claim parked while its comment
@@ -108,15 +107,15 @@ fn raw_resume_of_annotation_hold_is_not_parked_again() {
     let (row, actor_id) = annotation_held_row(&vault, &queue, now);
     let resumed = resume(&queue, row.id, &actor_id.to_hex(), now + 6);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
-    assert_eq!(
-        last_note(&resumed.record),
-        Some("override of the annotation hold")
-    );
     let leased = claim(&queue, KIND, now + 7);
     assert!(
         matches!(&leased, ClaimOutcome::Claimed(record) if record.id == row.id),
         "the released row is leased, not parked again: {:?}",
         RunState::of(&read(&queue, row.id))
+    );
+    assert_eq!(
+        last_note(&resumed.record),
+        Some("override of the annotation hold")
     );
 }
 
@@ -129,10 +128,17 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
     let queue = AttemptQueue::new(&vault);
     let now = unix_now();
     let actor = person(&vault, now);
-    let epic = EntityId::now();
-    vault
-        .put_entity(&epic, ENTITY_TYPE_TASK, at(now), now, b"epic")
-        .expect("put epic");
+    let epic = vault
+        .memory(actor, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("split the epic"),
+            Some("epic".into()),
+            None,
+            Some(now),
+        ))
+        .expect("the epic is created")
+        .task_ref
+        .expect("open task effects");
     let plan = || WavePlan {
         schema_version: WAVE_PLAN_SCHEMA_VERSION,
         plan_ref: "run-hold-plan".to_owned(),
@@ -169,10 +175,6 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
 
     let resumed = resume(&queue, row.id, &actor.to_hex(), now + 3);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
-    assert_eq!(
-        last_note(&resumed.record),
-        Some("override of the fan-out hold")
-    );
 
     let second = claimed(claim(&queue, WAVE_PLAN_ATTEMPT_KIND, now + 4));
     assert_eq!(second.id, row.id);
@@ -187,5 +189,9 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
         read(&queue, row.id).state,
         AttemptState::Completed,
         "the released planner completes instead of parking again"
+    );
+    assert_eq!(
+        last_note(&resumed.record),
+        Some("override of the fan-out hold")
     );
 }
