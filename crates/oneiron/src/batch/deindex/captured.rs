@@ -84,6 +84,8 @@ impl CapturedEntityDeindex {
         TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
         SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
         crate::store::claim_projection::remove_claim_projection_index(store, wtxn, *id)?;
+        // The change log's delete names no type; a change feed judges the withdrawal by it.
+        crate::feeds::remember_withdrawn_type_in_txn(store, wtxn, id, entity_type)?;
         store.port_remove_entity_row(wtxn, id)?;
         crate::ports::audit_mutation_in_txn(
             store,
