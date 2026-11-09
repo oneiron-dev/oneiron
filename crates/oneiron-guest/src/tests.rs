@@ -31,6 +31,22 @@ fn get(channel: &mut impl Read) -> Value {
     serde_json::from_slice(&bytes).expect("guest JSON")
 }
 
+/// The guest's next frame that is not streamed output. A program's output
+/// (its finish value, console and store writes) streams to the host as
+/// output frames while it runs (#5998); the host takes each with a receipt.
+fn next_after_output(host: &mut UnixStream) -> Value {
+    loop {
+        let frame = get(host);
+        if !matches!(
+            frame["type"].as_str(),
+            Some("output_text" | "output_bytes" | "store_bytes")
+        ) {
+            return frame;
+        }
+        put(host, json!({"type":"receipt", "accepted":true}));
+    }
+}
+
 fn start(length: usize) -> Value {
     json!({"type":"start", "version":GUEST_PROTOCOL_VERSION, "vm_id":"localtest-1", "tier":"foreign",
         "pids":2, "component_bytes":length, "source":""})
@@ -354,7 +370,7 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
     }
     put(&mut host, json!({"type":"ready"}));
     assert_eq!(
-        get(&mut host),
+        next_after_output(&mut host),
         json!({"type":"delete", "path":"/mnt/workspace/removed"})
     );
     put(&mut host, json!({"type":"receipt", "accepted":true}));
@@ -363,6 +379,8 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
         json!({"type":"rename", "from":"/mnt/workspace/moved", "to":"/mnt/workspace/destination"})
     );
     put(&mut host, json!({"type":"receipt", "accepted":true}));
+    // The step's result frame (#1670) comes before the finish.
+    assert_eq!(get(&mut host)["type"], "step_result");
     assert_eq!(get(&mut host), json!({"type":"finish", "status":0}));
     worker.join().expect("guest thread").expect("guest success");
     assert_eq!(fs::read(root.join("removed")).expect("seeded file"), b"old");
@@ -404,7 +422,10 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
     put(&mut host, json!({"type":"file_chunk", "bytes":b"old"}));
     put(&mut host, json!({"type":"file_close"}));
     put(&mut host, json!({"type":"ready"}));
-    assert_eq!(get(&mut host), json!({"type":"finish", "status":1}));
+    assert_eq!(
+        next_after_output(&mut host),
+        json!({"type":"finish", "status":1})
+    );
     assert!(worker.join().expect("guest thread").is_err());
     assert_eq!(fs::read(root.join("old")).expect("seeded file"), b"old");
 }
