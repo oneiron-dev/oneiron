@@ -248,4 +248,3 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
     );
     Ok(())
 }
-

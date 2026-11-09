@@ -448,4 +448,3 @@ fn gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement() {
         EventOutcome::Held
     );
 }
-

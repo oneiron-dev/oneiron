@@ -84,6 +84,8 @@ fn answer(yes: bool, probability: f64, think: Option<f64>) -> ProviderDecision {
             probability,
         }),
         person: None,
+        served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -210,11 +212,18 @@ impl Ladder {
             big: None,
             human: &self.queue,
             human_pin: pin(DecisionRung::Human),
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
         }
         .run(
             question,
             EntityId::now(),
             &[],
+            // The call's bounded state: these questions read none.
+            &serde_json::json!({}),
             DecisionDial {
                 first: DecisionRung::SystemOne,
                 ceiling,
@@ -618,6 +627,8 @@ fn at_seat(
             ..question()
         },
         state: serde_json::json!({ "note": "bounded" }),
+        images: Vec::new(),
+        audio: Vec::new(),
         score_levels: Vec::new(),
         posture: HostingPrivacyPosture::Hosted,
         remote_opt_in: false,

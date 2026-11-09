@@ -47,6 +47,9 @@ impl DecisionProvider for HostHead {
             answer: self.answer.clone(),
             probability,
             paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
         })
     }
 }
@@ -58,7 +61,13 @@ impl HumanDecisionQueue for NoPerson {
     }
 }
 
-fn decisions(local: Option<&dyn DecisionProvider>, principal: EntityId) -> DetectorDecisions<'_> {
+/// The host's decision path: `local` on the Local rung, no person, and the
+/// state the host built from the window (here an empty object).
+fn decisions<'a>(
+    local: Option<&'a dyn DecisionProvider>,
+    principal: EntityId,
+    state: &'a serde_json::Value,
+) -> DetectorDecisions<'a> {
     DetectorDecisions {
         ladder: DecisionLadder {
             rule: None,
@@ -72,10 +81,16 @@ fn decisions(local: Option<&dyn DecisionProvider>, principal: EntityId) -> Detec
                 model: "host-queue".into(),
                 version: "1".into(),
             },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
         },
         principal,
         dial: DETECTOR_DIAL,
         bands: DecisionBandPolicy::default(),
+        state,
         budget: std::time::Duration::from_secs(3600),
     }
 }
@@ -114,12 +129,13 @@ fn an_unanswered_telemetry_question_fails_like_a_failed_judge() -> Result<()> {
     let principal = EntityId::now();
     let policy = policy();
 
+    let state = serde_json::json!({});
     let abstains = HostHead::new(DecisionAnswer::Abstain);
-    let host = decisions(Some(&abstains), principal);
+    let host = decisions(Some(&abstains), principal, &state);
     let abstained = vault.judge_retrieval_trace(&policy, &host, std::slice::from_ref(&run));
     assert!(matches!(abstained, Err(Error::InvalidConfig(_))));
 
-    let no_slot = vault.judge_retrieval_trace(&policy, &decisions(None, principal), &[run]);
+    let no_slot = vault.judge_retrieval_trace(&policy, &decisions(None, principal, &state), &[run]);
     assert!(matches!(no_slot, Err(Error::InvalidConfig(_))));
     Ok(())
 }

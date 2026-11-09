@@ -45,6 +45,22 @@ use oneiron::{
 };
 use rmpv::Value;
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 /// The counterparty every send in this file addresses.
 const COUNTERPARTY: &str = "mika@example.com";
 const CHANNEL: &str = "email";
@@ -126,7 +142,8 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
         .unwrap();
     vault
         .mint_standing_outbound_grant(
-            &test_id(SEND_GRANT_SEED),
+            &owner_proof(&vault),
+            test_id(SEND_GRANT_SEED),
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -136,7 +153,6 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
                     verb_class: VERB.to_owned(),
                 },
             },
-            1,
         )
         .unwrap();
     (dir, vault, actor)
@@ -275,6 +291,7 @@ fn schedule(
             trigger_ref: "session:opt-out-oracle".to_owned(),
             job_ref: None,
             occurred_at: Some(1_000),
+            mention: None,
         })
         .unwrap()
 }

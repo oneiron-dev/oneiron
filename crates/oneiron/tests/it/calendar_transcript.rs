@@ -25,6 +25,19 @@ fn file_drop_actor(vault: &Vault, at: u64) -> EntityId {
     seed_file_drop_machine_fixture(vault, at).unwrap()
 }
 
+/// The sitting the file-drop import opens and reads: its deterministic MACHINE
+/// actor on this install (a session is keyed by actor and machine). The
+/// actor's id is derived as the importer derives it; nothing is seeded.
+fn file_drop_session_key(vault: &Vault) -> oneiron::session_lifecycle::SessionKey {
+    let actor = EntityId::from_bytes(
+        sha2::Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1")[..16]
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
+    vault.local_session_key(actor).unwrap()
+}
+
 fn uploaded_blob(vault: &Vault, at: u64) -> EntityId {
     let blob = EntityId::now();
     vault
@@ -121,7 +134,9 @@ fn meso_partition_attempt_count(vault: &Vault) -> usize {
 #[test]
 fn open_interactive_session_causes_retry_without_partial_turn_writes() {
     let (_dir, vault) = vault();
-    vault.mint_session(8).unwrap();
+    vault
+        .mint_session(file_drop_session_key(&vault), 8)
+        .unwrap();
     let outcome = ingest_file_drop_transcript(
         &vault,
         TranscriptFileDropRequest {
@@ -283,7 +298,12 @@ fn injected_failure_rolls_back_session_turns_close_and_wake() {
     )
     .expect_err("injected failure must abort the outer transaction");
     assert!(matches!(err, oneiron::Error::InvariantViolation(_)));
-    assert!(vault.open_session().unwrap().is_none());
+    assert!(
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         vault
             .entities_by_type(oneiron::registry::ENTITY_TYPE_SESSION)
@@ -304,7 +324,10 @@ fn injected_failure_rolls_back_session_turns_close_and_wake() {
         "close+wake queue writes roll back"
     );
     assert!(
-        vault.open_session().unwrap().is_none(),
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none(),
         "lifecycle open-session state rolls back"
     );
 }
@@ -343,4 +366,3 @@ fn raw_blob_is_retained_and_calendar_adapter_does_not_rewrite_blob_storage() {
         before_bytes
     );
 }
-

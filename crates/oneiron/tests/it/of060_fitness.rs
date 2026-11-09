@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use oneiron::{
     code_run::SelfEffect, code_sandbox::SANDBOX_WIT_WORLD_NAME,
     code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxGuestTier,
-    code_sandbox::SandboxImportClass, task_verb::sdk::RunVerb,
+    code_sandbox::SandboxImportClass, code_sandbox::SandboxLinkedImportEffects,
+    task_verb::sdk::RunVerb,
 };
 
 // Which FILES count as production is decided once, in the shared scanner
@@ -412,4 +413,3 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
         }
     }
 }
-
