@@ -107,4 +107,3 @@ fn body(text: &str) -> Option<(&str, u32, &str)> {
     let (code, message) = rest.split_once(": ")?;
     Some((category, code.parse().ok()?, message))
 }
-

@@ -592,7 +592,10 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
 
     let witnessed = FirecrawlRenderer::new(client.clone(), &format!("{base}/with-final"))
         .expect("endpoint")
-        .render("https://request.example/page", &RenderContext::single_page())
+        .render(
+            "https://request.example/page",
+            &RenderContext::single_page(),
+        )
         .expect("envelope with distinct canonical and final identities");
     assert_eq!(
         witnessed.canonical_url, "https://canonical.example/page",
@@ -1142,11 +1145,7 @@ fn assert_no_userinfo(haystack: &str, context: &str) {
 struct UnreachableHeadless;
 
 impl HeadlessRenderer for UnreachableHeadless {
-    fn render_html(
-        &self,
-        url: &str,
-        _context: &RenderContext,
-    ) -> RendererResult<HeadlessDocument> {
+    fn render_html(&self, url: &str, _context: &RenderContext) -> RendererResult<HeadlessDocument> {
         panic!("the browser boundary was reached with {url:?}");
     }
 }
@@ -1474,7 +1473,10 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     // 2. The send boundary, reached by redirecting onto a refused loopback port
     //    so the error is produced while connecting rather than after a status.
     let send_error = renderer
-        .render(&format!("{origin}/refused-redirect"), &RenderContext::single_page())
+        .render(
+            &format!("{origin}/refused-redirect"),
+            &RenderContext::single_page(),
+        )
         .expect_err("the redirected request cannot connect");
     assert_eq!(send_error.kind, RendererErrorKind::Transport);
     assert_no_redirect_credential(&send_error.message, "the native GET send error");
@@ -1677,7 +1679,10 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     let renderer = NativeReadabilityRenderer::new(single_hop());
 
     let latin = renderer
-        .render(&format!("{base}/windows-1252"), &RenderContext::single_page())
+        .render(
+            &format!("{base}/windows-1252"),
+            &RenderContext::single_page(),
+        )
         .expect("a declared legacy charset decodes");
     assert!(
         latin.title.contains("Café"),
@@ -1733,7 +1738,10 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     // declared charset. windows-1252 accepts every byte, so honoring the decoy
     // would silently mojibake the UTF-8 bytes instead of failing closed.
     let decoy = renderer
-        .render(&format!("{base}/quoted-decoy"), &RenderContext::single_page())
+        .render(
+            &format!("{base}/quoted-decoy"),
+            &RenderContext::single_page(),
+        )
         .expect("the real top-level charset parameter decodes");
     assert!(
         decoy.title.contains("Café") && decoy.markdown.contains("café"),
@@ -1748,7 +1756,10 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     // The streaming ceiling still runs first, and still fails closed.
     let capped = renderer
         .with_max_response_bytes(NonZeroUsize::new(64).expect("non-zero ceiling"))
-        .render(&format!("{base}/windows-1252"), &RenderContext::single_page())
+        .render(
+            &format!("{base}/windows-1252"),
+            &RenderContext::single_page(),
+        )
         .expect_err("the byte ceiling is enforced before anything is decoded");
     assert_eq!(capped.kind, RendererErrorKind::InvalidResponse);
     assert!(
@@ -1917,4 +1928,3 @@ fn fetch_result_decoding_keeps_the_field_doors_closed() {
 // ---------------------------------------------------------------------------
 // Peer-controlled link cardinality
 // ---------------------------------------------------------------------------
-

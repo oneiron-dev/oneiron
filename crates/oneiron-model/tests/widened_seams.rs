@@ -145,4 +145,3 @@ fn metric_tier_check_refuses_foreign_versions_and_mismatched_reports() {
         );
     }
 }
-

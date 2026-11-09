@@ -82,4 +82,3 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
 
     position
 }
-

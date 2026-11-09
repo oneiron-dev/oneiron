@@ -428,4 +428,3 @@ pub enum DiscoverError {
         source: korean::DictLoadError,
     },
 }
-

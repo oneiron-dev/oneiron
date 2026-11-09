@@ -198,4 +198,3 @@ pub fn normalize_with_offset_map<'a>(
         },
     }
 }
-

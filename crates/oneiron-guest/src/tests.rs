@@ -242,7 +242,11 @@ fn descriptor_workspace_refuses_symlinks_hardlinks_and_special_files() {
     assert!(workspace.read("/mnt/workspace/escape/secret").is_err());
     // A write lands only by create_seed since #5006 (16349c2258d): it cannot
     // follow the planted symlink out of the workspace either.
-    assert!(workspace.create_seed("/mnt/workspace/escape/secret").is_err());
+    assert!(
+        workspace
+            .create_seed("/mnt/workspace/escape/secret")
+            .is_err()
+    );
     assert!(workspace.snapshot().is_err());
     fs::remove_file(root.join("escape")).expect("remove symlink");
     fs::hard_link(outside.join("secret"), root.join("linked")).expect("hardlink fixture");
@@ -271,7 +275,11 @@ fn descriptor_walk_refuses_symlink_ancestors_and_conflicting_tree() {
     // Seeding streams one file at a time since #5006 (16349c2258d): the file
     // `a` lands, and the conflicting `a/b` is refused at the descriptor walk
     // and writes nothing.
-    drop(workspace.create_seed("/mnt/workspace/a").expect("the first file"));
+    drop(
+        workspace
+            .create_seed("/mnt/workspace/a")
+            .expect("the first file"),
+    );
     assert!(workspace.create_seed("/mnt/workspace/a/b").is_err());
     assert_eq!(
         workspace.snapshot().expect("the first file only"),

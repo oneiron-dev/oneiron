@@ -33,8 +33,9 @@ enum V1CtlResponse {
     },
 }
 
-/// A v3 vault's `Ping` (c66727bf2a7, #3266): `readiness` and the
-/// `vm_outbox_companion` slot are required; every build-floor field absent.
+/// A v3 vault's `Ping`: `readiness` is required (2f7f20393ac) and so is the
+/// `vm_outbox_companion` key (6653544016b, #5236); every build-floor field
+/// absent.
 fn ping_v3() -> CtlResponse {
     CtlResponse::Ping {
         ok: true,
@@ -65,7 +66,8 @@ fn ctl_response_fixtures() -> Vec<(CtlResponse, &'static str)> {
                 quiescent: false,
                 ledger: LedgerReportHead {
                     rev: 7,
-                    report_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                    report_digest:
+                        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
                     total: 0,
                     artifact_origins_total: 0,
                 },
@@ -166,8 +168,8 @@ fn ctl_response_fixtures() -> Vec<(CtlResponse, &'static str)> {
 #[test]
 fn reap_flow_byte_identical() {
     // A v1 conversation's requests stay byte-identical. Its replies no longer
-    // do, by ruling: contract v3 (c66727bf2a7, #3266) requires `readiness` on
-    // every Ping and keeps no reader of an older answer, and the paged ledger
+    // do, by ruling: a v3 Ping requires `readiness` (2f7f20393ac) and the
+    // `vm_outbox_companion` key (6653544016b, #5236), and the paged ledger
     // (28c9b753f6d, #3940) has prepare_reap answer `quiescent` and `ledger`.
     for request in [
         r#"{"op":"ping"}"#,
@@ -189,7 +191,7 @@ fn reap_flow_byte_identical() {
     assert_eq!(serde_json::to_string(&new_ok).unwrap(), ok);
     new_ok.validate().unwrap();
 
-    // Ruled (c66727bf2a7): a v1 Ping carries no readiness, so it is no Ping.
+    // Ruled (2f7f20393ac): a v1 Ping carries no readiness, so it is no Ping.
     let v1_ping = r#"{"ok":true,"vault":"v","pid":42,"contract_version":1}"#;
     let old_ping: V1CtlResponse = serde_json::from_str(v1_ping).unwrap();
     assert_eq!(serde_json::to_string(&old_ping).unwrap(), v1_ping);
@@ -261,8 +263,8 @@ fn ctl_version_gating() {
         (u32::MAX, true),
     ] {
         assert_eq!(supports_slim(version), supported);
-        // Since v3 (c66727bf2a7) a Ping carries `readiness` and the
-        // `vm_outbox_companion` slot; without them it is no Ping.
+        // A Ping carries `readiness` (2f7f20393ac) and the
+        // `vm_outbox_companion` key (6653544016b); without them it is no Ping.
         let wire = format!(
             r#"{{"ok":true,"vault":"v","pid":42,"contract_version":{version},"readiness":{{"state":"ready"}},"vm_outbox_companion":null}}"#
         );
