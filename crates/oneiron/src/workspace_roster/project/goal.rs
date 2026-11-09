@@ -305,16 +305,91 @@ impl Vault {
         Ok(id)
     }
 
-    /// Read the project's current goal, never the leader's instructions.
-    pub fn project_intake_goal(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
+    /// The project's current goal as `reader` may read it, never the
+    /// leader's instructions (untangle 6.6d, F4: the goal read is an
+    /// ordinary granted read with an actor). The vault's owner reads it; a
+    /// base agent reads it through its own grant and scoped read
+    /// (GOAL-PRIVACY); any other reader through a live Steward grant naming
+    /// `read`. A reader without that reads no goal: absent.
+    ///
+    /// # Errors
+    ///
+    /// A store failure; a goal claim that fails its seal.
+    pub fn project_intake_goal_as(
+        &self,
+        reader: WriteActor,
+        project_id: EntityId,
+    ) -> Result<Option<GoalRecord>> {
         let txn = self.store.env.read_txn()?;
         Ok(self
-            .project_intake_goal_in_txn(&txn, project_id)?
+            .project_intake_goal_as_in_txn(&txn, reader, project_id)?
             .map(|(_, record)| record))
     }
 
-    /// [`Self::project_intake_goal`] in the caller's snapshot, with the id of
-    /// the goal claim it read.
+    /// The project's current goal as the caller's scoped read `read` may
+    /// read it: only when that read admits the goal claim itself, not only
+    /// the project (the context board's project row, F4).
+    ///
+    /// # Errors
+    ///
+    /// A store or read failure; a goal claim that fails its seal.
+    pub fn project_intake_goal_through(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        project_id: EntityId,
+    ) -> Result<Option<GoalRecord>> {
+        let goal = {
+            let txn = self.store.env.read_txn()?;
+            self.project_intake_goal_in_txn(&txn, project_id)?
+        };
+        let Some((claim, record)) = goal else {
+            return Ok(None);
+        };
+        Ok(read.is_entity_readable(&claim)?.then_some(record))
+    }
+
+    /// [`Self::project_intake_goal_as`] in the caller's snapshot, with the
+    /// id of the goal claim it read.
+    pub(crate) fn project_intake_goal_as_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WriteActor,
+        project_id: EntityId,
+    ) -> Result<Option<(EntityId, GoalRecord)>> {
+        let Some((claim, record)) = self.project_intake_goal_in_txn(txn, project_id)? else {
+            return Ok(None);
+        };
+        let actor = reader.entity_ref();
+        if crate::federation::SystemAgent::of(actor).is_some() {
+            // Before the engine stands its grant, the agent's rows decide,
+            // as before.
+            if crate::federation::steward_grant_of_in(&self.store, txn, actor)?.is_none() {
+                return Ok(Some((claim, record)));
+            }
+            // A base agent whose grant no longer names `read`, or whose
+            // binding is gone, reads no goal: its scoped read would refuse
+            // the dead credential with an error instead.
+            if !self.system_agent_reads_live_in(txn, actor)? {
+                return Ok(None);
+            }
+            let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(
+                actor,
+                EdgeActorClass::System,
+            ))
+            .ok_or_else(|| crate::error::Error::InvalidConfig("invalid agent read key".into()))?;
+            return Ok(self
+                .scoped_read(key)
+                .entity_raw_live_in(txn, &claim)?
+                .map(|_| (claim, record)));
+        }
+        Ok(self
+            .substrate_read_allowed_in_txn(txn, reader, crate::federation::SubstrateRead::Goal)?
+            .then_some((claim, record)))
+    }
+
+    /// The project's current goal claim and record, read with no actor: for
+    /// the engine's own integrity checks (a pointer, a revision, a writer's
+    /// expected claim), never to show the goal to a caller.
     pub(crate) fn project_intake_goal_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -332,58 +407,13 @@ impl Vault {
         Ok(Some((id, record)))
     }
 
-    /// [`Self::project_intake_goal`] as the Coach reads it (untangle 6.6,
-    /// GOAL-PRIVACY).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::project_intake_goal`].
-    pub fn project_intake_goal_for_coach(
-        &self,
-        project_id: EntityId,
-    ) -> Result<Option<GoalRecord>> {
+    /// TEST-ONLY: [`Self::project_intake_goal_in_txn`] in a snapshot of its
+    /// own, without the claim id.
+    #[cfg(test)]
+    pub(crate) fn project_intake_goal(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
         let txn = self.store.env.read_txn()?;
         Ok(self
-            .project_intake_goal_for_coach_in_txn(&txn, project_id)?
+            .project_intake_goal_in_txn(&txn, project_id)?
             .map(|(_, record)| record))
-    }
-
-    /// [`Self::project_intake_goal_in_txn`] as the Coach reads it (untangle
-    /// 6.6, GOAL-PRIVACY): once a host has minted the Coach's Steward grant,
-    /// the goal claim is read through the Coach's own scoped read in the
-    /// same snapshot, so a goal it may not read (its grant narrowed off
-    /// `read`, revoked, or its binding gone) is absent. Before any mint, as
-    /// before.
-    pub(crate) fn project_intake_goal_for_coach_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        project_id: EntityId,
-    ) -> Result<Option<(EntityId, GoalRecord)>> {
-        let Some((claim, record)) = self.project_intake_goal_in_txn(txn, project_id)? else {
-            return Ok(None);
-        };
-        let coach = crate::dreamer_runner::authority::coach_actor_id()?;
-        if crate::federation::steward_grant_of_in(&self.store, txn, coach)?.is_none() {
-            return Ok(Some((claim, record)));
-        }
-        // A Coach whose grant no longer names `read`, or whose binding is
-        // gone, reads no goal: absent, as documented above. Its scoped read
-        // would refuse the dead credential with an error instead.
-        if !self.system_agent_reads_live_in(txn, coach)? {
-            return Ok(None);
-        }
-        let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(
-            coach,
-            EdgeActorClass::System,
-        ))
-        .ok_or_else(|| crate::error::Error::InvalidConfig("invalid Coach read key".into()))?;
-        if self
-            .scoped_read(key)
-            .entity_raw_live_in(txn, &claim)?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        Ok(Some((claim, record)))
     }
 }
