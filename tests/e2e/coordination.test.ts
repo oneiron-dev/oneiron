@@ -227,6 +227,7 @@ suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an ag
   if (!sourceOne || !sourceTwo) throw new Error("COORDINATION-01 needs two source messages");
   const providers = await ScriptedProviders.start({ id: "coordination-01-projects", origins: ["decider", "drafter"], steps: [] });
   const engine = await EngineFixture.start({ id: "COORDINATION-01", profile, serverConfig: coordination01Models(providers) });
+  let failure: unknown;
   try {
     const client = engine.client;
     const owner = engine.pairedActor.principalRef;
@@ -385,11 +386,17 @@ suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an ag
     expect(coordination01Answered(providers, "decider")).toEqual(["coordination01-yes-1", "coordination01-yes-2"]);
     expect(coordination01Answered(providers, "drafter"))
       .toEqual(["coordination01-draft-1", "coordination01-draft-2", "coordination01-intake"]);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     const errors: string[] = [];
     try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
     try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
-    if (errors.length) throw new Error(`COORDINATION-01 close: ${errors.join("; ")}`);
+    // A close error never replaces the flow's own failure (it would hide, for example, which barrier
+    // timed out); it is appended to it, and thrown alone only when the flow itself passed.
+    if (errors.length && failure instanceof Error) failure.message += `; COORDINATION-01 close: ${errors.join("; ")}`;
+    else if (errors.length && failure === undefined) throw new Error(`COORDINATION-01 close: ${errors.join("; ")}`);
   }
 });
 
@@ -704,7 +711,7 @@ suite.test(test, "COORDINATION-04", "A leader's live run cannot widen its own sl
   const c = await coordination04Scenario();
   const extra = c.inputs.extraResource.key;
   const providers = await ScriptedProviders.start({ id: "coordination04-runs", origins: ["chat"], steps: [] });
-  const engine = await EngineFixture.start({ id: "COORDINATION-04", profile, serverConfig: `
+  const engine = await EngineFixture.start({ id: "COORDINATION-04", profile, serverLog: "oneiron=info", serverConfig: `
 [models.providers.coord04chat]
 kind = "local-openai-compat"
 base_url = "${providers.urls.chat}"
@@ -769,7 +776,10 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     // Barrier: the run's one step is committed, so its provider exchange is over (no Busy guard).
     await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: run }),
       view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-04 leader run commits its asking step" });
-    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+    // The whole branch first, so a failure prints its last_error.
+    const parkedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
+    expect(parkedBranch).toMatchObject({ state: "Leased" });
+    expect(parkedBranch?.state).toBe("Leased");
     expect((await coordination04Status(owner, task)).phase.phase).not.toBe("terminal");
 
     // The leader attaches to her own parked run under her own credential.
@@ -838,8 +848,10 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(firstAfter?.declined_at).toBe(declined.declined_at);
     expect(secondAfter?.state).toBe("pending");
     expect(secondAfter?.landed_attempt ?? null).toBeNull();
-    // The parked leader run kept its lease across the restart.
-    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+    // The parked leader run kept its lease across the restart (the whole branch first: its last_error).
+    const restartedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
+    expect(restartedBranch).toMatchObject({ state: "Leased" });
+    expect(restartedBranch?.state).toBe("Leased");
 
     // ---- The board approves: exactly the asked slice lands, with one child. ----
     expect(c.expected.boardApprovalAddsOnlyRequestedSlice).toBe(true);
@@ -1453,7 +1465,10 @@ async function coordination08ParkedRun(
   await awaitPublic(() => engine.client.call("vault.runs.checkpoint", { run_ref: run }),
     view => (view?.completed_steps ?? 0) >= 1, { label: `COORDINATION-08 ${label} run commits its asking step` });
   // Parked, not settled: the try keeps its lease (store.rs:1173-1174) and the TASK stays open.
-  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+  // The whole branch first, so a failure prints its last_error.
+  const parkedBranch = (await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0];
+  expect(parkedBranch).toMatchObject({ state: "Leased" });
+  expect(parkedBranch?.state).toBe("Leased");
   expect((await coordination08Status(engine.client, task)).phase.phase).not.toBe("terminal");
   return { task, run };
 }
@@ -1484,7 +1499,7 @@ async function coordination08ParkedRun(
 suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, none and full apply live, and the owner cannot refuse in her place on her live run", async () => {
   const c = await coordination08Scenario();
   const providers = await ScriptedProviders.start({ id: "coordination08-runs", origins: ["chat"], steps: [] });
-  const engine = await EngineFixture.start({ id: "COORDINATION-08", profile, serverConfig: `
+  const engine = await EngineFixture.start({ id: "COORDINATION-08", profile, serverLog: "oneiron=info", serverConfig: `
 [models.providers.coord08chat]
 kind = "local-openai-compat"
 base_url = "${providers.urls.chat}"
@@ -1608,7 +1623,9 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
       reason_ref: { kind: "turn", entity_ref: personalReason }, at: refusedAt });
     // A voice objection proceeds: her TASK stays open, and her run stays parked on its ask.
     expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
-    expect((await owner.call("vault.runs.branches.get", { task_ref: held.task })).branches[0]?.state).toBe("Leased");
+    const heldBranch = (await owner.call("vault.runs.branches.get", { task_ref: held.task })).branches[0];
+    expect(heldBranch).toMatchObject({ state: "Leased" });
+    expect(heldBranch?.state).toBe("Leased");
 
     // ---- Failure step: restart. Dials and refusal records are durable. ----
     await engine.restart();
