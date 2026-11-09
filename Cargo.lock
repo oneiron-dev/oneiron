@@ -8086,6 +8086,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "base64 0.22.1",
+ "blake3",
+ "libc",
+ "oneiron",
+ "oneiron-container",
+ "oneiron-sandbox-contract",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "wasmtime",
+]
+
+[[package]]
 name = "oneiron-android"
 version = "0.1.0"
 dependencies = [

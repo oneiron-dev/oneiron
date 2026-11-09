@@ -27,9 +27,6 @@ mod container;
 #[doc(hidden)]
 pub mod protocol;
 #[cfg(target_os = "linux")]
-#[path = "../firecracker/snapshot.rs"]
-mod snapshot;
-#[cfg(target_os = "linux")]
 pub fn refused(detail: impl Into<String>) -> crate::Error {
     backend::backend_error("isolated-guest", detail)
 }
