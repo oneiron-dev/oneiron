@@ -9,7 +9,7 @@ use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::hold_override::override_note;
-use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::lifecycle::{HoldSignal, RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptPause, AttemptRecord,
@@ -254,6 +254,39 @@ impl AttemptQueue<'_> {
         input: InterveneAttempt,
     ) -> Result<InterveneOutcome> {
         self.intervene_releasing_in_txn(wtxn, input, HoldRelease::Override)
+    }
+
+    /// [`Self::intervene_in_txn`] for a caller that is not the vault owner (a
+    /// TASK's owner, the host, an agent): its Pause or Resume of a held row
+    /// passes the table's caller-class column first
+    /// ([`RunLifecycle::caller_hold`]). `Ok(Err(signal))` refuses it, names
+    /// what the row waits on, and writes nothing. Every other intervention,
+    /// and an admitted one, runs as [`Self::intervene_in_txn`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::intervene_in_txn`].
+    pub(crate) fn intervene_as_caller_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: InterveneAttempt,
+    ) -> Result<std::result::Result<InterveneOutcome, HoldSignal>> {
+        let event = match input.kind {
+            AttemptInterventionKind::Resume => Some(RunEvent::Resume),
+            AttemptInterventionKind::Pause => Some(RunEvent::Pause {
+                pause: AttemptPause::Person,
+                by_hold_actor: false,
+            }),
+            _ => None,
+        };
+        if let Some(event) = event
+            && let Some(row) = self.get_in_write_txn(wtxn, input.id)?
+            && let Some(signal) =
+                RunLifecycle::caller_hold(RunRow::of(&row), event, placed_pause(&row, &input.actor))
+        {
+            return Ok(Err(signal));
+        }
+        Ok(Ok(self.intervene_in_txn(wtxn, input)?))
     }
 
     /// [`Self::intervene_in_txn`] for an engine hold's own release door
@@ -615,6 +648,17 @@ impl AttemptQueue<'_> {
             .put(wtxn, &ready_key, record.id.as_bytes())?;
         Ok(true)
     }
+}
+
+/// Whether `actor` placed `record`'s pause: the row's newest Pause event names
+/// it.
+fn placed_pause(record: &AttemptRecord, actor: &str) -> bool {
+    record
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == AttemptInterventionKind::Pause)
+        .is_some_and(|event| event.actor == actor)
 }
 
 /// Who resumes an engine hold (RUN-HOLD): its own release door, which writes
