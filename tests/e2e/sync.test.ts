@@ -121,10 +121,10 @@ async function sync01Facts(client: Sync01Client, predicates: readonly string[]):
 
 /* SYNC-01 — decision: WRITTEN (partial).
  * Promise: two machines of one vault, partitioned, each write; after the link
- *   heals (through a duplicated replay and a reconnect) both machines hold the
+ *   heals and reconnects both machines hold the
  *   authored note text and the authored claim set, each claim once, authored
  *   by the owner, not by a machine.
- * Doors: EngineFixture.startDevicePeer + SyncLinkProxy (cut, duplicate, heal,
+ * Doors: EngineFixture.startDevicePeer + SyncLinkProxy (cut, heal,
  *   counts, awaitSeen); on the device vault.residence.mode (all),
  *   vault.notes.read, vault.get, vault.claims.upsert / list; on the home
  *   vault.notes.create / read / edit (replace_span) / history,
@@ -136,9 +136,12 @@ async function sync01Facts(client: Sync01Client, predicates: readonly string[]):
  *   home's and only the ledger is written on both sides; two distinct paired
  *   writers (both machines carry the one owner credential); messages; the
  *   two opposite delivery orders on fresh replica pairs (one pair per case
- *   fits the 30 s flow); in-socket drop and reorder (no recovery promise).
+ *   fits the 30 s flow); a duplicated or dropped sync UPDATE (the link proxy
+ *   counts whole messages per direction across sockets, so it cannot select
+ *   an update over a session hello or a residence RPC; Sol review, 10 Nov);
+ *   in-socket drop and reorder (no recovery promise).
  */
-suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchored note edits and on a claim written on each side, once each and authored by the owner, after a partition, a duplicated replay and a reconnect", async () => {
+suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchored note edits and on a claim written on each side, once each and authored by the owner, after a partition and a reconnect", async () => {
   const scenario = await sync01Scenario();
   const { note: authored, edits, claims } = scenario.inputs;
   const [northEdit, southEdit] = edits;
@@ -193,15 +196,7 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   expect((await home.client.call("vault.claims.list", { predicate: predicates[1], limit: 10 })).value).toEqual([]);
   expect((await device.client.call("vault.claims.list", { predicate: predicates[0], limit: 10 })).value).toEqual([]);
 
-  // Fault on the rejoin: the device's first message is delivered twice. The
-  // protocol promises recovery by reconnect, not in-socket repair, so the
-  // faulted session is cut and the link healed again before any assertion.
-  const seenBefore = link.counts("to_home").seen;
-  link.duplicate("to_home", 1);
-  link.heal();
-  await link.awaitSeen("to_home", seenBefore + 1);
-  expect(link.counts("to_home").duplicated).toBe(1);
-  link.cut();
+  // The partition ends: the device reconnects through the healed link.
   link.heal();
 
   for (const side of [home.client, device.client]) {
@@ -210,13 +205,13 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
     await awaitPublic(() => sync01Facts(side, predicates), facts => facts.every(rows => rows.length === 1),
       { label: "both claims on this machine", timeoutMs: 15_000 });
   }
-  // Barrier after the replay: a later home write reaching the device orders after it.
+  // Barrier after the reconnect: a later home write reaching the device orders after it.
   await home.client.call("vault.claims.upsert", {
     predicate: "observatory.reconnect_witness", subject_ref: note.id_hex, value: "SYNC-01 reconnect witness",
     confidence: 0.9, source: "user_stated", scope,
   });
   await awaitPublic(() => device.client.call("vault.claims.list", { predicate: "observatory.reconnect_witness", limit: 10 }),
-    page => page.value.length === 1, { label: "post-replay witness on the device", timeoutMs: 15_000 });
+    page => page.value.length === 1, { label: "post-reconnect witness on the device", timeoutMs: 15_000 });
 
   const homeFacts = await sync01Facts(home.client, predicates);
   const deviceFacts = await sync01Facts(device.client, predicates);
