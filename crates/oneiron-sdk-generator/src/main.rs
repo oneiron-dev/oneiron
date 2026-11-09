@@ -23,11 +23,58 @@ fn root() -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// `--out-dir <dir>` or `--out-dir=<dir>` as the only arguments (argparse's two spellings).
-fn out_dir(args: &[String]) -> Option<&str> {
-    match args {
-        [flag, dir] if flag == "--out-dir" => Some(dir),
-        [flag] => flag.strip_prefix("--out-dir="),
+/// generate.py's option strings, argparse's `-h`/`--help` included: they decide what argparse reads as an option.
+const OPTIONS: &[&str] = &["-h", "--help", "--check", "--out-dir", "--package"];
+
+/// Whether argparse reads `arg` as an option, not as a value (Python 3.14 `ArgumentParser._parse_optional` and
+/// `_get_option_tuples` over generate.py's options, `allow_abbrev` on): then `--out-dir <arg>` has no value.
+fn is_option(arg: &str) -> bool {
+    if !arg.starts_with('-') {
+        return false;
+    }
+    if OPTIONS.contains(&arg) {
+        return true;
+    }
+    if arg.len() == 1 {
+        return false;
+    }
+    let (flag, explicit) = match arg.split_once('=') {
+        Some((flag, _)) => (flag, true),
+        None => (arg, false),
+    };
+    if explicit && OPTIONS.contains(&flag) {
+        return true;
+    }
+    // An abbreviation of an option; a short option glued to its value (`-hx`).
+    if OPTIONS.iter().any(|option| option.starts_with(flag))
+        || (!arg[1..].starts_with('-') && arg.starts_with("-h"))
+    {
+        return true;
+    }
+    // A negative number is a value: Python's `-\.?\d` (`\d` is Unicode Nd in both engines).
+    let negative = regex::Regex::new(r"\A-\.?\d").expect("a constant pattern");
+    if negative.is_match(arg) || arg.contains(' ') {
+        return false;
+    }
+    true
+}
+
+/// argparse's reading of `--out-dir` when it is the only option given: `--out-dir <dir>`, `--out-dir=<dir>`, or an
+/// abbreviation no other option shares (`--out <dir>`, `--o=<dir>`). `Some(Err(..))` is argparse's error for an
+/// `--out-dir` with no value; `None` is anything else (G4b ports the other flags and their combinations).
+fn out_dir(args: &[String]) -> Option<Result<&str, &'static str>> {
+    let (first, rest) = args.split_first()?;
+    let (flag, explicit) = match first.split_once('=') {
+        Some((flag, dir)) => (flag, Some(dir)),
+        None => (first.as_str(), None),
+    };
+    if flag.len() < 3 || !"--out-dir".starts_with(flag) {
+        return None;
+    }
+    match (explicit, rest) {
+        (Some(dir), []) => Some(Ok(dir)),
+        (None, [dir]) if !is_option(dir) => Some(Ok(dir)),
+        (None, [] | [_]) => Some(Err("argument --out-dir: expected one argument")),
         _ => None,
     }
 }
@@ -36,7 +83,12 @@ fn dispatch(args: &[String]) -> ExitCode {
     let result = match (args.first().map(String::as_str), out_dir(args)) {
         (Some("port-harness"), _) => oneiron_sdk_generator::port_harness(&args[1..]),
         // generate.py --out-dir (G2: the outputs ported so far; G4b: every flag of generate.py's main()).
-        (_, Some(dir)) => {
+        (_, Some(Err(message))) => {
+            // argparse's error: the usage, then `<prog>: error: <message>`, exit status 2.
+            eprintln!("{USAGE}\noneiron-sdk-generator: error: {message}");
+            return ExitCode::from(2);
+        }
+        (_, Some(Ok(dir))) => {
             let Some(root) = root() else {
                 eprintln!(
                     "oneiron-sdk-generator: no scripts/sdk/verbs/ in the current directory or above it"
