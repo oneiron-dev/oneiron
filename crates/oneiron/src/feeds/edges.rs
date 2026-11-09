@@ -58,7 +58,12 @@ pub(crate) fn record_edge_change_in_txn(
     target: &EntityId,
     added: bool,
 ) -> Result<()> {
-    if !source_followed_in_txn(store, txn, FeedSource::Edges)? {
+    // An end an erase fences stays out of the feed: the erase scrubbed its rows before the tear
+    // whose cascade calls here (review #6942).
+    if !source_followed_in_txn(store, txn, FeedSource::Edges)?
+        || super::erase_fenced_in_txn(store, txn, source)?
+        || super::erase_fenced_in_txn(store, txn, target)?
+    {
         return Ok(());
     }
     let sequence = next_sequence_in_txn(store, txn, EDGE_NEXT, "feed edge sequence")?;
@@ -83,7 +88,9 @@ pub(crate) fn record_redirty_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    if !source_followed_in_txn(store, txn, FeedSource::Redirty)? {
+    if !source_followed_in_txn(store, txn, FeedSource::Redirty)?
+        || super::erase_fenced_in_txn(store, txn, turn)?
+    {
         return Ok(());
     }
     let sequence = next_sequence_in_txn(store, txn, REDIRTY_NEXT, "feed redirty sequence")?;
