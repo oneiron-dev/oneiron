@@ -81,7 +81,8 @@ fn rows_dump(generator: &Generator) -> Value {
 pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     let root = super::flag(args, "--root", USAGE)?;
     let out = super::flag(args, "--out", USAGE)?;
-    let generator = Generator::new(Path::new(root))?;
+    // Python's harness stubs `facade_types.Inventory` (after its import read type_names.json).
+    let generator = Generator::rows_only(Path::new(root))?;
     let text = dumps(
         &rows_dump(&generator),
         DumpOptions {
