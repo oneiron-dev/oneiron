@@ -5,7 +5,18 @@
 )]
 use oneiron::error::Result;
 use oneiron::interlocutor::InterlocutorResolutionInput;
+use oneiron::llm::media::{AiOperation, MediaCaps};
+use oneiron::llm::run_admission::{
+    BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute, Payer,
+    RunAdmission, RunDeclaration, WireSeat, offer_id, offer_place,
+};
+use oneiron::llm::{
+    CallClass, CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
+};
 use oneiron::speculative::SpeculativeSessionConfig;
+use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
+use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{
     EntityId, Vault, VaultConfig,
     voice_cascade::{
@@ -195,17 +206,89 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
 
 /// Tiny wire peer: proves the production queue really posts banked bytes to
 /// an already-ready process and rejects a different target in its response.
+/// Where the host's worker runs in these tests: its own server, never a
+/// third party, as the reference clip is the person's raw voice.
+const WORKER_LOCALITY: ModelLocality = ModelLocality::OwnServer;
+
+/// The subject's render grant for `voice_id`, reaching the host's worker:
+/// a captured pack is banked under it and cites its event.
+fn grant_render(vault: &Vault, voice_id: &str, owner: EntityId, event_id: &str) -> Result<()> {
+    vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: event_id.into(),
+        voice_id: voice_id.into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
+        occurred_at: 1,
+        reach: WORKER_LOCALITY,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "render".into(),
+        }),
+        state: VoiceConsentState::Granted,
+    })?;
+    Ok(())
+}
+
+/// The host's rung for the worker: each render is one `ai.speech` call on
+/// it (FIX 8314), admitted under one run with room for every render here.
+fn worker_seat() -> WireSeat {
+    let model = ModelId::new(format!("local/{MODEL}@pinned-revision")).expect("worker model id");
+    let route = OfferRoute::new("voxcpm2-worker", "loopback").expect("worker route");
+    let offer = OfferBinding {
+        offer: offer_id(&model, &offer_place(WORKER_LOCALITY, route.origin())),
+        model,
+        route,
+        locality: WORKER_LOCALITY,
+        payer: Payer::Local,
+        credential_binding: None,
+        catalog_revision: None,
+        custody: KeyCustody::Keyless,
+        rates: vec![],
+        payer_person: None,
+    };
+    let envelope = CallEnvelope {
+        scope: Default::default(),
+        purpose: CallPurpose::Voice,
+        class: CallClass::BestEffort,
+        tier: TierPrecedence::for_purpose(&CallPurpose::Voice, ModelTierRef("global".into())),
+        response_format: ResponseFormat::Text,
+        locality: WORKER_LOCALITY,
+        host_keyless: false,
+        host_paid: false,
+        seat_effort: None,
+    };
+    let run = RunAdmission::new(
+        format!("voxcpm2-test:{}", EntityId::now().to_hex()),
+        RunDeclaration::undeclared(BudgetLine {
+            limit_units: 1_000_000,
+            reserve_units: 10_000,
+            unit: LeaseUnit::tokens(),
+        }),
+        None,
+        Arc::new(MemoryReceipts::default()),
+    );
+    WireSeat::new(
+        run,
+        offer,
+        envelope,
+        MediaCaps::for_operation(AiOperation::Speech),
+    )
+}
+
 #[test]
 fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     let owner = EntityId::now();
+    grant_render(&vault, "owner-voice", owner, "owner-grant")?;
     vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "owner-ref".into(),
         voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: "owner-grant".into(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -302,8 +385,19 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
             stream.write_all(&response).unwrap();
         }
     });
-    let queue = VoxCpm2HttpQueue::connect(Arc::clone(&vault), &endpoint, &"t".repeat(32))?;
-    let mut tts = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-voice", "neutral", queue)?;
+    let queue = VoxCpm2HttpQueue::connect(
+        Arc::clone(&vault),
+        &endpoint,
+        &"t".repeat(32),
+        worker_seat(),
+    )?;
+    let mut tts = VoxCpm2Adapter::new(
+        Arc::clone(&vault),
+        "owner-voice",
+        "neutral",
+        WORKER_LOCALITY,
+        queue,
+    )?;
     let generation = brain.generation;
     tts.submit(TtsCommand::Start { generation })?;
     tts.submit(TtsCommand::Text {
@@ -323,8 +417,8 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
         assert!(Instant::now() < deadline, "worker reply timed out");
         thread::yield_now();
     };
-    let pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
-    let (frame, target) = pcm.filter_pcm(&cascade).expect("active PCM");
+    let mut pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
+    let (frame, target) = pcm.next_window(&cascade)?.expect("active PCM");
     assert_eq!(frame.samples, [1, -1]);
     assert_eq!(target.fence.owner, owner);
     assert_eq!(target.warm.model, MODEL);
