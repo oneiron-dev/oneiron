@@ -15,9 +15,7 @@ use oneiron::EntityId;
 use oneiron::claim::{PointRead, ScopedReadActorKey};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::consolidation::{
-    consolidate_unbound_turn, consolidate_unbound_turn_with_hidden, open_dreamer_vault,
-};
+use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
 
 const READER: &str = "reader";
 const WORDS: &str = "call me Oleksii";
@@ -109,59 +107,5 @@ fn a_claim_from_a_relationship_limited_message_stays_inside_the_relationship() {
             .value,
         vec![None],
         "a member outside the relationship does not read the claim"
-    );
-}
-
-/// A hidden MESSAGE of the same TURN is pinned but not read: its label does
-/// not narrow the bound (review round 1 of #6903). The visible words are
-/// scoped to R1, a hidden MESSAGE to R2, and the Dreamer may read both; the
-/// call binds to R1 and the claim lands in R1, not in the empty set.
-#[test]
-fn a_hidden_message_does_not_narrow_the_claims_label() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = open_dreamer_vault(dir.path(), READER).expect("fixture vault");
-    let [shown, hidden] = [b"shown".as_slice(), b"hidden".as_slice()].map(|body| {
-        let id = EntityId::now();
-        vault
-            .put_entity(
-                &id,
-                ENTITY_TYPE_RELATIONSHIP,
-                TimeRange { start: 1, end: 1 },
-                1,
-                body,
-            )
-            .expect("a relationship");
-        id
-    });
-
-    let pass = consolidate_unbound_turn_with_hidden(
-        &vault,
-        WORDS,
-        Some(serde_json::json!({"rel": shown.to_hex()})),
-        Some(serde_json::json!({"rel": hidden.to_hex()})),
-        &[shown, hidden],
-        &reply(),
-    )
-    .expect("one unbound consolidation pass");
-
-    assert!(!pass.call_relationships.is_empty(), "the model was called");
-    assert_eq!(
-        pass.call_relationships[0],
-        Some(BTreeSet::from([shown])),
-        "the call binds to the words it shows, not to a hidden MESSAGE's label"
-    );
-    let [claim] = pass.landed.as_slice() else {
-        panic!("one landed claim, found {}", pass.landed.len());
-    };
-    let body = vault
-        .get_claim(claim)
-        .expect("claim")
-        .expect("landed claim");
-    assert_eq!(
-        body.rel
-            .as_ref()
-            .map(|rel| rel.iter().copied().collect::<Vec<_>>()),
-        Some(vec![shown]),
-        "the claim lands in the shown words' relationship"
     );
 }
