@@ -160,8 +160,9 @@ pub enum GrantMark {
 
 /// A vault whose install can carry the embedded owner's signed acts, as a
 /// serving host's: rooted under the test host, the engine's MACHINE writers
-/// provisioned, the embedded owner seeded, and this install's machine
-/// profile enrolled, so the owner's agent-grant act has a carrier.
+/// provisioned, the embedded owner seeded, an in-memory device keystore
+/// installed, and this install's machine profile enrolled, so the owner's
+/// agent-grant act has a carrier.
 ///
 /// # Errors
 ///
@@ -172,6 +173,10 @@ pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
+    // The install's machine keys come from its device keystore, as a host's.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
     Ok(vault)
 }
