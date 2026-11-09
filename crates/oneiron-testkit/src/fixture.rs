@@ -13,6 +13,12 @@
 //! [`FixtureVault::copy`] copies the closed directory into a fresh temp dir:
 //! one vault per test, never shared. The copy's clock starts where the seed's
 //! ended, so the vault's recorded time never runs backwards.
+//!
+//! What a copy guarantees: a fixture is a bare, unsealed vault with no key
+//! custody bound. Key custody lives beside a vault and its row names the
+//! vault's absolute path, so a byte copy of a custody-bound vault would read
+//! the original's keys. The build refuses a seed that leaves anything beside
+//! the vault directory. A test that needs custody binds it on its own copy.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -194,6 +200,22 @@ impl FixtureVault {
             let vault = Vault::open(staging.join(VAULT_DIR), config(&clock))?;
             seed(&vault, &clock).map_err(FixtureError::Seed)?;
         }
+        // A seed that bound key custody or a page seal left state beside the
+        // vault, and the custody row names this directory's absolute path: a
+        // byte copy would share the original's keys, not own its own.
+        let mut beside: Vec<String> = fs::read_dir(&staging)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != VAULT_DIR)
+            .collect();
+        if !beside.is_empty() {
+            beside.sort();
+            let _ = fs::remove_dir_all(&staging);
+            return Err(FixtureError::Record(format!(
+                "the seed of {name:?} left {beside:?} beside the vault (key custody or a page seal); a copy of it \
+                 would share those keys. Seed without protected publication, or build per test."
+            )));
+        }
         let ended_at = clock.now();
         fs::write(
             staging.join(RECORD_FILE),
@@ -352,6 +374,15 @@ impl VaultCopy {
     /// The engine refuses the open.
     pub fn open_with(&self, config: impl FnOnce(&FakeClock) -> VaultConfig) -> oneiron::Result<Vault> {
         Vault::open(&self.path, config(&self.clock))
+    }
+
+    /// Opens the copy as a process-owned vault (it holds the writer lease),
+    /// as a server or an embedded SDK host does. Owner-only verbs need it.
+    ///
+    /// # Errors
+    /// The engine refuses the open.
+    pub fn open_owned(&self) -> oneiron::Result<Vault> {
+        Vault::open_owned(&self.path, self.config())
     }
 
     /// Opens the copy through the existing-only door, which never creates.

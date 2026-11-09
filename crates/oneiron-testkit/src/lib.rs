@@ -6,7 +6,7 @@
 //! |---|---|
 //! | One vault per test, seeded once | [`fixture`]: [`FixtureVault`], [`VaultCopy`] |
 //! | Time that moves only when the test moves it | [`clock`]: [`FakeClock`] |
-//! | A model that answers from a script | [`provider`]: [`ScriptedProvider`] |
+//! | A model that answers from a script | [`provider`]: [`ScriptedProvider`] (HTTP), [`ScriptedBackend`] (in process) |
 //! | Embeddings with no model | [`embedder`]: [`HashingEmbedder`] |
 //! | A server on a free port | [`server`]: [`ServerProcess`] |
 //! | Crashes, lost leases, failing providers | [`fault`] |
@@ -49,6 +49,6 @@ pub mod server;
 pub use clock::{FAKE_EPOCH, FakeClock};
 pub use embedder::HashingEmbedder;
 pub use fixture::{FixtureCache, FixtureError, FixtureVault, VaultCopy};
-pub use provider::{PromptDigest, Reply, ScriptedProvider, Step};
+pub use provider::{PromptDigest, Reply, ScriptedBackend, ScriptedProvider, Step};
 #[cfg(unix)]
 pub use server::{ServerProcess, ServerSpec};

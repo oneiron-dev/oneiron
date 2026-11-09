@@ -19,6 +19,8 @@ const READ_STALL_LIMIT: Duration = Duration::from_secs(60);
 pub(crate) struct Request {
     pub(crate) method: String,
     pub(crate) path: String,
+    /// The `Content-Encoding` header, when the body carries one.
+    pub(crate) content_encoding: Option<String>,
     pub(crate) body: Vec<u8>,
 }
 
@@ -104,6 +106,7 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
     let path = target.split('?').next().unwrap_or_default().to_owned();
     let mut length = None;
     let mut chunked = false;
+    let mut content_encoding = None;
     loop {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
@@ -124,6 +127,8 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
             length = value.parse::<usize>().ok();
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             chunked = value.to_ascii_lowercase().contains("chunked");
+        } else if name.eq_ignore_ascii_case("content-encoding") && !value.eq_ignore_ascii_case("identity") {
+            content_encoding = Some(value.to_owned());
         }
     }
     let body = if chunked {
@@ -140,7 +145,12 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
         reader.read_exact(&mut body)?;
         body
     };
-    Ok(Some(Request { method, path, body }))
+    Ok(Some(Request {
+        method,
+        path,
+        content_encoding,
+        body,
+    }))
 }
 
 fn read_chunked(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
@@ -180,6 +190,7 @@ fn reason(status: u16) -> &'static str {
         200 => "OK",
         400 => "Bad Request",
         404 => "Not Found",
+        415 => "Unsupported Media Type",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
