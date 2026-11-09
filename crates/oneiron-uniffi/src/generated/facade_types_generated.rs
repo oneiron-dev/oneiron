@@ -22473,6 +22473,8 @@ pub struct SharedActExecutionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub authorizer: Option<String>,
+    #[serde(rename = "proposer", default, skip_serializing_if = "Option::is_none")]
+    pub proposer: Option<String>,
     #[serde(rename = "detach", default, skip_serializing_if = "Option::is_none")]
     pub detach: Option<DetachReport>,
     #[serde(rename = "completed_at")]

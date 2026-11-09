@@ -7371,6 +7371,7 @@ class SharedActExecutionReceipt(TypedDict):
     authority_entry: NotRequired[str | None]
     authority_record_pending: NotRequired[bool]
     authorizer: NotRequired[str | None]
+    proposer: NotRequired[str | None]
     detach: NotRequired[DetachReport | None]
     completed_at: int
 class RemovalExportDelivery(TypedDict):

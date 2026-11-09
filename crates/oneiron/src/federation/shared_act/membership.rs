@@ -160,7 +160,7 @@ impl Vault {
         Ok(grants)
     }
     /// `member`'s one membership role in the vault, delegate grants aside.
-    fn member_role_in_txn(
+    pub(super) fn member_role_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
@@ -511,6 +511,26 @@ impl Vault {
             &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member_for_ask(actor, vault_id, power, None, apply)
+    }
+
+    /// [`Self::move_shared_member`] applying a Steward's member ask `ask`
+    /// when one is named (untangle 6.3d): in the same writer the ask closes
+    /// as applied, and the receipt names its Steward as `proposer` beside
+    /// the applier as `actor`.
+    fn move_shared_member_for_ask(
+        &self,
+        actor: &AuthenticatedOwner,
+        vault_id: u64,
+        power: Option<OrgAdminPower>,
+        ask: Option<&str>,
+        apply: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            EntityId,
+            u64,
+            &str,
+        ) -> Result<(Effect, Option<UnsignedExecution>)>,
+    ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
@@ -533,9 +553,12 @@ impl Vault {
             )?,
             None => ChangeRecord::Unnamed,
         };
-        let receipt = self.record_shared_change_in_txn(
+        let mut receipt = self.record_shared_change_in_txn(
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
+        if let Some(ask) = ask {
+            self.apply_member_ask_in_txn(&mut txn, ask, actor_id, &mut receipt, now)?;
+        }
         txn.commit()?;
         self.store.notify_credential_revocations();
         Ok(receipt)
@@ -592,11 +615,22 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_shared_membership(
+        self.add_shared_member_for_ask(admin, vault_id, member, role, None)
+    }
+    pub(super) fn add_shared_member_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Option<Role>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            |txn, inviter, now| {
+            ask,
+            |txn, inviter, now, _receipt| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
                     .and_then(|row| row.preset);
@@ -611,7 +645,9 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
+                let effect =
+                    self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)?;
+                Ok((effect, None))
             },
         )
     }
@@ -625,11 +661,23 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.change_shared_member_role_for_ask(admin, vault_id, member, role, slips, None)
+    }
+    pub(super) fn change_shared_member_role_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Role,
+        slips: Option<&HostSlipIssuer>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
-        self.move_shared_member(
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
+            ask,
             |txn, _, now, receipt| {
                 non_root(Some(role))?;
                 let from = self
@@ -686,11 +734,22 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.remove_shared_member_for_ask(admin, vault_id, member, slips, None)
+    }
+    pub(super) fn remove_shared_member_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        slips: Option<&HostSlipIssuer>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
-        self.move_shared_member(
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
+            ask,
             |txn, _, now, receipt| {
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
