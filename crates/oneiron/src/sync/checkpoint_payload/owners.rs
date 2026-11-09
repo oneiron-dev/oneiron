@@ -45,13 +45,14 @@ use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
 use crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP;
+use crate::sync::turn_programs::{TURN_PROGRAM_ARMS_MAP, TURN_PROGRAM_WAKES_MAP};
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
     epoch_floor_scope,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(crate) const WINDOW_ROOTS: [&str; 26] = [
+pub(crate) const WINDOW_ROOTS: [&str; 28] = [
     "entities",
     "edges",
     "tombstones",
@@ -76,6 +77,8 @@ pub(crate) const WINDOW_ROOTS: [&str; 26] = [
     OFFICE_PROPOSALS_MAP,
     TYPED_BODY_ROWS_MAP,
     REPO_MANIFESTS_MAP,
+    TURN_PROGRAM_ARMS_MAP,
+    TURN_PROGRAM_WAKES_MAP,
     ASSET_BODY_REFS_MAP,
     SOURCE_AUDIENCES_MAP,
 ];
@@ -183,6 +186,10 @@ pub(crate) fn root_entry(
         TYPED_BODY_ROWS_MAP => crate::sync::typed_body_rows::checkpoint::entry(key, value),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
         SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::entry(key, value),
+        // FIX 5266: a turn-program row names its actor.
+        TURN_PROGRAM_ARMS_MAP | TURN_PROGRAM_WAKES_MAP => {
+            crate::sync::turn_programs::checkpoint_entry(root, value)
+        }
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -287,6 +294,13 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
+        // FIX 5266: an arming rides under its registration, a wake under its
+        // turn and registration.
+        TURN_PROGRAM_ARMS_MAP => id_key(key),
+        TURN_PROGRAM_WAKES_MAP if crate::sync::turn_programs::wake_key_is_opaque(key) => {
+            KeyClass::Opaque
+        }
+        TURN_PROGRAM_WAKES_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),
     };
     match class {

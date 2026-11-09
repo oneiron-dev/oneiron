@@ -14,8 +14,9 @@ use crate::{EntityId, Vault};
 use super::authority::TurnProgramAuthority;
 use super::erase::scrub_actor_admission_instruments_in_txn;
 use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
+use super::types::TurnProgramDisarm;
 use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
-use super::{ARM, WAKE};
+use super::{ARM, DISARMED, WAKE};
 
 const CONTRACT_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-contract:v1";
 
@@ -83,14 +84,22 @@ pub(crate) fn arm_turn_program_in_txn(
 }
 
 /// Disarms one of `actor`'s programs; `true` when it was armed. A wake its
-/// turns already owed is refused at admission.
+/// turns already owed is refused at admission. The disarm is kept, with its
+/// time, so the arming another window of the vault still carries arms it
+/// nowhere again (FIX 5266).
 pub(crate) fn disarm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     registration: EntityId,
 ) -> Result<bool> {
-    ARM.delete(vault, txn, &(actor, registration))
+    let key = (actor, registration);
+    if !ARM.delete(vault, txn, &key)? {
+        return Ok(false);
+    }
+    let at = vault.store.clock.now_recorded_at();
+    DISARMED.put(vault, txn, &key, &TurnProgramDisarm { at })?;
+    Ok(true)
 }
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
@@ -111,6 +120,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
+    DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;

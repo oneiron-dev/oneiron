@@ -11,7 +11,7 @@ use crate::error::Result;
 use super::admit::WakeAdmission;
 use super::authority::TurnProgramAuthority;
 use super::types::{LandedTurnRef, TurnProgramAdmissionOutcome, TurnProgramDrain, TurnProgramWake};
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 /// How many owed wakes one drain admits; [`TurnProgramDrain::more`] asks for
 /// the next batch. A batch size, never a cap: every wake is drained.
@@ -60,6 +60,7 @@ pub(crate) fn record_turn_program_wakes_in_txn(
         };
         if WAKE.contains(vault, &*txn, &wake.key())?
             || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
+            || DECIDED.get(vault, &*txn, &wake.key())? == Some(wake.admission_id())
         {
             continue;
         }
@@ -75,6 +76,8 @@ pub(crate) fn record_turn_program_wakes_in_txn(
 /// next drain; it never blocks the others. A wake held on its lapsed slip
 /// (FIX 12058) is passed by, taking no place in the batch, until its own
 /// expiry: before then only its rebind admits it, in the rebind's writer.
+/// A wake that rides to the elected home is passed by too while another
+/// machine is that home: the home admits it (FIX 5266).
 pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnProgramDrain> {
     let pending = {
         let txn = vault.store.env.read_txn()?;
@@ -82,6 +85,10 @@ pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnPr
         for row in WAKE.iter_from(vault, &txn, &[])? {
             let wake = row?.1;
             if wake.held.as_ref().is_some_and(|held| now < held.expires_at) {
+                continue;
+            }
+            #[cfg(feature = "sync")]
+            if super::replica::wake_is_the_homes_in_txn(vault, &txn, &wake)? {
                 continue;
             }
             pending.push(wake);
