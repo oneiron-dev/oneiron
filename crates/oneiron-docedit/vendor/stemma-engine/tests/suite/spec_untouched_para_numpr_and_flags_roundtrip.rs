@@ -131,6 +131,7 @@ fn edit_a_different_paragraph(doc: &Document, target_text: &str) -> Vec<u8> {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target,
             expect: target_text.to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,
@@ -399,6 +400,7 @@ fn reject_restores_untouched_numpr_and_flags() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: editable,
             expect: "Editable".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,

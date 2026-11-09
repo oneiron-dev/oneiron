@@ -87,19 +87,20 @@ pub(super) fn answer(
     let memory = agent_memory(server, actor, origin, invocation).listing_producers(&producers);
     let name = verb.as_str();
     let mut listed = Some(Vec::new());
-    let output = verb_hook_boundary::row(&memory, name, input, |input| {
-        sdk::validate_input(name, &input)?;
-        owner_row(
-            server,
-            owner,
-            actor.entity_ref(),
-            line,
-            attempt,
-            verb,
-            input,
-            &mut listed,
-        )
-    })?;
+    let output =
+        verb_hook_boundary::row(&memory, &oneiron::verbs::VERB_TABLE, name, input, |input| {
+            sdk::validate_input(name, &input)?;
+            owner_row(
+                server,
+                owner,
+                actor.entity_ref(),
+                line,
+                attempt,
+                verb,
+                input,
+                &mut listed,
+            )
+        })?;
     let rows = listed.map(|mut listed| {
         let mut rows = producers.take();
         rows.append(&mut listed);
