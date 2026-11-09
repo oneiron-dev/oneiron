@@ -82,7 +82,7 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
 PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
 RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
 the Observed producer (FIX 21842). These cases remain registered with their reasons
