@@ -55,7 +55,7 @@ type Stopped<T> = std::result::Result<T, VerbHookStop>;
 /// A call an earlier try of its invocation left saved reaches the chain
 /// whatever this says ([`super::ask::saved`]).
 pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
-    let state = &vault.verb_hook_state;
+    let state = vault.runtime().verb_hook_state();
     if state.suppressed() || depth() > 0 {
         return false;
     }
@@ -136,7 +136,7 @@ fn pre_with_saved(
             through(call, args)
         };
     }
-    let state = &vault.verb_hook_state;
+    let state = vault.runtime().verb_hook_state();
     let mark = match state.enter(call.invocation, call.actor) {
         Entered::Nested => {
             return if require_saved {
@@ -292,7 +292,7 @@ pub(super) fn post(
         read_capture,
         ..
     } = pre;
-    let state = &vault.verb_hook_state;
+    let state = vault.runtime().verb_hook_state();
     let Some(carry) = carry else {
         return Ok(Ok(result));
     };
