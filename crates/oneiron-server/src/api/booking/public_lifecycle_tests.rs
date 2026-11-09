@@ -18,6 +18,7 @@ async fn public_booking_route_runs_shared_anti_abuse_once() {
         };
         apply_rule_amendment(
             &fixture.server.vault,
+            &crate::test_credentials::embedded_owner(&fixture.server.vault),
             0,
             BookingAntiAbuseRuleRow {
                 row_id: booking_rule_row_id(&scope, &rule),
@@ -108,6 +109,7 @@ async fn a_page_wide_required_intake_refuses_a_confirm_but_never_an_amendment() 
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
@@ -609,6 +611,7 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
@@ -728,6 +731,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),

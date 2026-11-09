@@ -1098,8 +1098,12 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                 metadata: Some(json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("speak");
 

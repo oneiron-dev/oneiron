@@ -101,7 +101,7 @@ impl LlmBackend for Backend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text }],
+                    content: vec![ContentPart::Text { text, signature: None }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
@@ -168,6 +168,8 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
                         slot: ModelSlot::Llm,
                         tier: Tier("legacy".into()),
                         route_models: BTreeMap::new(),
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -569,7 +571,7 @@ async fn quickjs_execute_code_serves_a_64_kib_task() {
         seen.iter()
             .flat_map(|request| &request.messages)
             .flat_map(|message| &message.content)
-            .any(|part| matches!(part, ContentPart::Text { text } if text.contains(&task))),
+            .any(|part| matches!(part, ContentPart::Text { text, .. } if text.contains(&task))),
         "the whole task reaches the model",
     );
 }

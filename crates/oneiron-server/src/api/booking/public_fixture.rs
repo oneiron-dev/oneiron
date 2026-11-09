@@ -318,6 +318,8 @@ pub(super) fn publication_input(
             window_secs: 86_400,
             visitor_tz: "UTC".to_owned(),
         },
+        constraint_front: None,
+        sponsor: None,
     };
     ClaimInput {
         id: None,
@@ -334,6 +336,7 @@ pub(super) fn publication_input(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 

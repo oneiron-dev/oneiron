@@ -15,6 +15,7 @@ fn install(fixture: &Fixture, rule: BookingAntiAbuseRule) {
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
