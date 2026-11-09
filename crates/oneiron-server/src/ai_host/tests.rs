@@ -539,9 +539,11 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     );
     let host = AiHost::start(vault.clone(), Some(&tight), true).await;
     let sitting = local_sitting(&vault);
-    host.handle().session_hint(sitting, SessionHint::AppOpen, None);
+    host.handle()
+        .session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Oleksii");
-    host.handle().session_hint(sitting, SessionHint::ExplicitEnd, None);
+    host.handle()
+        .session_hint(sitting, SessionHint::ExplicitEnd, None);
     let runner = oneiron::DreamerRunnerStore::new(&vault);
     let on_trap = |row: &AttemptRecord| {
         runner
@@ -627,7 +629,8 @@ async fn one_step(config: &ModelsConfig) -> Vec<oneiron::llm::run_admission::Run
         )
         .unwrap();
     let receipts = Arc::new(MemoryReceipts::default());
-    let host = AiHost::start_receipted(vault.clone(), Some(config), true, receipts.clone(), None).await;
+    let host =
+        AiHost::start_receipted(vault.clone(), Some(config), true, receipts.clone(), None).await;
     let dispatcher = AgentDispatcher::new(&vault);
     dispatcher
         .dispatch(DispatchAgent {
@@ -701,7 +704,6 @@ fn local_sitting(vault: &Vault) -> oneiron::session_lifecycle::SessionKey {
     vault.local_session_key(owner).expect("local session key")
 }
 
-
 /// Runs the saved one-step workflow `workflow` once more, until it stops.
 async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str, host: &AiHost) {
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
@@ -763,7 +765,8 @@ retry_backoff_secs = 0
         )
         .unwrap();
     let receipts = Arc::new(MemoryReceipts::default());
-    let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone(), None).await;
+    let host =
+        AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone(), None).await;
 
     step_once(&vault, workflow, "no-world-kept", &host).await;
     assert_eq!(cloud.seen().len(), 1, "the step fell back to the cloud");
