@@ -97,6 +97,8 @@ fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
             ),
             response_format: ResponseFormat::Text,
             locality: seat.locality,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,

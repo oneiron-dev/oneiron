@@ -265,6 +265,8 @@ fn seven_units() -> LlmResponse {
         },
         usage,
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
