@@ -18,7 +18,7 @@ fn transport_failures_are_typed_and_inert() {
     let client = OneironClient::connect("http://127.0.0.1:9/", "v2.scope=core:read.deadbeef")
         .expect("connect");
     let error = client
-        .receipts(10)
+        .vault_receipts(10, &[], None)
         .expect_err("a dead endpoint cannot answer");
 
     assert_eq!(error.code, MEMORY_CODE_INTERNAL);
@@ -78,11 +78,13 @@ fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
     // accept the following real request rather than waiting forever at EOF.
     drop(TcpStream::connect(address).expect("cleanup connection"));
     let client = OneironClient::connect(&format!("http://{address}"), "fixture").unwrap();
-    let result = client.witness(&oneiron::memory::WitnessTurn {
+    let result = client.vault_witness(&oneiron::memory::WitnessTurn {
         conversation_ref: "conversation".into(),
         turn_ref: None,
         messages: vec![],
         occurred_at: 1,
+        thread_audience: None,
+        assertions: Default::default(),
     });
     // Release the peer even if the client failed before making the request.
     let _ = done_tx.send(());

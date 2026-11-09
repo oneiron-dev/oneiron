@@ -202,9 +202,8 @@ fn end_outcome_row(run_id: RetrievalRunId, metadata: &[(&str, &str)]) -> EndOutc
         fields.insert((*key).to_owned(), (*value).to_owned());
     }
     EndOutcomeRow {
-        run_id: run_id.to_hex(),
+        retrieval_run_ids: vec![run_id.to_hex()],
         turn_id: hex_id(FIXTURE_TURN_ID),
-        activated_memory_id: hex_id(FIXTURE_MEMORY_ID),
         gate_score: 0.75,
         confirmed_fact_hit: true,
         latency_scale_us: 1,
@@ -565,4 +564,3 @@ fn eval_existing_vault_refuses_unsupported_platform_without_writing() {
         assert_eq!(entry_count(&root), 2);
     }
 }
-

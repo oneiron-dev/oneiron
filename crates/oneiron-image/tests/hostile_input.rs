@@ -13,9 +13,8 @@ use oneiron_image::{
     ImageBody, ImageOrgan, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_INSPECT, VERB_OPEN,
 };
 use oneiron_organ_protocol::{
-    Answer, CallContext, ErrorCode, InputBytes, Limits, Organ, OrganError, TypedBody,
+    Answer, CallContext, ErrorCode, InputBytes, Limits, Organ, OrganError, TypedBody, Value,
 };
-use rmpv::Value;
 
 const LIMITS: Limits = Limits {
     threads: 1,
@@ -362,7 +361,7 @@ fn a_crop_or_a_flag_never_leaves_a_body_export_refuses() {
 
     // A body whose overlay denies being clipped, when its bounds cross the
     // canvas edge, is refused.
-    let mut lying = ImageBody::from_typed(Some(&cropped)).expect("body");
+    let mut lying = ImageBody::from_typed(Some(&cropped), &|| Ok(())).expect("body");
     lying.overlays[0].clipped = false;
     let lying = lying.to_typed().expect("typed");
     assert_eq!(

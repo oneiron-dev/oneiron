@@ -123,7 +123,7 @@ pub use self::types::{
 // and std imports the tests name bare. After the directory split the seam
 // re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::types::{ENTITY_ID_LEN, MAX_FFI_QUERY_BYTES};
+use self::types::ENTITY_ID_LEN;
 #[cfg(test)]
 use oneiron::EdgeKind;
 #[cfg(test)]
