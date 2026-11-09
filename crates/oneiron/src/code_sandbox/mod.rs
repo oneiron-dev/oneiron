@@ -19,6 +19,8 @@ pub mod wasmtime_boundary;
 pub mod wasmtime_runtime;
 
 mod adapter;
+/// The isolating backends this build carries, behind `microvm::SandboxBackends`.
+mod compiled_backends;
 mod contract;
 mod credential;
 /// Engine-owned open-web relay and owner-local receipts.
@@ -39,6 +41,7 @@ pub mod firecracker;
 pub mod microvm;
 
 pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
+pub use self::compiled_backends::{CompiledSandboxBackends, SANDBOX_BACKENDS};
 pub use self::contract::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
     SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,

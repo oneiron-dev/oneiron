@@ -504,9 +504,9 @@ impl<'a> StepSecretUse<'a> {
             })
         };
         let answered = if retained.is_some() {
-            verb_hook_boundary::row_retained(&memory, verb, input, run)
+            verb_hook_boundary::row_retained(&memory, &oneiron::verbs::VERB_TABLE, verb, input, run)
         } else {
-            verb_hook_boundary::row(&memory, verb, input, run)
+            verb_hook_boundary::row(&memory, &oneiron::verbs::VERB_TABLE, verb, input, run)
         };
         match answered {
             Ok(output) => StepToolOutcome::Answered(output, false),
