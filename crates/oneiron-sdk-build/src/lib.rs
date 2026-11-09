@@ -7,8 +7,9 @@
 //! into its `OUT_DIR`, where its `include!` reads them. A crate that ships generated sources in a package of its own
 //! (`oneiron-py`'s Python files) places them with [`place`].
 //!
-//! The digest covers every file the generator reads and the generator's own source
-//! ([`GENERATOR_SOURCE_DIGEST`]), so a change to either makes a new run.
+//! The digest covers every file the generator reads and the generator's identity: its source
+//! ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests that decide its build, and the compiler. A change to
+//! any of them makes a new run.
 //!
 //! Each run also leaves the agent-SDK reference (`types.md`, `facade-types.md`, `verbs.md`) in
 //! `<target dir>/<profile>/sdk-generated/agent-sdk/`, the local copy of what CI publishes.
@@ -74,15 +75,17 @@ pub fn place(outputs: &[(&str, PathBuf)]) {
         .unwrap_or_else(|| panic!("no scripts/sdk/verbs above {}", manifest.display()))
         .to_path_buf();
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
-    let files = input_files(&root);
+    let roots = input_roots(&root);
+    let files = input_files(&root, &roots);
     for file in &files {
         println!("cargo:rerun-if-changed={}", file.display());
     }
-    // A new verb is a new file: the directory itself is watched too.
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("scripts/sdk/verbs").display()
-    );
+    // A new file (a verb, or a Rust file the type inventory reads) is in no list above, so every input directory is
+    // watched too: cargo scans a watched directory for any file added, removed or changed under it. Only directories
+    // that exist are named, because a missing path would rerun this on every build.
+    for dir in roots.iter().filter(|path| path.is_dir()) {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
     let digest = digest(&root, &files);
     // OUT_DIR is <target dir>/[<triple>/]<profile>/build/<package>/out: the run is shared at the profile.
     let shared = out_dir
@@ -117,18 +120,22 @@ fn write_if_changed(to: &Path, text: &[u8]) {
     fs::write(to, text).unwrap_or_else(|error| panic!("write {} ({error})", to.display()));
 }
 
-/// Every input file: under the generator's fixed inputs (`INPUTS`) and the crate source directories its type
-/// inventory reads (`CRATES`), generated outputs excluded.
-fn input_files(root: &Path) -> Vec<PathBuf> {
-    let paths: Vec<PathBuf> = INPUTS
+/// What the generator reads: its fixed inputs (`INPUTS`, files and the verb directory) and the crate source
+/// directories its type inventory reads (`CRATES`).
+fn input_roots(root: &Path) -> Vec<PathBuf> {
+    INPUTS
         .iter()
         .copied()
         .chain(CRATES.iter().map(|(_, dir)| *dir))
         .map(|path| root.join(path))
-        .collect();
+        .collect()
+}
+
+/// Every input file under `roots`, generated outputs excluded.
+fn input_files(root: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
     let generated: Vec<PathBuf> = PACKAGE_OUTPUTS.iter().map(|path| root.join(path)).collect();
     let mut files = Vec::new();
-    for path in &paths {
+    for path in roots {
         collect(path, &generated, &mut files);
     }
     files.sort();
@@ -136,15 +143,52 @@ fn input_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// A digest of the generator's own source and every input file's path and bytes.
+/// The files that decide how the generator was built, beside its source: the lock file (the resolved versions of its
+/// dependencies), the workspace manifest (their declared features, the profiles) and its own manifest. They are read
+/// here, not watched: a change to them that changes the generator rebuilds it, which rebuilds and reruns every build
+/// script that calls this crate, and the digest then names a new run. A change that rebuilds nothing changes no
+/// generator.
+const GENERATOR_BUILD_FILES: &[&str] = &[
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/oneiron-sdk-generator/Cargo.toml",
+];
+
+/// A digest of the generator's identity and every input file's path and bytes. The identity is the generator's own
+/// source (`GENERATOR_SOURCE_DIGEST`), the files that decide its build (`GENERATOR_BUILD_FILES`) and the compiler
+/// that built it, so a run directory an older generator wrote is never reused.
 fn digest(root: &Path, files: &[PathBuf]) -> u64 {
     let mut hasher = DefaultHasher::new();
     GENERATOR_SOURCE_DIGEST.hash(&mut hasher);
+    for file in GENERATOR_BUILD_FILES {
+        file.hash(&mut hasher);
+        fs::read(root.join(file)).unwrap_or_default().hash(&mut hasher);
+    }
+    compiler_version().hash(&mut hasher);
     for file in files {
         file.strip_prefix(root).unwrap_or(file).hash(&mut hasher);
         fs::read(file).unwrap_or_default().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// `$RUSTC -vV`: the release, commit and host of the compiler cargo builds with (and so built the generator), or
+/// nothing when it cannot be asked. A new compiler rebuilds every build script, so this is asked again then.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a build script asks the compiler cargo names for its version; oneiron_spawn is the engine's spawn path"
+)]
+fn compiler_version() -> Vec<u8> {
+    let Some(rustc) = env::var_os("RUSTC") else {
+        return Vec::new();
+    };
+    std::process::Command::new(rustc)
+        .arg("-vV")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout)
+        .unwrap_or_default()
 }
 
 fn collect(path: &Path, generated: &[PathBuf], files: &mut Vec<PathBuf>) {
