@@ -8021,6 +8021,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-sdk-build",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8219,6 +8220,7 @@ name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "oneiron-sdk-build",
  "oneiron-spawn",
  "serde",
  "serde_json",
@@ -8643,6 +8645,7 @@ dependencies = [
  "napi-derive",
  "oneiron",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-server",
  "serde",
  "serde_json",
@@ -8729,6 +8732,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "serde",
@@ -8774,6 +8778,10 @@ dependencies = [
 
 [[package]]
 name = "oneiron-sandbox-contract"
+version = "0.1.0"
+
+[[package]]
+name = "oneiron-sdk-build"
 version = "0.1.0"
 
 [[package]]
@@ -8867,6 +8875,7 @@ dependencies = [
  "oneiron-organ-host",
  "oneiron-organ-protocol",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8974,6 +8983,7 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "oneiron-remote",
+ "oneiron-sdk-build",
  "oneiron-server",
  "oneiron-vault-contract",
  "serde",
