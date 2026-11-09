@@ -17748,7 +17748,8 @@
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -18296,7 +18297,7 @@
      "path": "src/code_run/dispatcher/binding.rs",
      "purpose": "Host construction, binding and captured identity for a dispatcher",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 12
      }
     },
@@ -18388,13 +18389,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -18440,7 +18441,7 @@
      "purpose": "The four durable memory writes, search, and the off-record policy that refuses them",
      "surface": {
       "const": 1,
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -18812,7 +18813,7 @@
      "surface": {
       "crate-vis": 60,
       "mod": 8,
-      "re-export": 36
+      "re-export": 38
      }
     },
     {
@@ -19323,7 +19324,8 @@
      "path": "src/code_run/run_verb_call.rs",
      "purpose": "The run rows as typed calls (OF-181)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -20943,12 +20945,11 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CompiledSandboxBackends"
+      "ComponentBudget"
      ],
-     "path": "src/code_sandbox/compiled_backends.rs",
-     "purpose": "The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature…",
+     "path": "src/code_sandbox/component_budget.rs",
+     "purpose": "Per-step ceilings of a Wasmtime component run",
      "surface": {
-      "static": 1,
       "struct": 1
      }
     },
@@ -21130,119 +21131,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "FirecrackerBackend"
-     ],
-     "path": "src/code_sandbox/firecracker.rs",
-     "purpose": "Host-configured jailer execution with a bounded vsock guest-agent protocol",
-     "surface": {
-      "const": 4,
-      "fn": 4,
-      "re-export": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "FirecrackerHostConfig",
-      "GuestArtifactPins"
-     ],
-     "path": "src/code_sandbox/firecracker/config.rs",
-     "purpose": "Host-only image pins and jailer profile validation",
-     "surface": {
-      "crate-vis": 6,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/egress.rs",
-     "purpose": "Native VM network channels terminate at the engine's one egress proxy",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/launch.rs",
-     "purpose": "Jailer launch, resource ceilings and process custody for one microVM",
-     "surface": {
-      "crate-vis": 10
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/launch/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/oci_mounts.rs",
-     "purpose": "Snapshot caller-selected directories without following descendant host links",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/oci_session.rs",
-     "purpose": "Native OCI sessions in a no-NIC Firecracker VM",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/protocol.rs",
-     "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/protocol/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/snapshot.rs",
-     "purpose": "Descriptor-relative, no-symlink source snapshot for a foreign VM",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/firecracker/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -21252,8 +21140,7 @@
      "path": "src/code_sandbox/foreign.rs",
      "purpose": "A finite foreign program on the existing propose-only isolation lane",
      "surface": {
-      "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -21261,12 +21148,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "GuestErrorMask"
+      "GuestErrorMask",
+      "GuestProgramError"
      ],
      "path": "src/code_sandbox/guest_error.rs",
      "purpose": "A guest program's own error text, as the model reads it",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -21295,24 +21185,10 @@
      "purpose": "The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "fn": 6,
+      "crate-vis": 1,
+      "fn": 7,
       "struct": 1,
       "trait": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ContainerBackend"
-     ],
-     "path": "src/code_sandbox/microvm/container.rs",
-     "purpose": "OCI code and browser sessions on Linux hosts without a usable microVM",
-     "surface": {
-      "const": 1,
-      "fn": 2,
-      "struct": 1
      }
     },
     {
@@ -21360,7 +21236,6 @@
      "path": "src/code_sandbox/microvm/mod.rs",
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
-      "crate-vis": 1,
       "re-export": 8
      }
     },
@@ -21388,8 +21263,8 @@
      "path": "src/code_sandbox/microvm/overlay.rs",
      "purpose": "The host-side scratch root and the checked overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 6,
-      "fn": 2
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -21417,7 +21292,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 8,
+      "mod": 4,
       "re-export": 7
      }
     },
@@ -21449,9 +21324,9 @@
      "path": "src/code_sandbox/proposal.rs",
      "purpose": "The proposal-delta channel a guest write becomes instead of a direct mutation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 10,
+      "fn": 12,
       "re-export": 2,
       "struct": 8
      }
@@ -21467,8 +21342,7 @@
      "path": "src/code_sandbox/proposal/body.rs",
      "purpose": "A proposed file's bytes, spooled to an anonymous host temp file as they arrive",
      "surface": {
-      "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1,
       "struct": 3
      }
@@ -21509,139 +21383,11 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "QuickJsRuntimeFactory"
-     ],
-     "path": "src/code_sandbox/quickjs.rs",
-     "purpose": "Hash-pinned, readiness-checked QuickJS artifact factory",
-     "surface": {
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/quickjs/tests.rs",
-     "purpose": "Acceptance tests require the real artifacts produced by the pinned build",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/code_sandbox/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "WasmtimeBoundary",
-      "WasmtimeRequest"
-     ],
-     "path": "src/code_sandbox/wasmtime_boundary.rs",
-     "purpose": "Real Component Model boundary",
-     "surface": {
-      "fn": 8,
-      "mod": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_boundary/tests.rs",
-     "purpose": "Component fixtures test the boundary, not a substitute JavaScript runtime",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/isolated.rs",
-     "purpose": "Finite foreign steps use the selected backend, never an engine worker",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ComponentBudget",
-      "WasmtimeComponentRuntime"
-     ],
-     "path": "src/code_sandbox/wasmtime_runtime/mod.rs",
-     "purpose": "Pinned, in-process Component Model execution for host-trusted code",
-     "surface": {
-      "const": 1,
-      "fn": 4,
-      "mod": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/typed.rs",
-     "purpose": "Canonical typed WIT imports over the bounded engine-host channel",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
-     "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/wire/describe.rs",
-     "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/wire/reply.rs",
-     "purpose": "A dispatched call's reply as the guest gets it: its JSON measured, and stored as a result of the run when it…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_sandbox/wasmtime_runtime/wire/search.rs",
-     "purpose": "`vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an…",
-     "surface": {
-      "crate-vis": 1
-     }
     },
     {
      "bucket": "s",
@@ -38526,7 +38272,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 3,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -38727,7 +38473,8 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 66
+      "const": 2,
+      "crate-vis": 64
      }
     },
     {
@@ -42103,7 +41850,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 128
+      "crate-vis": 130
      }
     },
     {
@@ -42532,7 +42279,7 @@
      "path": "src/gate/doors/dreamer_run.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -42875,6 +42622,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/live_run_claim_put_fixture.rs",
+     "purpose": "The gate fixtures of the live-run claim put test (#6881, review 6881 P1), for its integration test doors…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -42915,7 +42672,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 88,
+      "crate-vis": 91,
       "mod": 2,
       "re-export": 8
      }
@@ -71664,7 +71421,7 @@
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
       "crate-vis": 27,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -71736,7 +71493,8 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 26,
+      "crate-vis": 25,
+      "fn": 1,
       "re-export": 3
      }
     },
@@ -90343,10 +90101,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/live_run_claim_put.rs",
+     "purpose": "Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 1
+      "mod": 2
      }
     },
     {
@@ -99017,6 +98785,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/live_run_claim_put.rs",
+     "purpose": "Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
      "surface": {}
@@ -99484,9 +99260,9 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 59,
+     "files": 35,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
@@ -99869,7 +99645,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 206,
+     "files": 207,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100660,7 +100436,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -100828,10 +100604,327 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 240,
+   "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7248,
-   "test_files": 904
+   "source_files": 7232,
+   "test_files": 899
+  },
+  "oneiron-agent-runtime": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompiledSandboxBackends"
+     ],
+     "path": "src/code_sandbox/compiled_backends.rs",
+     "purpose": "The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature…",
+     "surface": {
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FirecrackerBackend"
+     ],
+     "path": "src/code_sandbox/firecracker.rs",
+     "purpose": "Host-configured jailer execution with a bounded vsock guest-agent protocol",
+     "surface": {
+      "const": 4,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FirecrackerHostConfig",
+      "GuestArtifactPins"
+     ],
+     "path": "src/code_sandbox/firecracker/config.rs",
+     "purpose": "Host-only image pins and jailer profile validation",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/egress.rs",
+     "purpose": "Native VM network channels terminate at the engine's one egress proxy",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/launch.rs",
+     "purpose": "Jailer launch, resource ceilings and process custody for one microVM",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/launch/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/oci_mounts.rs",
+     "purpose": "Snapshot caller-selected directories without following descendant host links",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/oci_session.rs",
+     "purpose": "Native OCI sessions in a no-NIC Firecracker VM",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/protocol.rs",
+     "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/protocol/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/snapshot.rs",
+     "purpose": "Descriptor-relative, no-symlink source snapshot for a foreign VM",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ContainerBackend"
+     ],
+     "path": "src/code_sandbox/microvm/container.rs",
+     "purpose": "OCI code and browser sessions on Linux hosts without a usable microVM",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/mod.rs",
+     "purpose": "The microVM lane: core's contract and selection law (`oneiron::code_sandbox::microvm`, re-exported whole)…",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/mod.rs",
+     "purpose": "The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's…",
+     "surface": {
+      "mod": 5,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QuickJsRuntimeFactory"
+     ],
+     "path": "src/code_sandbox/quickjs.rs",
+     "purpose": "Hash-pinned, readiness-checked QuickJS artifact factory",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/quickjs/tests.rs",
+     "purpose": "Acceptance tests require the real artifacts produced by the pinned build",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WasmtimeBoundary",
+      "WasmtimeRequest"
+     ],
+     "path": "src/code_sandbox/wasmtime_boundary.rs",
+     "purpose": "Real Component Model boundary",
+     "surface": {
+      "fn": 8,
+      "mod": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_boundary/tests.rs",
+     "purpose": "Component fixtures test the boundary, not a substitute JavaScript runtime",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/isolated.rs",
+     "purpose": "Finite foreign steps use the selected backend, never an engine worker",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WasmtimeComponentRuntime"
+     ],
+     "path": "src/code_sandbox/wasmtime_runtime/mod.rs",
+     "purpose": "Pinned, in-process Component Model execution for host-trusted code",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "mod": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/typed.rs",
+     "purpose": "Canonical typed WIT imports over the bounded engine-host channel",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
+     "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/describe.rs",
+     "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/reply.rs",
+     "purpose": "A dispatched call's reply as the guest gets it: its JSON measured, and stored as a result of the run when it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/search.rs",
+     "purpose": "`vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "`oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1)",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "code_sandbox": {
+     "files": 27,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's…"
+    }
+   },
+   "over_bar": 1,
+   "purpose": "`oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1)",
+   "source_files": 22,
+   "test_files": 6
   },
   "oneiron-android": {
    "files": [
@@ -124564,7 +124657,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
