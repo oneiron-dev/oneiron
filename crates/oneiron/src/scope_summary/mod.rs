@@ -47,6 +47,8 @@ pub use codec::{
     encode_scope_summary_body,
 };
 pub use doors::LandedHeader;
+#[cfg(oneiron_test_support)]
+pub(crate) use doors::mint_scope_summary_for_test;
 pub(crate) use doors::{
     body_covers_in_txn, body_covers_through_in, merge_summary_ref, merge_word_sources_in_txn,
     merge_word_sources_through_in, turn_needs_summary_cover, validate_summary_put,

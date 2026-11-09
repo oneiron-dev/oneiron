@@ -472,7 +472,7 @@ pub(crate) struct SummaryContent<'a> {
     pub(crate) notes: Vec<SummarySourceNote>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 impl<'a> SummaryContent<'a> {
     /// `text` over every source the scope resolves to, for a body written
     /// outside the Dreamer (test fixtures).
@@ -490,6 +490,31 @@ impl<'a> SummaryContent<'a> {
             notes: Vec::new(),
         })
     }
+}
+
+/// TEST-SUPPORT ONLY: mints a summary of `text` over every source `scope`
+/// resolves to, written as the Dreamer as its runner writes one, so an
+/// integration test lands a summary with no model
+/// (`tests/summary_as_record_permit.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn mint_scope_summary_for_test(
+    vault: &Vault,
+    scope: &ScopeSelector,
+    text: &str,
+) -> Result<EntityId> {
+    let dreamer = vault.dreamer_authority()?;
+    vault.with_write_txn_grouped(|txn| {
+        let content = SummaryContent::whole_scope(vault, txn, scope, text)?;
+        mint_in_txn(
+            vault,
+            txn,
+            vault.store.clock.entity_id()?,
+            Some(scope),
+            dreamer,
+            vault.store.clock.now_recorded_at(),
+            content,
+        )
+    })
 }
 
 /// Every source a summary's words came from: what erasing must reach.
