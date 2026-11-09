@@ -309,16 +309,23 @@ impl Generator {
         // generate.py:2243-2385: sdk_generated.rs (G4a's segment).
         let core = super::emit_core::core(self, &facade_rows)?;
         // generate.py:2386
-        let (server, dispatch) = super::emit_server::facade_dispatch(self, &facade_rows)?;
+        let super::emit_server::FacadeDispatch {
+            routes: server,
+            dispatch,
+        } = super::emit_server::facade_dispatch(self, &facade_rows)?;
         // generate.py:2387-2449: the remote client's typed methods (G4a's segment).
         let remote = super::emit_remote::remote(self, &facade_rows)?;
         // generate.py:2450-2459: the napi and PyO3 methods, one row at a time (G4a's segment).
-        let (napi, py) = super::emit_native::napi_py(self, &facade_rows)?;
+        let super::emit_native::NativeTexts { napi, py } =
+            super::emit_native::napi_py(self, &facade_rows)?;
         // generate.py:2460-2461
         let ts = format!("{}{}", super::HEADER, super::common::AGENT_VERBS_TS);
         let ts_native = ts_native(self, &facade_rows)?;
         // generate.py:2462-2508: verb_catalog.rs and the custody rows (G4a's segment).
-        let (catalog, custody) = super::emit_core::catalog(self)?;
+        let super::emit_core::Catalog {
+            text: catalog,
+            custody,
+        } = super::emit_core::catalog(self)?;
         // generate.py:2509-2510: UniFFI before the HTTP facade.
         let (uniffi, uniffi_types) = super::uniffi::uniffi_facade(self, &facade_rows)?;
         let http = http_facade(self)?;
