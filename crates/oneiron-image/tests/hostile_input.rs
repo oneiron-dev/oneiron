@@ -59,10 +59,13 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
+    // The protocol's Value drops on its own heap stack, so `&Value::Nil` is
+    // no longer promoted to a static; this one is.
+    static NIL: Value = Value::Nil;
     value
         .as_map()
         .and_then(|map| map.iter().find(|(k, _)| k.as_str() == Some(key)))
-        .map_or(&Value::Nil, |(_, v)| v)
+        .map_or(&NIL, |(_, v)| v)
 }
 
 fn code(result: Result<Answer, OrganError>) -> ErrorCode {
