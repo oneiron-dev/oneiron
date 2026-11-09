@@ -1,6 +1,8 @@
 //! The stemma fork reads untrusted DOCX parts with quick-xml. Before 0.41,
 //! quick-xml checked a start tag's attributes for duplicates pairwise, so one
-//! tag with n attributes cost O(n^2) (RUSTSEC-2026-0194).
+//! tag with n attributes cost O(n^2) (RUSTSEC-2026-0194). The fork's own
+//! expanded-name duplicate check (word_xml.rs) scanned the same way until
+//! FIX TEST-RED-DOCEDIT-STEMMA-BUDGET.
 
 use std::io::{Cursor, Read, Write};
 use std::time::{Duration, Instant};
@@ -60,4 +62,29 @@ fn start_tag_with_many_attributes_parses_in_bounded_time() {
         "{ATTRIBUTES} attributes on one start tag took {elapsed:?}"
     );
     assert_eq!(text, accepted_text(INPUT));
+}
+
+#[test]
+fn start_tag_refuses_a_duplicate_expanded_name_below_and_past_the_scan_limit() {
+    // Two prefixes bound to one URI name one expanded attribute. quick-xml
+    // sees two different names, so the fork's own check must refuse it, on a
+    // tag it scans and on a tag it hashes (more than 32 attributes).
+    for filler in [0_usize, 64] {
+        let mut attributes: Vec<String> = (0..filler)
+            .map(|index| format!("x{index:06}=\"{index}\""))
+            .collect();
+        attributes.push(
+            "xmlns:twina=\"urn:oneiron:twin\" xmlns:twinb=\"urn:oneiron:twin\" \
+             twina:name=\"1\" twinb:name=\"2\""
+                .to_owned(),
+        );
+        let bytes = with_paragraph_attributes(&attributes.join(" "));
+        let refusal = Document::parse(&bytes)
+            .err()
+            .unwrap_or_else(|| panic!("a duplicate expanded name beside {filler} attributes read"));
+        assert!(
+            refusal.to_string().contains("duplicate attribute"),
+            "{refusal}"
+        );
+    }
 }
