@@ -470,6 +470,95 @@ impl Vault {
         Ok(policy)
     }
 
+    /// A holder of `engine.controls` moves the schedule of `agent`'s
+    /// free-time policy (untangle 6.6b, the B2 family; wake cadence;
+    /// S66B-BUDGETS B2 = A), replacing revision `expected_revision`. The
+    /// policy must stand: setting or clearing one chooses a cap, which is the
+    /// owner's act. Its `total_units`, `cap_shown_at_ms` and pinned split
+    /// stay as the owner set them. The act is the vault owner's, made by the
+    /// holder through its grant (`ActBy::Agent`), as an agent's set within a
+    /// live Grant is. Returns the receipt and the policy now in force.
+    ///
+    /// # Errors
+    /// `InvalidConfig` when `holder` holds no live `engine.controls` or no
+    /// policy stands; an invalid schedule; an unknown agent;
+    /// [`Error::ConcurrentWrite`] for a stale revision; storage errors.
+    pub fn set_free_time_schedule_as_holder(
+        &self,
+        holder: EntityId,
+        agent: EntityId,
+        expected_revision: u64,
+        schedule: FreeTimeSchedule,
+    ) -> Result<(EntityId, FreeTimePolicy)> {
+        let mut set = None;
+        let receipt = self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::WakeCadence,
+            "DREAMER_FREE_TIME_POLICY",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "agent": agent.to_hex(),
+                "schedule": &schedule,
+            }))?,
+            |txn| {
+                let grant = self.engine_controls_grant_in(txn, holder)?.ok_or_else(|| {
+                    Error::InvalidConfig("this holder holds no live engine.controls".into())
+                })?;
+                let owner = crate::policy_model::owners_in_txn(self, txn)?
+                    .first()
+                    .copied()
+                    .ok_or_else(|| Error::InvalidConfig("this vault has no owner".into()))?;
+                self.read_agent_definition_in_txn(txn, &agent)?;
+                let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
+                let Some(prior) = record.as_ref().and_then(|record| record.policy.clone()) else {
+                    return Err(Error::InvalidConfig(
+                        "a holder moves the schedule of a policy that stands; setting or clearing one is the owner's act"
+                            .into(),
+                    ));
+                };
+                FreeTimePolicyInput {
+                    total_units: prior.total_units,
+                    schedule: schedule.clone(),
+                    pinned_split: prior.pinned_split,
+                    cap_shown_at_ms: prior.cap_shown_at_ms,
+                }
+                .validate()?;
+                let set_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                let policy = FreeTimePolicy {
+                    revision: expected_revision
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow("free-time policy revision"))?,
+                    schedule: schedule.clone(),
+                    set_by: None,
+                    set_by_agent: Some(holder),
+                    set_grant: Some(grant),
+                    set_at,
+                    surface: None,
+                    prior: policy_digest(Some(&prior))?,
+                    ..prior.clone()
+                };
+                let record =
+                    FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), holder, set_at)?;
+                POLICY.put(&self.store, txn, &agent, &record)?;
+                let actor = FreeTimeActor {
+                    owner,
+                    by: ActBy::Agent {
+                        agent: holder,
+                        grant,
+                    },
+                    acting: holder,
+                    surface: None,
+                };
+                record_act_in_txn(self, txn, &actor, agent, Some(&prior), Some(&policy));
+                set = Some(policy);
+                Ok(())
+            },
+        )?;
+        // The home's timer arms on the policy's next boundary.
+        self.store.notify_proactivity_changes();
+        let policy = set.ok_or_else(|| Error::InvalidConfig("no schedule was set".into()))?;
+        Ok((receipt, policy))
+    }
+
     /// Clears `agent`'s free-time policy as the owner (FIX 4453), at
     /// revision `expected_revision`: its open cycle ends now, no new cycle
     /// opens, and the agent goes back to its nightly dreaming. Calls already
