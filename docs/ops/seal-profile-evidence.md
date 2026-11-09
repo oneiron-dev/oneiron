@@ -120,11 +120,28 @@ reasons, plus `validation_material_possible_tampering` (below). A `not_run` chec
 rolls up to an indeterminate verdict, never a passed B-LT/B-LTA
 validation-material check.
 
-The rule: missing or authenticated-unknown material is unavailable (`not_run`).
-Material that claims nothing about the signer's certificates, such as a CRL from
-an unrelated issuer, is missing coverage. Forged presented revocation material,
-a CRL signed by a shadow of a covered certificate's issuer, is `not_run` with
-`validation_material_possible_tampering`.
+The rule, by cause:
+- Missing or authenticated-unknown material is unavailable (`not_run`). Material
+  that claims nothing about the signer's certificates is missing coverage: a DSS
+  with no arrays, a present but empty array, a covered certificate missing from
+  `/Certs` and the trust anchors, or a CRL from an unrelated issuer.
+- Forged or unverifiable presented material is discarded. It supplies no
+  coverage, and wherever the result would otherwise be unavailable or unknown it
+  is `not_run` with `validation_material_possible_tampering`; beside complete
+  genuine coverage it is disregarded, and the material passes. This covers a
+  DSS, array or entry that does not parse (a reference cycle and an undecodable
+  stream included); a CRL or OCSP response whose signature no key it claims
+  verifies, or whose responder nobody presents; an unsuccessful or empty OCSP
+  response; a CertID bound to no validation-set certificate; a CRL issuer
+  without cRLSign or an OCSP responder without the delegation, EKU or key usage
+  it needs; and a CRL signed by a shadow of a covered certificate's issuer. A
+  `/Root` that cannot be read as a catalog reports the same, never absent.
+- Genuine material that says no still fails (`fail`,
+  `validation_material_invalid`): a CRL or OCSP response stale or future-dated at
+  the applicable time, a delta or IDP-scoped CRL, an OCSP delegate outside its
+  validity, and a revoked serial or status. Authenticity is judged first, so a
+  forged response that claims any of these is unverifiable, never a failure.
+  A failure outranks every unresolved result.
 
 A CRL signed by a shadow of a covered certificate's issuer is forged. The shadow
 carries the issuer's subject, did not sign the certificate, and holds a key no
@@ -136,23 +153,21 @@ tampering wherever the result would otherwise be unavailable or unknown; beside
 complete genuine coverage it is disregarded, and the material passes.
 
 Anyone holding a signed PDF can append a DSS without breaking its signatures, so
-presented material must not turn an unresolved check into a failed verdict. This
-case follows ETSI EN 319 102-1, which discards unusable revocation data and
+presented material must not turn an unresolved check into a failed verdict. These
+cases follow ETSI EN 319 102-1, which discards unusable revocation data and
 reports INDETERMINATE: the verdict is indeterminate, and
 `validation_material_possible_tampering` is always in `reasons`, so the user sees
 the tampering sub-indication.
 
-Malformed material, bad signatures, bad binding, unauthorized or stale responses,
-and proven revocation remain failures (`fail`, `validation_material_invalid`);
-FIX row [SEAL-REPORT-EN-319-102-1-ROLLUP] holds the EN-aligned rollup for them.
-Unknown status is reported only after the whole response's binding,
-authorization, freshness and signature checks pass; invalid evidence takes
-precedence. Seal-time OCSP gathering still accepts only
-all-good responses covering the requested certificate.
+FIX row [SEAL-REPORT-EN-319-102-1-ROLLUP] holds the EN-aligned rollup for the
+genuine failures (EN: TRY_LATER, REVOKED_NO_POE and the rest). Unknown status is
+reported only after the whole response's binding, authorization, freshness and
+signature checks pass. Seal-time OCSP gathering still accepts only all-good
+responses covering the requested certificate.
 
 An optional `/VRI` index does not preempt validation of the existing global DSS
 certificate and revocation arrays. The verifier does not parse that index or add
-an old-format reader. Invalid global material still fails, and an index without
+an old-format reader. Global material is judged as above, and an index without
 any global arrays does not establish validation material.
 
 Rebuild and hash-pin the native seal organ to publish these three finding codes
