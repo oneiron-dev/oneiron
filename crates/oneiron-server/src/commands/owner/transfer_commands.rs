@@ -53,6 +53,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     let run = |file: &mut std::fs::File| {
         oneiron::task_verb::verb_hook_boundary::typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.export",
             options.clone(),
             |input| memory.export_to(&input, &mut *file),
