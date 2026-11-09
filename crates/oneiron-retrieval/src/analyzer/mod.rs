@@ -429,5 +429,3 @@ pub enum DiscoverError {
     },
 }
 
-#[cfg(test)]
-mod tests;

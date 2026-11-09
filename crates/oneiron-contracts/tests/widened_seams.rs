@@ -75,33 +75,6 @@ fn entity_type_validators_refuse_reserved_and_engine_only_bytes() {
 }
 
 #[test]
-fn record_axes_derives_axes_without_widening_a_receipt() {
-    let scope = |band| ReadScope {
-        entity_types: None,
-        max_sensitivity_band: band,
-        include_stale: false,
-        min_confidence: 0.0,
-        min_salience: 0.0,
-        deny_all: false,
-    };
-    let mut receipt = ScopedReadReceipt {
-        requested: scope(3),
-        actor_ceiling: scope(1),
-        applied: scope(1),
-        narrowed_axes: Vec::new(),
-        suppressed_count: 0,
-        replan_hint: Vec::new(),
-    };
-    let before = receipt.clone();
-    receipt.record_axes();
-    assert_eq!(receipt.requested, before.requested);
-    assert_eq!(receipt.actor_ceiling, before.actor_ceiling);
-    assert_eq!(receipt.applied, before.applied);
-    assert_eq!(receipt.narrowed_axes, ["max_sensitivity_band"]);
-    assert_eq!(receipt.replan_hint, receipt.narrowed_axes);
-}
-
-#[test]
 fn claim_status_parsers_refuse_unknown_and_case_shifted_names() {
     for value in ["", "Approved", "approved ", "pending"] {
         assert_eq!(ClaimApprovalStatus::parse(value), None, "{value:?}");

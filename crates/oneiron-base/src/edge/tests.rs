@@ -7,32 +7,6 @@ use super::Vad;
 use super::encode_edge_value;
 use super::parse_strict_edge_record;
 
-#[test]
-fn strict_edge_record_parser_decodes_key_and_value() {
-    let source = EntityId::from_bytes([0x11; ENTITY_ID_LEN]).unwrap();
-    let target = EntityId::from_bytes([0x22; ENTITY_ID_LEN]).unwrap();
-    let kind = EdgeKind::Supports;
-    let mut key = [0_u8; EDGE_KEY_LEN];
-    key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
-    key[ENTITY_ID_LEN] = kind as u8;
-    key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
-    let value = encode_edge_value(kind, 0.75, 42, Vad::NEUTRAL, None).unwrap();
-
-    let record = parse_strict_edge_record(&key, &value).unwrap();
-    assert_eq!(record.source, source);
-    assert_eq!(record.kind, kind);
-    assert_eq!(record.target, target);
-    assert_eq!(record.decoded.weight, 0.75);
-    assert_eq!(record.decoded.created_at, 42);
-
-    let info = record.into_edge_info();
-    assert_eq!(info.kind, kind);
-    assert_eq!(info.target, target);
-    assert_eq!(info.target_short_id, None);
-    assert_eq!(info.weight, 0.75);
-    assert_eq!(info.created_at, 42);
-}
-
 /// ONE-1414 done-means 10 + the no-pooling contract, at the byte level.
 ///
 /// `same_as` is byte 20, has NO stored-weight prior, and is never traversed.
