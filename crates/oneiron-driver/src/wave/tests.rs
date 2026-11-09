@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use super::*;
-use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use oneiron::wave_orchestration::{PlannedTask, WAVE_PLAN_SCHEMA_VERSION, WavePlan};
 use oneiron::{TimeRange, VaultConfig};
 use rmpv::Value;
@@ -46,10 +46,11 @@ struct NoLadderHost;
 impl PassExecutorFactory for NoLadderHost {
     type Exec<'p> = NoExecutor;
 
-    fn executor<'p>(&'p mut self, _guard: &'p oneiron::BudgetGuard) -> oneiron::Result<NoExecutor> {
-        Err(oneiron::Error::InvalidConfig(
-            "the wave host tests run no Dreamer pass".into(),
-        ))
+    fn executor<'p>(
+        &'p mut self,
+        _guard: &'p oneiron::BudgetGuard,
+    ) -> oneiron::Result<NoExecutor> {
+        Err(oneiron::Error::InvalidConfig("the wave host tests run no Dreamer pass".into()))
     }
 }
 
@@ -175,10 +176,7 @@ fn completed_cut_survives_restart_and_reclaim_without_a_second_plan() -> WaveRes
         owner,
         EdgeActorClass::Human,
     );
-    assert!(
-        host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?
-            .is_none()
-    );
+    assert!(host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?.is_none());
     assert_eq!(
         host.planner.0.get(),
         0,

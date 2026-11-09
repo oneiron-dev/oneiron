@@ -36,6 +36,7 @@ impl LlmBackend for RefusingBackend {
 enum Answer {
     Refuse,
     Nothing,
+    Serve,
     ServeThenFail,
 }
 
@@ -90,7 +91,7 @@ impl PassAttachmentSource for Source {
         match self.answer {
             Answer::Refuse => Err(oneiron::Error::InvalidConfig("attachment refused".into())),
             Answer::Nothing => Ok(None),
-            Answer::ServeThenFail => Ok(Some(Box::new(Attached {
+            Answer::Serve | Answer::ServeThenFail => Ok(Some(Box::new(Attached {
                 fail: matches!(self.answer, Answer::ServeThenFail),
                 observed: Arc::clone(&self.observed),
             }))),

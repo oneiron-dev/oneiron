@@ -6,8 +6,9 @@ use super::*;
 use crate::tick::{PushTick, Tick, WakeSignal};
 use oneiron::attempt_queue::AttemptState;
 use oneiron::{
-    DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerConsolidationScope, DreamerRunnerStore,
-    WakeCancellation, WakeTrigger,
+    BudgetGuard, DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedAttempt,
+    DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerRunnerStore,
+    Result, WakeAttemptContext, WakeCancellation, WakeTrigger,
 };
 
 #[test]
