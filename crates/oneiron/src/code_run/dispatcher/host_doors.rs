@@ -165,18 +165,21 @@ impl<'a> HostSelfDispatcher<'a> {
                 call,
                 None,
                 crate::claim::ClaimApprovalStatus::Proposed,
+                true,
             )?
         } else {
             match self.dispatch_memory_put_claim_requesting(
                 call.clone(),
                 None,
                 crate::claim::ClaimApprovalStatus::Auto,
+                true,
             ) {
                 Err(error) if crate::gate::gate_rejection_pends(&error) => self
                     .dispatch_memory_put_claim_requesting(
                         call,
                         None,
                         crate::claim::ClaimApprovalStatus::Proposed,
+                        true,
                     )?,
                 outcome => outcome?,
             }

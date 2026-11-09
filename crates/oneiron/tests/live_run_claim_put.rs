@@ -144,7 +144,12 @@ fn seed_dreamer_parts(vault: &Vault, body: &ClaimBody) -> Result<()> {
 
 /// A caller's live-run claim put (FIX 3983) as the gate sees it: the agent the checker manifest ceilings at
 /// Auto, a Generated source, and the door's provenance, with or without the marker its Auto request carries.
-fn live_run_put_envelope(vault: &Vault, body: &ClaimBody, marked: bool) -> Result<WriteEnvelope> {
+fn live_run_put_envelope(
+    vault: &Vault,
+    body: &ClaimBody,
+    marked: bool,
+    approval: ClaimApprovalStatus,
+) -> Result<WriteEnvelope> {
     // The Dreamer fixture seeds the actor and the subject; the envelope below replaces its provenance.
     seed_dreamer_parts(vault, body)?;
     let mut provenance = vec![(Value::from("surface"), Value::from("self.*"))];
@@ -161,7 +166,7 @@ fn live_run_put_envelope(vault: &Vault, body: &ClaimBody, marked: bool) -> Resul
         ),
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(provenance))?,
-        ClaimApprovalStatus::Auto,
+        approval,
     ))
 }
 
@@ -173,7 +178,7 @@ fn live_run_put_envelope(vault: &Vault, body: &ClaimBody, marked: bool) -> Resul
 fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
     let (_tmp, vault) = doors::checker_vault(Some(CHECKER_REF))?;
     let body = doors::checker_body(&vault, ClaimApprovalStatus::Auto)?;
-    let marked = live_run_put_envelope(&vault, &body, true)?;
+    let marked = live_run_put_envelope(&vault, &body, true, ClaimApprovalStatus::Auto)?;
 
     let result = doors::gate_claim_write(&vault, &test_id(0x3d), &body, &marked, None, false);
     let (outcome, reason_codes) =
@@ -198,7 +203,7 @@ fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
     assert_eq!(outcome, "pending");
     assert_eq!(reason_codes, vec!["gate.pending.checker"]);
 
-    let unmarked = live_run_put_envelope(&vault, &body, false)?;
+    let unmarked = live_run_put_envelope(&vault, &body, false, ClaimApprovalStatus::Auto)?;
     let untouched = Arc::new(RecordingAutoChecker::hold());
     let bounded_untouched = bounded(untouched.clone());
     doors::gate_claim_write(
@@ -213,6 +218,59 @@ fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
         untouched.calls(),
         0,
         "an unmarked agent write is not consulted"
+    );
+    Ok(())
+}
+
+/// Review 6908 P1: the door resubmits a held Auto request Proposed, with the same marker. With the checker still
+/// unavailable, the resubmission pends at Proposed and parks with a pending review the owner rules on, instead of
+/// landing Proposed with no review. Code mode's Proposed put carries no marker and is not consulted.
+#[test]
+fn a_held_live_run_put_resubmitted_proposed_parks_with_a_pending_review() -> Result<()> {
+    let (_tmp, vault) = doors::checker_vault(Some(CHECKER_REF))?;
+    let body = doors::checker_body(&vault, ClaimApprovalStatus::Proposed)?;
+    let resubmitted = live_run_put_envelope(&vault, &body, true, ClaimApprovalStatus::Proposed)?;
+    let held = test_id(0x40);
+
+    let result = doors::gate_claim_write(&vault, &held, &body, &resubmitted, None, true);
+    let reviews: Vec<_> = vault
+        .pending_gate_consents(64)?
+        .into_iter()
+        .filter(|record| record.claim_id == *held.as_bytes())
+        .collect();
+    assert_eq!(
+        reviews.len(),
+        1,
+        "FAILBEFORE 6908 P1: the held resubmission parks with no pending review ({result:?})"
+    );
+    assert_eq!(
+        reviews[0].reason_codes,
+        vec!["gate.pending.checker.unavailable"]
+    );
+
+    let code_mode = live_run_put_envelope(&vault, &body, false, ClaimApprovalStatus::Proposed)?;
+    let untouched = Arc::new(RecordingAutoChecker::hold());
+    let bounded_untouched = bounded(untouched.clone());
+    let plain = test_id(0x41);
+    doors::gate_claim_write(
+        &vault,
+        &plain,
+        &body,
+        &code_mode,
+        Some(&bounded_untouched),
+        true,
+    )?;
+    assert_eq!(
+        untouched.calls(),
+        0,
+        "a code-mode Proposed put is not consulted"
+    );
+    assert!(
+        vault
+            .pending_gate_consents(64)?
+            .iter()
+            .all(|record| record.claim_id != *plain.as_bytes()),
+        "a code-mode Proposed put parks no review"
     );
     Ok(())
 }

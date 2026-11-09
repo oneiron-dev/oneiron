@@ -89,7 +89,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
-    // FIX 3983 (review 6881 P1): a caller's live-run claim put asking Auto is the other Generated producer the
+    // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
     // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
     // Dreamer-only; only the checker consult below reads this.
     let checked_producer =
@@ -268,7 +268,8 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         //
         // The consult is EXACTLY: a manifest names a checker, the ordinary
         // decision is Auto, the write is an agent-class Dreamer write or a
-        // caller's live-run claim put asking Auto (FIX 3983), and its
+        // caller's live-run claim put (FIX 3983; its Proposed resubmission
+        // too, so a hold parks it with a pending review, review 6908 P1), and its
         // source is one that requires an explicit auto permit. Human and owner
         // writes therefore never reach a checker at all. A door that injects
         // no checker for a write the manifest wants checked gets no verdict,
