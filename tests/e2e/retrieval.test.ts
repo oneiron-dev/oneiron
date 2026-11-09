@@ -1708,19 +1708,216 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
   }
 });
 
-/* RETRIEVAL-11: evidence inspection and vetting exist; the complete
- * Generated/Auto + pending-critical production producers are still owed.
- * Engine 2026-11-07 07:12 JST confirms agents.spawn -> genuine agent holder
- * pairing -> agents.spawn.get leased -> self.run.attach. That composition is
- * built; this is not a request for another lease/registration API.
- * The fixture must retain the actual caller-owned lease for its production
- * writes. Attach consumes that state; a queue receipt alone does not grant
- * the paired human owner an agent's run. Deterministic fixture timing and
- * host-stamped producer setup remain to be qualified, not forged or inferred
- * from an evidence read. No source:"generated" upsert or fabricated run is
- * a positive control. Keep the complete original pending-critical oracle.
+async function retrieval11OwnerRefusal(engine: EngineFixture, client: PublicHttpClient,
+  verb: "vault.claims.review" | "vault.claims.settle" | "vault.consolidation.evidence",
+  input: unknown, actorRef: string, actorClass: "agent" | "human") {
+  const reply = await client.raw<{ error: { code: string; message: string; receiptRef?: string } }>(
+    "POST", `/v1/core/facade/${verb}`, input);
+  expect(reply.status).toBe(403);
+  expect(reply.body.error.code).toBe("FORBIDDEN");
+  expect(reply.body.error.message).toBe(`${verb} is the vault owner's`);
+  expect(reply.body.error.receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
+  expect(reply.headers.get("x-oneiron-receipt-ref")).toBe(reply.body.error.receiptRef!);
+  const receipt = await engine.client.call("vault.receipts.get", {
+    receipt_ref: reply.body.error.receiptRef!,
+  });
+  expect(receipt).not.toBeNull();
+  expect(receipt!.receipt_ref).toBe(reply.body.error.receiptRef!);
+  expect(receipt!.actor_ref).toBe(actorRef);
+  expect(receipt!.actor_class).toBe(actorClass);
+  expect(receipt!.transport).toBe("http_facade");
+  expect(receipt!.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
+}
+
+/* RETRIEVAL-11
+ * Promise: An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control corroborates, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.
+ * Doors: agent upsert -> owner review/settle -> claims.list/evidence; review/settle/evidence refuse the agent, evidence refuses an attenuated owner, restart preserves the matrix, recall runs last.
+ * Unproved: host-stamped Generated/Auto needs a genuine Dreamer run through vault.agents.spawn -> owned leased vault.agents.spawn.get -> self.run.attach -> vault.consolidation.promote, with its Auto grant/checker; a declared external source is not that producer.
+ * Unproved: pending-critical Generated/Proposed needs a qualified public producer and vault.writes.critical_confirm.pending binding; Proposed alone is not an attached confirmation.
+ * Unproved: consuming promotion/root accounting needs vault.consolidation.promote output evidence or vault.consolidation.pin/frontier/accounting under its grant; this case inspects eligibility only.
+ * Unproved: outbound authority from prose needs vault.policy.outbound.decide and the consuming connector.call consent/grant door; effector_evidence_eligible is not permission to send.
  */
-suite.skip(test, "RETRIEVAL-11", "waits on merged complete production Generated/Auto and pending-critical producers and qualification of the genuine caller-owned leased-run fixture; spawn/agent-pair/leased-get/attach composition exists, while evidence inspection is not a producer [FIX 3983]");
+suite.test(test, "RETRIEVAL-11", "An external agent's Generated claim becomes recall-visible after owner approval but remains ineligible as corroboration; an owner-stated human control corroborates, an unapproved ToolOutput proposal is neither recall-visible nor admissible evidence, and these evidence decisions require the owner's own unattenuated credential.", async () => {
+  const fixture = await scenario<{
+    readonly sources: { readonly label: string; readonly source: string }[];
+  }>("RETRIEVAL-11");
+  const toolSource = fixture.sources.find(row => row.label === "foreign-tool");
+  expect(toolSource?.source).toBe("tool_output");
+  const engine = await EngineFixture.start({ id: "RETRIEVAL-11", profile,
+    serverConfig: "[models.dreamer]\nenabled = false\n[models.workflows]\nenabled = false\n" });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
+  try {
+    const ownerRef = engine.pairedActor.principalRef;
+    const scope = await ownerBaseClaimScope(engine.client, ownerRef);
+    const created = await engine.client.call("vault.agents.create", {
+      agent_def_ref: "10000000000000000000000000000012",
+      definition: { agent_id: "r11_claim_author", display_name: "R11 claim author",
+        desc: "External claim author for source-trust inspection", version: "1", ceiling: "auto" },
+    });
+    const agent = await engine.pairActor({ principalRef: created.agent_def_ref,
+      actorClass: "agent", scope: ["core:read", "core:write"] });
+    const identity = await agent.client.call("self.actor", {});
+    expect(identity.actor_ref).toBe(created.agent_def_ref);
+    expect(identity.actor_class).toBe("agent");
+    const prompt = await witnessedText(engine,
+      "Propose a short generated statement for source-trust inspection.", utc("2026-08-01T00:00:00Z"));
+    // Fixed external-agent output, not a host-run model or a Generated/Auto fixture.
+    const generated = await agent.client.call("vault.claims.upsert", {
+      predicate: "profile.r11_generated", subject_ref: ownerRef,
+      value: "r11marker amber generated assertion", confidence: 0.875,
+      source: "generated", scope, sensitivity: 0,
+      evidence_turn_refs: [prompt.witnessed.turn_short_id],
+    });
+    const tool = await agent.client.call("vault.claims.upsert", {
+      predicate: "profile.r11_tool", subject_ref: ownerRef,
+      value: "r11marker amber tool observation", confidence: 0.875,
+      source: toolSource!.source, scope, sensitivity: 0, evidence_turn_refs: [],
+    });
+    expect(generated.approval).toBe("proposed");
+    expect(tool.approval).toBe("proposed");
+    expect(generated.claim).toBeTruthy();
+    expect(tool.claim).toBeTruthy();
+    const generatedId = generated.claim!.id;
+    const toolId = tool.claim!.id;
+    const gates = await engine.client.call("vault.receipts", { limit: 1000 });
+    for (const [write, reasons] of [
+      [generated, ["gate.pending.actor_ceiling", "gate.pending.source_trust"]],
+      [tool, ["gate.pending.actor_ceiling"]],
+    ] as const) {
+      const gate = gates.receipts.find(row => row.receipt_ref === write.receipt_ref);
+      expect(gate).toBeDefined();
+      expect(gate!.outcome).toBe("pending");
+      expect(gate!.actor_class).toBe("agent");
+      expect(gate!.actor_ref).toBe(created.agent_def_ref);
+      expect(gate!.claim_ref).toBe(write.claim!.id);
+      expect(sorted(gate!.reason_codes)).toEqual(sorted(reasons));
+    }
+    const control = await claim(engine, scope, { predicate: "profile.r11_control",
+      value: "r11marker amber owner statement", evidence_turn_refs: [] });
+    expect(control.receipt.approval).toBe("auto");
+    const retrieval11ReadClaims = async (generatedApproval: "proposed" | "approved") => {
+      const rows = await claimSet(engine);
+      for (const expected of [
+        { claim_ref: generatedId, predicate: "profile.r11_generated", source: "generated",
+          approval: generatedApproval, value: "r11marker amber generated assertion" },
+        { claim_ref: toolId, predicate: "profile.r11_tool", source: "tool_output",
+          approval: "proposed", value: "r11marker amber tool observation" },
+        { claim_ref: control.id, predicate: "profile.r11_control", source: "user_stated",
+          approval: "auto", value: "r11marker amber owner statement" },
+      ]) {
+        expect(rows.find(row => row.claim_ref === expected.claim_ref)).toMatchObject({
+          ...expected, subject_ref: ownerRef, claim_scope: scope, confidence: 0.875,
+          lifecycle: "active", stale: false,
+        });
+      }
+    };
+    const review = await engine.client.call("vault.claims.review", { claim_ref: generated.claim_short_id });
+    expect(review.proposal_ref).toBe(generatedId);
+    expect(review.opener_ref).toBe(created.agent_def_ref);
+    expect(review.claim).toMatchObject({ claim_ref: generatedId, source: "generated", approval: "proposed" });
+    await retrieval11OwnerRefusal(engine, agent.client, "vault.claims.review",
+      { claim_ref: generated.claim_short_id }, created.agent_def_ref, "agent");
+    const settlementInput: FacadeInput<"vault.claims.settle"> = {
+      claim_ref: review.proposal_ref, review_id: review.review_id, decision: "approve",
+    };
+    await retrieval11OwnerRefusal(engine, agent.client, "vault.claims.settle",
+      settlementInput, created.agent_def_ref, "agent");
+    await retrieval11ReadClaims("proposed");
+    const approved = await engine.client.call("vault.claims.settle", settlementInput);
+    expect(approved.verdict).toBe("landed");
+    expect(approved.reason).toBe("gate.claim.settle.approved");
+    expect(approved.proposal_ref).toBe(generatedId);
+    expect(approved.review_id).toBe(review.review_id);
+    expect(approved.answered_by).toEqual({ kind: "word", person_ref: ownerRef });
+    expect(approved.claim).toMatchObject({ claim_ref: generatedId, source: "generated",
+      approval: "approved", lifecycle: "active", stale: false });
+    await retrieval11ReadClaims("approved");
+    const evidenceInput: FacadeInput<"vault.consolidation.evidence"> = {
+      source_refs: [generatedId, toolId, control.id],
+    };
+    const retrieval11ReadEvidence = async () => {
+      const read = await engine.client.call("vault.consolidation.evidence", evidenceInput);
+      readReceipt(read.narrowing);
+      expect(read.value).toHaveLength(3);
+      for (const expected of [
+        { source_ref: generatedId, source: "generated", approval: "approved", generated_origin: true,
+          writer_ref: created.agent_def_ref, consolidation_eligible: true, corroboration_eligible: false,
+          first_party_corroboration: false, effector_evidence_eligible: true, refusal: "generated_origin" },
+        { source_ref: toolId, source: "tool_output", approval: "proposed", generated_origin: false,
+          writer_ref: created.agent_def_ref, consolidation_eligible: false, corroboration_eligible: false,
+          first_party_corroboration: false, effector_evidence_eligible: false, refusal: "not_surfaceable" },
+        { source_ref: control.id, source: "user_stated", approval: "auto", generated_origin: false,
+          writer_ref: ownerRef, consolidation_eligible: true, corroboration_eligible: true,
+          first_party_corroboration: true, effector_evidence_eligible: true, refusal: null },
+      ]) {
+        expect(read.value.find(row => row.source_ref === expected.source_ref)).toMatchObject({
+          ...expected, lifecycle: "active", evidence_taint: null, foreign_world_ref: null,
+        });
+      }
+    };
+    await retrieval11ReadEvidence();
+    await retrieval11OwnerRefusal(engine, agent.client, "vault.consolidation.evidence",
+      evidenceInput, created.agent_def_ref, "agent");
+    const { seed } = credentialParts(engine.pairedActor.credential);
+    const narrowed = await engine.client.call("self.credential.attenuate", {
+      holder_seed: [...Buffer.from(seed, "hex")],
+      caveat: { scope: { kind: "ceiling", scope: {
+        worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" },
+        audience: { kind: "all" }, verbs: { kind: "some", values: ["core:read"] },
+        sensitivity: { kind: "all" },
+      } } },
+    });
+    expect(narrowed.token.startsWith("v2.slip.")).toBe(true);
+    const attenuatedOwner = new PublicHttpClient(engine.url, {
+      credential: `v2.cred.${narrowed.token.slice(8)}.${seed}`, artifacts: engine.artifacts,
+    });
+    const narrowedIdentity = await attenuatedOwner.call("self.actor", {});
+    expect(narrowedIdentity.actor_ref).toBe(ownerRef);
+    expect(narrowedIdentity.actor_class).toBe("human");
+    await retrieval11OwnerRefusal(engine, attenuatedOwner, "vault.consolidation.evidence",
+      evidenceInput, ownerRef, "human");
+    await engine.restart();
+    await retrieval11ReadClaims("approved");
+    await retrieval11ReadEvidence();
+
+    // Last door: assert the promise despite the no-embedder publication defect (2026-11-10).
+    const recallInput: FacadeInput<"vault.recall"> = {
+      query: "r11marker amber", effort: "light", limit: 100, format: "md", token_budget: 8192,
+      scope: { kinds: ["CLAIM"], worlds: { kind: "base" } },
+    };
+    const retrieval11Matches = (item: Facade.MemoryItem, id: string, shortRef: string) =>
+      item.record?.id === id || item.short_id === shortRef;
+    let pack: FacadeResult<"vault.recall">;
+    const recallLabel = "approved Generated claim visible in recall";
+    try {
+      pack = await awaitPublic(() => engine.client.call("vault.recall", recallInput),
+        value => value.items.some(item => retrieval11Matches(item, generatedId, generated.claim_short_id))
+          && value.items.some(item => retrieval11Matches(item, control.id, control.ref)),
+        { timeoutMs: 5000, label: recallLabel });
+    } catch (error) {
+      if (errorText(error).startsWith(`${recallLabel} deadline after 5000ms poll budget;`)) {
+        throw new Error("approved Generated claim visible in recall: not published within 5000ms [DEFECT 2026-11-10]", { cause: error });
+      }
+      throw error;
+    }
+    readReceipt(pack.narrowing);
+    expect(pack.items.find(item => retrieval11Matches(item, generatedId, generated.claim_short_id))!.provenance.source).toBe("generated");
+    expect(pack.items.find(item => retrieval11Matches(item, control.id, control.ref))!.provenance.source).toBe("user_stated");
+    expect(pack.items.some(item => retrieval11Matches(item, toolId, tool.claim_short_id))).toBe(false);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
+});
 
 /* RETRIEVAL-12 replacement section. Drop-in for retrieval.test.ts: delete the
  * RETRIEVAL-12 suite.todo block and paste this whole section in its place.
