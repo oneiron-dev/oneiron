@@ -1,13 +1,16 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::future::Future;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::task::{Context, Poll, Waker};
 
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
 };
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
-use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use oneiron::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerConsolidationScope, EdgeKind, SessionEndWake,
-    TimeRange, VaultConfig, session_lifecycle::SessionEndReason,
+    SessionMintOutcome, TimeRange, VaultConfig, dreamer_consolidation::decode_partition_payload,
+    session_lifecycle::SessionEndReason,
 };
 
 use super::*;
@@ -158,9 +161,7 @@ fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
 /// (`Vault::plan_session_end_wake` for the sitting) — used to hand stale
 /// closers a REAL wake plan.
 fn meso_wake(vault: &Vault, session: &EntityId) -> SessionEndWake {
-    vault
-        .plan_session_end_wake(session)
-        .expect("plan session end wake")
+    vault.plan_session_end_wake(session).expect("plan session end wake")
 }
 
 /// The one actor these tests open sittings for, on this install's machine
@@ -192,11 +193,7 @@ const CEILING: u64 = 8 * 60 * 60; // 8 h test ceiling
 fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
     let (_dir, vault) = open_vault();
     let (now, clock) = manual_clock(1_000_000);
-    let driver = driver(
-        &vault,
-        SessionLifecycleConfig::new(Some(FLOOR), Some(CEILING)),
-        clock,
-    );
+    let driver = driver(&vault, SessionLifecycleConfig::new(Some(FLOOR), Some(CEILING)), clock);
     let conversation = seed_conversation(&vault, 0x61);
     seed_dirty_turn(&vault, &conversation, 999);
 
@@ -320,11 +317,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
     hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
     assert!(matches!(ticks.next_tick().await, Some(Tick::Hint(_))));
-    let a = vault
-        .open_session(key)
-        .expect("read")
-        .expect("A open")
-        .session;
+    let a = vault.open_session(key).expect("read").expect("A open").session;
 
     // ExplicitEnd then AppOpen, buffered together: arrival order is
     // lifecycle causality — A ends, then a NEW sitting B mints. The old
@@ -355,11 +348,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         "the reopen follows the deadline; the end was consumed by its close"
     );
 
-    let b = vault
-        .open_session(key)
-        .expect("read")
-        .expect("B open")
-        .session;
+    let b = vault.open_session(key).expect("read").expect("B open").session;
     assert_ne!(a, b, "two sittings, not one");
     assert_eq!(
         vault
