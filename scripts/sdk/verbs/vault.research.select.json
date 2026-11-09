@@ -1,0 +1,12 @@
+{
+  "name": "vault.research.select",
+  "description": "Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met.",
+  "input": "crate::task_verb::sdk::ResearchSelectWire",
+  "output": "crate::autoreason_campaign::research::SelectionReceipt",
+  "call": "crate::task_verb::sdk::research_select(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

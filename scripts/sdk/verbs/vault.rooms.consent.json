@@ -1,0 +1,13 @@
+{
+  "name": "vault.rooms.consent",
+  "description": "One party's answer to a join that waits on it, after which the join is decided again.",
+  "input": "crate::workspace_roster::ConsentAnswer",
+  "output": "crate::workspace_roster::JoinOutcome",
+  "call": "memory.rooms_consent(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

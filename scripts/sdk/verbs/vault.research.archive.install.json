@@ -1,0 +1,13 @@
+{
+  "name": "vault.research.archive.install",
+  "description": "Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator.",
+  "input": "crate::autoreason_campaign::archive::CampaignArchiveInstall",
+  "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+  "call": "crate::task_verb::sdk::research_archive_install(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

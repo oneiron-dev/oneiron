@@ -155,7 +155,7 @@ impl ActionRegistry {
             return Err(invalid("a run-row action runs only under a host's door"));
         }
         if let ActionBuild::Run(verb) = registered.build
-            && super::run_verb_call::LIVE_RUN_VERBS.contains(&verb)
+            && crate::task_verb::sdk::RunVerb::LIVE_RUN.contains(&verb)
             && live_run.is_none()
         {
             return Err(invalid("this run row needs its caller's live run"));

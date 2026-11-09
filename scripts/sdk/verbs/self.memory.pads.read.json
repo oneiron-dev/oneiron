@@ -1,0 +1,16 @@
+{
+  "name": "self.memory.pads.read",
+  "description": "Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log.",
+  "input": "crate::task_verb::sdk::DiaryQueryRequest",
+  "output": "crate::task_verb::sdk::DiaryQueryOutcome",
+  "call": "crate::task_verb::sdk::self_memory_pads_read_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "host_door_proof": "diary_reader"
+}

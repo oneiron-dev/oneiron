@@ -551,7 +551,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
 fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
         // A row's answer is its output, framed as every verb's is: the type
-        // its row names (`output` in `scripts/sdk/agent-verbs.json`).
+        // its row names (`output` in `scripts/sdk/verbs/`).
         SelfDispatchOutcome::MemoryWrite(value) => {
             json!({ "output": crate::code_run::MemoryWriteOutput { id: value.id } })
         }

@@ -1,0 +1,16 @@
+{
+  "name": "calendar.ics.configure",
+  "description": "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent.",
+  "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest",
+  "output": "crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.configure\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

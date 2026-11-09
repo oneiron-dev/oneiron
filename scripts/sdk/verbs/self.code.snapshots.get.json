@@ -1,0 +1,8 @@
+{
+  "name": "self.code.snapshots.get",
+  "input": "crate::memory::repo_doors::RepoSnapshotsGetInput",
+  "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "RepoSnapshotsGet"
+}

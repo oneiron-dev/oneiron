@@ -474,7 +474,7 @@ impl SessionHookKeep {
             return None;
         }
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
-            overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            overlay: SessionOverlay::new(vault.runtime().off_record_overlay_budget_bytes()),
             invocations: None,
             asks: HashMap::new(),
             ask_records: HashMap::new(),

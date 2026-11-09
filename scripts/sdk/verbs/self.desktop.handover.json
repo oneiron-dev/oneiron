@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.handover",
+  "description": "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record.",
+  "input": "oneiron_browser::HandoverInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::HandoverOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.handover(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

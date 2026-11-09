@@ -1,0 +1,13 @@
+{
+  "name": "vault.members.reset_project_access",
+  "description": "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override.",
+  "input": "crate::task_verb::sdk::SharedProjectAccessResetRequest",
+  "output": "crate::task_verb::sdk::SharedProjectAccessReset",
+  "call": "crate::task_verb::sdk::reset_shared_project_access(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,22 @@
+{
+  "name": "vault.notes.author_take",
+  "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref.",
+  "refs": [
+    "/target/subject",
+    "/target/claim",
+    "/source_ref"
+  ],
+  "input": "AuthorTakeRequest",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory_requests::author_take(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true
+}

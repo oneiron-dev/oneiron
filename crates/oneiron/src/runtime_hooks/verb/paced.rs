@@ -225,7 +225,7 @@ pub(crate) fn hold_paced_verb_call(
     let Some(invocation) = memory.invocation() else {
         return Ok(None);
     };
-    let Some(check) = vault.verb_hook_state.credential_check() else {
+    let Some(check) = vault.runtime().verb_hook_state().credential_check() else {
         return Ok(None);
     };
     let Some(credential) = memory.verb_ask_credential() else {
@@ -462,13 +462,19 @@ impl Vault {
     /// counted from its hold; 0 keeps the default, 7 days. The host sets it
     /// from its limits before its settler starts.
     pub fn set_paced_verb_wait_secs(&self, secs: u64) {
-        self.verb_hook_state
+        self.runtime()
+            .verb_hook_state()
             .paced_wait
             .store(secs, Ordering::Release);
     }
 
     fn paced_verb_wait_secs(&self) -> u64 {
-        match self.verb_hook_state.paced_wait.load(Ordering::Acquire) {
+        match self
+            .runtime()
+            .verb_hook_state()
+            .paced_wait
+            .load(Ordering::Acquire)
+        {
             0 => PACED_VERB_WAIT_DEFAULT_SECS,
             secs => secs,
         }
@@ -551,7 +557,10 @@ impl Vault {
             (!passed.contains(actor)
                 && row.next_eligible_at <= now
                 && row.deadline > now
-                && !self.verb_hook_state.drain_holds(InvocationId(*key)))
+                && !self
+                    .runtime()
+                    .verb_hook_state()
+                    .drain_holds(InvocationId(*key)))
             .then(|| (*key, row.clone()))
         };
         let after = last.last_served.map_or_else(
@@ -575,7 +584,8 @@ impl Vault {
     fn run_paced_turn(&self, key: [u8; 16], row: PacedVerbCall) -> Result<bool> {
         let invocation = InvocationId(key);
         let Some(_held) = self
-            .verb_hook_state
+            .runtime()
+            .verb_hook_state()
             .hold_for_drain(invocation, row.actor, row.work)
         else {
             return Ok(false);
@@ -680,7 +690,7 @@ impl Vault {
         class: crate::EdgeActorClass,
         args: Value,
     ) -> Result<VerbAskResumed> {
-        let Some(check) = self.verb_hook_state.credential_check() else {
+        let Some(check) = self.runtime().verb_hook_state().credential_check() else {
             return Ok(VerbAskResumed::Refused(
                 VerbAskRefusal::CredentialUnavailable,
             ));

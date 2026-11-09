@@ -1,0 +1,17 @@
+{
+  "name": "vault.identity.merge",
+  "description": "The owner merges source identities into a survivor, retaining claim subjects and append-only evidence.",
+  "input": "crate::task_verb::sdk::IdentityMergeRequest",
+  "output": "crate::task_verb::sdk::IdentityTopologyResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.merge\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

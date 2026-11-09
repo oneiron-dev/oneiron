@@ -17,7 +17,7 @@ afterAll(suite.flush);
  * hashes are in calendar-scenarios. Every corpus file is hash-pinned by the
  * calendar manifest, loaded by the shared preflight. No shared helper is edited.
  *
- * Binding evidence: scripts/sdk/agent-verbs.json, both generated SDK catalogs,
+ * Binding evidence: scripts/sdk/verbs/, both generated SDK catalogs,
  * api/openapi_registry.rs, api/openapi/{booking_schemas,endpoints_merge}.rs,
  * api/booking{,/public,/front,/page_token}.rs, mcp/{surface,tool_catalog}.rs,
  * api/mcp_gateway/actor_dispatch.rs and cli.rs. Rust calendar DTOs explain the

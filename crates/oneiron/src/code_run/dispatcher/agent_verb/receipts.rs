@@ -232,7 +232,7 @@ pub(super) fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
             .then(|| [ERASED_ROW_IDENTITY, identity.as_slice()].concat());
     }
     let (verb, input) = recorded_call(row)?;
-    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+    if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
         if !input.is_empty() {
             return None;
         }

@@ -1,0 +1,27 @@
+{
+  "name": "vault.summaries.patch",
+  "description": "Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read.",
+  "input": "crate::scope_summary::SummaryPatchRequest",
+  "output": "crate::scope_summary::SummaryMutationResult",
+  "call": "memory.patch_summary(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryPatchRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true
+}

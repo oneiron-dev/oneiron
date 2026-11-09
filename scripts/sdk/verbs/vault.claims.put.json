@@ -1,0 +1,9 @@
+{
+  "name": "vault.claims.put",
+  "input": "crate::code_run::MemoryClaimInput",
+  "output": "crate::code_run::MemoryWriteOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "MemoryPutClaim",
+  "run_surface": "memory"
+}

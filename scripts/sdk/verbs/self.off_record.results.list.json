@@ -1,0 +1,17 @@
+{
+  "name": "self.off_record.results.list",
+  "description": "The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not.",
+  "input": "crate::task_verb::sdk::OffRecordResultsRequest",
+  "output": "crate::task_verb::sdk::OffRecordResultCards",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.list\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

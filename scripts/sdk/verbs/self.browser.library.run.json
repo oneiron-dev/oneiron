@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.library.run",
+  "description": "Runs a replay library program live, strict (rules only; model steps and fill generation ask up at zero tokens) or assisted; secret slots take handles; receipts name fill text_source; misses return a failed_receipt; 3 strict misses: drift.",
+  "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
+  "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
+    "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

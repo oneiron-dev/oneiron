@@ -433,8 +433,9 @@ fn export_unencoded(error: serde_json::Error) -> napi::Error {
     boundary_error(format!("could not encode the export receipt: {error}"))
 }
 
-#[path = "client/generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 // The engine-backed served client (OF-237), only in an `engine` build.
 #[cfg(feature = "engine")]
 mod embedded_engine;
