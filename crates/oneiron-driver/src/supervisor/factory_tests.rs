@@ -101,7 +101,7 @@ async fn setup_panic_before_admission_redrives_push_tick() {
     let (_dir, vault) = open_vault();
     let attempt = enqueue_micro(&vault, "factory-panic-redrive", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);
@@ -145,7 +145,7 @@ async fn in_pass_failure_with_backlog_redrives_without_second_push() {
     let first = enqueue_micro(&vault, "fail-after-admit-1", 10);
     let second = enqueue_micro(&vault, "fail-after-admit-2", 11);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);
@@ -297,6 +297,7 @@ fn consolidation_factory(actor: WriteActor) -> ConsolidationExecutorFactory {
         oneiron::llm::HostInferenceBinding::Advertised {
             model: oneiron::ModelId::new("test/model@v1").expect("host model"),
             locality: oneiron::ModelLocality::OwnServer,
+            keyless: false,
         },
         Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),

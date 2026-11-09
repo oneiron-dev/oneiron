@@ -97,6 +97,7 @@ impl DreamerAttemptExecutor for TestExec {
         assert!(!self.panic_now, "scripted executor panic");
         Ok(DreamerAttemptExecution::Completed {
             completed_units: self.completed_units,
+            step_bindings: Vec::new(),
         })
     }
 }

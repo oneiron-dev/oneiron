@@ -11,19 +11,24 @@ use crate::session::SessionHint;
 #[test]
 fn session_hints_preserve_arrival_order_and_coalesce_only_adjacent_same_kind() {
     let (mut receiver, _wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
+    // One actor's sitting on one machine: the hints share one causal queue.
+    let key = oneiron::session_lifecycle::SessionKey {
+        actor: EntityId::from_bytes([0x5e; 16]).expect("actor id"),
+        machine: EntityId::from_bytes([0x3a; 16]).expect("machine id"),
+    };
     // Arrival sequence: open, a typing burst (adjacent → ONE bump),
     // end, REOPEN, plain advisory. The second AppOpen is same-kind but
     // NOT adjacent to the first — collapsing them would erase a whole
     // sitting (the C4/G1 causality bug).
-    hint.push_session_hint(SessionHint::AppOpen, None)
+    hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
     for _ in 0..3 {
-        hint.push_session_hint(SessionHint::Activity, None)
+        hint.push_session_hint(key, SessionHint::Activity, None)
             .expect("open channel");
     }
-    hint.push_session_hint(SessionHint::ExplicitEnd, None)
+    hint.push_session_hint(key, SessionHint::ExplicitEnd, None)
         .expect("open channel");
-    hint.push_session_hint(SessionHint::AppOpen, None)
+    hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
     hint.push_hint().expect("open channel");
 

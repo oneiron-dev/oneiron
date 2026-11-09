@@ -8,8 +8,9 @@ use oneiron::attempt_queue::{
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use oneiron::{
-    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, EdgeKind, SessionMintOutcome, TimeRange, VaultConfig,
-    dreamer_consolidation::decode_partition_payload, session_lifecycle::SessionEndReason,
+    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerConsolidationScope, EdgeKind, SessionEndWake,
+    SessionMintOutcome, TimeRange, VaultConfig, dreamer_consolidation::decode_partition_payload,
+    session_lifecycle::SessionEndReason,
 };
 
 use super::*;
@@ -184,21 +185,18 @@ fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
     );
 }
 
-/// The production planning trio, exactly as the driver's close runs it —
-/// used to hand stale closers a REAL non-empty wake plan.
-fn meso_wake(vault: &Vault) -> SessionEndWake {
-    let scope = DreamerConsolidationScope::Meso;
-    let watermark = read_watermark(vault, scope).expect("watermark");
-    let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
-    let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
-    let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
-    let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
-    SessionEndWake {
-        plans,
-        planned_watermark: watermark.last_learned_at,
-        planned_turn_ids,
-        advance_watermark_to,
-    }
+/// The production planning round, exactly as the driver's close runs it
+/// (`Vault::plan_session_end_wake` for the sitting) — used to hand stale
+/// closers a REAL wake plan.
+fn meso_wake(vault: &Vault, session: &EntityId) -> SessionEndWake {
+    vault.plan_session_end_wake(session).expect("plan session end wake")
+}
+
+/// The one actor these tests open sittings for, on this install's machine
+/// (`Vault::local_session_key`, the on-device caller's binding).
+fn sitting_key(vault: &Vault) -> SessionKey {
+    let actor = EntityId::from_bytes([0x5e; 16]).expect("actor id");
+    vault.local_session_key(actor).expect("local session key")
 }
 
 fn driver(
@@ -213,10 +211,10 @@ fn driver(
 /// scheduling clock outside the mutation, then pass the stamp explicitly.
 fn apply_now(driver: &SessionLifecycleDriver<'_>, hint: SessionHint) -> Result<SessionHintEffect> {
     let arrival_ms = (driver.clock())();
-    driver.apply_hint(hint, None, arrival_ms)
+    driver.apply_hint(sitting_key(driver.vault), hint, None, arrival_ms)
 }
 
-const FLOOR: u64 = DEFAULT_SESSION_IDLE_FLOOR_SECS; // 1_200 s
+const FLOOR: u64 = crate::TEST_SESSION_IDLE_FLOOR_SECS; // 1_200 s
 const CEILING: u64 = 8 * 60 * 60; // 8 h test ceiling
 
 #[test]
@@ -390,7 +388,7 @@ fn explicit_end_fires_exactly_one_durable_meso_wake() {
 fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
     let (_dir, vault) = open_vault();
     let (now, clock) = manual_clock(1_000_000);
-    let driver = driver(&vault, SessionLifecycleConfig::new(FLOOR, CEILING), clock);
+    let driver = driver(&vault, SessionLifecycleConfig::new(Some(FLOOR), Some(CEILING)), clock);
     let conversation = seed_conversation(&vault, 0x61);
     seed_dirty_turn(&vault, &conversation, 999);
 
@@ -460,7 +458,7 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
                 &id,
                 SessionClosePredicate::Explicit,
                 1_095,
-                &meso_wake(&vault),
+                &meso_wake(&vault, &id),
             )
             .expect("stale replay"),
         None
@@ -596,12 +594,13 @@ async fn session_expiry_wins_an_exact_poll_tie_with_an_inner_tick() {
 async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
     let clock = tokio_clock(1_000_000_000);
     let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
+    let key = sitting_key(&vault);
     // The session-end miner runs as the Dreamer, a MACHINE writer: the host
     // roots the vault and holds its key.
     crate::provision_test_engine_machines(&vault);
     let lifecycle = driver(
         &vault,
-        SessionLifecycleConfig::new(FLOOR, CEILING),
+        SessionLifecycleConfig::new(Some(FLOOR), Some(CEILING)),
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
@@ -610,17 +609,17 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
     let conversation = seed_conversation(&vault, 0x62);
     seed_dirty_turn(&vault, &conversation, 999_999);
 
-    hint.push_session_hint(SessionHint::AppOpen, None)
+    hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
     assert!(matches!(ticks.next_tick().await, Some(Tick::Hint(_))));
-    let a = vault.open_session().expect("read").expect("A open").session;
+    let a = vault.open_session(key).expect("read").expect("A open").session;
 
     // ExplicitEnd then AppOpen, buffered together: arrival order is
     // lifecycle causality — A ends, then a NEW sitting B mints. The old
     // per-kind slots drained open-first, so the reopen never minted.
-    hint.push_session_hint(SessionHint::ExplicitEnd, None)
+    hint.push_session_hint(key, SessionHint::ExplicitEnd, None)
         .expect("open channel");
-    hint.push_session_hint(SessionHint::AppOpen, None)
+    hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
     let deadline = ticks.next_tick().await.expect("deadline");
     assert!(
@@ -644,7 +643,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         "the reopen follows the deadline; the end was consumed by its close"
     );
 
-    let b = vault.open_session().expect("read").expect("B open").session;
+    let b = vault.open_session(key).expect("read").expect("B open").session;
     assert_ne!(a, b, "two sittings, not one");
     assert_eq!(
         vault
@@ -863,9 +862,10 @@ async fn retry_slot_applies_before_newer_buffered_hints() {
 async fn ready_meso_deadline_beats_an_applied_pending_hint() {
     let clock = tokio_clock(1_000_000_000);
     let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
+    let key = sitting_key(&vault);
     let lifecycle = driver(
         &vault,
-        SessionLifecycleConfig::new(FLOOR, CEILING),
+        SessionLifecycleConfig::new(Some(FLOOR), Some(CEILING)),
         Arc::clone(&clock),
     );
     assert!(matches!(
@@ -878,9 +878,9 @@ async fn ready_meso_deadline_beats_an_applied_pending_hint() {
     let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
 
-    hint.push_session_hint(SessionHint::Activity, None)
+    hint.push_session_hint(key, SessionHint::Activity, None)
         .expect("pending activity");
-    hint.push_session_hint(SessionHint::ExplicitEnd, None)
+    hint.push_session_hint(key, SessionHint::ExplicitEnd, None)
         .expect("end sitting");
     let first = ticks.next_tick().await.expect("first tick");
     assert!(

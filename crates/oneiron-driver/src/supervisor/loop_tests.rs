@@ -42,7 +42,7 @@ async fn supervisor_pumps_one_pass_per_wake_then_stops_when_exhausted() {
     let (_dir, vault) = open_vault();
     enqueue_micro(&vault, "driver-smoke", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);

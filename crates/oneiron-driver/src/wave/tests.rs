@@ -38,6 +38,34 @@ impl WavePlanner for AgentPlanner {
     }
 }
 
+/// The host a planning pass runs under here: it builds no Dreamer executor
+/// and staffs no fan-out decision ladder, so the factory's default lends no
+/// decisions to a cut (FIX 8599).
+struct NoLadderHost;
+
+impl PassExecutorFactory for NoLadderHost {
+    type Exec<'p> = NoExecutor;
+
+    fn executor<'p>(
+        &'p mut self,
+        _guard: &'p oneiron::BudgetGuard,
+    ) -> oneiron::Result<NoExecutor> {
+        Err(oneiron::Error::InvalidConfig("the wave host tests run no Dreamer pass".into()))
+    }
+}
+
+struct NoExecutor;
+
+impl oneiron::DreamerAttemptExecutor for NoExecutor {
+    async fn execute(
+        &mut self,
+        _attempt: &oneiron::DreamerAdmittedAttempt,
+        _ctx: &mut oneiron::WakeAttemptContext<'_>,
+    ) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+        unreachable!("the wave host tests run no Dreamer pass")
+    }
+}
+
 fn fixture(vault: &Vault, owner: EntityId) -> oneiron::Result<EntityId> {
     vault.put_entity(
         &owner,
@@ -209,7 +237,7 @@ fn completed_cut_survives_restart_and_reclaim_without_a_second_plan() -> WaveRes
         owner,
         EdgeActorClass::Human,
     );
-    assert!(host.run_plan_once("restarted-host", 100_001)?.is_none());
+    assert!(host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?.is_none());
     assert_eq!(
         host.planner.0.get(),
         0,
