@@ -808,6 +808,17 @@ pub(super) fn land_in_txn(
             super::landing_writer::admit_reply(&vault.store, *summary, *turn, scope.conversation);
         let appended = append_composed_in_txn(vault, txn, &input, Some(*summary), false)?;
         drop(landing);
+        // The reply engages the room's offer cards for the requester, as it
+        // did when it was theirs (OF-530): the landing writer reads no room.
+        crate::workspace_roster::record_offer_append_in_txn(
+            vault,
+            txn,
+            &AppendRecord {
+                actor,
+                ..input.clone()
+            },
+            Some(*turn),
+        )?;
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
