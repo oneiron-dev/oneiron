@@ -477,12 +477,17 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
             .code,
         oneiron::memory::MEMORY_CODE_FORBIDDEN
     );
-    assert_eq!(
-        agent
-            .commit(std::slice::from_ref(&input))
-            .expect("per-claim receipt")[0]
-            .approval,
-        "rejected"
+    // The rejected element answers its typed refusal, never a success-shaped
+    // "rejected" receipt (OF-063, FIX 1221).
+    let outcomes = agent
+        .commit(std::slice::from_ref(&input))
+        .expect("per-claim outcome");
+    assert!(
+        matches!(
+            outcomes[0],
+            oneiron::memory::CommitOutcome::Refused { .. }
+        ),
+        "{outcomes:?}"
     );
     let path = format!("/public/booking/{}", fixture.token);
     assert_eq!(
