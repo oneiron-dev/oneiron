@@ -494,3 +494,186 @@ fn a_stale_release_of_an_earlier_park_refuses() -> Result<()> {
     );
     Ok(())
 }
+
+/// Parks `queued` as the host's drain cancels the server's Dreamer pass after admission, and returns the park.
+/// The parked try keeps the server's lease, as on a running server.
+fn park_drained(
+    vault: &Vault,
+    store: &DreamerRunnerStore<'_>,
+    queued: &DreamerAttemptStatus,
+    now: u64,
+) -> Result<DreamerParkedAttemptRecord> {
+    let node_id = doors::load_or_mint_client_id(vault)?;
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, now);
+    input.lease_owner = DREAMER_SERVER_PARK_OWNER.to_owned();
+    let mut driver = DreamerWakeDriver::new(vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        input,
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1, "the pass parks the try");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_eq!(parked.cause, DreamerParkCause::Cancelled);
+    assert_eq!(parked.park_owner, DREAMER_SERVER_PARK_OWNER);
+    Ok(parked)
+}
+
+/// Runs one server Dreamer pass at `now` with a completing executor, and returns how many tries it ran.
+fn run_server_pass(vault: &Vault, now: u64) -> Result<u32> {
+    let node_id = doors::load_or_mint_client_id(vault)?;
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, now);
+    input.lease_owner = DREAMER_SERVER_PARK_OWNER.to_owned();
+    let mut completer = CompletingExecutor {
+        completed_units: 25,
+        executed: 0,
+    };
+    let mut driver = DreamerWakeDriver::new(vault, "wake", frozen_deadline(0, 180_000));
+    block_on_ready(driver.run_wake_pass(input, &mut completer, &WakeCancellation::new()))?;
+    Ok(completer.executed)
+}
+
+/// Engine 08:3x: the owner stops a try the host's drain parked. The parked try keeps its lease, so the run tree's
+/// cancel refuses it; the owner's stop on the park door ends it, clears its park, and no later pass runs it.
+#[test]
+fn the_owner_stops_a_drained_park() -> Result<()> {
+    let store_clock = oneiron_store::ports::manual_clock::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = open_vault_with(config)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "drained", 10)?;
+    store_clock.set(20);
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+
+    store_clock.set(25);
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )
+    .expect("FAILBEFORE park-stop: the owner stops a parked try");
+    assert_eq!(state, "cancelled");
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_none(),
+        "the stop clears the park"
+    );
+
+    for now in [30, 40] {
+        store_clock.set(now);
+        assert_eq!(
+            run_server_pass(&vault, now)?,
+            0,
+            "no later pass runs the stopped try"
+        );
+    }
+    let after = store.status(queued.attempt.id)?.expect("the try");
+    assert_eq!(after.attempt.state.as_str(), "cancelled");
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
+    Ok(())
+}
+
+/// Engine 08:3x: the owner stops a park that waits on his release instead of resuming it. The try ends, its park
+/// clears and its notice is resolved; no later pass runs it.
+#[test]
+fn the_owner_stops_an_executor_error_park_and_its_notice_resolves() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    let parked = park_executor_error(&vault, &store, &queued, 20)?;
+    assert_eq!(
+        doors::park_notice_seen(&vault, &parked)?,
+        Some(false),
+        "the park raised its notice"
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::ExecutorError,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )
+    .expect("FAILBEFORE park-stop: the owner stops a parked try");
+    assert_eq!(state, "cancelled");
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
+    assert_eq!(
+        doors::park_notice_seen(&vault, &parked)?,
+        Some(true),
+        "the stop resolves the park's notice"
+    );
+    assert_eq!(
+        run_server_pass(&vault, 30)?,
+        0,
+        "no later pass runs the stopped try"
+    );
+    Ok(())
+}
+
+/// Engine 08:3x: a stop names the exact park the owner read. A stop against a lease generation that is no longer
+/// the try's refuses, and the park stands.
+#[test]
+fn a_stop_of_a_changed_park_refuses() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "drained", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let stale = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)? + 1,
+    );
+    assert!(
+        matches!(stale, Err(oneiron::Error::ConcurrentWrite(_))),
+        "FAILBEFORE park-stop: a stop of a changed park refuses: {stale:?}"
+    );
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_some(),
+        "the park stands"
+    );
+    Ok(())
+}
+
+/// Engine 08:3x: the stop serves the Dreamer server's own parks only. A park under any other owner keeps its own
+/// door, and the stop refuses it as a park it does not serve.
+#[test]
+fn a_stop_refuses_a_park_of_another_owner() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "worker park", 10)?;
+    let node_id = doors::load_or_mint_client_id(&vault)?;
+    // `run_input` leases under a caller-chosen worker, not the server.
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_ne!(parked.park_owner, DREAMER_SERVER_PARK_OWNER);
+    let refused = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    );
+    assert!(
+        matches!(refused, Err(oneiron::Error::EntityNotFound)),
+        "FAILBEFORE park-stop: the stop refuses another owner's park: {refused:?}"
+    );
+    assert!(store.parked_attempt(queued.attempt.id)?.is_some());
+    Ok(())
+}

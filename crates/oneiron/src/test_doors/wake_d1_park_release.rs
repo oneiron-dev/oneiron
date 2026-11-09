@@ -111,3 +111,46 @@ pub fn release_as_owner(
         },
     )
 }
+
+/// Red adapter (scratch, never merged): the owner's stop as this head offers
+/// it, the run tree's cancel of the try (`Memory::cancel_run_branch`, as the
+/// owner). Returns the try's queue state after the cancel.
+///
+/// # Errors
+/// The cancel's.
+#[doc(hidden)]
+pub fn stop_as_owner(
+    vault: &Vault,
+    _owner: &AuthenticatedOwner,
+    attempt: &str,
+    _cause: DreamerParkCauseView,
+    _parked_at: u64,
+    _attempt_count: u32,
+) -> Result<String> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's embedded owner");
+    let id = EntityId::from_hex(attempt)
+        .map_err(|_| crate::Error::InvalidConfig("attempt must be 32 hex".to_owned()))?;
+    let id = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
+    let outcome = vault
+        .memory(owner, crate::edge::EdgeActorClass::Human)
+        .cancel_run_branch(crate::attempt_queue::InterveneAttempt {
+            id,
+            kind: crate::attempt_queue::AttemptInterventionKind::Cancel,
+            actor: owner.to_hex(),
+            note: Some("the owner stops this run".to_owned()),
+            now: vault.now_recorded_at(),
+        })
+        .map_err(|error| {
+            crate::Error::InvalidConfig(format!("the run tree's cancel refused: {error:?}"))
+        })?;
+    match outcome {
+        crate::task_verb::run_cancel::RunCancelOutcome::Applied(applied) => {
+            Ok(applied.record.state.as_str().to_owned())
+        }
+        crate::task_verb::run_cancel::RunCancelOutcome::Proposed { .. } => Err(
+            crate::Error::InvalidConfig("the owner's cancel became a proposal".to_owned()),
+        ),
+    }
+}
