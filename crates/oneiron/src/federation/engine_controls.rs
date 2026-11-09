@@ -192,7 +192,7 @@ impl Vault {
                 && grant.role == FederationGrantRole::Steward
                 && grant.preset == FederationGrantPreset::Steward
                 && grant.kind == FederationGrantKind::Access
-                && grant.confers_at(now)
+                && grant.is_live_at(now)
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
                     if verbs.contains(verb))
             {

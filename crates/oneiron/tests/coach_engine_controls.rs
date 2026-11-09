@@ -21,7 +21,7 @@ use oneiron::test_doors::steward::{
     GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, grant_mark, open_owner_carrier_vault, owner,
     stand_steward_grant,
 };
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EntityId, Vault};
 
 const CLASSES: [EngineControlClass; 4] = [
     EngineControlClass::MaintenanceCadence,
@@ -30,10 +30,11 @@ const CLASSES: [EngineControlClass; 4] = [
     EngineControlClass::KnowledgeRecipe,
 ];
 
+/// A device vault as the other Coach tests open it: an embedded owner, an
+/// in-memory device keystore and this install's machine profile, so the
+/// owner's goal write has a carrier.
 fn open(dir: &tempfile::TempDir) -> Vault {
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
-    oneiron::test_support::provision_engine_machines(&vault);
-    vault
+    open_owner_carrier_vault(dir.path()).expect("owner carrier vault")
 }
 
 fn allowed(vault: &Vault, actor: EngineControlActor<'_>, class: EngineControlClass) -> bool {
