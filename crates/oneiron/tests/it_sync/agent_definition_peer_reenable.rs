@@ -42,7 +42,11 @@ fn running_definition() -> AgentDefinition {
         1.0,
         false,
         true,
-        rmpv::Value::Map(Vec::new()),
+        // A stored definition names where it came from (a non-empty map).
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("it_sync fixture"),
+        )]),
         None,
         true,
         None,
