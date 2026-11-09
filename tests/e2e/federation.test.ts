@@ -1,4 +1,10 @@
-import { afterAll, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
+import { blake3 } from "@noble/hashes/blake3";
+import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
+import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
+import { PublicHttpClient, PublicHttpError, WsClient, credentialParts } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -6,79 +12,542 @@ const profile = process.env.E2E_PROFILE === "real-small-model"
 const suite = defineFile(import.meta, { profile, slots: 2 });
 afterAll(suite.flush);
 
-// Binding readback: main 0dcb431bb50d39b01d7bc222e2d28922bf59bc4d.
-// Checked the generated HTTP/JS catalogs, OpenAPI registration/owner paths,
-// org_admin routes and CLI. Runtime OpenAPI remains a diagnostic, not an oracle.
+// Binding readback: main e79eb76df3e406c22ea49a04af0f5144d3aff119.
 // Fixtures: federation-canon-scenarios, fixtures/federation/scenarios.json.
 // Source pins and independent expected facts are in the hash-checked fixture.
-// Labels below name future public fixtures, not pre-seeded engine records.
 //
-// G01: these are full-flow blockers, not passing partial tests. suite.todo uses
-// Bun test.todo and emits BLOCKED, including for a registration-only file.
-// Existing typed calls are documented below so an implementer does not replace
-// them or mistake a missing follow-on verb for an absent whole subsystem.
-// Required contracts describe canon's data, NOT newly invented callable names.
+// Written cases are partial subsets (Engine ruling E2E-PARTIAL = A): each test
+// name states exactly the promise it proves, and the comment above it names what
+// of the planned title stays unproved and the public door that is missing.
+// Unwritten cases stay suite.todo (BLOCKED) with the real missing door.
 // No generic facade casts, batch/structural authority writes, private signing,
 // fake vaults, or internal admission/replay calls stand in for missing doors.
 
 // FEDERATION-01 — Member and admin powers should work.
 // OF-150/158/157/287/331; ARCH-0043#shared-vault-authority.
-// Setup: host shared vault; two equal Owners; Admin, Member, Viewer and an
-// expiring Delegate; a disjoint guest grant; guest/third vaults and a separate
-// personal root containing the fixture's private sentence.
-// Available typed setup: vault.shape.plan({preset:{preset:"org",vault_id,
-// members:[{member,role}]}}) -> ShapePlan; vault.shape.apply({plan,approve}) ->
-// ShapeApplyReceipt. ShapeMemberRole is owner|admin|member|viewer, not guest.
-// Membership calls: vault.members.add({vault_id,member,role?,holder_key?}) ->
-// {receipt,credential?}; accept({vault_id,invitation}) -> receipt;
-// change({vault_id,member,role}) / remove({vault_id,member}) -> receipt.
-// GET /v1/core/org-admin/{org}/powers -> {powers:string[]} exists, as does
-// owner-only POST .../policy. Neither is a generated typed SDK operation.
-// Required contracts: named Admin powers and a bounded Delegate grant (parent,
-// holder, scope, expiry, no onward delegation), plus a role/person/relationship
-// projection. A guest must not be inserted as a member to manufacture setup.
-// Journey: Admin adds/removes a member, changes a role, resets project access;
-// exercise each other role's allowed read/write and refused widen. Attempt
-// Admin self-grant/root mutation, Owner objection and personal-vault reads.
-// Attempt Delegate onward grant and use after its public expiry boundary.
-// Read the projection as two actors: roles/person/relationship agree, but the
-// label confers no extra power. Assert exact named-power sets, no private
-// sentence in Admin recall, and no personal-root change after shared removal.
-// Missing: typed named-power/reset-project-access and scoped Delegate grant
-// doors/projection. Shape setup and ordinary membership alone cover less than
-// this ID; do not seed OrgAdminPolicy or FederationGrant through Rust/batch.
-suite.todo(test, "FEDERATION-01", "waits on typed named Admin powers, scoped Delegate grants and relationship-role projection");
+interface Fed01Fixture {
+  setup: { principals: { label: string; role: string }[] };
+  cases: { id: string; inputs: {
+    sharedPreset?: Facade.ShapePreset;
+    memberChangeSequence?: string[];
+    delegate?: { scope: string; expires: boolean; onwardDelegation: boolean };
+  } }[];
+}
+
+async function fed01Entity(client: PublicHttpClient, entityRef: string): Promise<Facade.EntityView> {
+  const result = await client.call("vault.get", { entity_ref: entityRef });
+  if (!result.value) throw new Error(`Public entity missing: ${entityRef}`);
+  return result.value;
+}
+
+async function fed01Refused(
+  owner: PublicHttpClient, actorRef: string, act: () => Promise<unknown>,
+  status: number, code: string, hasReceipt = true,
+): Promise<void> {
+  let failure: unknown;
+  try { await act(); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  if (hasReceipt) {
+    const receiptRef = failure.error?.receiptRef;
+    if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
+    expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+    const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
+    if (!receipt) throw new Error("Refusal receipt is not publicly readable by the Owner");
+    expect(receipt.receipt_ref).toBe(receiptRef);
+    expect(receipt.actor_ref).toBe(actorRef);
+    expect(receipt.actor_class).toBe("human");
+    expect(receipt.outcome).toEqual({ refused: { code } });
+  }
+}
+
+async function fed01Role(
+  client: PublicHttpClient, vaultId: string, member: string, role: Facade.FederationGrantRole,
+): Promise<Facade.FederationMemberGrant> {
+  const projection = await client.call("vault.members.projection", { vault_id: vaultId, member });
+  expect(projection.member_ref).toBe(member);
+  const grant = projection.grants.find(row => row.active && row.role === role);
+  if (!grant) throw new Error(`No live ${role} grant in the public member projection`);
+  expect(grant.vault_id).toBe(vaultId);
+  expect(grant.member_ref).toBe(member);
+  return grant;
+}
+
+/* Promise: Admin membership changes respect Owner authority and revoke removed access; Delegates cannot delegate onward.
+ * Doors: evidence-backed people + CLI/SDK pairing; shape; members; shared.receipt; receipts.get; restart.
+ * Unproved: document-only Delegate expiry, all named powers, other role/content ceilings, relationship authority and personal-vault isolation.
+ */
+suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Owners, cannot promote itself to Owner, removal invalidates the member's next authenticated call, and a Delegate cannot delegate onward.", async () => {
+  const data = await (await loadFixtures()).readJson<Fed01Fixture>("federation-canon-scenarios");
+  const scenario = data.cases.find(row => row.id === "FEDERATION-01");
+  if (!scenario || scenario.inputs.sharedPreset !== "org") throw new Error("Missing org membership fixture");
+  if (scenario.inputs.delegate?.onwardDelegation !== false) throw new Error("Missing no-onward-delegation oracle");
+  const label = (role: string): string => {
+    const person = data.setup.principals.find(row => row.role === role);
+    if (!person) throw new Error(`Missing fixture principal ${role}`);
+    return person.label;
+  };
+  const names = [label("admin"), label("member"), label("delegate")];
+  const engine = await EngineFixture.start({ id: "FEDERATION-01", profile, peers: 0 });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const vaultId = "41"; // Public shared setup identifier, not a seeded record.
+    const occurred = 1769947200; // Evidence event time; never the engine's clock.
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    expect((await fed01Entity(owner, conversation.id)).kind).toBe("CONVERSATION");
+    const witnessed = await owner.call("vault.witness", {
+      conversation_ref: conversation.id, occurred_at: occurred,
+      messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+        content: `These are distinct people: ${names.join(", ")}.` }],
+    });
+    const evidence = await fed01Entity(owner, witnessed.turn_short_id);
+    expect(evidence.kind).toBe("TURN");
+    const people: string[] = [];
+    for (const name of names) {
+      const created = await owner.call("vault.people.create", {
+        identity: { name }, identity_evidence_refs: [evidence.id_hex], occurred_at: occurred,
+      });
+      const person = await fed01Entity(owner, created.person.entity_ref);
+      expect(person.kind).toBe("PERSON");
+      expect(person.id_hex).toBe(created.person.id_hex);
+      expect(person.id_hex).not.toBe(ownerRef);
+      people.push(person.id_hex);
+    }
+    expect(new Set(people).size).toBe(3);
+    const [adminRef, memberRef, delegateRef] = [people[0]!, people[1]!, people[2]!];
+    const admin = await engine.pairActor({ principalRef: adminRef, actorClass: "human" });
+    const member = await engine.pairActor({ principalRef: memberRef, actorClass: "human" });
+    const delegate = await engine.pairActor({ principalRef: delegateRef, actorClass: "human" });
+    for (const actor of [admin, member, delegate]) {
+      expect((await actor.client.call("self.actor", {})).actor_ref).toBe(actor.principalRef);
+    }
+
+    const plan = await owner.call("vault.shape.plan", { preset: {
+      preset: scenario.inputs.sharedPreset, vault_id: vaultId, members: [{ member: adminRef, role: "admin" }],
+    } });
+    const approve = plan.items.filter(item => item.change === "create" &&
+      (item.target.kind === "shared" || item.target.kind === "member")).map(item => item.seq);
+    const applied = await owner.call("vault.shape.apply", { plan, approve });
+    const shared = applied.items.find(item => item.item.target.kind === "shared");
+    if (!shared || shared.state.state !== "landed") throw new Error("Shared vault setup did not land");
+    expect(shared.state.receipt).toBe(vaultId);
+    await fed01Role(owner, vaultId, ownerRef, "owner");
+    const adminInvitation = (await admin.client.call("vault.members.invitations", { vault_id: vaultId }))
+      .find(row => row.invitee === adminRef);
+    if (!adminInvitation) throw new Error("Founding Admin invitation is missing");
+    expect(adminInvitation.state).toBe("pending");
+    expect(adminInvitation.role).toBe("admin");
+    expect(adminInvitation.founding).toBe(true);
+    const adminAccepted = await admin.client.call("vault.members.accept", {
+      vault_id: vaultId, invitation: adminInvitation.id,
+    });
+    expect(adminAccepted.change).toEqual({ invitation_accepted: {
+      invitation: adminInvitation.id, member: adminRef, role: "admin",
+    } });
+    const adminGrant = await fed01Role(owner, vaultId, adminRef, "admin");
+
+    const invited = await admin.client.call("vault.members.add", {
+      vault_id: vaultId, member: memberRef, role: "member",
+    });
+    expect(invited.actor).toBe(adminRef);
+    expect(invited.vault_id).toBe(vaultId);
+    const invitation = (await member.client.call("vault.members.invitations", { vault_id: vaultId }))
+      .find(row => row.invitee === memberRef);
+    if (!invitation) throw new Error("Admin's invitation is missing at the invitee's door");
+    expect(invitation.inviter).toBe(adminRef);
+    expect(invitation.role).toBe("member");
+    expect(invitation.state).toBe("pending");
+    expect(invitation.founding).toBe(false);
+    expect(invited.change).toEqual({ member_invited: {
+      invitation: invitation.id, member: memberRef, role: "member", expires_at: invitation.expires_at,
+    } });
+    expect((await owner.call("vault.shared.receipt", { receipt_id: invited.id })).change).toEqual(invited.change);
+    const accepted = await member.client.call("vault.members.accept", {
+      vault_id: vaultId, invitation: invitation.id,
+    });
+    expect(accepted.change).toEqual({ invitation_accepted: {
+      invitation: invitation.id, member: memberRef, role: "member",
+    } });
+    await fed01Role(owner, vaultId, memberRef, "member");
+
+    await fed01Refused(owner, memberRef, () => member.client.call("vault.members.change", {
+      vault_id: vaultId, member: memberRef, role: "admin",
+    }), 403, "FORBIDDEN");
+    await fed01Role(owner, vaultId, memberRef, "member");
+    await fed01Refused(owner, adminRef, () => admin.client.call("vault.members.change", {
+      vault_id: vaultId, member: adminRef, role: "owner",
+    }), 400, "BAD_REQUEST");
+    await fed01Role(owner, vaultId, adminRef, "admin");
+    const unchangedAdmin = await owner.call("vault.members.projection", { vault_id: vaultId, member: adminRef });
+    expect(unchangedAdmin.grants.some(row => row.active && row.role === "owner")).toBe(false);
+    await fed01Refused(owner, adminRef, () => admin.client.call("vault.members.remove", {
+      vault_id: vaultId, member: ownerRef,
+    }), 400, "BAD_REQUEST");
+    await fed01Role(owner, vaultId, ownerRef, "owner");
+
+    // This read-only grant proves one-hop delegation, not the fixture's document-only/expiry journey.
+    const delegateScope: Facade.Scope = {
+      worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" },
+      audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] }, sensitivity: { kind: "all" },
+    };
+    const expiresAt = accepted.completed_at + 3600; // One-hour input anchored to a public server receipt.
+    const delegated = await admin.client.call("vault.members.delegate", {
+      parent_grant: adminGrant.grant_ref, member_ref: delegateRef, authority_scope: delegateScope, expires_at: expiresAt,
+    });
+    const delegateGrant = await fed01Role(owner, vaultId, delegateRef, "delegate");
+    expect(delegateGrant.grant_ref).toBe(delegated.grant_ref);
+    expect(delegateGrant.delegated_by).toBe(adminRef);
+    expect(delegateGrant.expires_at).toBe(expiresAt);
+    expect(delegateGrant.authority_scope).toEqual(delegateScope);
+    await fed01Refused(owner, delegateRef, () => delegate.client.call("vault.members.delegate", {
+      parent_grant: delegateGrant.grant_ref, member_ref: memberRef, authority_scope: delegateScope, expires_at: expiresAt,
+    }), 400, "BAD_REQUEST");
+    const afterOnward = await owner.call("vault.members.projection", { vault_id: vaultId, member: memberRef });
+    expect(afterOnward.grants.some(row => row.active && row.delegated_by === delegateRef)).toBe(false);
+
+    const changed = await admin.client.call("vault.members.change", {
+      vault_id: vaultId, member: memberRef, role: "viewer",
+    });
+    expect(changed.change).toEqual({ member_role_changed: { member: memberRef, from: "member", to: "viewer" } });
+    expect(changed.revoked_slips.length).toBeGreaterThan(0);
+    await fed01Role(owner, vaultId, memberRef, "viewer");
+    expect((await owner.call("vault.shared.receipt", { receipt_id: changed.id })).change).toEqual(changed.change);
+    await fed01Refused(owner, memberRef, () => member.client.call("self.actor", {}), 401, "UNAUTHORIZED", false);
+    // A new credential is proven live BEFORE removal, so the next refusal is not the earlier downgrade.
+    const viewer = await engine.pairActor({ principalRef: memberRef, actorClass: "human", scope: ["core:read"] });
+    await fed01Role(viewer.client, vaultId, memberRef, "viewer");
+    const removed = await admin.client.call("vault.members.remove", { vault_id: vaultId, member: memberRef });
+    await fed01Refused(owner, memberRef, () => viewer.client.call("vault.members.projection", {
+      vault_id: vaultId, member: memberRef,
+    }), 401, "UNAUTHORIZED", false);
+    expect(removed.change).toEqual({ member_removed: { member: memberRef } });
+    expect(removed.grants.length).toBeGreaterThan(0);
+    expect(removed.revoked_slips.length).toBeGreaterThan(0);
+    const removalReceipt = await owner.call("vault.shared.receipt", { receipt_id: removed.id });
+    expect(removalReceipt.id).toBe(removed.id);
+    expect(removalReceipt.vault_id).toBe(vaultId);
+    expect(removalReceipt.actor).toBe(adminRef);
+    expect(removalReceipt.change).toEqual(removed.change);
+    expect(removalReceipt.grants).toEqual(removed.grants);
+    expect(removalReceipt.revoked_slips).toEqual(removed.revoked_slips);
+    const afterRemoval = await owner.call("vault.members.projection", { vault_id: vaultId, member: memberRef });
+    expect(afterRemoval.grants.filter(row => row.active)).toHaveLength(0);
+
+    await engine.restart();
+    await fed01Refused(owner, memberRef, () => viewer.client.call("vault.members.projection", {
+      vault_id: vaultId, member: memberRef,
+    }), 401, "UNAUTHORIZED", false);
+    const persistedReceipt = await owner.call("vault.shared.receipt", { receipt_id: removed.id });
+    expect(persistedReceipt.id).toBe(removalReceipt.id);
+    expect(persistedReceipt.change).toEqual(removalReceipt.change);
+    expect(persistedReceipt.grants).toEqual(removalReceipt.grants);
+    expect(persistedReceipt.revoked_slips).toEqual(removalReceipt.revoked_slips);
+    const persisted = await owner.call("vault.members.projection", { vault_id: vaultId, member: memberRef });
+    expect(persisted.grants.filter(row => row.active)).toHaveLength(0);
+    await fed01Role(owner, vaultId, adminRef, "admin");
+    expect(await fed01Role(owner, vaultId, delegateRef, "delegate")).toEqual(delegateGrant);
+  } finally {
+    await engine.close();
+  }
+});
 
 // FEDERATION-02 — Owner veto window should work.
 // OF-163; ARCH-0043#shared-vault-authority; identity#cloud-agent-recovery.
-// Two live Owners, with a third initially present then no longer live, govern
-// each independent destructive fixture. Inspect the default before configuring
-// the short fixture wait: four acts, 604800 seconds each; export is absent.
-// Available: vault.shared.propose_delete({vault_id}),
-// propose_transfer({vault_id,to,from_keeps?}),
-// propose_remove_owner({vault_id,target,successor?,target_keeps?,export_first})
-// -> PendingAuthorityAct {id,vault_id,act,starter,started_at,deadline,
-// objector_roles,objections,completed,execution?};
-// object/withdraw_objection/execute({act_id}); started/matured({vault_id}) ->
-// notices {act_id,vault_id,act,recipient,deadline,...}; receipt({receipt_id}).
-// Erase uses vault.records.erase_preview({record}) -> {preview_digest,...},
-// then erase_confirm({record,preview_digest}) -> {first,first_act?,same_bytes}.
-// Required policy contract: read the act list/waits and jointly authorize a
-// change by exactly the live Owners. Use wait_secs=2 only as explicit fixture
-// policy, never a new engine default, caller clock, or private queue advance.
-// For EACH of delete-vault/erase/transfer/remove-Owner: start, assert deadline
-// and the other Owner's typed notice, object before expiry, await the public
-// matured boundary, attempt execution and assert the act remains held with
-// no destructive effect. Admin cannot object. Withdraw only with the live
-// Owners' agreement; removed/dead holders neither release nor hold it forever.
-// Await the real execution receipt, not just completed=true. For remove-Owner,
-// cover export_first true/false and last-Owner successor/self-removal. Ordinary
-// Owner export must be immediate with a receipt all Owners can see, not an act
-// on the veto list. Do not wait seven real days to establish the default.
-// Missing: typed default-policy inspection and all-live-Owner policy editing;
-// no SharedActPolicy DTO/call exists in the generated public catalog. A shape
-// manifest hex body is not the named typed policy door G01 requires.
-suite.todo(test, "FEDERATION-02", "waits on typed shared-act default policy read and all-live-Owner veto policy change");
+interface Fed02CasesFixture {
+  readonly cases: readonly {
+    readonly id: string;
+    readonly inputs: { readonly fixtureVetoWaitSeconds: number; readonly acts: readonly string[] };
+    readonly expected: { readonly defaultVetoWaitSeconds: number; readonly defaultActs: readonly string[] };
+  }[];
+}
+
+async function fed02Refused(
+  reader: PublicHttpClient, actorRef: string, act: () => Promise<unknown>,
+  status: number, code: string,
+): Promise<void> {
+  let failure: unknown;
+  try { await act(); } catch (error) { failure = error; }
+  if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  expect(failure.reply.status).toBe(status);
+  expect(failure.error?.code).toBe(code);
+  const receiptRef = failure.error?.receiptRef;
+  if (typeof receiptRef !== "string" || !receiptRef.startsWith("call:")) {
+    throw new Error("Authenticated refusal has no call receiptRef");
+  }
+  expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await reader.call("vault.receipts.get", { receipt_ref: receiptRef });
+  if (!receipt) throw new Error("Refusal receipt is not publicly readable");
+  expect(receipt.receipt_ref).toBe(receiptRef);
+  expect(receipt.actor_ref).toBe(actorRef);
+  expect(receipt.actor_class).toBe("human");
+  expect(receipt.outcome).toEqual({ refused: { code } });
+}
+
+async function fed02Person(engine: EngineFixture, evidence: string, occurred: number, name: string): Promise<string> {
+  const created = await engine.client.call("vault.people.create", {
+    identity: { name },
+    identity_evidence_refs: [evidence],
+    occurred_at: occurred,
+  });
+  expect(created.person.id_hex).not.toBe(engine.pairedActor.principalRef);
+  const read = await engine.client.call("vault.get", { entity_ref: created.person.entity_ref });
+  if (!read.value || read.value.kind !== "PERSON") throw new Error(`person ${name} has no PERSON readback`);
+  return created.person.id_hex;
+}
+
+async function fed02Accept(actor: PairedActor, vaultId: string, role: "owner" | "admin"): Promise<FacadeResult<"vault.members.accept">> {
+  const invitations = await actor.client.call("vault.members.invitations", { vault_id: vaultId });
+  const invitation = invitations.find(row => row.invitee === actor.principalRef);
+  if (!invitation) throw new Error(`no invitation for ${actor.principalRef}`);
+  expect(invitation.state).toBe("pending");
+  expect(invitation.role).toBe(role);
+  expect(invitation.vault_id).toBe(vaultId);
+  expect(invitation.founding).toBe(true);
+  const receipt = await actor.client.call("vault.members.accept", {
+    vault_id: vaultId,
+    invitation: invitation.id,
+  });
+  expect(receipt.vault_id).toBe(vaultId);
+  expect(receipt.actor).toBe(actor.principalRef);
+  expect(receipt.revoked_slips).toEqual([]);
+  if (!("invitation_accepted" in receipt.change)) throw new Error("acceptance receipt names no invitation_accepted change");
+  expect(receipt.change.invitation_accepted.invitation).toBe(invitation.id);
+  expect(receipt.change.invitation_accepted.member).toBe(actor.principalRef);
+  expect(receipt.change.invitation_accepted.role).toBe(role);
+  const projection = await actor.client.call("vault.members.projection", {
+    vault_id: vaultId,
+    member: actor.principalRef,
+  });
+  expect(projection.member_ref).toBe(actor.principalRef);
+  const grant = projection.grants.find(row => row.role === role && row.active);
+  if (!grant) throw new Error(`accepted ${role} has no active grant in projection`);
+  expect(grant.member_ref).toBe(actor.principalRef);
+  expect(grant.vault_id).toBe(vaultId);
+  return receipt;
+}
+
+/* FEDERATION-02 — decision: WRITTEN (partial).
+ * Promise: two live Owners jointly configure a veto policy, an Owner objection survives restart, another Owner cannot clear it, and an Admin cannot object.
+ * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
+ * Unproved: transfer/remove/erase veto journeys and the four-act 604800 default (transfer/remove ship at wait 0 with no veto; needs an engine ruling or fix, no new door).
+ * Unproved: a public elapsed-maturity observation for the held act (matured only lists persisted notices; needs an Owner-grant act-status read such as vault.shared.act.get).
+ * Unproved: former/dead third-Owner release (members.remove refuses Owners; needs a public person-liveness revocation verb behind Owner membership).
+ * Unproved: last-Owner successor/self-removal, remove-Owner export_first true/false, and the co-Owner export receipt (needs separate destructive fixtures plus a public Owner-grant export-receipt read).
+ */
+suite.test(test, "FEDERATION-02", "Two live Owners jointly configure a veto policy, an Owner objection survives restart, another Owner cannot clear it, and an Admin cannot object", async () => {
+  const fixture = await (await loadFixtures()).readJson<Fed02CasesFixture>("federation-canon-scenarios");
+  const scenario = fixture.cases.find(row => row.id === "FEDERATION-02");
+  if (!scenario) throw new Error("federation-canon-scenarios has no FEDERATION-02 row");
+  const waitSecs = scenario.inputs.fixtureVetoWaitSeconds;
+  const defaultWaitSecs = scenario.expected.defaultVetoWaitSeconds;
+  expect(scenario.inputs.acts).toContain("delete_vault");
+  expect(scenario.expected.defaultActs).toContain("delete_vault");
+  const engine = await EngineFixture.start({ id: "FEDERATION-02", profile, peers: 0 });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const vaultId = "42";
+    const occurred = 1769947200;
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    const conversationRead = await owner.call("vault.get", { entity_ref: conversation.id });
+    if (!conversationRead.value) throw new Error("conversation has no readback");
+    const witnessed = await owner.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: occurred,
+      messages: [{
+        author: "user", message_type: "text", is_visible: true, order: 0,
+        content: "These are distinct people: owner-b and admin-person.",
+      }],
+    });
+    const evidenceRead = await owner.call("vault.get", { entity_ref: witnessed.turn_short_id });
+    const evidenceValue = evidenceRead.value;
+    if (!evidenceValue || evidenceValue.kind !== "TURN") throw new Error("identity evidence has no TURN readback");
+    const evidence = evidenceValue.id_hex;
+    const coOwnerRef = await fed02Person(engine, evidence, occurred, "owner-b");
+    const adminRef = await fed02Person(engine, evidence, occurred, "admin-person");
+    const coOwner = await engine.pairActor({ principalRef: coOwnerRef, actorClass: "human" });
+    const admin = await engine.pairActor({ principalRef: adminRef, actorClass: "human" });
+    expect((await coOwner.client.call("self.actor", {})).actor_ref).toBe(coOwnerRef);
+    expect((await admin.client.call("self.actor", {})).actor_ref).toBe(adminRef);
+    const plan = await owner.call("vault.shape.plan", {
+      preset: { preset: "org", vault_id: vaultId, members: [{ member: coOwnerRef, role: "owner" }, { member: adminRef, role: "admin" }] },
+    });
+    const approve = plan.items
+      .filter(item => {
+        if (item.change !== "create") return false;
+        if (item.target.kind === "shared") return true;
+        if (item.target.kind === "member") return item.target.member !== ownerRef;
+        return false;
+      })
+      .map(item => item.seq);
+    const applied = await owner.call("vault.shape.apply", { plan, approve });
+    const sharedItem = applied.items.find(entry => entry.item.target.kind === "shared");
+    if (!sharedItem) throw new Error("shape apply landed no shared item");
+    if (sharedItem.state.state !== "landed") throw new Error(`shared item did not land: ${sharedItem.state.state}`);
+    expect(sharedItem.state.receipt).toBe(vaultId);
+    const memberItems = applied.items.filter(entry => entry.item.change === "create" && entry.item.target.kind === "member");
+    for (const entry of memberItems) {
+      const target = entry.item.target;
+      if (target.kind !== "member") throw new Error("member item lost its target");
+      if (target.member === ownerRef) {
+        if (entry.state.state === "refused" || entry.state.state === "no_door") {
+          throw new Error("creator member row was refused");
+        }
+        continue;
+      }
+      if (entry.state.state !== "landed") throw new Error(`founding member item did not land: ${entry.state.state}`);
+      expect(entry.state.receipt).toBe("founding member");
+    }
+    const founded = memberItems
+      .filter(entry => {
+        const target = entry.item.target;
+        return target.kind === "member" && target.member !== ownerRef;
+      })
+      .map(entry => {
+        const target = entry.item.target;
+        if (target.kind !== "member") throw new Error("member item lost its target");
+        return target.member;
+      })
+      .sort();
+    expect(founded).toEqual([adminRef, coOwnerRef].sort());
+    for (const entry of applied.items) {
+      expect(entry.state.state).not.toBe("refused");
+      expect(entry.state.state).not.toBe("no_door");
+    }
+    const shape = await owner.call("vault.shape.read", {});
+    expect(shape.applies.some(apply => apply.seed_id === applied.seed_id)).toBe(true);
+    const coOwnerAcceptance = await fed02Accept(coOwner, vaultId, "owner");
+    await fed02Accept(admin, vaultId, "admin");
+    const before = await owner.call("vault.shared.policy.get", { vault_id: vaultId });
+    const deleteBefore = before.effective["delete_vault"];
+    if (!deleteBefore) throw new Error("policy has no delete_vault row");
+    expect(deleteBefore.wait_secs).toBe(defaultWaitSecs);
+    expect(deleteBefore.objector_roles).toEqual(["owner"]);
+    const eraseBefore = before.effective["erase"];
+    if (!eraseBefore) throw new Error("policy has no erase row");
+    expect(eraseBefore.wait_secs).toBe(defaultWaitSecs);
+    expect(eraseBefore.objector_roles).toEqual(["owner"]);
+    expect(before.effective["export"]).toBeUndefined();
+    expect(await owner.call("vault.shared.owner_change_wait.get", {})).toBeNull();
+    const hash = before.policy_hash;
+    const shortPolicy: NonNullable<FacadeInput<"vault.shared.policy.propose">["policy"]> = {
+      wait_secs: waitSecs,
+      objector_roles: ["owner"],
+      initiator_roles: ["owner"],
+      policy_editor_roles: ["owner"],
+      required_verb: "admin",
+      starter_may_object: true,
+      max_act_name_bytes: 128,
+      max_payload_bytes: 1048576,
+      precedence: "holder_may_narrow",
+    };
+    const proposed = await owner.call("vault.shared.policy.propose", {
+      vault_id: vaultId, act: "delete_vault", policy: shortPolicy, expected_policy_hash: hash,
+    });
+    expect(proposed.state).toBe("pending");
+    expect(proposed.proposer).toBe(ownerRef);
+    expect(proposed.vault_id).toBe(vaultId);
+    expect(proposed.act).toBe("delete_vault");
+    expect(proposed.policy?.wait_secs).toBe(waitSecs);
+    expect([...proposed.approvals].sort()).toEqual([ownerRef]);
+    expect([...(proposed.awaiting ?? [])].sort()).toEqual([coOwnerRef]);
+    const pending = await owner.call("vault.shared.policy.get", { vault_id: vaultId });
+    const deletePending = pending.effective["delete_vault"];
+    if (!deletePending) throw new Error("policy lost its delete_vault row while the change was pending");
+    expect(deletePending.wait_secs).toBe(defaultWaitSecs);
+    expect(pending.policy_hash).toBe(hash);
+    await fed02Refused(admin.client, adminRef,
+      () => admin.client.call("vault.shared.policy.answer", { change_id: proposed.id, approve: true }), 400, "BAD_REQUEST");
+    const answered = await coOwner.client.call("vault.shared.policy.answer", { change_id: proposed.id, approve: true });
+    expect(answered.state).toBe("applied");
+    expect([...answered.approvals].sort()).toEqual([coOwnerRef, ownerRef].sort());
+    expect(answered.awaiting ?? []).toEqual([]);
+    expect(typeof answered.settled_at).toBe("number");
+    const change = await owner.call("vault.shared.policy.change", { change_id: proposed.id });
+    expect(change.id).toBe(proposed.id);
+    expect(change.state).toBe("applied");
+    expect([...change.approvals].sort()).toEqual([coOwnerRef, ownerRef].sort());
+    const changes = await owner.call("vault.shared.policy.changes", { vault_id: vaultId });
+    const listed = changes.find(row => row.id === proposed.id);
+    if (!listed) throw new Error("applied policy change is not listed");
+    expect(listed.state).toBe("applied");
+    const after = await owner.call("vault.shared.policy.get", { vault_id: vaultId });
+    const deleteAfter = after.effective["delete_vault"];
+    if (!deleteAfter) throw new Error("policy lost its delete_vault row after the change applied");
+    expect(deleteAfter).toEqual(shortPolicy);
+    expect(after.policy_hash).not.toBe(hash);
+    const act = await owner.call("vault.shared.propose_delete", { vault_id: vaultId });
+    expect(act.act).toBe("delete_vault");
+    expect(act.vault_id).toBe(vaultId);
+    expect(act.starter).toBe(ownerRef);
+    expect(act.deadline).toBe(act.started_at + waitSecs);
+    expect(act.objector_roles).toEqual(["owner"]);
+    expect(act.objections).toEqual([]);
+    expect(act.completed).toBe(false);
+    expect(act.execution ?? null).toBeNull();
+    // The Admin refusal precedes a successful Owner objection, proving that the
+    // same window was still open; receipt readback comes after the Owner acts.
+    let adminObjectionFailure: unknown;
+    try { await admin.client.call("vault.shared.object", { act_id: act.id }); }
+    catch (error) { adminObjectionFailure = error; }
+    const objected = await coOwner.client.call("vault.shared.object", { act_id: act.id });
+    expect(objected.objections).toEqual([coOwnerRef]);
+    expect(objected.completed).toBe(false);
+    expect(objected.execution ?? null).toBeNull();
+    const started = await coOwner.client.call("vault.shared.started", { vault_id: vaultId });
+    const notice = started.find(row => row.act_id === act.id);
+    if (!notice) throw new Error("co-Owner has no start notice for the act");
+    expect(notice.vault_id).toBe(vaultId);
+    expect(notice.act).toBe("delete_vault");
+    expect(notice.recipient).toBe(coOwnerRef);
+    expect(notice.deadline).toBe(act.deadline);
+    await fed02Refused(admin.client, adminRef,
+      async () => { throw adminObjectionFailure; }, 400, "BAD_REQUEST");
+    const held = await owner.call("vault.shared.withdraw_objection", { act_id: act.id });
+    expect(held.objections).toEqual([coOwnerRef]);
+    expect(held.completed).toBe(false);
+    expect(held.execution ?? null).toBeNull();
+    await fed02Refused(owner, ownerRef,
+      () => owner.call("vault.shared.execute", { act_id: act.id }), 409, "INVALID_STATE");
+    expect(await owner.call("vault.shared.deletion", {})).toBeNull();
+    await engine.restart();
+    const durable = await owner.call("vault.shared.withdraw_objection", { act_id: act.id });
+    expect(durable.objections).toEqual([coOwnerRef]);
+    expect(durable.completed).toBe(false);
+    expect(durable.execution ?? null).toBeNull();
+    const startedAgain = await coOwner.client.call("vault.shared.started", { vault_id: vaultId });
+    const noticeAgain = startedAgain.find(row => row.act_id === act.id);
+    if (!noticeAgain) throw new Error("co-Owner start notice did not survive restart");
+    expect(noticeAgain.deadline).toBe(act.deadline);
+    await fed02Refused(owner, ownerRef,
+      () => owner.call("vault.shared.execute", { act_id: act.id }), 409, "INVALID_STATE");
+    expect(await owner.call("vault.shared.deletion", {})).toBeNull();
+    const durablePolicy = await coOwner.client.call("vault.shared.policy.get", { vault_id: vaultId });
+    const durableDelete = durablePolicy.effective["delete_vault"];
+    if (!durableDelete) throw new Error("policy lost its delete_vault row across restart");
+    expect(durableDelete).toEqual(shortPolicy);
+    expect(durablePolicy.policy_hash).toBe(after.policy_hash);
+    const durableReceipt = await coOwner.client.call("vault.shared.receipt", { receipt_id: coOwnerAcceptance.id });
+    expect(durableReceipt.id).toBe(coOwnerAcceptance.id);
+    expect(durableReceipt.vault_id).toBe(vaultId);
+    expect(durableReceipt.actor).toBe(coOwnerRef);
+    expect(durableReceipt.grants).toEqual(coOwnerAcceptance.grants);
+    expect(durableReceipt.revoked_slips).toEqual([]);
+    if (!("invitation_accepted" in durableReceipt.change)) throw new Error("durable acceptance receipt names no invitation_accepted change");
+    if (!("invitation_accepted" in coOwnerAcceptance.change)) throw new Error("acceptance receipt names no invitation_accepted change");
+    expect(durableReceipt.change.invitation_accepted.invitation).toBe(coOwnerAcceptance.change.invitation_accepted.invitation);
+    expect(durableReceipt.change.invitation_accepted.member).toBe(coOwnerRef);
+    expect(durableReceipt.change.invitation_accepted.role).toBe("owner");
+  } finally {
+    await engine.close();
+  }
+});
 
 // FEDERATION-03 — Exact reciprocal relationship consent should work.
 // OF-156/167; ARCH-0043#relationship-lifecycle.
@@ -108,30 +577,368 @@ suite.todo(test, "FEDERATION-03", "waits on typed SDK Connect and reciprocal re-
 
 // FEDERATION-04 — Guest share cannot reshare or reveal topology should work.
 // OF-141/153/154/069/232; ARCH-0043#guest-grants/#relationship-lifecycle.
-// Setup has a shareable host-authored document, another unshared document,
-// hidden members, an unrelated edge and unique fixture topology sentinels.
-// Required share/envelope contract: a named non-base world/facet/band ceiling,
-// accountable guest, read/propose-only actions, epoch and the recipient's
-// filtered signed body/update. Inspect the ACTUAL guest WS envelope and its
-// decoded authorized content, not a server-generated expected snapshot.
-// Assert only the authored document arrives; hidden membership/roster ids,
-// topology edges and counts are absent from metadata AND decoded payload.
-// Guest cannot widen, join the authority roster, select base or reshare the
-// received foreign world to third. A host-authored control share to third
-// must work, so a disconnected third is not mistaken for non-transitivity.
-// No test claims to prevent an owner manually re-authoring what they saw.
-// Available vault.shares.create({recipient,brief_ref,world_refs?,...}) ->
-// {share_id,recipient,brief_ref,...} and shares.view({share_ref,narrowing?})
-// -> {value,narrowing} are BRIEF shares, not a federation envelope door.
-// Available vault.guests.revoke({grant_ref}) -> {grant_ref,guest_ref,changed,
-// revoked_at,revoked_slip_refs?,pact_standing,disclosure,courtesy_targets?}.
-// After host revocation, future HTTP/WS read/propose must fail and the receipt
-// must say disclosure.copied_bytes_recallable=false, recipient_copy_state=
-// "unknown"; no successful deletion or deletion attestation is implied.
-// Missing: typed guest document share/export-envelope and foreign-world
-// reshare operations with SDK bindings. Do not test just the brief and label
-// it federation, or encode/import a private Loro grant/envelope to get setup.
-suite.todo(test, "FEDERATION-04", "waits on typed guest document share/envelope and foreign-world reshare calls");
+type Fed04Scope = FacadeInput<"vault.federation.connect.grants.mint">["authority_scope"];
+type Fed04Direction = FacadeInput<"vault.federation.connect.offer">["outbound"];
+type Fed04Envelope = FacadeResult<"vault.guests.share">;
+type Fed04Grant = FacadeResult<"vault.federation.connect.grants.mint">;
+interface Fed04Scenarios {
+  readonly scenarios: readonly {
+    readonly id: string;
+    readonly inputs: { readonly sharedDocument?: unknown };
+  }[];
+}
+interface Fed04Pact {
+  readonly pact: string;
+  readonly hostVault: string;
+  readonly guestVault: string;
+  readonly hostKey: string;
+  readonly world: string;
+  readonly grant: Fed04Grant;
+  readonly direction: Fed04Direction;
+}
+
+/** Test-authored learn time (2026-10-17T12:00:00Z): the claim's world window is
+ * then known without reading a clock. Claims honour a supplied past learned_at. */
+const FED04_LEARNED_AT = 1792238400;
+const FED04_PREDICATE = "federation.fixture.document";
+const FED04_HEX32 = /^[0-9a-f]{32}$/;
+const FED04_HEX64 = /^[0-9a-f]{64}$/;
+
+/** A Connect guest grant over one named world: read and propose, at most
+ * private, every other axis explicit (an omitted Scope axis deserializes as
+ * bottom). Verbs are pre-sorted: the wire carries a sorted set. */
+function fed04ShareScope(world: string): Fed04Scope {
+  return {
+    worlds: { kind: "some", values: [world] },
+    facets: { kind: "all" },
+    bands: { kind: "all" },
+    audience: { kind: "all" },
+    verbs: { kind: "some", values: ["propose", "read"] },
+    sensitivity: { kind: "at_most", value: "private" },
+  };
+}
+/** The pact half a grant above projects to; offer/accept require it exactly. */
+function fed04Direction(world: string): Fed04Direction {
+  return {
+    worlds: { kind: "some", values: [world] },
+    facets: { kind: "all" },
+    bands: { kind: "all" },
+  };
+}
+/** "YYYY-MM@<world hex>": the world-scoped monthly window a CLAIM lives in. */
+function fed04WindowKey(learnedAt: number, world: string): string {
+  return `${new Date(learnedAt * 1000).toISOString().slice(0, 7)}@${world}`;
+}
+async function fed04Refusal(attempt: Promise<unknown>): Promise<PublicHttpError> {
+  try {
+    await attempt;
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error;
+    throw error;
+  }
+  throw new Error("expected a public refusal; the call succeeded");
+}
+async function fed04NamedWorld(engine: EngineFixture, name: string): Promise<string> {
+  const world = await engine.client.call("vault.structural.put", {
+    kind: "WORLD",
+    body: { name, kind: "fictional" },
+    occurred_at: FED04_LEARNED_AT,
+    text_fields: [{ field: "name", value: name }],
+  });
+  expect(world.id_hex).toMatch(FED04_HEX32);
+  expect((await engine.client.call("vault.get", { entity_ref: world.entity_ref })).value?.kind).toBe("WORLD");
+  return world.id_hex;
+}
+/** Both owners carry each signed half; each host sends nothing (FIX 323/3016). */
+async function fed04ConnectPact(host: EngineFixture, guest: EngineFixture): Promise<Fed04Pact> {
+  const hostId = await host.client.call("vault.federation.connect.identity", {});
+  const guestId = await guest.client.call("vault.federation.connect.identity", {});
+  expect(hostId.vault).toMatch(FED04_HEX64);
+  expect(hostId.host_key).toMatch(FED04_HEX64);
+  expect(guestId.vault).toMatch(FED04_HEX64);
+  expect(hostId.vault).not.toBe(guestId.vault);
+  const world = await fed04NamedWorld(host, "FEDERATION-04 shared observatory");
+  const guestWorld = await fed04NamedWorld(guest, "FEDERATION-04 guest observatory");
+  const grant = await host.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: guestId.vault,
+    authority_scope: fed04ShareScope(world),
+  });
+  expect(grant.grant).toMatch(FED04_HEX32);
+  expect(grant.guest_actor).toMatch(FED04_HEX32);
+  expect(grant.expires_at ?? null).toBeNull();
+  const guestGrant = await guest.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: hostId.vault,
+    authority_scope: fed04ShareScope(guestWorld),
+  });
+  const direction = fed04Direction(world);
+  const offer = await host.client.call("vault.federation.connect.offer", {
+    peer_vault: guestId.vault,
+    grant: grant.grant,
+    outbound: direction,
+    inbound: fed04Direction(guestWorld),
+  });
+  expect(offer.pact).toMatch(FED04_HEX64);
+  const guestAccepted = await guest.client.call("vault.federation.connect.accept", {
+    offer,
+    grant: guestGrant.grant,
+  });
+  expect(guestAccepted.pact).toBe(offer.pact);
+  expect(guestAccepted.status).toBe("Active");
+  const hostAccepted = await host.client.call("vault.federation.connect.accept", {
+    offer: guestAccepted.counter,
+    grant: grant.grant,
+  });
+  expect(hostAccepted.pact).toBe(offer.pact);
+  expect(hostAccepted.status).toBe("Active");
+  for (const side of [host, guest]) {
+    const status = await side.client.call("vault.federation.status", {});
+    expect(status.pacts.filter((row) => row.status === "Active" && row.epoch === 1)).toHaveLength(1);
+  }
+  return {
+    pact: offer.pact,
+    hostVault: hostId.vault,
+    guestVault: guestId.vault,
+    hostKey: hostId.host_key,
+    world,
+    grant,
+    direction,
+  };
+}
+/** The guest's own Ed25519 holder key, generated on its own device: the mint
+ * binds the public half, and the guest proves each request with the seed. */
+function fed04GuestKeys(): { holderKeyHex: string; seedHex: string } {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const x = publicKey.export({ format: "jwk" }).x;
+  const d = privateKey.export({ format: "jwk" }).d;
+  if (typeof x !== "string" || typeof d !== "string") throw new Error("ed25519 JWK export has no key material");
+  const holderKeyHex = Buffer.from(x, "base64url").toString("hex");
+  const seedHex = Buffer.from(d, "base64url").toString("hex");
+  expect(holderKeyHex).toMatch(FED04_HEX64);
+  expect(seedHex).toMatch(FED04_HEX64);
+  return { holderKeyHex, seedHex };
+}
+/** Every field of one fetched envelope: pact, epoch, ceiling, effective scope,
+ * recipient, window, both 64-byte signatures, and its own travel digest. Each
+ * export builds a fresh document, so callers compare digests, never bytes. */
+function fed04ExpectEnvelope(envelope: Fed04Envelope, pact: Fed04Pact, windowKey: string): void {
+  expect(envelope.context.pact).toBe(pact.pact);
+  expect(envelope.context.epoch).toBe(1);
+  expect(envelope.context.ceiling).toEqual(pact.grant.resolved_scope);
+  expect(envelope.context.effective_scope).toEqual(pact.direction);
+  expect(envelope.envelope.body.member_ref).toBe(pact.grant.guest_actor);
+  expect(envelope.envelope.body.scope).toEqual({
+    Connect: { peer_vault_id: [...Buffer.from(pact.guestVault, "hex")] },
+  });
+  expect(envelope.envelope.body.window_key).toBe(windowKey);
+  expect(envelope.envelope.body.update.length).toBeGreaterThan(0);
+  expect(envelope.envelope.body.selector.length).toBeGreaterThan(0);
+  expect(envelope.envelope.signature).toHaveLength(64);
+  expect(envelope.signer).toBe(pact.hostKey);
+  expect(envelope.signature).toHaveLength(64);
+  const note = envelope.travel_receipt;
+  expect(note).not.toBeNull();
+  if (!note) throw new Error("guest export has no travel note");
+  expect(note.content_hash).toBe(
+    Buffer.from(blake3(Uint8Array.from(envelope.envelope.body.update))).toString("hex"),
+  );
+  expect(typeof note.receipt_owed).toBe("boolean");
+}
+
+/* FEDERATION-04 — decision: WRITTEN (partial).
+ * Promise: a live Connect guest can fetch its signed scoped envelope;
+ *   revocation reports that copies are not recallable and stops the guest's
+ *   next fetch and proposal.
+ * Doors: vault.structural.put (WORLD) + vault.get read-back,
+ *   vault.federation.connect.identity / grants.mint / offer / accept,
+ *   vault.federation.status, vault.claims.upsert, vault.guests.mint_slip /
+ *   share / export_envelope / propose / revoke (typed facade),
+ *   POST /v1/owner/guests/revoke (raw owner route), guest WS
+ *   export_envelope, restart.
+ * Unproved and why: decoded payload hides nothing (needs a consumer Loro wire
+ *   decoder in the suite; byte scans prove no topology claim).
+ *   A valid guest-authored text proposal landing pre-revoke (needs a public
+ *   guest text-proposal encoding door behind the live guest grant).
+ *   Foreign-world reshare refused, and a host control share to a third vault
+ *   (needs a third vault with two more pacts; no missing verb identified).
+ *   Guest-envelope admission into the guest vault's own store (needs a public
+ *   guest-envelope admission verb behind the receiving grant).
+ */
+suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed scoped envelope; revocation reports that copies are not recallable and stops the guest's next fetch and proposal", async () => {
+  const catalog = await loadFixtures();
+  const fixture = await catalog.readJson<Fed04Scenarios>("federation-canon-scenarios");
+  const sharedSentence = fixture.scenarios.find((row) => row.id === "FEDERATION-04")?.inputs.sharedDocument;
+  if (typeof sharedSentence !== "string") throw new Error("federation-canon-scenarios has no FEDERATION-04 sharedDocument");
+  const engine = await EngineFixture.start({ id: "FEDERATION-04", profile, peers: 1 });
+  const guestVault = engine.peers[0];
+  if (!guestVault) throw new Error("FEDERATION-04 needs its peer vault");
+  let guestSocket: WsClient | undefined;
+  try {
+    const pact = await fed04ConnectPact(engine, guestVault);
+    // Mint refuses an excess scope rather than clamping it: the stored grant
+    // is exactly what was asked (verb sets compare unordered).
+    const resolved = pact.grant.resolved_scope;
+    expect(resolved.worlds).toEqual({ kind: "some", values: [pact.world] });
+    expect(resolved.facets).toEqual({ kind: "all" });
+    expect(resolved.bands).toEqual({ kind: "all" });
+    expect(resolved.audience).toEqual({ kind: "all" });
+    if (resolved.verbs.kind !== "some") throw new Error("grant verbs narrowed unexpectedly");
+    expect([...resolved.verbs.values].sort()).toEqual(["propose", "read"]);
+    expect(resolved.sensitivity).toEqual({ kind: "at_most", value: "private" });
+    // The host's own claim in the shared world. Sensitivity 1 (private) keeps
+    // it inside the grant's at-most-private ceiling.
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const shared = await engine.client.call("vault.claims.upsert", {
+      predicate: FED04_PREDICATE,
+      subject_ref: engine.pairedActor.principalRef,
+      value: sharedSentence,
+      confidence: 0.9,
+      source: "user_stated",
+      sensitivity: 1,
+      scope: { ...scope, world_id: pact.world },
+      occurred_at: FED04_LEARNED_AT,
+      learned_at: FED04_LEARNED_AT,
+    });
+    expect(shared.claim_short_id.length).toBeGreaterThan(0);
+    const windowKey = fed04WindowKey(FED04_LEARNED_AT, pact.world);
+    const request: FacadeInput<"vault.guests.share"> = {
+      grant_ref: pact.grant.grant,
+      world_ref: pact.world,
+      window_key: windowKey,
+      facets: [],
+      bands: [],
+    };
+    // The guest's own key; the host mints the slip that binds it.
+    const { holderKeyHex, seedHex } = fed04GuestKeys();
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const minted = await engine.client.call("vault.guests.mint_slip", {
+      grant_ref: pact.grant.grant,
+      holder_key: holderKeyHex,
+      expires_at: expiresAt,
+    });
+    expect(minted.slip.startsWith("v2.slip.")).toBe(true);
+    expect(minted.slip_id).toMatch(FED04_HEX64);
+    expect(minted.expires_at).toBe(expiresAt);
+    const guestCredential = `v2.cred.${minted.slip.slice(8)}.${seedHex}`;
+    const guestClient = new PublicHttpClient(engine.url, {
+      credential: guestCredential,
+      artifacts: engine.artifacts,
+      label: "fed04-guest",
+    });
+    guestSocket = await WsClient.connect(engine.url, guestCredential);
+
+    // Act: the owner shares. Second doors: the guest fetches over HTTP and WS.
+    const sharedEnvelope = await engine.client.call("vault.guests.share", request);
+    fed04ExpectEnvelope(sharedEnvelope, pact, windowKey);
+    const fetched = await guestClient.call("vault.guests.export_envelope", request);
+    fed04ExpectEnvelope(fetched, pact, windowKey);
+    const socketFetched = await guestSocket.call("vault.guests.export_envelope", request);
+    expect(socketFetched.frames.length).toBeGreaterThan(0);
+    fed04ExpectEnvelope(socketFetched.value, pact, windowKey);
+
+    // Wrong-actor refusals, each with its status and code; refusals list no rows.
+    const ownerExport = await fed04Refusal(engine.client.call("vault.guests.export_envelope", request));
+    expect(ownerExport.reply.status).toBe(403);
+    expect(ownerExport.error?.code).toBe("FORBIDDEN");
+    const guestShare = await fed04Refusal(guestClient.call("vault.guests.share", request));
+    expect(guestShare.reply.status).toBe(403);
+    expect(guestShare.error?.code).toBe("FORBIDDEN");
+    const unsharedWorld = await fed04NamedWorld(engine, "FEDERATION-04 unshared observatory");
+    const outsideGrant = await fed04Refusal(engine.client.call("vault.guests.share", { ...request, world_ref: unsharedWorld }));
+    expect(outsideGrant.reply.status).toBe(403);
+    expect(outsideGrant.error?.code).toBe("FORBIDDEN");
+
+    // Revoke mid-flow; the receipt is honest about already-synced copies.
+    const revoked = await engine.client.call("vault.guests.revoke", { grant_ref: pact.grant.grant });
+    expect(revoked.grant_ref).toBe(pact.grant.grant);
+    expect(revoked.guest_ref).toBe(pact.grant.guest_actor);
+    expect(revoked.changed).toBe(true);
+    expect(revoked.revoked_at).toBeGreaterThan(0);
+    expect(revoked.revoked_slip_refs ?? []).toContain(minted.slip_id);
+    expect(revoked.pact_standing).toBe("disconnected");
+    expect(revoked.disclosure.copied_bytes_recallable).toBe(false);
+    expect(revoked.disclosure.recipient_copy_state).toBe("unknown");
+    expect(revoked.disclosure.deletion_request_status).toBe("not_requested");
+    const targets = revoked.courtesy_targets ?? [];
+    expect(targets).toHaveLength(1);
+    const [target] = targets;
+    if (!target) throw new Error("revoke names no ended pact");
+    expect(target.pact).toBe(pact.pact);
+    expect(target.peer_vault_id).toBe(pact.guestVault);
+    expect(target.epoch_cutoff).toBe(1);
+    expect(target.deletion_request_status).toBe("not_requested");
+    expect(target.request ?? null).toBeNull();
+
+    // Owner read-back through other doors: the raw route repeats the first
+    // revoke, the pact stands disconnected, and the grant is gone.
+    const repeatRaw = await engine.client.raw("POST", "/v1/owner/guests/revoke", { grant_ref: pact.grant.grant });
+    expect(repeatRaw.status).toBe(200);
+    const repeat = repeatRaw.body as Facade.GuestRevokeResponse;
+    expect(repeat.grant_ref).toBe(pact.grant.grant);
+    expect(repeat.changed).toBe(false);
+    expect(repeat.revoked_at).toBe(revoked.revoked_at);
+    expect(repeat.revoked_slip_refs ?? []).toEqual([]);
+    const standing = await engine.client.call("vault.federation.status", {});
+    const ended = standing.pacts.find((row) => row.pact === pact.pact);
+    expect(ended?.status).toBe("Disconnected");
+    expect(ended?.epoch).toBe(1);
+    const grantGone = await fed04Refusal(engine.client.call("vault.guests.share", request));
+    expect(grantGone.reply.status).toBe(404);
+    expect(grantGone.error?.code).toBe("NOT_FOUND");
+
+    // The guest's next fetch and proposal stop at authentication.
+    const fetchStopped = await fed04Refusal(guestClient.call("vault.guests.export_envelope", request));
+    expect(fetchStopped.reply.status).toBe(401);
+    expect(fetchStopped.error?.code).toBe("UNAUTHORIZED");
+    const proposeStopped = await fed04Refusal(
+      guestClient.call("vault.guests.propose", {
+        grant_ref: pact.grant.grant,
+        world_ref: pact.world,
+        entity_ref: pact.world,
+        update: [],
+      }),
+    );
+    expect(proposeStopped.reply.status).toBe(401);
+    expect(proposeStopped.error?.code).toBe("UNAUTHORIZED");
+    // The held socket serves no more RPC: it closes instead of answering.
+    await expect(guestSocket.call("vault.guests.export_envelope", request)).rejects.toThrow();
+    guestSocket.close();
+    guestSocket = undefined;
+
+    // Restart keeps the revocation: no revived fetch, no revived grant.
+    await engine.restart();
+    const fetchAfterRestart = await fed04Refusal(guestClient.call("vault.guests.export_envelope", request));
+    expect(fetchAfterRestart.reply.status).toBe(401);
+    expect(fetchAfterRestart.error?.code).toBe("UNAUTHORIZED");
+    const shareAfterRestart = await fed04Refusal(engine.client.call("vault.guests.share", request));
+    expect(shareAfterRestart.reply.status).toBe(404);
+    expect(shareAfterRestart.error?.code).toBe("NOT_FOUND");
+    const standingAfterRestart = await engine.client.call("vault.federation.status", {});
+    const endedAfterRestart = standingAfterRestart.pacts.find((row) => row.pact === pact.pact);
+    expect(endedAfterRestart?.status).toBe("Disconnected");
+
+    await engine.artifacts.json("federation-04.json", {
+      pact: pact.pact,
+      world: pact.world,
+      windowKey,
+      guestActor: pact.grant.guest_actor,
+      contentHashes: [sharedEnvelope, fetched, socketFetched.value].map((row) => row.travel_receipt?.content_hash ?? null),
+      updateLengths: [sharedEnvelope, fetched, socketFetched.value].map((row) => row.envelope.body.update.length),
+      wsFrames: socketFetched.frames.length,
+      revoked: { changed: revoked.changed, pact_standing: revoked.pact_standing, disclosure: revoked.disclosure },
+      refusals: {
+        ownerExport: ownerExport.reply.status,
+        guestShare: guestShare.reply.status,
+        outsideGrant: outsideGrant.reply.status,
+        grantGone: grantGone.reply.status,
+        fetchStopped: fetchStopped.reply.status,
+        proposeStopped: proposeStopped.reply.status,
+      },
+    });
+  } finally {
+    guestSocket?.close();
+    await engine.close();
+  }
+});
 
 // FEDERATION-05 — Cross-vault identity without pooled truth should work.
 // OF-151; ARCH-0043#quarantine-and-coreference/#relationship-lifecycle.
@@ -182,27 +989,469 @@ suite.todo(test, "FEDERATION-06", "waits on typed disconnect, foreign-world rejo
 
 // FEDERATION-07 — Peer anomaly quarantines without losing review should work.
 // OF-152/303; ARCH-0023b#decision-federation-26; ARCH-0040#mcp-actor-ceilings.
-// G11=B IS RULED: assert configured routed outcome and receipt, never a
-// universal model-score cutoff, absolute burst constant or human-pause rule.
-// Required public policy/ingress contract: named peer baseline and vault-size
-// context; authorized ordinary/anomalous batches -> a receipted discriminated
-// allow | isolate-and-propose | defer result, with batch/review/replay refs.
-// Exercise each configured policy outcome. If it consults a model, use the
-// production adapter with independently scripted output. Feed real WS ingress,
-// retaining ACK and receipt; never call Rust replay.
-// Allow exposes exactly the authored ordinary rows. Isolate keeps anomalous
-// rows out of normal recall and produces ONE retained review bundle. Owner
-// release exposes only grant-authorized rows, preserves original provenance
-// and cannot widen rejected authority. Defer persists the batch across rejoin
-// and later public replay, without losing or duplicating its work. An ordinary
-// second peer stays usable while the first has isolated/deferred work.
-// Compare the same burst under distinct named baselines to make the relative
-// policy observable. Assert bounded maintenance-band admission against its
-// configured per-peer byte/window policy separately from the burst outcome;
-// an old hard-quota error is not the canon's complete three-way response.
-// Missing: typed relative-burst policy/baseline, disposition/review and durable
-// deferred replay doors. No TODO waits on G11, and no score is invented here.
-suite.todo(test, "FEDERATION-07", "waits on typed peer-relative burst policy, disposition/review and durable deferred replay");
+type Fed07Scope = FacadeInput<"vault.federation.connect.grants.mint">["authority_scope"];
+type Fed07Direction = FacadeInput<"vault.federation.connect.offer">["outbound"];
+type Fed07Peer = FacadeInput<"vault.federation.burst.policy">;
+type Fed07Receipt = FacadeResult<"vault.federation.burst.ingress">;
+type Fed07Bundle = FacadeResult<"vault.federation.burst.review">[number];
+type Fed07Evidence = FacadeResult<"vault.consolidation.evidence">["value"][number];
+type Fed07SourceTrust = NonNullable<FacadeInput<"vault.gate.policy.put">["manifest"]["source_trust"]>[string];
+interface Fed07Fixture {
+  readonly cases: readonly {
+    readonly id: string;
+    readonly inputs: {
+      readonly ordinaryBatch?: readonly string[];
+      readonly anomalousBatch?: readonly string[];
+      readonly configuredRoutes?: readonly string[];
+    };
+    readonly expected: {
+      readonly oracle?: string;
+      readonly isolationReviewBundleCount?: number;
+      readonly deferredWorkLost?: boolean;
+      readonly deferredReplayPreserves?: readonly string[];
+    };
+  }[];
+}
+interface Fed07Pact {
+  readonly pact: string;
+  readonly sharerVault: string;
+  readonly receiverVault: string;
+  readonly sharerWorld: string;
+  readonly receiverWorld: string;
+  readonly receiverGrant: FacadeResult<"vault.federation.connect.grants.mint">;
+}
+
+const FED07_PREDICATE = "federation.fixture.document";
+const FED07_ALLOW_TS = 1757937600;
+const FED07_ISOLATE_TS = 1760529600;
+const FED07_DEFER_TS = 1763208000;
+
+function fed07ShareScope(world: string): Fed07Scope {
+  return {
+    worlds: { kind: "some", values: [world] },
+    facets: { kind: "all" },
+    bands: { kind: "all" },
+    audience: { kind: "all" },
+    verbs: { kind: "some", values: ["read"] },
+    sensitivity: { kind: "at_most", value: "private" },
+  };
+}
+function fed07Direction(world: string): Fed07Direction {
+  return {
+    worlds: { kind: "some", values: [world] },
+    facets: { kind: "all" },
+    bands: { kind: "all" },
+  };
+}
+function fed07WindowKey(learnedAt: number, world: string): string {
+  return `${new Date(learnedAt * 1000).toISOString().slice(0, 7)}@${world}`;
+}
+async function fed07Refusal(attempt: Promise<unknown>): Promise<PublicHttpError> {
+  try {
+    await attempt;
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error;
+    throw error;
+  }
+  throw new Error("expected a public refusal; the call succeeded");
+}
+async function fed07NamedWorld(engine: EngineFixture, name: string, occurred: number): Promise<string> {
+  const world = await engine.client.call("vault.structural.put", {
+    kind: "WORLD",
+    body: { name, kind: "fictional" },
+    occurred_at: occurred,
+    text_fields: [{ field: "name", value: name }],
+  });
+  expect(world.id_hex).toMatch(/^[a-f0-9]{32}$/);
+  expect(world.entity_ref.length).toBeGreaterThan(0);
+  return world.id_hex;
+}
+async function fed07ConnectPact(sharer: EngineFixture, receiver: EngineFixture): Promise<Fed07Pact> {
+  const sharerId = await sharer.client.call("vault.federation.connect.identity", {});
+  const receiverId = await receiver.client.call("vault.federation.connect.identity", {});
+  expect(sharerId.vault).not.toBe(receiverId.vault);
+  expect(sharerId.vault).toMatch(/^[a-f0-9]{64}$/);
+  expect(receiverId.vault).toMatch(/^[a-f0-9]{64}$/);
+  const sharerWorld = await fed07NamedWorld(sharer, "FED-07 shared workshop", FED07_ALLOW_TS);
+  const receiverWorld = await fed07NamedWorld(receiver, "FED-07 receiving workshop", FED07_ALLOW_TS);
+  expect(sharerWorld).not.toBe(receiverWorld);
+  const sharerGrant = await sharer.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: receiverId.vault,
+    authority_scope: fed07ShareScope(sharerWorld),
+  });
+  const receiverGrant = await receiver.client.call("vault.federation.connect.grants.mint", {
+    peer_vault: sharerId.vault,
+    authority_scope: fed07ShareScope(receiverWorld),
+  });
+  expect(sharerGrant.grant).toMatch(/^[a-f0-9]{32}$/);
+  expect(receiverGrant.grant).toMatch(/^[a-f0-9]{32}$/);
+  expect(sharerGrant.guest_actor).toMatch(/^[a-f0-9]{32}$/);
+  expect(receiverGrant.guest_actor).toMatch(/^[a-f0-9]{32}$/);
+  const offer = await sharer.client.call("vault.federation.connect.offer", {
+    peer_vault: receiverId.vault,
+    grant: sharerGrant.grant,
+    outbound: fed07Direction(sharerWorld),
+    inbound: fed07Direction(receiverWorld),
+  });
+  const receiverAccepted = await receiver.client.call("vault.federation.connect.accept", {
+    offer,
+    grant: receiverGrant.grant,
+  });
+  expect(receiverAccepted.pact).toBe(offer.pact);
+  expect(receiverAccepted.status).toBe("Active");
+  const sharerAccepted = await sharer.client.call("vault.federation.connect.accept", {
+    offer: receiverAccepted.counter,
+    grant: sharerGrant.grant,
+  });
+  expect(sharerAccepted.pact).toBe(offer.pact);
+  expect(sharerAccepted.status).toBe("Active");
+  return {
+    pact: offer.pact,
+    sharerVault: sharerId.vault,
+    receiverVault: receiverId.vault,
+    sharerWorld,
+    receiverWorld,
+    receiverGrant,
+  };
+}
+async function fed07Evidence(engine: EngineFixture, claimRef: string): Promise<Fed07Evidence> {
+  const read = await engine.client.call("vault.consolidation.evidence", { source_refs: [claimRef] });
+  expect(read.value).toHaveLength(1);
+  const row = read.value[0];
+  if (!row) throw new Error(`No evidence row for ${claimRef}`);
+  return row;
+}
+
+/* Promise: a peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays once across restart with foreign provenance.
+ * Doors: vault.structural.put, vault.federation.connect.identity/grants.mint/offer/accept/export, vault.gate.policy.get/put, vault.federation.burst.policy/policy.set/baseline via receipts/disposition/review/release/replay/ingress, vault.claims.upsert/list, vault.consolidation.evidence, self.credential.attenuate, vault.guests.revoke, restart.
+ * Unproved: bundle reject path not driven to hold 30s; same review/reject verb behind owner grant would close it.
+ * Unproved: unaffected second peer on same receiver not driven; needs real C grant/pact/content behind Connect grants, three-server cost unmeasured.
+ * Unproved: maintenance per-peer byte/window quota not driven; needs public maintenance quota policy get/set plus receipted admission verb behind owner/peer grants.
+ * Unproved: raw sync ACK not observed; needs caller-owned raw sync client binding real peer/grant behind peer grant.
+ * Unproved: unusual_streak branch not triggered; needs public authorized ingress of genuinely malformed structural work with receipted disposition behind owner/peer grants.
+ * Unproved: expired/stale_authority/erased transitions not driven; no universal clock door asserted, runtime scheduling unproved.
+ * Unproved: same burst under distinct baselines/vault sizes not compared; needs independent receiving authority contexts behind Connect grants, not defeating idempotency.
+ */
+suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays once across restart with foreign provenance.", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<Fed07Fixture>("federation-canon-scenarios");
+  const scenario = data.cases.find((row) => row.id === "FEDERATION-07");
+  if (!scenario) throw new Error("federation-canon-scenarios has no FEDERATION-07");
+  const ordinary = scenario.inputs.ordinaryBatch?.[0];
+  const anomalous = scenario.inputs.anomalousBatch?.[0];
+  if (typeof ordinary !== "string" || typeof anomalous !== "string") throw new Error("FEDERATION-07 fixture has no ordinary/anomalous batch");
+  expect(scenario.inputs.configuredRoutes).toContain("allow");
+  expect(scenario.inputs.configuredRoutes).toContain("isolate-and-propose");
+  expect(scenario.inputs.configuredRoutes).toContain("defer");
+  expect(scenario.expected.oracle).toBe("configured_routed_outcome_and_receipt");
+  expect(scenario.expected.isolationReviewBundleCount).toBe(1);
+  expect(scenario.expected.deferredWorkLost).toBe(false);
+  const deferredValue = `${ordinary} Deferred.`;
+  const engine = await EngineFixture.start({ id: "FEDERATION-07", profile, peers: 1 });
+  try {
+    const receiver = engine.peers[0];
+    if (!receiver) throw new Error("FEDERATION-07 needs its peer vault");
+    const pact = await fed07ConnectPact(engine, receiver);
+    const scopeA = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const policy = await receiver.client.call("vault.gate.policy.get", {});
+    const manifest = policy.manifests.find((row) => row.manifest_ref === policy.default_manifest_ref);
+    if (!manifest) throw new Error("Receiving vault has no default policy manifest");
+    const permit: Fed07SourceTrust = { max_auto_sensitivity: 1, receipted: true, warned: true };
+    const put = await receiver.client.call("vault.gate.policy.put", {
+      manifest_ref: manifest.manifest_ref,
+      expected_body_hash: manifest.body_hash,
+      manifest: { ...manifest.manifest, source_trust: { ...(manifest.manifest.source_trust ?? {}), imported: permit } },
+    });
+    expect(put.receipt_ref.length).toBeGreaterThan(0);
+    expect(put.manifest.manifest.source_trust?.["imported"]).toBeDefined();
+    const peer: Fed07Peer = {
+      principal: pact.receiverGrant.guest_actor,
+      grant: pact.receiverGrant.grant,
+      scope: { kind: "connect", peer_vault_id: pact.sharerVault },
+      world: { kind: "world", world_ref: pact.receiverWorld },
+      facets: [],
+      bands: [],
+    };
+    const allowBaseline = { name: "federation-ordinary-baseline", writes_per_sec: 1000000000, structural_streak: 1000000000 };
+    await receiver.client.call("vault.federation.burst.policy.set", {
+      peer,
+      policy: { baseline: allowBaseline, unusual_rate: "allow", unusual_streak: "allow" },
+    });
+    const allowPolicy = await receiver.client.call("vault.federation.burst.policy", peer);
+    expect(allowPolicy.unusual_rate).toBe("allow");
+    expect(allowPolicy.unusual_streak).toBe("allow");
+    expect(allowPolicy.baseline).toEqual(allowBaseline);
+    const allowWindow = fed07WindowKey(FED07_ALLOW_TS, pact.sharerWorld);
+    const allowUpsert = await engine.client.call("vault.claims.upsert", {
+      predicate: FED07_PREDICATE,
+      subject_ref: engine.pairedActor.principalRef,
+      value: ordinary,
+      confidence: 0.9,
+      source: "user_stated",
+      sensitivity: 1,
+      scope: { ...scopeA, world_id: pact.sharerWorld },
+      occurred_at: FED07_ALLOW_TS,
+      learned_at: FED07_ALLOW_TS,
+    });
+    expect(allowUpsert.approval).toBe("auto");
+    const allowDelivery = await engine.client.call("vault.federation.connect.export", {
+      pact: pact.pact,
+      window_key: allowWindow,
+      world_ref: pact.sharerWorld,
+    });
+    expect(allowDelivery.body.pact).toBe(pact.pact);
+    expect(allowDelivery.body.epoch).toBe(1);
+    expect(allowDelivery.body.source_vault).toBe(pact.sharerVault);
+    expect(allowDelivery.body.recipient_vault).toBe(pact.receiverVault);
+    expect(allowDelivery.body.update.length).toBeGreaterThan(0);
+    const allowReceipt = await receiver.client.call("vault.federation.burst.ingress", allowDelivery);
+    expect(allowReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
+    expect(allowReceipt.principal).toBe(pact.receiverGrant.guest_actor);
+    expect(allowReceipt.grant).toBe(pact.receiverGrant.grant);
+    expect(allowReceipt.window_key).toBe(allowWindow);
+    expect(allowReceipt.disposition).toEqual({ outcome: "allow" });
+    expect(allowReceipt.state).toBe("imported");
+    expect(allowReceipt.baseline.baseline.name).toBe(allowBaseline.name);
+    expect(allowReceipt.baseline.learned).toBe(false);
+    expect(allowReceipt.baseline.vault_size).toBeGreaterThan(0);
+    const allowList = await awaitPublic(
+      () => receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 }),
+      (page) => page.value.some((row) => row.value === ordinary),
+      { label: "allowed foreign claim readable" },
+    );
+    expect(allowList.value).toHaveLength(1);
+    const allowRow = allowList.value[0];
+    if (!allowRow) throw new Error("Allowed claim missing");
+    expect(allowRow.value).toBe(ordinary);
+    expect(allowRow.source).toBe("imported");
+    expect(allowRow.lifecycle).toBe("active");
+    const foreignWorld = allowRow.world_ref;
+    if (typeof foreignWorld !== "string") throw new Error("Allowed claim has no foreign world");
+    expect(foreignWorld).not.toBe(pact.sharerWorld);
+    expect(foreignWorld).not.toBe(pact.receiverWorld);
+    expect(foreignWorld).not.toBe("00000000000000000000000000000001");
+    const isolateBaseline = { name: "federation-burst-isolate", writes_per_sec: 0.000000001, structural_streak: 1000000000 };
+    await receiver.client.call("vault.federation.burst.policy.set", {
+      peer,
+      policy: { baseline: isolateBaseline, unusual_rate: "isolate-and-propose", unusual_streak: "defer" },
+    });
+    const isolatePolicy = await receiver.client.call("vault.federation.burst.policy", peer);
+    expect(isolatePolicy.unusual_rate).toBe("isolate-and-propose");
+    expect(isolatePolicy.unusual_streak).toBe("defer");
+    expect(isolatePolicy.baseline).toEqual(isolateBaseline);
+    const isolateWindow = fed07WindowKey(FED07_ISOLATE_TS, pact.sharerWorld);
+    await engine.client.call("vault.claims.upsert", {
+      predicate: FED07_PREDICATE,
+      subject_ref: engine.pairedActor.principalRef,
+      value: anomalous,
+      confidence: 0.9,
+      source: "user_stated",
+      sensitivity: 1,
+      scope: { ...scopeA, world_id: pact.sharerWorld },
+      occurred_at: FED07_ISOLATE_TS,
+      learned_at: FED07_ISOLATE_TS,
+    });
+    const isolateDelivery = await engine.client.call("vault.federation.connect.export", {
+      pact: pact.pact,
+      window_key: isolateWindow,
+      world_ref: pact.sharerWorld,
+    });
+    const isolateReceipt = await receiver.client.call("vault.federation.burst.ingress", isolateDelivery);
+    expect(isolateReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
+    expect(isolateReceipt.window_key).toBe(isolateWindow);
+    expect(isolateReceipt.state).toBe("pending");
+    expect(isolateReceipt.baseline.baseline.name).toBe(isolateBaseline.name);
+    const isolateDisp = isolateReceipt.disposition;
+    if (isolateDisp.outcome !== "isolate-and-propose") throw new Error("Isolate batch did not take the isolate route");
+    expect(isolateDisp.bundle_ref).toMatch(/^federation-review:[a-f0-9]{64}$/);
+    expect(isolateDisp.replay_ref).toBe(isolateReceipt.batch_ref);
+    const isolatedReview = await receiver.client.call("vault.federation.burst.review", {});
+    expect(isolatedReview).toHaveLength(1);
+    const isolatedBundle = isolatedReview[0];
+    if (!isolatedBundle) throw new Error("Isolated review bundle missing");
+    expect(isolatedBundle.bundle_ref).toBe(isolateDisp.bundle_ref);
+    expect(isolatedBundle.request_refs).toContain(isolateReceipt.batch_ref);
+    expect(isolatedBundle.updates.length).toBeGreaterThan(0);
+    expect(isolatedBundle.quarantined).toBe(true);
+    expect(isolatedBundle.replay_automatic).toBe(true);
+    const isolatedUpdate = isolatedBundle.updates[0];
+    if (!isolatedUpdate) throw new Error("Isolated bundle has no update");
+    expect(isolatedUpdate.request_ref).toBe(isolateReceipt.batch_ref);
+    const heldList = await receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 });
+    expect(heldList.value.map((row) => row.value)).not.toContain(anomalous);
+    expect(heldList.value).toHaveLength(1);
+    const released = await receiver.client.call("vault.federation.burst.review.release", { bundle_ref: isolatedBundle.bundle_ref });
+    expect(released.bundle_ref).toBe(isolatedBundle.bundle_ref);
+    expect(released.batches).toHaveLength(1);
+    const releasedBatch = released.batches[0];
+    if (!releasedBatch) throw new Error("Release returned no batch");
+    expect(releasedBatch.batch_ref).toBe(isolateReceipt.batch_ref);
+    expect(releasedBatch.state).toBe("pending");
+    expect(releasedBatch.disposition.outcome).toBe("isolate-and-propose");
+    const isolateReplayed = await receiver.client.call("vault.federation.burst.replay", { peer, batch_ref: isolateReceipt.batch_ref });
+    expect(isolateReplayed.batch_ref).toBe(isolateReceipt.batch_ref);
+    expect(isolateReplayed.state).toBe("imported");
+    expect(isolateReplayed.disposition.outcome).toBe("isolate-and-propose");
+    const isolateDispAfter = isolateReplayed.disposition;
+    if (isolateDispAfter.outcome !== "isolate-and-propose") throw new Error("Released receipt lost its original disposition");
+    expect(isolateDispAfter.bundle_ref).toBe(isolateDisp.bundle_ref);
+    expect(isolateDispAfter.replay_ref).toBe(isolateReceipt.batch_ref);
+    const releasedList = await awaitPublic(
+      () => receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 }),
+      (page) => page.value.some((row) => row.value === anomalous),
+      { label: "released claim readable" },
+    );
+    expect(releasedList.value).toHaveLength(2);
+    const releasedRow = releasedList.value.find((row) => row.value === anomalous);
+    if (!releasedRow) throw new Error("Released claim missing");
+    expect(releasedRow.source).toBe("imported");
+    expect(releasedRow.world_ref).toBe(foreignWorld);
+    const releasedEvidence = await fed07Evidence(receiver, releasedRow.claim_ref);
+    expect(releasedEvidence.source).toBe("imported");
+    expect(releasedEvidence.foreign_world_ref).toBe(foreignWorld);
+    expect(releasedEvidence.first_party_corroboration).toBe(false);
+    expect(releasedEvidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+    expect(releasedEvidence.delivery_history).toHaveLength(1);
+    const releasedOrigin = releasedEvidence.delivery_history?.[0];
+    if (!releasedOrigin) throw new Error("Released claim has no delivery origin");
+    expect(releasedOrigin.source_ref).toBe(releasedRow.claim_ref);
+    expect(releasedOrigin.delivering_pact).toBe(pact.pact);
+    expect(releasedOrigin.consent_epoch).toBe(1);
+    expect(releasedOrigin.grant_ref).toBe(pact.receiverGrant.grant);
+    expect(releasedOrigin.source_vault).toBe(pact.sharerVault);
+    expect(releasedOrigin.delivered_row_hash).toMatch(/^[a-f0-9]{64}$/);
+    const deferBaseline = { name: "federation-burst-defer", writes_per_sec: 0.000000001, structural_streak: 1000000000 };
+    await receiver.client.call("vault.federation.burst.policy.set", {
+      peer,
+      policy: { baseline: deferBaseline, unusual_rate: "defer", unusual_streak: "isolate-and-propose" },
+    });
+    const deferPolicy = await receiver.client.call("vault.federation.burst.policy", peer);
+    expect(deferPolicy.unusual_rate).toBe("defer");
+    expect(deferPolicy.unusual_streak).toBe("isolate-and-propose");
+    expect(deferPolicy.baseline).toEqual(deferBaseline);
+    const deferWindow = fed07WindowKey(FED07_DEFER_TS, pact.sharerWorld);
+    await engine.client.call("vault.claims.upsert", {
+      predicate: FED07_PREDICATE,
+      subject_ref: engine.pairedActor.principalRef,
+      value: deferredValue,
+      confidence: 0.9,
+      source: "user_stated",
+      sensitivity: 1,
+      scope: { ...scopeA, world_id: pact.sharerWorld },
+      occurred_at: FED07_DEFER_TS,
+      learned_at: FED07_DEFER_TS,
+    });
+    const deferDelivery = await engine.client.call("vault.federation.connect.export", {
+      pact: pact.pact,
+      window_key: deferWindow,
+      world_ref: pact.sharerWorld,
+    });
+    const deferReceipt = await receiver.client.call("vault.federation.burst.ingress", deferDelivery);
+    expect(deferReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
+    expect(deferReceipt.window_key).toBe(deferWindow);
+    expect(deferReceipt.state).toBe("pending");
+    expect(deferReceipt.baseline.baseline.name).toBe(deferBaseline.name);
+    const deferDisp = deferReceipt.disposition;
+    if (deferDisp.outcome !== "defer") throw new Error("Defer batch did not take the defer route");
+    expect(deferDisp.replay_ref).toBe(deferReceipt.batch_ref);
+    const deferredHeld = await receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 });
+    expect(deferredHeld.value.map((row) => row.value)).not.toContain(deferredValue);
+    expect(deferredHeld.value).toHaveLength(2);
+    await receiver.restart();
+    const restored = await receiver.client.call("vault.federation.burst.disposition", { peer, batch_ref: deferReceipt.batch_ref });
+    expect(restored.batch_ref).toBe(deferReceipt.batch_ref);
+    expect(restored.principal).toBe(pact.receiverGrant.guest_actor);
+    expect(restored.grant).toBe(pact.receiverGrant.grant);
+    expect(restored.window_key).toBe(deferWindow);
+    expect(restored.state).toBe("pending");
+    expect(restored.disposition.outcome).toBe("defer");
+    expect(restored.baseline.baseline.name).toBe(deferBaseline.name);
+    const reviewAfterRestart = await receiver.client.call("vault.federation.burst.review", {});
+    expect(reviewAfterRestart).toHaveLength(1);
+    const surviving = reviewAfterRestart[0];
+    if (!surviving) throw new Error("Review bundle did not survive restart");
+    expect(surviving.bundle_ref).toBe(isolatedBundle.bundle_ref);
+    expect(surviving.request_refs).toContain(isolateReceipt.batch_ref);
+    expect(surviving.quarantined).toBe(false);
+    expect(surviving.replay_automatic).toBe(true);
+    const firstReplay = await receiver.client.call("vault.federation.burst.replay", { peer, batch_ref: deferReceipt.batch_ref });
+    expect(firstReplay.batch_ref).toBe(deferReceipt.batch_ref);
+    expect(firstReplay.state).toBe("imported");
+    expect(firstReplay.disposition.outcome).toBe("defer");
+    const secondReplay = await receiver.client.call("vault.federation.burst.replay", { peer, batch_ref: deferReceipt.batch_ref });
+    expect(secondReplay.batch_ref).toBe(deferReceipt.batch_ref);
+    expect(secondReplay.state).toBe("imported");
+    expect(secondReplay.disposition.outcome).toBe("defer");
+    const deferredList = await awaitPublic(
+      () => receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 }),
+      (page) => page.value.some((row) => row.value === deferredValue),
+      { label: "deferred claim readable after replay" },
+    );
+    expect(deferredList.value).toHaveLength(3);
+    const deferredRow = deferredList.value.find((row) => row.value === deferredValue);
+    if (!deferredRow) throw new Error("Deferred claim missing after replay");
+    expect(deferredRow.source).toBe("imported");
+    expect(deferredRow.world_ref).toBe(foreignWorld);
+    const deferredEvidence = await fed07Evidence(receiver, deferredRow.claim_ref);
+    expect(deferredEvidence.source).toBe("imported");
+    expect(deferredEvidence.foreign_world_ref).toBe(foreignWorld);
+    expect(deferredEvidence.first_party_corroboration).toBe(false);
+    expect(deferredEvidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+    expect(deferredEvidence.delivery_history).toHaveLength(1);
+    const deferredOrigin = deferredEvidence.delivery_history?.[0];
+    if (!deferredOrigin) throw new Error("Deferred claim has no delivery origin");
+    expect(deferredOrigin.source_ref).toBe(deferredRow.claim_ref);
+    expect(deferredOrigin.delivering_pact).toBe(pact.pact);
+    expect(deferredOrigin.consent_epoch).toBe(1);
+    expect(deferredOrigin.grant_ref).toBe(pact.receiverGrant.grant);
+    expect(deferredOrigin.source_vault).toBe(pact.sharerVault);
+    expect(deferredOrigin.delivered_row_hash).toMatch(/^[a-f0-9]{64}$/);
+    const { seed } = credentialParts(receiver.pairedActor.credential);
+    const narrowed = await receiver.client.call("self.credential.attenuate", {
+      holder_seed: [...Buffer.from(seed, "hex")],
+      caveat: {
+        scope: {
+          kind: "ceiling",
+          scope: {
+            worlds: { kind: "all" },
+            facets: { kind: "all" },
+            bands: { kind: "all" },
+            audience: { kind: "all" },
+            verbs: { kind: "some", values: ["core:read"] },
+            sensitivity: { kind: "all" },
+          },
+        },
+      },
+    });
+    expect(narrowed.token.startsWith("v2.slip.")).toBe(true);
+    const weak = new PublicHttpClient(receiver.url, {
+      credential: `v2.cred.${narrowed.token.slice(8)}.${seed}`,
+      artifacts: receiver.artifacts,
+    });
+    const weakRefused = await fed07Refusal(weak.call("vault.federation.burst.policy", peer));
+    expect(weakRefused.reply.status).toBe(403);
+    expect(weakRefused.error?.code).toBe("FORBIDDEN");
+    const revoked = await receiver.client.call("vault.guests.revoke", { grant_ref: pact.receiverGrant.grant });
+    expect(revoked.grant_ref).toBe(pact.receiverGrant.grant);
+    expect(revoked.guest_ref).toBe(pact.receiverGrant.guest_actor);
+    expect(revoked.changed).toBe(true);
+    expect(revoked.pact_standing).toBe("disconnected");
+    expect(revoked.disclosure.copied_bytes_recallable).toBe(false);
+    expect(revoked.disclosure.recipient_copy_state).toBe("unknown");
+    expect(revoked.disclosure.deletion_request_status).toBe("not_requested");
+    const replayLost = await fed07Refusal(receiver.client.call("vault.federation.burst.replay", { peer, batch_ref: deferReceipt.batch_ref }));
+    expect(replayLost.reply.status).toBe(400);
+    expect(replayLost.error?.code).toBe("BAD_REQUEST");
+    const ingressLost = await fed07Refusal(receiver.client.call("vault.federation.burst.ingress", allowDelivery));
+    expect(ingressLost.reply.status).toBe(400);
+    expect(ingressLost.error?.code).toBe("BAD_REQUEST");
+    const finalList = await receiver.client.call("vault.claims.list", { predicate: FED07_PREDICATE, limit: 100 });
+    expect(finalList.value).toHaveLength(3);
+    expect(finalList.value.map((row) => row.value).sort()).toEqual([ordinary, anomalous, deferredValue].sort());
+  } finally {
+    await engine.close();
+  }
+});
 
 // FEDERATION-08 — Hosting trust modes stay explicit should work.
 // OF-040/162/168/275/292; identity#cloud-agent-recovery.
