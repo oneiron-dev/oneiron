@@ -6,7 +6,7 @@ import { blake3 } from "@noble/hashes/blake3";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { CliClient, PublicHttpClient, WsClient, boundHeaders, credentialParts } from "./support/clients.ts";
-import { loadFixtures, requireAsset } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
 import { defineFile, LIMITS, ManagedProcess, ownResource, redactor, runProcess, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -238,10 +238,11 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const stranger = new PublicHttpClient(engine.url, { credential: strangerCredential, artifacts: engine.artifacts });
   expect(await refusal(stranger, "vault.kv.get", address)).toEqual(unauthorized);
   await refusedUpgrade(engine.url, strangerCredential);
-  // Nor can the slip's presenter attenuate it with a seed that is not its holder's.
+  // Nor can the slip's presenter attenuate it with a seed that is not its
+  // holder's: the engine refuses the narrowing as invalid authority.
   const wrongSeed = await refusal(engine.client, "self.credential.attenuate",
     { holder_seed: seedBytes(strangerSeed), caveat: {} });
-  expect(wrongSeed).toEqual({ status: 403, code: "FORBIDDEN" });
+  expect(wrongSeed).toEqual({ status: 400, code: "BAD_REQUEST" });
 
   // Holder attenuation narrows by Scope meet; it mints no actor, grant or slip.
   const before = await auditRows(engine.client);
@@ -357,8 +358,11 @@ suite.test(test, "AUTHORITY-03", "Public authority history is append-only should
       .toEqual(audit.map(row => [row.entry_hash, row.signer_key, row.seq, row.fold_valid]));
   };
 
-  // Importing the vault's own history again changes nothing.
-  await engine.client.call("vault.authority.history.import", history);
+  // Importing the vault's own history again changes nothing. Each submitted
+  // envelope answers with its content-addressed log id: its hash's first 16 bytes.
+  const again = await engine.client.call("vault.authority.history.import", history);
+  expect([...again.entry_refs].sort()).toEqual(history.entries.map(entry => envelopeHash(entry).slice(0, 32)).sort());
+  expect([...again.entry_refs].sort()).toEqual(audit.map(row => row.entry_ref).sort());
   await unchanged();
 
   // Forgeries of the owner's real slip mint: a broken signature, a backdated
@@ -495,10 +499,122 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
 // Available: vault.recall({query,scope?:{world_ref?,facet?,kinds?}}),
 // vault.hydrate({refs}) -> {value,narrowing}, and vault.export({format?,
 // include_secrets?}) -> {format,archive,digest} (whole-vault owner export).
-// Missing: typed position/ceiling public fixture setup and a channel-bound
-// scoped export contract. The owner-only full archive is NOT a scoped export;
-// RecallScope is NOT a grant ceiling. Do not cast one into the other.
-suite.todo(test, "AUTHORITY-06", "waits on typed Scope position/ceiling setup and channel-bound scoped export");
+// Doors: vault.scope.position({record_ref}) -> {value: {kind:"position",scope}|null},
+// vault.scope.ceiling({}) -> {kind:"ceiling",scope}, vault.export.scoped({selector,
+// channel}) -> {credential, applied, records}, and self.credential.attenuate for
+// a narrower ceiling. A record's band is its kind, so a claim and a message
+// sit at two distinct positions without any extra world or facet setup.
+suite.test(test, "AUTHORITY-06", "Scope position and ceiling should work", async () => {
+  const engine = await EngineFixture.start({ id: "AUTHORITY-06", profile });
+  const at = Date.parse("2026-10-01T09:00:00Z") / 1000;
+  const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const claimed = await engine.client.call("vault.claims.upsert", {
+    scope, subject_ref: engine.pairedActor.principalRef, source: "user_stated", confidence: 0.875,
+    predicate: "profile.authority_06_harbour_key", value: "The harbour key hangs by the north door.",
+    occurred_at: at, learned_at: at,
+  });
+  await engine.awaitReceipt(claimed.receipt_ref);
+  const claimRow = (await engine.client.call("vault.hydrate", { refs: [claimed.claim_short_id] })).value[0];
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: at, occurred_end: at, learned_at: at,
+  });
+  const witnessed = await engine.client.call("vault.witness", {
+    conversation_ref: conversation.id, occurred_at: at,
+    messages: [{ author: "user", message_type: "text", content: "The ferry leaves at seven.", is_visible: true, order: 0 }],
+  });
+  const messageRow = (await engine.client.call("vault.get", { entity_ref: witnessed.message_short_ids[0]! })).value;
+  if (!claimRow || !messageRow) throw new Error("Fixture rows were not readable by their owner");
+  const ids = { claim: claimRow.id_hex, message: messageRow.id_hex };
+
+  type Position = FacadeResult<"vault.scope.position">["value"];
+  const position = async (client: PublicHttpClient, id: string): Promise<Position> =>
+    (await client.call("vault.scope.position", { record_ref: id })).value;
+  const band = (stamp: Position): number => {
+    if (!stamp) throw new Error("Stamped row has no readable position");
+    expect(stamp.kind).toBe("position");
+    if (stamp.scope.bands.kind !== "some") throw new Error("A record position names its band");
+    expect(stamp.scope.bands.values).toHaveLength(1);
+    return stamp.scope.bands.values[0]!;
+  };
+  const claimPosition = await position(engine.client, ids.claim);
+  const messagePosition = await position(engine.client, ids.message);
+  const claimBand = band(claimPosition);
+  const messageBand = band(messagePosition);
+  expect(claimBand === messageBand).toBe(false);
+  expect(claimPosition!.scope.worlds).toEqual({ kind: "some", values: [scope.world_id] });
+  // An id with no row has no position; that is an answer, not an error.
+  expect(await position(engine.client, secretHex(16))).toBeNull();
+
+  // Narrower ceilings are held by attenuating the owner's own slip.
+  const { seed } = credentialParts(engine.pairedActor.credential);
+  const top: Facade.Scope = {
+    worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" }, audience: { kind: "all" },
+    verbs: { kind: "all" }, sensitivity: { kind: "all" },
+  };
+  const holding = async (ceiling: Facade.Scope): Promise<PublicHttpClient> => {
+    const narrowed = await engine.client.call("self.credential.attenuate", {
+      holder_seed: seedBytes(seed), caveat: { scope: { kind: "ceiling", scope: ceiling } },
+    });
+    return new PublicHttpClient(engine.url, { credential: holderCredential(narrowed.token, seed), artifacts: engine.artifacts });
+  };
+  const claimsOnly = await holding({ ...top, bands: { kind: "some", values: [claimBand] },
+    verbs: { kind: "some", values: ["core:read", "export"] } });
+  const ceiling = await claimsOnly.call("vault.scope.ceiling", {});
+  expect(ceiling.kind).toBe("ceiling");
+  expect(ceiling.scope.bands).toEqual({ kind: "some", values: [claimBand] });
+  expect(ceiling.scope.verbs).toEqual({ kind: "some", values: ["core:read", "export"] });
+  // The ceiling admits the claim's position and withholds the message's.
+  expect(await position(claimsOnly, ids.claim)).toEqual(claimPosition);
+  expect(await position(claimsOnly, ids.message)).toBeNull();
+  expect((await claimsOnly.call("vault.get", { entity_ref: ids.claim })).value?.id_hex).toBe(ids.claim);
+  expect((await claimsOnly.call("vault.get", { entity_ref: ids.message })).value).toBeNull();
+
+  // Scoped export: selector, credential and channel meet. A channel can
+  // narrow the credential but never stand in for it.
+  type ChannelScope = FacadeInput<"vault.export.scoped">["channel"]["scope"];
+  const allChannel: ChannelScope = {
+    worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" }, audience: { kind: "all" },
+    verbs: { kind: "all" }, sensitivity: { kind: "all" },
+  };
+  const exported = (client: PublicHttpClient, channel: ChannelScope,
+    selector: FacadeInput<"vault.export.scoped">["selector"] = {}) =>
+    client.call("vault.export.scoped", { selector, channel: { channel_ref: "authority-06", scope: channel } });
+  const fixtureRows = (result: FacadeResult<"vault.export.scoped">): string[] => result.records
+    .map(row => row.record.id).filter(id => id === ids.claim || id === ids.message).sort();
+  const ownerAll = await exported(engine.client, allChannel);
+  expect(fixtureRows(ownerAll)).toEqual([ids.claim, ids.message].sort());
+  const exportedClaim = ownerAll.records.find(row => row.record.id === ids.claim)!;
+  expect(exportedClaim.position).toEqual(claimPosition);
+  expect(exportedClaim.bytes.length).toBeGreaterThan(0);
+  const readerAll = await exported(claimsOnly, allChannel);
+  expect(fixtureRows(readerAll)).toEqual([ids.claim]);
+  expect(readerAll.credential).toEqual(ceiling);
+  const messageChannel: ChannelScope = { ...allChannel, bands: { kind: "some", values: [messageBand] } };
+  expect(fixtureRows(await exported(engine.client, messageChannel))).toEqual([ids.message]);
+  expect(fixtureRows(await exported(claimsOnly, messageChannel))).toEqual([]);
+  // Empty requested selector lists narrow nothing, and cannot widen the ceiling.
+  expect(fixtureRows(await exported(claimsOnly, allChannel, { facet_refs: [], kinds: [], project_refs: [] })))
+    .toEqual([ids.claim]);
+  // An omitted channel axis is bottom: it grants nothing, even to the owner.
+  expect((await exported(engine.client, {})).records).toEqual([]);
+
+  // A bottom ceiling grants nothing on any door.
+  const nothing = await holding({ ...top, bands: { kind: "bottom" } });
+  expect((await nothing.call("vault.scope.ceiling", {})).scope.bands).toEqual({ kind: "bottom" });
+  expect(await position(nothing, ids.claim)).toBeNull();
+  expect((await nothing.call("vault.get", { entity_ref: ids.claim })).value).toBeNull();
+  expect((await exported(nothing, allChannel)).records).toEqual([]);
+
+  // Refusals: a position offered as a ceiling, export without the export
+  // verb, and an unnamed channel.
+  expect(await refusal(engine.client, "self.credential.attenuate",
+    { holder_seed: seedBytes(seed), caveat: { scope: claimPosition } })).toEqual({ status: 400, code: "BAD_REQUEST" });
+  const readOnly = await holding({ ...top, verbs: { kind: "some", values: ["core:read"] } });
+  const scopedExport = { selector: {}, channel: { channel_ref: "authority-06", scope: allChannel } };
+  expect(await refusal(readOnly, "vault.export.scoped", scopedExport)).toEqual({ status: 403, code: "FORBIDDEN" });
+  expect(await refusal(engine.client, "vault.export.scoped",
+    { ...scopedExport, channel: { ...scopedExport.channel, channel_ref: "" } })).toEqual({ status: 403, code: "FORBIDDEN" });
+});
 
 // AUTHORITY-07 — Owner recovery stays vault-local should work.
 // OF-169/173; identity#cloud-agent-recovery and #authority-log.
