@@ -154,7 +154,7 @@ fn scope_matches(
 }
 
 /// A `*` glob: `*` matches any run of characters, every other byte itself.
-pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
     let (mut p, mut t) = (0, 0);
     let mut star: Option<(usize, usize)> = None;

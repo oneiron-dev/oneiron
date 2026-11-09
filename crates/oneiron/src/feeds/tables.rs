@@ -1,0 +1,16 @@
+//! The side tables `feeds` keeps (untangle slice 6.8): each row declares one, and the crate's build
+//! script places it in `side_table`'s catalogue.
+
+crate::side_table::side_tables! {
+    /// A change feed subscription: its actor, what it follows and when it was made. Key: id16
+    /// (actor) + id16 (subscription).
+    FEED_SUBSCRIPTION: VaultMeta b"feeds:subscription:v1:" Named
+        // Restore class: a subscription is its actor's standing intent, kept as the live vault
+        // holds it, as an armed turn program is.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::feeds::erase_feed_actor_in_txn;
+    /// A subscription's cursor in one source: the last position its actor acknowledged.
+    /// Key: id16 (subscription) + u8 (source).
+    FEED_CURSOR: VaultMeta b"feeds:cursor:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
+}
