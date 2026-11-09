@@ -150,6 +150,7 @@ async function agent(w: World, role: string) {
 }
 function scenarioName(w: World): string { return w.engine.options.id! }
 const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
+const ENTITY_TYPE_MESSAGE = 3; // record-kind byte of a MESSAGE (oneiron-contracts registry/type_bytes.rs)
 const memoryModels = (providers: ScriptedProviders) => `
 [models.providers.drafter]
 kind = "local-openai-compat"
@@ -275,6 +276,24 @@ async function setup(id: string): Promise<World> {
     serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
+  // The house (the seeded sys.team_lead) reads the source message of a project question
+  // under its own read authority. A fresh vault's default policy gives it none, so the
+  // question settles unread and never reaches the decider. The owner grants it reads of
+  // ordinary messages in the base world and the default project audience: an owner act
+  // through the public grant door, revocable, checked at each read.
+  const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const houseRead = await engine.client.call("vault.agents.grants.mint", {
+    agent: PROJECT_LEADER,
+    authority_scope: {
+      worlds: { kind: "some", values: [base.world_id] }, facets: { kind: "all" },
+      bands: { kind: "some", values: [ENTITY_TYPE_MESSAGE] },
+      audience: { kind: "some", values: [base.scope_project_id] },
+      verbs: { kind: "some", values: ["read"] }, sensitivity: { kind: "at_most", value: "sensitive" },
+    },
+  });
+  expect(houseRead.grant.agent).toBe(PROJECT_LEADER);
+  expect(houseRead.grant.delegated_by).toBe(engine.pairedActor.principalRef);
+  expect(houseRead.grant.confers).toBe(true);
   const projects = new Map<string, string>();
   for (const [index, row] of data.fixture.projects.entries()) {
     projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
@@ -288,7 +307,6 @@ async function setup(id: string): Promise<World> {
   const conversation = await engine.client.call("vault.conversations.create", {
     body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
   });
-  const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const w: World = { engine, providers, data, refs: new Map(), conversation: conversation.id,
     scope: base, occurred };
   w.refs.set("@base", base.world_id);
