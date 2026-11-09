@@ -1,0 +1,13 @@
+{
+  "name": "vault.critic.review",
+  "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
+  "input": "crate::critic::review::CriticReviewSubmit",
+  "output": "crate::critic::review::CriticReviewOutcome",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.critic.review\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {},
+  "section": false
+}

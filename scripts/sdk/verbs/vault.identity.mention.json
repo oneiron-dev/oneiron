@@ -1,0 +1,17 @@
+{
+  "name": "vault.identity.mention",
+  "description": "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance.",
+  "input": "crate::dreamer_runner::maintenance::identity::MentionProvenance",
+  "output": "crate::dreamer_runner::maintenance::identity::IdentityMentionView",
+  "call": "memory.identity_mention_as_owner(&memory.embedded_owner(\"vault.identity.mention\")?, &input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

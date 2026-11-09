@@ -1,0 +1,17 @@
+{
+  "name": "vault.campaign.stage.evidence",
+  "description": "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing.",
+  "input": "crate::campaign::surface::CampaignStageEvidenceRequest",
+  "output": "crate::campaign::surface::CampaignStageEvidenceReceipt",
+  "call": "memory.campaign_stage_evidence(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "openapi": true,
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "host_door_lists": true
+}

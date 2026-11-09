@@ -1,0 +1,15 @@
+{
+  "name": "ai.voice.events",
+  "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events.",
+  "input": "crate::task_verb::sdk::LiveVoiceEventsRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceEvents",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.events\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

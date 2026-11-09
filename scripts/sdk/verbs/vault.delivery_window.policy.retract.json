@@ -1,0 +1,16 @@
+{
+  "name": "vault.delivery_window.policy.retract",
+  "description": "The owner retracts a delivery-window policy through the existing claim lifecycle door.",
+  "input": "crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.delivery_window_retract_as(&memory.embedded_owner(\"vault.delivery_window.policy.retract\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

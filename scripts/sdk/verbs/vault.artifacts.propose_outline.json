@@ -1,0 +1,13 @@
+{
+  "name": "vault.artifacts.propose_outline",
+  "description": "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline.",
+  "input": "crate::blob_artifact::deck_creation::DeckOutlineProposeRequest",
+  "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+  "call": "memory.artifacts_propose_outline(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

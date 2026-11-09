@@ -1,0 +1,16 @@
+{
+  "name": "vault.support_grants.revoke",
+  "description": "The owner revokes one support grant; what support already read is not recalled.",
+  "input": "crate::task_verb::sdk::SupportGrantRevokeRequest",
+  "output": "crate::task_verb::sdk::SupportGrantRevokeAnswer",
+  "call": "crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

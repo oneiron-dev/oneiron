@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.cohorts.open",
+  "description": "Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse.",
+  "input": "crate::skill_optimize::eval_doors::EvalCohortOpenRequest",
+  "output": "crate::skill_optimize::EvalRelease",
+  "call": "crate::skill_optimize::eval_doors::open_cohort(memory.vault(), &memory.embedded_owner(\"vault.evals.cohorts.open\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

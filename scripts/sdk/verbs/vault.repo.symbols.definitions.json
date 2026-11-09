@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.symbols.definitions",
+  "description": "Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsDefinitionsInput>",
+  "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.definitions\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

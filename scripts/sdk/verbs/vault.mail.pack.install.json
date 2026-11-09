@@ -1,0 +1,14 @@
+{
+  "name": "vault.mail.pack.install",
+  "description": "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing.",
+  "input": "EmptyRequest",
+  "output": "crate::task_verb::sdk::PackPutReceipt",
+  "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_proof": "owner"
+}

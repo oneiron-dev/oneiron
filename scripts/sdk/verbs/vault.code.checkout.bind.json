@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.checkout.bind",
+  "description": "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential.",
+  "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",
+  "output": "crate::memory::origin_doors::CheckoutDoorBinding",
+  "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

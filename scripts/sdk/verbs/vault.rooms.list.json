@@ -1,0 +1,15 @@
+{
+  "name": "vault.rooms.list",
+  "description": "The caller's rooms its own grants admit; inside a room turn, only that room.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::RoomEntry>",
+  "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
+  "scope": "Read",
+  "mcp_fields": {},
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": []
+  }
+}

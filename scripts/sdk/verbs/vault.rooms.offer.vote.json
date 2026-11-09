@@ -1,0 +1,13 @@
+{
+  "name": "vault.rooms.offer.vote",
+  "description": "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits.",
+  "input": "crate::workspace_roster::OfferVoteRequest",
+  "output": "crate::workspace_roster::OfferCard",
+  "call": "memory.rooms_offer_vote(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

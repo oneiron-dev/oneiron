@@ -1,0 +1,8 @@
+{
+  "name": "self.code.merge_queue.enqueue",
+  "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
+  "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoMergeQueueEnqueue"
+}

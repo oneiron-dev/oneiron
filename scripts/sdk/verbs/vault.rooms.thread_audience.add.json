@@ -1,0 +1,14 @@
+{
+  "name": "vault.rooms.thread_audience.add",
+  "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record.",
+  "input": "crate::workspace_roster::ThreadAudienceAddRequest",
+  "output": "crate::workspace_roster::ThreadAudienceReceipt",
+  "call": "memory.rooms_thread_audience_add(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

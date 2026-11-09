@@ -1,0 +1,12 @@
+{
+  "name": "self.memory.diary.reads",
+  "description": "This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds.",
+  "input": "crate::memory::DiaryReadsRequest",
+  "output": "crate::memory::DiaryReadsView",
+  "call": "memory.diary_reads(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

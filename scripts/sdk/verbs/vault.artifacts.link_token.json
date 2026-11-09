@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.link_token",
+  "description": "Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactLinkToken",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.link_token\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

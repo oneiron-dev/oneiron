@@ -1,0 +1,13 @@
+{
+  "name": "vault.campaign.enroll",
+  "description": "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing.",
+  "input": "crate::campaign::surface::CampaignEnrollRequest",
+  "output": "crate::campaign::surface::CampaignEnrollmentReceipt",
+  "call": "memory.campaign_enroll(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "openapi": true,
+  "section": false
+}

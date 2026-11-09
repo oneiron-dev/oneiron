@@ -1,0 +1,16 @@
+{
+  "name": "vault.off_record.rooms.witness",
+  "description": "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.",
+  "input": "crate::task_verb::sdk::OffRecordRoomWitnessRequest",
+  "output": "crate::memory::WitnessReceipt",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.witness\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record_room"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.checkout.takeover",
+  "description": "Explicitly take over a checkout as its task owner, including effect work, at the named epoch.",
+  "input": "crate::memory::checkout_doors::CheckoutTakeoverInput",
+  "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.takeover\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}

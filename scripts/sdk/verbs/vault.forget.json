@@ -1,0 +1,23 @@
+{
+  "name": "vault.forget",
+  "description": "Retracts claims by exact claim or by subject and predicate; never a hard delete.",
+  "refs": [
+    "/claim_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "selector": "ForgetSelector"
+    },
+    "output": "Vec<CommitReceipt>"
+  },
+  "input": "ForgetRequest",
+  "output": "Vec<crate::memory::CommitReceipt>",
+  "call": "memory_requests::forget_claims(memory, input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.wait_for",
+  "description": "Waits until a window row its refs name, or else some row matching a role and name, is there, walking a cut tree on within its time; pages read on with find and next, and a wait ended cut is partial, with a walk_next.",
+  "input": "oneiron_browser::WaitForInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::WaitForOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.wait_for(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.view",
+  "description": "Reads back a held image by its ref.",
+  "input": "oneiron_browser::ViewInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.view(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

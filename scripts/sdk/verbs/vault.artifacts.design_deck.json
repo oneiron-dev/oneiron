@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.design_deck",
+  "description": "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions.",
+  "input": "crate::blob_artifact::deck_creation::DeckDesignRequest",
+  "output": "crate::blob_artifact::deck_creation::DeckDesignView",
+  "call": "memory.artifacts_design_deck(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "refs": [
+    "/outline_ref"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.hyde.complete",
+  "description": "Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded.",
+  "input": "crate::query_expansion::host::HydeHostCompleteRequest",
+  "output": "crate::query_expansion::host::HydeHostReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.complete\", &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "hyde_caller"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.hold",
+  "description": "The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume.",
+  "input": "crate::agent_dispatch::budget_doors::BudgetHoldRequest",
+  "output": "Option<crate::agent_dispatch::PartialResultHold>",
+  "call": "crate::agent_dispatch::budget_doors::budget_hold_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.hold\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

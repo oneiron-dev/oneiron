@@ -1,0 +1,23 @@
+{
+  "name": "vault.tasks.linear.provenance",
+  "description": "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.",
+  "refs": [
+    "/task_ref"
+  ],
+  "input": "crate::linear_sync::LinearProvenanceRequest",
+  "output": "crate::linear_sync::LinearProvenancePage",
+  "call": "memory.linear_provenance(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "task_ref"
+    ]
+  },
+  "page": {
+    "rows": "events",
+    "cursor": "next_cursor"
+  },
+  "section": false,
+  "openapi": true
+}

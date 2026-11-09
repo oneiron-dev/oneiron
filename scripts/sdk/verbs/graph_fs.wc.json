@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.wc",
+  "description": "Count lines, words and bytes of a visible file at the mounted reference.",
+  "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_wc(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

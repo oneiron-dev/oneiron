@@ -1,0 +1,18 @@
+{
+  "name": "vault.esign.signing.image",
+  "description": "Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names.",
+  "input": "crate::blob_artifact::esign::EsignSigningImageRequest",
+  "output": "crate::blob_artifact::esign::EsignSigningImageView",
+  "call": "memory.esign_signing_image(&input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}
