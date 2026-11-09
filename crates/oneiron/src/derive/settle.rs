@@ -107,7 +107,7 @@ pub(super) fn stage_in_txn(
         context.now.saturating_mul(1_000),
     );
     match applied {
-        Ok(SettlementApplied::Settled(_)) => {
+        Ok(SettlementApplied::Settled(settled)) => {
             savepoint.commit()?;
             let receipt = allowance_receipt_in_txn(
                 vault,
@@ -117,7 +117,8 @@ pub(super) fn stage_in_txn(
                 &[SETTLE_ALLOWED.to_owned()],
                 &allowance,
             )?;
-            let mut rows = vec![marker];
+            // The answer first: a revert reverts the settlement by it.
+            let mut rows = vec![settled.resolved, marker];
             rows.extend(conflict.members.iter().copied());
             Ok(ItemOutcome::Landed {
                 rows,
