@@ -686,6 +686,48 @@ fn changes_followed_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool>
     source_followed_in_txn(store, txn, FeedSource::Changes)
 }
 
+/// Whether `subscription` is `actor`'s, read in `txn`: a feed-woken turn program names one of its
+/// own actor's (slice 6.8c).
+pub(crate) fn subscription_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    subscription: EntityId,
+) -> Result<bool> {
+    SUBSCRIPTIONS.contains(&vault.store, txn, &(actor, subscription))
+}
+
+/// The heads `actor`'s `subscription` stands behind, read in `txn`: the head of each source it
+/// follows whose cursor is behind that head, in the selector's order; empty when every cursor
+/// stands at its head; `None` when the subscription is not `actor`'s. A feed-woken turn program
+/// wakes once per answer (slice 6.8c).
+pub(crate) fn heads_behind_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    subscription: EntityId,
+) -> Result<Option<Vec<FeedPosition>>> {
+    let Some(row) = SUBSCRIPTIONS.get(&vault.store, txn, &(actor, subscription))? else {
+        return Ok(None);
+    };
+    let mut behind = Vec::new();
+    for source in &row.selector.sources {
+        let Some(head) = source.head_in_txn(vault, txn)? else {
+            continue;
+        };
+        let cursor = CURSORS
+            .get(&vault.store, txn, &(subscription, [source.tag()]))?
+            .ok_or(Error::CorruptedIndex(
+                "feed subscription without its cursor",
+            ))?
+            .position()?;
+        if cursor.is_none_or(|cursor| cursor < head) {
+            behind.push(FeedPosition::of(head)?);
+        }
+    }
+    Ok(Some(behind))
+}
+
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
 /// fact of it, hooks on or off.
 pub(crate) fn followed_in_txn(
