@@ -447,166 +447,57 @@ async function models01Round(client: Models01HttpClient, providers: ScriptedProv
 
 /* MODELS-01 Independent model slots and role bindings should work.
  * Canon: ARCH-0036 #inference-slots, #model-line, #roles; OF-126/129/131/132/133/134/138.
- * Partial: separate generate/embed/tag origins, real embedder route narrowing,
- * a reasoner-only rebind preserving all other rows and resident routes, and
- * restart durability. Invalid manifests, owner-only calls and one embedder
- * outage are refused without changing bindings. Fixture: scenarios.json.
- * Operator teacher approval is synthetic owner evidence, not model quality.
- * No off-device tagger, generative outage exhaustion or fallback receipt is
- * claimed. The two known identity/slot defects run only in the red variant.
+ * Red-only alternative replacement for MODELS-01; never register beside green.
+ * Capture both defects before asserting: a generative role in the embedder
+ * slot must be refused at replacement, and a same-checkpoint wrong-name
+ * tagger must not obtain a successful call receipt. No model quality claim.
  */
-suite.test(test, "MODELS-01", "Independent slot routes and revision-pinned role calls survive a reasoner-only rebind and restart; invalid manifests and non-owner callers are refused", async () => {
-  const providers = await ScriptedProviders.start({ id: "MODELS-01", steps: [
-    ...models01Metadata(), ...models01RoundSteps("models01-initial"),
-    models01EmbedStep("models01-narrow-embed"), ...models01RoundSteps("models01-rebound"),
-    models01EmbedStep("models01-upstream-failure", true), ...models01RoundSteps("models01-restarted"),
-  ] });
+suite.test(test, "MODELS-01", "Generative roles cannot bind the embedder slot, and tag invocations cannot attest a model name the endpoint does not serve", async () => {
+  const providers = await ScriptedProviders.start({ id: "MODELS-01-defects",
+    origins: ["reasoner", "alternate"], steps: [...models01Metadata(), models01TagStep("models01-wrong-name-tag")] });
   try {
     const engine = await models01Start(providers);
     try {
       const client = engine.client;
       const manifest = await models01Manifest();
-      const approval = models01Approval(manifest);
-      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
-      for (const slot of models01Slots) expect(await client.call("vault.models.routes.read", { slot }))
-        .toEqual({ slot, pin: null, route: null });
-      await models01Refused(() => client.call("vault.models.manifest.replace", { manifest }), 400, "BAD_REQUEST");
-      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
-      await models01Refused(() => client.call("vault.models.manifest.replace", {
-        manifest, teacher_approval: { ...approval, binding_hash: "0".repeat(64) },
-      }), 400, "BAD_REQUEST");
-      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
-      expect(await client.call("vault.models.manifest.replace", { manifest, teacher_approval: approval })).toEqual(manifest);
-      const initial = await models01State(client);
-      expect(initial.manifest).toEqual(manifest);
-      expect(initial.routes).toEqual(models01Slots.map(slot => ({ slot, pin: manifest.routes[slot], route: manifest.routes[slot] })));
-      for (const row of initial.roles) {
-        const binding = manifest.roles[row.role]!;
-        expect(row).toMatchObject({ role: row.role, model: binding.model,
-          revision: binding.model.split("@")[1], provider: binding.model.split("/")[0],
-          slot: binding.slot, tier: binding.tier, route: manifest.routes[binding.slot] });
-      }
-      const firstCalls = await models01Round(client, providers, "models01-initial", "a");
-
-      // A wider embedder pin declares a distinct local alternative; it is not failover.
-      const widenedManifest = structuredClone(initial.manifest!);
-      widenedManifest.routes.embedder = "own_server";
-      widenedManifest.roles.retrieval_embedder = { ...widenedManifest.roles.retrieval_embedder!,
-        model: "models-fixture/embedder-remote@rev-a", route_models: { on_device: "models-fixture/embedder@rev-a" } };
-      expect(await client.call("vault.models.manifest.replace", { manifest: widenedManifest })).toEqual(widenedManifest);
-      const widened = await models01State(client);
-      expect(widened.manifest).toEqual(widenedManifest);
-      expect(widened.routes).toEqual(initial.routes.map(view => view.slot === "embedder"
-        ? { slot: "embedder", pin: "own_server", route: "own_server" } : view));
-      expect(widened.roles.filter(row => row.role !== "retrieval_embedder"))
-        .toEqual(initial.roles.filter(row => row.role !== "retrieval_embedder"));
-      const beforeMismatch = providers.seenFixtureCalls.filter(call => !call.standing).length;
-      const mismatch = await models01Refused(() => client.call("vault.models.roles.invoke", {
-        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
-      }), 503, "MODEL_UNAVAILABLE");
-      expect(mismatch.error?.message).toBe("the retrieval embedder does not serve the pinned model and route");
-      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeMismatch);
-      await models01Unchanged(client, widened);
-      expect(await client.call("vault.models.routes.replace", { slot: "embedder", route: "on_device" }))
-        .toEqual({ slot: "embedder", pin: "own_server", route: "on_device" });
-      const narrowed = await models01State(client);
-      expect(narrowed.manifest).toEqual(widenedManifest);
-      expect(narrowed.routes).toEqual(widened.routes.map(view => view.slot === "embedder" ? { ...view, route: "on_device" } : view));
-      expect(narrowed.roles).toEqual(initial.roles);
-      const narrowCall = await client.call("vault.models.roles.invoke", {
-        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
-      });
-      expect(narrowCall).toMatchObject({ receipt: { model: "models-fixture/embedder@rev-a", route: "on_device" },
-        output: { kind: "embedded", vector: [1, 0, 0, 0] } });
-
-      // Copy the public read, and alter exactly one row's model.
-      const reboundManifest = structuredClone(narrowed.manifest!);
-      reboundManifest.roles.generative_reasoner!.model = "reasoner-b/reasoner@rev-b";
-      expect(await client.call("vault.models.manifest.replace", { manifest: reboundManifest })).toEqual(reboundManifest);
-      const rebound = await models01State(client);
-      expect(rebound.manifest).toEqual(reboundManifest);
-      expect(rebound.routes).toEqual(narrowed.routes);
-      expect(rebound.manifest!.routes).toEqual(narrowed.manifest!.routes);
-      for (const role of models01Roles) if (role !== "generative_reasoner") {
-        expect(rebound.manifest!.roles[role]).toEqual(narrowed.manifest!.roles[role]);
-        expect(rebound.roles.find(row => row.role === role)).toEqual(narrowed.roles.find(row => row.role === role));
-      }
-      const reboundCalls = await models01Round(client, providers, "models01-rebound", "b");
-      expect(reboundCalls.slice(1)).toEqual(firstCalls.slice(1));
-
-      const invalidManifests: ModelManifest[] = [];
-      const unknownRole = structuredClone(reboundManifest);
-      unknownRole.roles.unknown_role = { ...unknownRole.roles.local_reasoner! };
-      invalidManifests.push(unknownRole);
-      const encoderWrongSlot = structuredClone(reboundManifest);
-      encoderWrongSlot.roles.extraction_encoder!.slot = "llm";
-      invalidManifests.push(encoderWrongSlot);
-      const missingRole = structuredClone(reboundManifest);
-      delete missingRole.roles.local_reasoner;
-      invalidManifests.push(missingRole);
-      const missingRoute = structuredClone(reboundManifest);
-      delete missingRoute.routes.oneironer;
-      invalidManifests.push(missingRoute);
-      const wrongVersion = structuredClone(reboundManifest);
-      wrongVersion.version = 1;
-      invalidManifests.push(wrongVersion);
-      for (const invalid of invalidManifests) {
-        await models01Refused(() => client.call("vault.models.manifest.replace", { manifest: invalid }), 400, "BAD_REQUEST");
-        await models01Unchanged(client, rebound);
-      }
-      await models01Refused(() => client.call("vault.models.manifest.replace", {
-        manifest: reboundManifest, teacher_approval: { ...approval, policy_hash: "0".repeat(64) },
-      }), 400, "BAD_REQUEST");
-      await models01Unchanged(client, rebound);
-      await models01Refused(() => client.call("vault.models.routes.replace", { slot: "llm", route: "third_party" }), 400, "BAD_REQUEST");
-      await models01Unchanged(client, rebound);
-      await models01Refused(() => client.call("vault.models.roles.invoke", {
-        role: "retrieval_embedder", input: { kind: "generate", request: models01Request() },
-      }), 400, "BAD_REQUEST");
-      await models01Unchanged(client, rebound);
-
-      await client.call("vault.agents.create", { agent_def_ref: models01AgentRef,
-        definition: { agent_id: "models01-observer", display_name: "MODELS-01 observer",
-          desc: "Inert non-owner model observer", version: "1" } });
-      expect(await client.call("vault.agents.get", { agent_def_ref: models01AgentRef }))
-        .toMatchObject({ agent_def_ref: models01AgentRef, definition: { agent_id: "models01-observer", version: "1" } });
-      const agent = await engine.pairActor(models01AgentRef);
-      expect(await agent.call("self.actor", {})).toMatchObject({ actor_ref: models01AgentRef, actor_class: "agent" });
-      const models01AgentRefusal = async <V extends FacadeVerb>(verb: V, input: FacadeInput<V>) => {
-        const error = await models01Refused(() => agent.call(verb, input), 403, "FORBIDDEN");
-        expect(error.error?.message).toBe(`${verb} is the vault owner's`);
-        expect(error.error?.suggestions).toEqual(["Present the owner's own verified, unattenuated credential."]);
-        await models01RefusalReceipt(client, error, verb, models01AgentRef);
+      await client.call("vault.models.manifest.replace", { manifest, teacher_approval: models01Approval(manifest) });
+      const baseline = await models01State(client);
+      expect(baseline.manifest).toEqual(manifest);
+      const models01Observe = async (action: () => Promise<unknown>) => {
+        try { return { refused: false as const, result: await action() } }
+        catch (error) {
+          if (!(error instanceof PublicHttpError)) throw error;
+          return { refused: true as const, status: error.reply.status, code: error.error?.code,
+            body: error.reply.body };
+        }
       };
-      const beforeAgent = providers.seenFixtureCalls.filter(call => !call.standing).length;
-      await models01AgentRefusal("vault.models.manifest.read", {});
-      await models01AgentRefusal("vault.models.manifest.replace", { manifest: reboundManifest });
-      await models01AgentRefusal("vault.models.routes.read", { slot: "embedder" });
-      await models01AgentRefusal("vault.models.routes.replace", { slot: "embedder", route: "on_device" });
-      await models01AgentRefusal("vault.models.roles.read", { role: "generative_reasoner" });
-      await models01AgentRefusal("vault.models.roles.invoke", { role: "generative_reasoner",
-        input: { kind: "generate", request: models01Request() } });
-      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeAgent);
-      await models01Unchanged(client, rebound);
-
-      const beforeFailure = providers.seenFixtureCalls.filter(call => !call.standing).length;
-      const failure = await models01Refused(() => client.call("vault.models.roles.invoke", {
-        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
-      }), 503, "MODEL_UNAVAILABLE");
-      expect(failure.error?.message).toBe("the retrieval embedder could not answer");
-      expect(failure.reply.body).not.toHaveProperty("output");
-      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeFailure + 1);
-      const failureReceipt = await models01RefusalReceipt(client, failure, "vault.models.roles.invoke");
-      await models01Unchanged(client, rebound);
-
+      const wrongSlot = structuredClone(manifest);
+      wrongSlot.roles.generative_reasoner!.slot = "embedder";
+      const slotAttempt = await models01Observe(() => client.call("vault.models.manifest.replace", { manifest: wrongSlot }));
+      const slotReadBack = await client.call("vault.models.manifest.read", {});
+      // Restore through the same public door so the second defect is independent.
+      await client.call("vault.models.manifest.replace", { manifest });
+      await models01Unchanged(client, baseline);
+      const wrongName = structuredClone(manifest);
+      wrongName.roles.extraction_encoder!.model = `false-provider/false-tagger@${models01Checkpoint}`;
+      await client.call("vault.models.manifest.replace", { manifest: wrongName });
+      expect(await client.call("vault.models.manifest.read", {})).toEqual(wrongName);
+      const tagAttempt = await models01Observe(() => client.call("vault.models.roles.invoke", {
+        role: "extraction_encoder", input: { kind: "tag", text: models01TagText },
+      }));
+      const tagReadBack = await client.call("vault.models.manifest.read", {});
+      await client.call("vault.models.manifest.replace", { manifest });
+      await models01Unchanged(client, baseline);
       await engine.kill(); await engine.restart();
-      expect(await models01State(client)).toEqual(rebound);
-      expect(await client.call("vault.receipts.get", { receipt_ref: failureReceipt }))
-        .toMatchObject({ receipt_ref: failureReceipt, outcome: { refused: { code: "MODEL_UNAVAILABLE" } } });
-      const restartedCalls = await models01Round(client, providers, "models01-restarted", "b");
-      expect(restartedCalls).toEqual(reboundCalls);
-      await engine.artifacts.json("models01-observations.json", { initial, narrowed, rebound,
-        firstCalls, reboundCalls, restartedCalls, failureReceipt, providerCalls: providers.seenFixtureCalls });
+      expect(await models01State(client)).toEqual(baseline);
+      await engine.artifacts.json("models01-defect-observations.json", {
+        slotAttempt, slotReadBack, tagAttempt, tagReadBack, providerCalls: providers.seenFixtureCalls,
+      });
+      // Both observations are saved even though the first assertion is expected red.
+      expect(slotAttempt).toMatchObject({ refused: true, status: 400, code: "BAD_REQUEST" });
+      expect(slotReadBack).toEqual(manifest);
+      expect(tagAttempt).toMatchObject({ refused: true, status: 503, code: "MODEL_UNAVAILABLE" });
+      expect(tagReadBack).toEqual(wrongName);
     } finally { await engine.close() }
   } finally { await providers.close() }
 });
