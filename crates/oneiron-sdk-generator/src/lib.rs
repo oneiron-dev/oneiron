@@ -23,10 +23,6 @@ mod harness;
 )]
 mod py;
 mod uniffi_types;
-#[allow(
-    dead_code,
-    reason = "the verb table loader; generate's module level calls it from G1a milestone 2"
-)]
 mod verb_table;
 
 pub use error::GenerateError;

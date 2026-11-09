@@ -2,15 +2,18 @@
 //! subcommand prints the same canonical dump as the Python half, so `diff` proves the port.
 
 mod replay;
+mod rows;
 mod unicode;
 
 use crate::error::GenerateError;
 
-const USAGE: &str = "usage: oneiron-sdk-generator port-harness unicode --out <file>";
+const USAGE: &str =
+    "usage: oneiron-sdk-generator port-harness (rows --root <dir> | unicode) --out <file>";
 
 /// `oneiron-sdk-generator port-harness <subcommand> ...`.
 pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     match args.first().map(String::as_str) {
+        Some("rows") => rows::run(&args[1..]),
         Some("unicode") => unicode::run(&args[1..]),
         Some("replay") => replay::run(&args[1..]),
         _ => Err(GenerateError::exit(USAGE)),
