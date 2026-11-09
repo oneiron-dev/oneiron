@@ -6,9 +6,10 @@
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use der::Decode;
+    use der::{Decode, Encode};
     use lopdf::Document;
 
+    use super::super::verify_chain_gates::classify_missing_material_root;
     use super::super::verify_dss_core::verify_dss;
     use super::super::verify_sig_pipeline::Checks;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
@@ -56,6 +57,18 @@ mod tests {
         )
     }
 
+    /// A second DER of the certificate `der` that `ca` issued: the same
+    /// signed content (TBSCertificate) under another valid signature by
+    /// `ca`. (An ECDSA (r, n-s) twin is another, needing no key.)
+    fn second_encoding(ca: &TestCa, der: &[u8]) -> Vec<u8> {
+        let mut cert = x509_cert::Certificate::from_der(der).unwrap();
+        let tbs = cert.tbs_certificate.to_der().unwrap();
+        cert.signature = der::asn1::BitString::from_bytes(&sign_p256(&ca.key, &tbs)).unwrap();
+        let second = cert.to_der().unwrap();
+        assert_ne!(second, der);
+        second
+    }
+
     #[test]
     fn dss_ocsp_unknown_for_unrelated_certificate_keeps_genuine_coverage() {
         // The leaf's anchor covers it with a genuine CRL. /Certs also holds
@@ -91,5 +104,80 @@ mod tests {
         let doc = dss_doc(std::slice::from_ref(&leaf_der), &[crl], &[unknown]);
         let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
+    }
+
+    #[test]
+    fn dss_ocsp_unknown_for_covered_certificate_counts_through_a_second_encoding() {
+        // /Certs carries a second encoding of the leaf (same TBSCertificate,
+        // another valid signature) before the leaf itself. The response's
+        // CertID binds to the first certificate that matches it, the second
+        // encoding, but the `unknown` still names the leaf: NotRun with
+        // RevocationStatusUnknown, as in the control above.
+        let anchor = test_ca("issuer-a");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let second_der = second_encoding(&anchor, &leaf_der);
+        let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let unknown = unknown_for(&anchor, &leaf_der);
+        let doc = dss_doc(&[second_der, leaf_der.clone()], &[crl], &[unknown]);
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
+    }
+
+    #[test]
+    fn dss_shadow_failure_survives_the_missing_root_probe() {
+        // A shadow CRL beside the anchor's genuine CRL, and the anchor's
+        // authenticated `unknown` for the leaf: Invalid under the real
+        // anchors. With a certificate path left unresolved, the missing-root
+        // probe re-runs the material with every covered certificate as a
+        // provisional anchor, which exempts the leaf from its `unknown` and
+        // from the shadow scan. A forged-material failure is never a
+        // missing-root symptom, so it stays Fail / ValidationMaterialInvalid.
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let shadow = test_ca("issuer");
+        let genuine = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let unknown = build_ocsp_full(
+            &anchor,
+            leaf.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            NEXT_UPDATE,
+            x509_ocsp::CertStatus::unknown(),
+            AT_UNIX - 60,
+            &anchor,
+            true,
+        );
+        let doc = dss_doc(
+            &[
+                leaf_der.clone(),
+                shadow.cert_der.clone(),
+                anchor.cert_der.clone(),
+            ],
+            &[genuine, forged],
+            &[unknown],
+        );
+        let limits = process_operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
+        let covered = covered_of(&[&leaf_der]);
+        let mut checks = Checks::new(limits);
+        verify_dss(
+            &doc,
+            &anchors,
+            &covered,
+            AT_UNIX,
+            &memory,
+            &mut checks,
+            limits,
+        )
+        .unwrap();
+        assert_material_fails(&checks);
+        checks
+            .not_run(VerifyCheckKind::TimestampCertificatePath)
+            .unwrap();
+        classify_missing_material_root(&doc, &covered, AT_UNIX, &memory, limits, &mut checks)
+            .unwrap();
+        assert_material_fails(&checks);
     }
 }
