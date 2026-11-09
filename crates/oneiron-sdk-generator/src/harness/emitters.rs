@@ -59,6 +59,41 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         },
         files: |value| text_file(crate::generate::CORE_VERB_NAMES_PATH, value),
     },
+    Emitter {
+        name: "ts_native_signature",
+        run: crate::generate::outputs::replay_ts_native_signature,
+        files: |_| Vec::new(),
+    },
+    Emitter {
+        name: "http_facade",
+        run: crate::generate::outputs::replay_http_facade,
+        files: |value| text_file("packages/oneiron-client/src/facade.ts", value),
+    },
+    Emitter {
+        name: "verb_tree",
+        run: crate::generate::outputs::replay_verb_tree,
+        files: |_| Vec::new(),
+    },
+    Emitter {
+        name: "ts_facade_module",
+        run: crate::generate::outputs::replay_ts_facade_module,
+        files: |value| text_file("packages/oneiron/src/facade-verbs.ts", value),
+    },
+    Emitter {
+        name: "python_facade_module",
+        run: crate::generate::outputs::replay_python_facade_module,
+        files: |value| {
+            let path = value
+                .as_str()
+                .map_or("", crate::generate::outputs::python_facade_module_path);
+            text_file(path, value)
+        },
+    },
+    Emitter {
+        name: "ts_native_module",
+        run: crate::generate::outputs::replay_ts_native_module,
+        files: |value| text_file("packages/oneiron/src/native-verbs.ts", value),
+    },
 ];
 
 /// `port-harness emitters`: the registered names, one per line.
