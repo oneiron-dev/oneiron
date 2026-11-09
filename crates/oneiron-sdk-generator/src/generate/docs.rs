@@ -52,7 +52,9 @@ pub(crate) fn generated_artifacts(
     let mut census = CENSUS_HEAD.to_owned();
     let mut verbs = Vec::new();
     for row in &rows {
-        let memory = row.get("context").is_none_or(|context| context.is_str("memory"));
+        let memory = row
+            .get("context")
+            .is_none_or(|context| context.is_str("memory"));
         if memory {
             let name = row.get("name").map_or_else(String::new, Value::str);
             verbs.push(format!("- `{name}`"));

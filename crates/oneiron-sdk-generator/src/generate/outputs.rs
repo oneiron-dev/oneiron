@@ -259,10 +259,13 @@ fn signal_text(cmd: &str, status: std::process::ExitStatus) -> String {
         return format!("Command '{cmd}' died with unknown signal 0.");
     };
     let names = [
-        "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL",
-        "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM",
+        "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE",
+        "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM",
     ];
-    match usize::try_from(signal - 1).ok().and_then(|at| names.get(at)) {
+    match usize::try_from(signal - 1)
+        .ok()
+        .and_then(|at| names.get(at))
+    {
         Some(name) if cfg!(target_os = "linux") => {
             format!("Command '{cmd}' died with <Signals.{name}: {signal}>.")
         }
@@ -541,7 +544,8 @@ impl Generator {
                 if target.exists() {
                     stale.push(path);
                     if !check {
-                        fs::remove_file(&target).map_err(|error| GenerateError::os(&error, &target))?;
+                        fs::remove_file(&target)
+                            .map_err(|error| GenerateError::os(&error, &target))?;
                     }
                 }
                 continue;
@@ -619,10 +623,7 @@ fn tree_value(generator: &Generator, tree: &VerbTree) -> Value {
             node.row
                 .map_or(Value::None, |id| Value::Dict(row_of(generator, id))),
         );
-        entry.insert(
-            "children".to_owned(),
-            tree_value(generator, &node.children),
-        );
+        entry.insert("children".to_owned(), tree_value(generator, &node.children));
         out.insert(name.clone(), Value::Dict(entry));
     }
     Value::Dict(out)
@@ -638,9 +639,7 @@ pub(crate) fn replay_ts_native_signature(
         .checked_sub(1)
         .and_then(|at| facade_rows.get(at))
         .copied()
-        .ok_or_else(|| {
-            GenerateError::exit(format!("port-harness replay: no facade row {n}"))
-        })?;
+        .ok_or_else(|| GenerateError::exit(format!("port-harness replay: no facade row {n}")))?;
     ts_native_signature(generator, id).map(Value::Str)
 }
 
@@ -654,7 +653,10 @@ pub(crate) fn replay_http_facade(
 
 /// The replay's `verb_tree#n`: the first call is `http_facade`'s over `FACADE_ROWS` (generate.py:1534), the next
 /// three `outputs()`'s over its `facade_rows` (2528-2530).
-pub(crate) fn replay_verb_tree(generator: &mut Generator, n: usize) -> Result<Value, GenerateError> {
+pub(crate) fn replay_verb_tree(
+    generator: &mut Generator,
+    n: usize,
+) -> Result<Value, GenerateError> {
     let rows = if n == 1 {
         generator.facade_rows.clone()
     } else {
@@ -746,7 +748,10 @@ mod tests {
         assert!(!is_package_path(
             "crates/oneiron/src/verbs/generated/verb_catalog.rs"
         ));
-        assert_eq!(package_outputs("oneiron-client").map(<[&str]>::len), Some(2));
+        assert_eq!(
+            package_outputs("oneiron-client").map(<[&str]>::len),
+            Some(2)
+        );
         assert_eq!(package_outputs("nope"), None);
         assert_eq!(BUILD_TIME_OUTPUTS.len(), 16);
     }
