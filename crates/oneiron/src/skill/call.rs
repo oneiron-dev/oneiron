@@ -21,7 +21,7 @@ pub(crate) use self::json_tokens::AnswerMemory;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
-use crate::code_run::{CodeRunDeterminism, SelfCall};
+use crate::code_run::{CodeRunDeterminism, SelfCall, SelfDispatchOutcome};
 use crate::engine_executor::{
     CallableProgram, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream,
     SelfDispatchResponse, StepCancellation,
@@ -44,6 +44,28 @@ fn invalid(reason: &'static str) -> Error {
 struct SkillHost<'h> {
     host: &'h mut dyn JsCodeModeHost,
     answer: CallableSkillAnswer,
+    /// Whether the body was answered its run's park as a call's own output
+    /// (`SelfCall::answers_park_as_output`), so a finish after it is no
+    /// finish (ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS).
+    answered_park: bool,
+}
+
+impl SkillHost<'_> {
+    /// Notes whether `response`, the host's answer to a call that answers
+    /// its park as its output, is that park.
+    fn noted(
+        &mut self,
+        answers_park_as_output: bool,
+        response: Result<SelfDispatchResponse>,
+    ) -> Result<SelfDispatchResponse> {
+        if answers_park_as_output
+            && let Ok(answered) = &response
+            && matches!(answered.outcome, SelfDispatchOutcome::DurableWait(_))
+        {
+            self.answered_park = true;
+        }
+        response
+    }
 }
 
 impl JsCodeModeHost for SkillHost<'_> {
@@ -68,7 +90,9 @@ impl JsCodeModeHost for SkillHost<'_> {
     }
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-        self.host.dispatch_self(call)
+        let answers_park_as_output = call.answers_park_as_output();
+        let response = self.host.dispatch_self(call);
+        self.noted(answers_park_as_output, response)
     }
 
     fn dispatch_self_nested(
@@ -76,7 +100,9 @@ impl JsCodeModeHost for SkillHost<'_> {
         call: SelfCall,
         runtime: &mut dyn JsCodeModeRuntime,
     ) -> Result<SelfDispatchResponse> {
-        self.host.dispatch_self_nested(call, runtime)
+        let answers_park_as_output = call.answers_park_as_output();
+        let response = self.host.dispatch_self_nested(call, runtime);
+        self.noted(answers_park_as_output, response)
     }
 
     fn dispatch_self_nested_cancellable(
@@ -85,8 +111,11 @@ impl JsCodeModeHost for SkillHost<'_> {
         runtime: &mut dyn JsCodeModeRuntime,
         cancel: &StepCancellation,
     ) -> Result<SelfDispatchResponse> {
-        self.host
-            .dispatch_self_nested_cancellable(call, runtime, cancel)
+        let answers_park_as_output = call.answers_park_as_output();
+        let response = self
+            .host
+            .dispatch_self_nested_cancellable(call, runtime, cancel);
+        self.noted(answers_park_as_output, response)
     }
 
     fn caller_entity(&self) -> Option<EntityId> {
@@ -390,6 +419,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     let mut lent = SkillHost {
         host,
         answer: CallableSkillAnswer::spool(),
+        answered_park: false,
     };
     let outcome = runtime.run_prepared_step_cancellable(
         JsCodeModeStep {
@@ -407,6 +437,14 @@ pub(crate) fn execute_callable_skill_cancellable(
     )?;
     if !outcome.done {
         return Err(invalid("callable skill did not finish"));
+    }
+    // A body that finished after it was answered its run's park did not
+    // finish: the run parks, and the body runs again once the wait's reply is
+    // delivered, as one the park unwound does. So it writes no success
+    // witness and no frozen case, and a pinned entry whose call it is keeps
+    // its wait (ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS).
+    if lent.answered_park {
+        return Err(invalid("callable skill finished on its run's park"));
     }
     let mut answer = lent.answer;
     // What a runtime returned instead of streaming it (a component that does
