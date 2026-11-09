@@ -311,7 +311,8 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   await awaitPublic(() => engine.client.call("vault.runs.checkpoint", { run_ref: run }),
     // No replay record exists until the run's first step commits: null, then a count.
     view => (view?.completed_steps ?? 0) >= 1, { label: "OPERATIONS-01 run commits its asking step" });
-  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+  // Parked, not ended: the branch keeps its lease. A failed run shows its last_error here.
+  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]).toMatchObject({ state: "Leased" });
   expect(await ops01TaskPhase(engine.client, task)).not.toBe("terminal");
 
   // The agent's own credential attaches to its parked run, once.
@@ -399,7 +400,7 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   expect(afterAudit.next_after ?? null).toBeNull();
   expect(afterAudit.rows.map(row => row.entry_hash)).toEqual(beforeAudit.rows.map(row => row.entry_hash));
   expect(await ops01TaskPhase(engine.client, task)).not.toBe("terminal");
-  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+  expect((await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0]).toMatchObject({ state: "Leased" });
 });
 
 /* OPERATIONS-02 — Custom versus publisher failure routing should work.
