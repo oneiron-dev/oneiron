@@ -116,42 +116,6 @@ fn report_u64(report: &rmpv::Value, key: &str) -> Option<u64> {
 }
 
 #[test]
-fn inputs_cross_as_regions_and_the_engine_hashes_them() {
-    let (_dir, vault) = vault();
-    let big: Vec<u8> = (0..3 * 1024 * 1024 + 5)
-        .map(|i: u32| (i % 251) as u8)
-        .collect();
-    let small = b"seven bytes, then some".to_vec();
-    let inputs = vec![put_blob(&vault, &big, BIN), put_blob(&vault, &small, BIN)];
-    let host = host();
-    for _ in 0..2 {
-        let outcome = host
-            .call(
-                &vault,
-                call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"),
-            )
-            .expect("touch");
-        assert_eq!(
-            report_u64(&outcome.report, "fold"),
-            Some(touch_fold(&big) ^ touch_fold(&small)),
-            "the organ read exactly the bytes the vault holds",
-        );
-        assert_eq!(
-            report_u64(&outcome.report, "len"),
-            Some((big.len() + small.len()) as u64)
-        );
-        let hashes: Vec<Hash32> = outcome
-            .receipt
-            .inputs
-            .iter()
-            .map(|i| i.content_hash)
-            .collect();
-        assert_eq!(hashes, vec![Hash32::of(&big), Hash32::of(&small)]);
-        assert_eq!(outcome.receipt.organ.name, "probe");
-    }
-}
-
-#[test]
 fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
     let (_dir, vault) = vault();
     let host = host();

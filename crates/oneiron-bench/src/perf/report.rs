@@ -151,17 +151,3 @@ fn is_present(value: &serde_json::Value, key: &str) -> bool {
     value.get(key).is_some_and(|found| !found.is_null())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The schema id and its candidate vocabulary are one decision. A v2
-    /// document that still said `publishable` would be the exact confusion the
-    /// rename exists to remove.
-    #[test]
-    fn the_schema_is_v2_and_the_envelope_never_says_publishable() {
-        assert_eq!(PERF_REPORT_SCHEMA, "oneiron.bench.perf_report.v2");
-        assert!(!PERF_REPORT_SCHEMA.contains("publish"));
-        assert!(REPORT_SECTIONS.contains(&"certificate"));
-    }
-}

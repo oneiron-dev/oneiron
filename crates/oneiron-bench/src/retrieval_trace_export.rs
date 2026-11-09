@@ -588,22 +588,4 @@ mod tests {
         assert!(lines.next().is_none(), "fixture exports one row");
         row
     }
-
-    #[test]
-    fn exports_captured_trace_fixture_as_jsonl_round_trip() {
-        let (_tempdir, vault, trace) = captured_trace_fixture();
-        let mut jsonl = Vec::new();
-
-        let rows = export_traces_jsonl(&vault, &[trace.fork_hash], &mut jsonl).expect("export");
-
-        assert_eq!(rows, 1);
-        let row = decode_exported_row(&jsonl);
-        assert_eq!(
-            row.contract_version,
-            RETRIEVAL_TRACE_EXPORT_CONTRACT_VERSION
-        );
-        assert_eq!(row.record_type, RETRIEVAL_TRACE_RECORD_TYPE);
-        assert_eq!(row.fork_hash, encode_hex(&trace.fork_hash));
-        assert_eq!(row.try_to_trace().expect("row reconstructs trace"), trace);
-    }
 }

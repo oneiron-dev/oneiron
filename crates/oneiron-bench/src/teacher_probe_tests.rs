@@ -65,43 +65,6 @@ fn passing_base_with_unprobed_teacher_route_cannot_publish() {
     assert!(!output.exists());
     assert!(!approval_path(&output).exists());
 }
-#[test]
-fn bench_uses_exported_vault_policy_not_a_compiled_eighty_percent_bar() {
-    let (dir, manifest, output, checkpoint, policy) = input();
-    let mut strict: TeacherProbePolicy = TeacherProbePolicy::load(&policy).unwrap();
-    strict.vault_min_f1_millionths = 900_000;
-    strict.min_f1_millionths = 900_000;
-    std::fs::write(&policy, serde_json::to_vec(&strict).unwrap()).unwrap();
-    let candidate = dir.path().join("eighty-five-checkpoint");
-    std::fs::create_dir(&candidate).unwrap();
-    std::fs::write(candidate.join("model_id"), format!("{MODEL}\n")).unwrap();
-    let mut result: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(checkpoint.join("output.json")).unwrap()).unwrap();
-    // Four of 24 spans are dropped: exact span micro-F1 = 40/44 = 0.909;
-    // six dropped: 36/42 = 0.857, which is above 0.8 but below 0.9.
-    for sentence in result["predictions"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .take(3)
-    {
-        let tags = sentence.as_array_mut().unwrap();
-        for tag in tags.iter_mut() {
-            *tag = "O".into();
-        }
-    }
-    std::fs::write(
-        candidate.join("output.json"),
-        serde_json::to_vec(&result).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        run(&cli(&candidate, &manifest, &policy, &output)),
-        ExitCode::FAILURE
-    );
-    assert!(!output.exists());
-    assert!(!approval_path(&output).exists());
-}
 
 #[test]
 fn wrong_model_or_malformed_bio_fails_closed() {

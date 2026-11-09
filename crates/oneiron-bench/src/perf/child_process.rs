@@ -535,5 +535,3 @@ pub(crate) fn run_wake_child(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;

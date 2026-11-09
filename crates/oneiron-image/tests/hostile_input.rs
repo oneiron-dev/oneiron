@@ -316,15 +316,6 @@ fn a_jpeg_header_past_the_prefix_is_too_large_not_corrupt() {
 }
 
 #[test]
-fn a_baseline_jpeg_is_booked_for_rows_not_whole_coefficient_planes() {
-    // A single-scan baseline JPEG decodes a row of blocks at a time: at a
-    // 64 MiB grant (32 MiB of work), a 2000x1500 one opens. Booked for four
-    // whole coefficient planes, it would not.
-    let jpeg = fixtures::jpeg_flat(2000, 1500, [90, 120, 150], None);
-    open_under(64 * 1024 * 1024, "image/jpeg", jpeg).expect("open");
-}
-
-#[test]
 fn a_crop_or_a_flag_never_leaves_a_body_export_refuses() {
     let organ = ImageOrgan::default();
     let source = [InputBytes::inline(

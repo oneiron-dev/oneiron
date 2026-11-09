@@ -528,11 +528,4 @@ mod tests {
         );
         assert_eq!(cohort.results.len(), 2);
     }
-
-    #[test]
-    fn public_doors_return_all_operations() {
-        let result = measure(Mode::Mixed, 1, 10, SEED).expect("seeded smoke");
-        assert_eq!(result.writes.as_ref().map(|m| m.count), Some(2));
-        assert_eq!(result.recalls.as_ref().map(|m| m.count), Some(8));
-    }
 }

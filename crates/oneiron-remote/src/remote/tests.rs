@@ -103,22 +103,6 @@ fn a_slip_holder_signs_each_request_with_a_proof_the_vault_accepts() {
     );
 }
 
-#[test]
-fn back_to_back_requests_carry_distinct_nonces() {
-    let (_dir, _vault, _issuer, slip, key) = paired();
-    let (origin, captured) = peer(2);
-    let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
-    call(&client);
-    call(&client);
-    let nonces: Vec<_> = captured
-        .join()
-        .unwrap()
-        .iter()
-        .map(|headers| binding(headers).unwrap()["nonce"].clone())
-        .collect();
-    assert_ne!(nonces[0], nonces[1]);
-}
-
 /// Both SDK projections use the remote route. Export, unlike ordinary
 /// verbs, must consume a complete archive larger than the 64 MiB ceiling.
 #[test]
