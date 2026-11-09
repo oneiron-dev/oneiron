@@ -128,8 +128,12 @@ fn room() -> Room {
                     metadata,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
     }
@@ -797,8 +801,12 @@ fn room_turn(
             metadata: Some(metadata),
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
         occurred_at: at,
+        assertions: Default::default(),
+        thread_audience: None,
     }
 }
 

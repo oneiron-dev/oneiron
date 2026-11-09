@@ -168,7 +168,7 @@ pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, cla
     let Some(op) = crate::test_credentials::binding_op(&fold, &host_key, actor, class) else {
         return;
     };
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in server
         .vault
@@ -235,6 +235,22 @@ pub(super) fn create_owned_project(
         "oneiron/host-authority-signing/v2",
         host_secret(server),
     ));
+    // The host signs the project's state for the owner with its project.write
+    // slip, under the same host key.
+    let issuer = HostSlipIssuer::from_secret(host_secret(server)).unwrap();
+    let project_signer = server
+        .vault
+        .owner_project_signer(&issuer)
+        .expect("the host's owner project signer");
+    let authenticated = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("the owner authenticates");
     server
         .vault
         .create_project_with_owner(
@@ -244,6 +260,8 @@ pub(super) fn create_owned_project(
             1,
             oneiron::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
             |message| Ok(signing.sign(message).to_bytes().to_vec()),
+            &authenticated,
+            &project_signer,
         )
         .expect("owner-signed project birth");
 }

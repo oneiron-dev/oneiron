@@ -2,7 +2,6 @@
 
 use super::gate::{ServiceRefusal, advertised_service, authenticate};
 use super::routes::{GitService, git_http_routes};
-use crate::auth::RevokedTokenJtis;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -15,14 +14,6 @@ use std::sync::Arc;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct NoRevocations;
-
-    impl RevokedTokenJtis for NoRevocations {
-        fn is_revoked(&self, _jti: &str) -> Result<bool, ()> {
-            Ok(false)
-        }
-    }
 
     fn secret_config() -> SyncServerConfig {
         SyncServerConfig {
@@ -70,29 +61,21 @@ mod tests {
         format!("{}{claims}", crate::test_credentials::RECIPE_PREFIX)
     }
 
-    #[test]
-    fn git_http_receive_pack_refuses_the_unauthenticated_dev_hatch() {
-        let config = hatch_config();
+    #[tokio::test]
+    async fn git_http_receive_pack_refuses_the_unauthenticated_dev_hatch() {
+        let (_dir, server) = fixture(hatch_config());
         // The hatch identity carries every scope and no principal_ref. The
         // hatch itself is untouched: a fetch still passes.
         assert!(
-            authenticate(
-                &HeaderMap::new(),
-                &config,
-                &NoRevocations,
-                GitService::UploadPack,
-            )
-            .is_ok(),
+            authenticate(&HeaderMap::new(), &server, GitService::UploadPack)
+                .await
+                .is_ok(),
             "the dev hatch still serves reads"
         );
         assert!(
-            authenticate(
-                &HeaderMap::new(),
-                &config,
-                &NoRevocations,
-                GitService::ReceivePack,
-            )
-            .is_err(),
+            authenticate(&HeaderMap::new(), &server, GitService::ReceivePack)
+                .await
+                .is_err(),
             "the dev escape hatch can never admit a push"
         );
     }
@@ -351,19 +334,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn git_http_read_only_bearer_cannot_reach_receive_pack() {
+    #[tokio::test]
+    async fn git_http_read_only_bearer_cannot_reach_receive_pack() {
         let config = secret_config();
         let (_dir, server) = fixture(config.clone());
         let token = scoped_token(&config, "core:read", Some(&principal()));
         assert!(
-            authenticate(
-                &bearer(&server, &token),
-                &config,
-                server.vault().as_ref(),
-                GitService::ReceivePack,
-            )
-            .is_err(),
+            authenticate(&bearer(&server, &token), &server, GitService::ReceivePack)
+                .await
+                .is_err(),
             "a read scope never becomes a write scope"
         );
     }

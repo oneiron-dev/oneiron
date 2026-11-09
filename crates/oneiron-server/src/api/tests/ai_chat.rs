@@ -391,6 +391,8 @@ fn install_route_manifest(vault: &oneiron::Vault) {
                                 (ModelLocality::OnDevice, model("device/tiny@live")),
                             ])
                         },
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })

@@ -993,9 +993,15 @@ fn bind_artifact_member_to_divergent_pacts(
             .to_vec();
         row
     };
+    // The scope digest is keyed (scope openings). No opening is stored for
+    // these pacts, so a fixed key stands for the one Connect would mint.
+    let scope_key = [0x6f; 32];
     let connect = |pact_id: [u8; 32], grant: oneiron::EntityId, nonce: [u8; 16]| {
-        let digest =
-            federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+        let digest = federation_scope_digest(
+            &scope_key,
+            &nonce,
+            &encode_federation_pact_scope(&scope).unwrap(),
+        );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Connect,
             &pact_id,

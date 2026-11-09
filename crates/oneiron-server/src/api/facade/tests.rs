@@ -603,6 +603,7 @@ async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     let server = Arc::new(
