@@ -1046,3 +1046,79 @@ fn a_named_checker_no_door_injected_holds_the_write() -> Result<()> {
     );
     Ok(())
 }
+
+/// A caller's live-run claim put (FIX 3983) as the gate sees it: the agent the checker manifest ceilings at
+/// Auto, a Generated source, and the door's provenance, with or without the marker its Auto request carries.
+fn live_run_put_envelope(
+    vault: &crate::Vault,
+    body: &ClaimBody,
+    marked: bool,
+) -> Result<WriteEnvelope> {
+    // The Dreamer fixture seeds the actor and the subject; the envelope below replaces its provenance.
+    let _ = dreamer_parts(vault, body)?;
+    let mut provenance = vec![(Value::from("surface"), Value::from("self.*"))];
+    if marked {
+        provenance.push((
+            Value::from(crate::gate::CHECKED_PRODUCER_PROVENANCE_KEY),
+            Value::from(crate::gate::LIVE_RUN_CLAIM_PUT_PRODUCER),
+        ));
+    }
+    Ok(WriteEnvelope::new(
+        WriteActor::new(first_party_connector_actor_id(), EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(provenance))?,
+        ClaimApprovalStatus::Auto,
+    ))
+}
+
+/// Review 6881 P1: a caller's live-run claim put asking Auto is a Generated producer the host's auto checker
+/// reviews, as it reviews a Dreamer write. With a checker named and none injected the write is held
+/// checker-unavailable (the door then resubmits it Proposed), and a checker that holds parks it. The same agent
+/// write without the door's marker is not consulted: the checker's scope widens by this one producer only.
+#[test]
+fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let marked = live_run_put_envelope(&vault, &body, true)?;
+
+    let result = gate_claim_write(&vault, &test_id(0x3d), &body, &marked, None, false);
+    let (outcome, reason_codes) =
+        gate_rejection_parts(result.expect_err(
+            "FAILBEFORE 6881 P1: the live-run put landed Auto with no checker consulted",
+        ));
+    assert_eq!(outcome, "pending");
+    assert_eq!(reason_codes, vec!["gate.pending.checker.unavailable"]);
+
+    let holding = Arc::new(RecordingAutoChecker::hold());
+    let bounded_holding = BoundedAutoChecker::new(holding.clone());
+    let result = gate_claim_write(
+        &vault,
+        &test_id(0x3e),
+        &body,
+        &marked,
+        Some(&bounded_holding),
+        false,
+    );
+    assert_eq!(holding.calls(), 1, "the checker is consulted once");
+    let (outcome, reason_codes) = gate_rejection_parts(result.expect_err("the checker holds it"));
+    assert_eq!(outcome, "pending");
+    assert_eq!(reason_codes, vec!["gate.pending.checker"]);
+
+    let unmarked = live_run_put_envelope(&vault, &body, false)?;
+    let untouched = Arc::new(RecordingAutoChecker::hold());
+    let bounded_untouched = BoundedAutoChecker::new(untouched.clone());
+    gate_claim_write(
+        &vault,
+        &test_id(0x3f),
+        &body,
+        &unmarked,
+        Some(&bounded_untouched),
+        false,
+    )?;
+    assert_eq!(
+        untouched.calls(),
+        0,
+        "an unmarked agent write is not consulted"
+    );
+    Ok(())
+}
