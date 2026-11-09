@@ -27,8 +27,8 @@ use crate::lens::{
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
 use crate::task_verb::sdk::AgentVerb;
-use crate::task_verb::sdk::RunVerb;
 use crate::task_verb::sdk::CUSTODY_VALUE_ROWS;
+use crate::task_verb::sdk::RunVerb;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

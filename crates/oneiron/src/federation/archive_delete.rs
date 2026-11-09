@@ -2,11 +2,13 @@
 //! judged from the vault's own rows in the caller's snapshot.
 //!
 //! The live Owner deletes anything its bound credential reaches. An Admin
-//! deletes what the resource axes of its live membership grant hold; an
-//! Admin or a Member deletes an item it provably owns (a TASK by its Owner
-//! fact, a NOTE by its author); the records the vault mints itself are no
-//! one's own. For a person delete is a role default, never a Grant it must
-//! hold; a Viewer, a Delegate or a guest has none. An agent deletes only
+//! deletes what the resource axes of its live membership grant hold; a
+//! Steward deletes in scope, what its live grant holds under the `delete`
+//! class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
+//! deletes an item it provably owns (a TASK by its Owner fact, a NOTE by
+//! its author); the records the vault mints itself are no one's own. For a
+//! person delete is a role default, never a Grant it must hold; a Viewer, a
+//! Delegate or a guest has none. An agent deletes only
 //! under ONE live Grant that names the `delete` class and holds the record,
 //! given by a live Owner or by an Admin still holding it. No second
 //! permission ledger is kept, and nothing a request carries asserts a role,
@@ -225,9 +227,10 @@ impl TargetRecord {
     }
 }
 
-/// An Admin's in-scope delete, else an Admin's or a Member's own item, each
-/// under one live membership grant over this shared vault. A personal vault
-/// has no membership roles.
+/// An Admin's in-scope delete, a Steward's in-scope delete under the
+/// `delete` class its grant names, else an Admin's, a Steward's or a
+/// Member's own item, each under one live membership grant over this shared
+/// vault. A personal vault has no membership roles.
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -251,9 +254,27 @@ fn person_arms(
         };
         if !matches!(
             role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Steward
+                | FederationGrantRole::Member
         ) {
             continue;
+        }
+        if role == FederationGrantRole::Steward
+            && names_delete(&grant.authority_scope)
+            && record.position.as_ref().is_some_and(|position| {
+                grant.authority_scope.admits(
+                    DELETE_VERB,
+                    &delete_record(&any_world_at(position, &grant.authority_scope.worlds)),
+                    &Scope::top(),
+                )
+            })
+        {
+            return Ok(Some(ArchiveDeleteAuthority {
+                role: ArchiveDeleteRole::Steward,
+                grant: Some(id),
+            }));
         }
         if role.is_admin()
             && record

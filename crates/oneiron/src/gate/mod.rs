@@ -84,6 +84,7 @@ mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
+pub(crate) use self::dreamer_grant::{DREAMER_LANDING_ROWS_REF, dreamer_landing_verdict_in_txn};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
