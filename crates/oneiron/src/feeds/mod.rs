@@ -949,35 +949,72 @@ pub(crate) fn subscription_stands_in_txn(
     SUBSCRIPTIONS.contains(&vault.store, txn, &(actor, subscription))
 }
 
-/// The heads `actor`'s `subscription` stands behind, read in `txn`: the head of each source it
-/// follows whose cursor is behind that head, in the selector's order; empty when every cursor
-/// stands at its head; `None` when the subscription is not `actor`'s. A feed-woken turn program
-/// wakes once per answer (slice 6.8c).
-pub(crate) fn heads_behind_in_txn(
+/// Rows a feed-woken program's wake looks at, at most, in each source after its cursor (slice
+/// 6.8c).
+const WAKE_SCAN_ROWS: usize = 16 * FEED_READ_MAX_LIMIT;
+
+/// What wakes a feed-woken program (slice 6.8c, lead call K), judged as `reader`'s reads would
+/// be: `None` when nothing `reader` is shown waits after the cursors; otherwise a mark of the
+/// last entry each source would show it, so the program wakes once per set of entries it can
+/// see and never for a change its lane does not show. A cursor idle past retention marks the gap
+/// its read would answer, which shows no row either. `None` too when the subscription is not
+/// `reader`'s.
+///
+/// # Errors
+///
+/// The read.
+pub(crate) fn feed_wake_mark(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: EntityId,
+    reader: &ScopedRead<'_>,
     subscription: EntityId,
-) -> Result<Option<Vec<FeedPosition>>> {
-    let Some(row) = SUBSCRIPTIONS.get(&vault.store, txn, &(actor, subscription))? else {
+) -> Result<Option<String>> {
+    let _bodies = reader.prepare_point_read::<Error>()?;
+    let txn = vault.store.env.read_txn()?;
+    let actor = live_reader_actor_in(reader, &txn)?;
+    let Some(row) = SUBSCRIPTIONS.get(&vault.store, &txn, &(actor, subscription))? else {
         return Ok(None);
     };
-    let mut behind = Vec::new();
+    let now = vault.store.clock.now_recorded_at();
+    let mut marks = Vec::new();
     for source in &row.selector.sources {
-        let Some(head) = source.head_in_txn(vault, txn)? else {
-            continue;
-        };
         let cursor = CURSORS
-            .get(&vault.store, txn, &(subscription, [source.tag()]))?
+            .get(&vault.store, &txn, &(subscription, [source.tag()]))?
             .ok_or(Error::CorruptedIndex(
                 "feed subscription without its cursor",
-            ))?
-            .position()?;
-        if cursor.is_none_or(|cursor| cursor < head) {
-            behind.push(FeedPosition::of(head)?);
+            ))?;
+        if cursor.lapsed(*source, now) {
+            return Ok(Some(format!("gap:{}", cursor.updated_at)));
         }
+        let mut after = cursor.position()?;
+        let mut looked = 0;
+        let mut last = None;
+        while looked < WAKE_SCAN_ROWS {
+            let scanned = match source {
+                FeedSource::Changes => {
+                    changes_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
+                }
+                FeedSource::Settlements => {
+                    settlements_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
+                }
+                FeedSource::Edges => {
+                    edges::edges_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
+                }
+                FeedSource::Redirty => {
+                    edges::redirty_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
+                }
+            };
+            let Some(through) = scanned.through else {
+                break;
+            };
+            looked += scanned.entries.len().max(1);
+            if let Some(shown) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
+                last = Some(shown.position.0);
+            }
+            after = Some(through);
+        }
+        marks.extend(last);
     }
-    Ok(Some(behind))
+    Ok((!marks.is_empty()).then(|| marks.join("\n")))
 }
 
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each

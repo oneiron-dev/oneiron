@@ -7,9 +7,10 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::dreamer_runner::{ArmTurnProgram, ProgramTrigger, TurnProgramDrain};
 use oneiron::dreamer_wake::WakeIdleState;
 use oneiron::feeds::{
-    FeedAckRequest, FeedReadRequest, FeedSelector, FeedSource, FeedStart, FeedSubscribeRequest,
+    FeedAckRequest, FeedRead, FeedReadRequest, FeedSelector, FeedSource, FeedStart,
+    FeedSubscribeRequest,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON};
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
 };
@@ -208,8 +209,8 @@ fn an_occurrence_is_judged_again_at_admission() {
     );
 }
 
-/// A feed program wakes once per set of source heads while its subscription's cursor stands
-/// behind them, not while the cursor is at the head; once its subscription is gone, a wake it
+/// A feed program wakes once per set of entries its lane is shown past its subscription's
+/// cursor, not while the cursor stands past every one; once its subscription is gone, a wake it
 /// still owes is refused.
 #[test]
 fn a_feed_program_wakes_once_per_head() {
@@ -246,7 +247,7 @@ fn a_feed_program_wakes_once_per_head() {
     let woken = drain(&vault, T0);
     assert_eq!((woken.admitted, woken.refused), (1, 0), "{woken:?}");
 
-    let page = vault
+    let FeedRead::Page(page) = vault
         .feed_read(
             &lane,
             &FeedReadRequest {
@@ -254,7 +255,10 @@ fn a_feed_program_wakes_once_per_head() {
                 limit: None,
             },
         )
-        .expect("read");
+        .expect("read")
+    else {
+        panic!("a page");
+    };
     assert!(!page.more, "{page:?}");
     vault
         .feed_ack(
@@ -280,6 +284,51 @@ fn a_feed_program_wakes_once_per_head() {
     );
     let refused = drain(&vault, T0);
     assert_eq!((refused.admitted, refused.refused), (0, 1), "{refused:?}");
+}
+
+/// Lead call K: a feed program's wake is judged as its own read would be, at delivery, so a
+/// change it would not be shown never wakes it. Here the subscription's selector takes PERSONs
+/// alone: a CODE_SYMBOL written past the cursor wakes nothing, a PERSON wakes it once.
+#[test]
+fn a_feed_program_is_not_woken_by_a_change_it_would_not_be_shown() {
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let lane = vault.scoped_read(fixture.reader_key());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_PERSON],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("release");
+    drain(&vault, T0);
+
+    vault
+        .put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_CODE_SYMBOL,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"symbol",
+        )
+        .expect("code symbol");
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        0,
+        "a change it would not be shown wakes nothing"
+    );
+    put_person(&vault);
+    assert_eq!(vault.release_feed_program_wakes(T0).expect("release"), 1);
 }
 
 /// An idle program wakes once per idle stretch, after its quiet time, and never while a turn
