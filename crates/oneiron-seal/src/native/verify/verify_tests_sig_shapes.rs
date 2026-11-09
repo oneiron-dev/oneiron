@@ -223,7 +223,7 @@ mod tests {
             "the nested signature field must be discovered through /Kids \
              with /FT inherited from the parent"
         );
-        assert!(found[0].handler != SigHandler::DocTs);
+        assert_eq!(found[0].handler, SigHandler::Cades);
     }
 
     #[test]
@@ -389,7 +389,7 @@ mod tests {
         let found =
             collect_signatures(&doc_with(Some(b"Sig"), Some(cades)), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(found[0].handler != SigHandler::DocTs);
+        assert_eq!(found[0].handler, SigHandler::Cades);
         let found = collect_signatures(
             &doc_with(Some(b"DocTimeStamp"), Some(rfc3161)),
             &operation_limits(),
@@ -400,7 +400,7 @@ mod tests {
         // Typeless interop: absent SubFilter tolerated, foreign one skipped.
         let found = collect_signatures(&doc_with(None, None), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(found[0].handler != SigHandler::DocTs);
+        assert_eq!(found[0].handler, SigHandler::Cades);
         assert!(
             collect_signatures(
                 &doc_with(None, Some(b"adbe.pkcs7.detached")),
@@ -499,7 +499,7 @@ mod tests {
         let found =
             collect_signatures(&doc_with_type_obj(None, None), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(found[0].handler != SigHandler::DocTs);
+        assert_eq!(found[0].handler, SigHandler::Cades);
     }
 
     #[test]
