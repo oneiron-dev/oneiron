@@ -21,7 +21,7 @@ use oneiron::{
 #[test]
 fn microvm_contract_isolating_tiers_route_or_fail_closed() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        match select_backend_for_tier(tier) {
+        match select_backend_for_tier(&oneiron::code_sandbox::SANDBOX_BACKENDS, tier) {
             Ok(selected) => {
                 let backend = selected.expect("an isolating tier never routes to `None`");
                 assert!(
