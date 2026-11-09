@@ -1526,6 +1526,9 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
         @property
+        def engine(self) -> "Oneiron._VaultEngineVerbs":
+            return Oneiron._VaultEngineVerbs(self._client)
+        @property
         def entities(self) -> "Oneiron._VaultEntitiesVerbs":
             return Oneiron._VaultEntitiesVerbs(self._client)
         @property
@@ -1979,6 +1982,9 @@ class Oneiron:
         def mint(self, spec):
             """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_mint(json.dumps(spec))))
+        def narrow(self, spec):
+            """The owner narrows or revokes the Dreamer's or the Coach's Steward grant; a narrowing that breaks a vault function answers what breaks and applies only with the confirm it gave."""
+            return json.loads(_translate(lambda: self._client.vault_agents_grants_narrow(json.dumps(spec))))
         def revoke(self, spec):
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_revoke(json.dumps(spec))))
@@ -3788,6 +3794,18 @@ class Oneiron:
         def put(self, spec):
             """Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_put(json.dumps(spec))))
+    class _VaultEngineVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def controls(self) -> "Oneiron._VaultEngineControlsVerbs":
+            return Oneiron._VaultEngineControlsVerbs(self._client)
+    class _VaultEngineControlsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def changes(self, spec):
+            """The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first."""
+            return json.loads(_translate(lambda: self._client.vault_engine_controls_changes(json.dumps(spec))))
     class _VaultEntitiesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4593,6 +4611,12 @@ class Oneiron:
         def add(self, spec):
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
+        def ask(self, spec):
+            """A Steward suggests adding, removing or moving one member of a shared vault; it writes one ask for the vault's Owners and Admins and changes no membership."""
+            return json.loads(_translate(lambda: self._client.vault_members_ask(json.dumps(spec))))
+        @property
+        def asks(self) -> "Oneiron._VaultMembersAsksVerbs":
+            return Oneiron._VaultMembersAsksVerbs(self._client)
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -4626,6 +4650,18 @@ class Oneiron:
         def withdraw_invitation(self, spec):
             """An Admin with the add_member power takes back a pending invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_withdraw_invitation(json.dumps(spec))))
+    class _VaultMembersAsksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The member asks the caller may see in a shared vault: every ask for an Owner or Admin, a Steward's own asks."""
+            return json.loads(_translate(lambda: self._client.vault_members_asks(json.dumps(spec))))
+        def apply(self, spec):
+            """An Owner or Admin applies a Steward's open member ask through the membership door it names; the receipt names the Steward as proposer."""
+            return json.loads(_translate(lambda: self._client.vault_members_asks_apply(json.dumps(spec))))
+        def decline(self, spec):
+            """An Owner or Admin declines a Steward's open member ask; no membership changes."""
+            return json.loads(_translate(lambda: self._client.vault_members_asks_decline(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
