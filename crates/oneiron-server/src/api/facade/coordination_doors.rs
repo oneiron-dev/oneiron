@@ -292,23 +292,46 @@ pub(crate) async fn vault_tasks_cancel_force(
     .await
 }
 
-/// A branch read names the TASK whose branches it read.
+/// A branch read names the TASK whose branches it read. The owner reads
+/// every branch on its proof; a person or agent on a verified slip of its own
+/// reads the branches it runs, or every branch as a Steward, through its own
+/// read lane (slice 6.5a).
 pub(crate) async fn vault_runs_branches_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    caller: (oneiron::EntityId, oneiron::EdgeActorClass),
+    _invocation: Option<oneiron::runtime_hooks::InvocationId>,
     input: RunBranchesRequest,
 ) -> MaybeListed<RunBranchesView> {
     const VERB: &str = "vault.runs.branches.get";
-    as_person_naming(
-        server,
-        VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| {
-            oneiron::task_verb::run_doors::read_branches_as(server.vault(), &owner, input)
-        },
-        |read| Some(vec![read.task_ref]),
-    )
-    .await
+    match super::run_read_doors::run_reader(server, auth, VERB) {
+        Ok(Some(owner)) => {
+            as_person_naming(
+                server,
+                VERB,
+                Ok(owner),
+                move |server, owner| {
+                    oneiron::task_verb::run_doors::read_branches_as(server.vault(), &owner, input)
+                },
+                |read| Some(vec![read.task_ref]),
+            )
+            .await
+        }
+        Ok(None) => {
+            let (answer, rows) = super::host_doors::support::credential_listing(
+                server,
+                auth,
+                caller,
+                VERB,
+                move |_, _, memory| {
+                    oneiron::task_verb::run_doors::read_branches_as_reader(&memory, input)
+                },
+            )
+            .await;
+            (answer, Some(rows))
+        }
+        Err(refusal) => (Err(refusal), Some(Vec::new())),
+    }
 }
 
 /// A consult read names the TASK, the result its settlement wrote, each

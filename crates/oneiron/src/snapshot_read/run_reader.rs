@@ -100,7 +100,7 @@ fn caller_of(memory: &Memory<'_>) -> WriteActor {
     WriteActor::new(memory.actor(), memory.actor_class())
 }
 
-fn not_the_callers(verb: &str) -> MemoryError {
+pub(crate) fn not_the_callers(verb: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!("{verb} reads the owner's runs, a Steward's, and the caller's own"),
