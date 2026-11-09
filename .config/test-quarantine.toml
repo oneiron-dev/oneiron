@@ -1,0 +1,19 @@
+# The flaky-test quarantine (Fable's verdict 2026-11-09, section 3).
+#
+# One [[test]] table per quarantined test, each with an issue and at most
+# seven days:
+#
+#   [[test]]
+#   filter = "package(oneiron) & test(=module::test_name)"  # a nextest filterset naming the test
+#   issue = "FIX-12345"                                      # the row or issue that fixes the flake
+#   added = "2026-11-10"
+#   expires = "2026-11-17"                                   # at most seven days after `added`
+#
+# The pr and nightly profiles in .config/nextest.toml end their default-filter
+# with `not (<union>)`, and the quarantine profile's default-filter is the
+# union itself: each entry's filter in parentheses, joined by ` | `, in this
+# file's order (`none()` while the quarantine is empty). The testkit lint test
+# (crates/oneiron-testkit/tests/test_lint.rs) checks all three against this
+# file. With ONEIRON_TESTKIT_TODAY=YYYY-MM-DD set, as the nightly sets it, it
+# also fails on an expired entry. An expired test is fixed or deleted, never
+# quarantined again.
