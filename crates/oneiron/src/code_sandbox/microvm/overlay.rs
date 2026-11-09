@@ -388,10 +388,7 @@ fn is_opaque(_dir: &Path) -> Result<bool> {
 
 /// Reclaim crash leftovers when an isolating backend starts, before it accepts VMs.
 #[cfg(all(unix, any(test, feature = "microvm-firecracker")))]
-pub(in crate::code_sandbox) fn reap_overlay_scratch(
-    root: &Path,
-    backend: &'static str,
-) -> Result<()> {
+pub fn reap_overlay_scratch(root: &Path, backend: &'static str) -> Result<()> {
     ensure_private_scratch_root(root, backend)?;
     super::scratch::reap(root, backend)
 }

@@ -14,11 +14,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use oneiron::ErrorKind;
-use oneiron::code_sandbox::SANDBOX_BACKENDS;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::{
     MicroVmBackend, SandboxBackends, select_backend_for_session, select_backend_for_tier,
 };
+use oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS;
 
 const TIERS: [SandboxGuestTier; 3] = [
     SandboxGuestTier::FirstPartyDreamer,

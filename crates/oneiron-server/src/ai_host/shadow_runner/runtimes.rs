@@ -15,14 +15,18 @@ use super::ShadowRuntimes;
 #[derive(Default)]
 pub(crate) struct CheckedInRuntimes {
     #[cfg(feature = "code-sandbox-wasmtime")]
-    component: std::sync::OnceLock<Option<oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory>>,
+    component: std::sync::OnceLock<
+        Option<oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory>,
+    >,
 }
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 impl CheckedInRuntimes {
     /// The component, compiled and probed at the first call; `None` when it
     /// did not load, which is logged once.
-    fn factory(&self) -> Option<&oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory> {
+    fn factory(
+        &self,
+    ) -> Option<&oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory> {
         self.component
             .get_or_init(|| match crate::mcp::checked_in_quickjs_runtime() {
                 Ok(factory) => Some(factory),
@@ -38,7 +42,7 @@ impl CheckedInRuntimes {
     /// loaded.
     pub(crate) fn pin(&self) -> Option<[u8; 32]> {
         self.factory()
-            .map(oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory::sha256)
+            .map(oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory::sha256)
     }
 
     /// A fresh runtime of the component.
