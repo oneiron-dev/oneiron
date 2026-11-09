@@ -65,7 +65,8 @@ mod types;
 mod wait_rows;
 
 pub(crate) use self::action_inputs::self_call_inputs;
-pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
+pub(crate) use self::agent_authoring::agent_put_draft;
+pub use self::agent_authoring::parse_agent_put_request;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
@@ -170,6 +171,7 @@ pub(crate) use self::result_read::{
     result_cards_in, unknown_handle,
 };
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
+pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
