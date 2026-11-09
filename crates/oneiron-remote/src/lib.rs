@@ -41,8 +41,9 @@
 
 #![forbid(unsafe_code)]
 
-#[path = "generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 mod caps;
 mod embedded;
 mod error;
