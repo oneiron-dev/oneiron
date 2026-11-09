@@ -267,12 +267,14 @@ suite.test(test, "LEARNING-02", "owner and admitted agent cannot forge learning.
       predicate: scenario.forgery.predicate, subject_ref: subject, value: scenario.forgery.value,
       confidence: 1, source: "observed", scope, evidence_turn_refs: [],
     };
-    const controls: { claim: string; value: string; actor: string }[] = [];
+    // One ordinary predicate per actor: a shared single-valued key would make the
+    // agent's control a cross-author replacement of the owner's claim (403).
+    const controls: { claim: string; predicate: string; value: string; actor: string }[] = [];
     const assertControls = async () => {
-      const rows = (await owner.client.call("vault.claims.list", {
-        subject_ref: subject, predicate: "core.learning_forgery_control", limit: 100,
-      })).value;
       for (const control of controls) {
+        const rows = (await owner.client.call("vault.claims.list", {
+          subject_ref: subject, predicate: control.predicate, limit: 100,
+        })).value;
         const row = rows.find(row => row.short_ref === control.claim);
         if (!row) throw new Error("An admitted ordinary control is missing from claims.list");
         expect(row.value).toBe(control.value);
@@ -282,13 +284,14 @@ suite.test(test, "LEARNING-02", "owner and admitted agent cannot forge learning.
       }
     };
     for (const actor of [owner, agent]) {
+      const predicate = `core.learning_forgery_control.${actor.actorClass}`;
       const value = `${actor.actorClass} ordinary admission control`;
       const control = await actor.client.call("vault.claims.upsert", {
-        ...attack, predicate: "core.learning_forgery_control", value,
+        ...attack, predicate, value,
       });
       expect(["auto", "proposed"]).toContain(control.approval);
       expect(control.claim_short_id).not.toBe("");
-      controls.push({ claim: control.claim_short_id, value, actor: actor.principalRef });
+      controls.push({ claim: control.claim_short_id, predicate, value, actor: actor.principalRef });
       await assertControls();
     }
     const refusals: LearningCallReceipt02[] = [];
