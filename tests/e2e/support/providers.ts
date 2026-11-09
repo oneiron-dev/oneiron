@@ -1,4 +1,5 @@
 /** Scripted external origins only. Storage, gates, schedulers and organ executables remain real. */
+import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { ownResource, redactor, withDeadline, LIMITS, assertFlowActive } from "./run.ts";
 import type { Artifacts } from "./run.ts";
@@ -8,7 +9,9 @@ export interface ProviderUsage { readonly inputTokens:number; readonly outputTok
 export type ProviderResponse =
   | {readonly kind:"json";readonly body:Json;readonly status?:number;readonly headers?:Readonly<Record<string,string>>}
   | {readonly kind:"bytes";readonly body:Uint8Array;readonly contentType:string;readonly status?:number}
-  | {readonly kind:"stream";readonly contentType:string;readonly status?:number;readonly parts:readonly StreamPart[]};
+  | {readonly kind:"stream";readonly contentType:string;readonly status?:number;readonly parts:readonly StreamPart[]}
+  /** OpenAI `/v1/embeddings` answer computed from the request's `input`: one hashingVector per text, in order. */
+  | {readonly kind:"hashing-embedding";readonly model:string;readonly dimensions:number};
 export interface StreamPart {
   readonly id:string;
   /** Exact protocol bytes; SSE event names, deltas and usage are fixture-authored. */
@@ -83,6 +86,47 @@ export function anthropicStream(id:string,model:string,deltas:readonly string[],
 }
 export function embeddingReply(model:string,vectors:readonly (readonly number[])[],inputTokens:number):ProviderResponse {
   return {kind:"json",body:{object:"list",model,data:vectors.map((embedding,index)=>({object:"embedding",index,embedding})),usage:{prompt_tokens:inputTokens,total_tokens:inputTokens}}};
+}
+/** A stable pseudo-vector for `text`, so recall plumbing is repeatable without a model. Like the bench's
+ * bag-of-words embedder: the normalised sum of one fixed pseudo-random vector per lowercased word (SHA-256
+ * in counter mode, components in [-1, 1)), so texts that share words land near each other. A text with no
+ * word answers the first unit vector. The same text and width always give the same vector. */
+export function hashingVector(text:string,dimensions:number):number[] {
+  if(!Number.isInteger(dimensions)||dimensions<1) throw new TypeError("hashingVector needs a positive integer width");
+  const sum=new Array<number>(dimensions).fill(0);
+  const words=text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(word=>word.length>0);
+  for(const word of words) {
+    for(let block=0;block*8<dimensions;block++) {
+      const digest=createHash("sha256").update(`${word}\u0000${block}`).digest();
+      for(let lane=0;lane<8&&block*8+lane<dimensions;lane++) sum[block*8+lane]!+=digest.readUInt32BE(lane*4)/2**31-1;
+    }
+  }
+  if(words.length===0) sum[0]=1;
+  const norm=Math.sqrt(sum.reduce((total,value)=>total+value*value,0));
+  return sum.map(value=>value/norm);
+}
+/** Standing steps for a hashing endpoint embedder on `origin` (`init --embedder endpoint --embedder-endpoint
+ * <urls[origin]>/v1 --embedder-model-key <modelKey> --dimensions <dimensions>`): the model listing and every
+ * embeddings request for `modelKey`, answered any number of times. A request for another model, a non-string
+ * input or a `dimensions` field other than the width fails the provider loudly. */
+export function hashingEmbedderSteps(options:{readonly id:string;readonly origin:string;readonly modelKey:string;readonly dimensions:number}):ProviderStep[] {
+  if(!Number.isInteger(options.dimensions)||options.dimensions<1) throw new TypeError("hashingEmbedderSteps needs a positive integer width");
+  return [
+    {id:`${options.id}-listing`,origin:options.origin,role:"embedder",purpose:"model identity metadata",standing:true,
+      request:{method:"GET",path:"/v1/models"},response:{kind:"json",body:{object:"list",data:[{id:options.modelKey,object:"model"}]}}},
+    {id:`${options.id}-embeddings`,origin:options.origin,role:"embedder",purpose:"hashing embeddings",standing:true,
+      request:{method:"POST",path:"/v1/embeddings",model:options.modelKey},
+      response:{kind:"hashing-embedding",model:options.modelKey,dimensions:options.dimensions}},
+  ];
+}
+function hashingAnswer(reply:{readonly model:string;readonly dimensions:number},body:unknown):Json {
+  const request=body as {input?:unknown;dimensions?:unknown}|null;
+  const input=typeof request?.input==="string"?[request.input]:request?.input;
+  if(!Array.isArray(input)||input.length===0||!input.every(text=>typeof text==="string"))
+    throw new ProviderScriptError("Hashing embedder needs `input` as a string or a non-empty string array");
+  if(request?.dimensions!==undefined&&request.dimensions!==reply.dimensions)
+    throw new ProviderScriptError(`Hashing embedder serves width ${reply.dimensions}, not ${String(request.dimensions)}`);
+  return {object:"list",model:reply.model,data:input.map((text,index)=>({object:"embedding",index,embedding:hashingVector(text,reply.dimensions)}))};
 }
 /** Exact connector/tagger/media protocol bodies use ProviderResponse, not a synthetic engine response. */
 export class ScriptedProviders {
@@ -203,32 +247,28 @@ export class ScriptedProviders {
       if(standing) {
         this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true});
         if(standing.barrier) await this.hold(standing.barrier);
-        const standingReply=standing.response;
-        if(standingReply.kind==="json") return Response.json(standingReply.body,{status:standingReply.status??200,...(standingReply.headers?{headers:standingReply.headers}:{})});
-        if(standingReply.kind==="bytes") return new Response(standingReply.body,{status:standingReply.status??200,headers:{"content-type":standingReply.contentType}});
-        const standingSelf=this;
-        return new Response(new ReadableStream<Uint8Array>({async start(controller){
-          try {for(const part of standingReply.parts){if(part.barrier) await standingSelf.hold(part.barrier);controller.enqueue(typeof part.data==="string"?new TextEncoder().encode(part.data):part.data)}controller.close()}
-          catch(error){controller.error(error)}
-        }}),{status:standingReply.status??200,headers:{"content-type":standingReply.contentType}});
+        return this.respond(standing.response,body);
       }
       const step=this.pending.get(origin)?.shift();
       const accepted=step&&matches(step,request.method,path,body);
       this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body});
       if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`);
       if(step.barrier) await this.hold(step.barrier);
-      const reply=step.response;
-      if(reply.kind==="json") return Response.json(reply.body,{status:reply.status??200,...(reply.headers?{headers:reply.headers}:{})});
-      if(reply.kind==="bytes") return new Response(reply.body,{status:reply.status??200,headers:{"content-type":reply.contentType}});
-      const self=this;
-      return new Response(new ReadableStream<Uint8Array>({async start(controller){
-        try {for(const part of reply.parts){if(part.barrier) await self.hold(part.barrier);controller.enqueue(typeof part.data==="string"?new TextEncoder().encode(part.data):part.data)}controller.close()}
-        catch(error){controller.error(error)}
-      }}),{status:reply.status??200,headers:{"content-type":reply.contentType}});
+      return this.respond(step.response,body);
     } catch(error) {
       this.violations.push(error instanceof Error?error.message:String(error));
       return Response.json({error:{type:"fixture_script_mismatch",message:"Unexpected fixture request"}},{status:500});
     }
+  }
+  private respond(reply:ProviderResponse,body:unknown):Response {
+    if(reply.kind==="json") return Response.json(reply.body,{status:reply.status??200,...(reply.headers?{headers:reply.headers}:{})});
+    if(reply.kind==="bytes") return new Response(reply.body,{status:reply.status??200,headers:{"content-type":reply.contentType}});
+    if(reply.kind==="hashing-embedding") return Response.json(hashingAnswer(reply,body));
+    const self=this;
+    return new Response(new ReadableStream<Uint8Array>({async start(controller){
+      try {for(const part of reply.parts){if(part.barrier) await self.hold(part.barrier);controller.enqueue(typeof part.data==="string"?new TextEncoder().encode(part.data):part.data)}controller.close()}
+      catch(error){controller.error(error)}
+    }}),{status:reply.status??200,headers:{"content-type":reply.contentType}});
   }
   async close():Promise<void> {
     if(this.closed) return;

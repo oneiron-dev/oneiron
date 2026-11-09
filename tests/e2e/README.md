@@ -223,6 +223,19 @@ error bodies and statuses. The helpers `openaiText`, `openaiStream`,
 `anthropicText`, `anthropicStream` and `embeddingReply` require declared usage;
 they do not estimate tokens or derive answers from requests.
 
+The hashing embedder is the one reply derived from the request, because an
+embedding is a pure function of its text. `hashingEmbedderSteps({id, origin,
+modelKey, dimensions})` returns two standing steps: the `GET /v1/models` listing
+and `{kind:"hashing-embedding",model,dimensions}` for every `POST /v1/embeddings`
+of `modelKey`. Point `init --embedder endpoint` at `${urls[origin]}/v1` with the
+same model key and `--dimensions`. Each text in `input` gets
+`hashingVector(text, dimensions)`: the normalised sum of one fixed SHA-256
+pseudo-random vector per lowercased word, so texts that share words land near
+each other and the same text always gets the same vector (as the bench's
+bag-of-words embedder does). A case computes a query vector with the same
+function. Another model, a non-string input or another requested width fails the
+provider. The reply carries no usage, since none is declared.
+
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
 It does **not** claim an internal transaction committed. Early release works.
