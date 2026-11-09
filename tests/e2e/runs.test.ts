@@ -1103,7 +1103,7 @@ suite.test(test, "RUNS-08", "A live agent's batched fan-out states its count, ex
   const providers = await ScriptedProviders.start({ id: "runs08-runs", origins: ["chat"], steps: [] });
   // No [models.decisions.*] and no [models.decision_read]: the fan-out ladder holds only its rule
   // rung, which abstains on a fresh vault, so auto mode surfaces every launch to the owner.
-  const engine = await EngineFixture.start({ id: "RUNS-08", profile, serverConfig: `
+  const engine = await EngineFixture.start({ id: "RUNS-08", profile, serverLog: "oneiron=info", serverConfig: `
 [models.providers.runs08chat]
 kind = "local-openai-compat"
 base_url = "${providers.urls.chat}"
@@ -1152,8 +1152,10 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     const stepped = await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: run }),
       view => view !== null && view.completed_steps >= 1, { label: "RUNS-08 parent run commits its asking step" });
     expect(stepped?.completed_steps).toBe(1);
-    // The parked run keeps its lease.
-    expect((await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0]?.state).toBe("Leased");
+    // The parked run keeps its lease. The whole branch first, so a failure prints its last_error.
+    const parkedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
+    expect(parkedBranch).toMatchObject({ state: "Leased" });
+    expect(parkedBranch?.state).toBe("Leased");
     const agent = await engine.pairActor({ principalRef: parentAgent, actorClass: "agent", scope: ["core:read", "core:write"] });
     const attached = await agent.client.call("self.run.attach", { run });
     expect(attached.live_run.startsWith(`lr1.${run}.`)).toBe(true);
