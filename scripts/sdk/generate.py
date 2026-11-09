@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-'Generate agent SDK transports from the verb table (scripts/sdk/verbs/); --check never writes.'
+'Generate agent SDK transports from the verb table (scripts/sdk/verbs/); --check never writes; --out-dir writes
+every output under a directory (build scripts read the build-time outputs from there).'
 import argparse
 import functools
 import json
@@ -1566,12 +1567,12 @@ def default_const(row, arg):
 # for the socket's send-time release (DEC-0005); a door that opens handles of
 # its own names none, and says so. Board, browser and run rows are refused by
 # the context each needs: no facade transport carries it.
-DISPATCH_DOC = '''//! The facade's one admission and typed call per verb-table row (OF-489).
-//! Every server transport runs a facade verb here: each HTTP route through
-//! `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
-//! transport hands a row its [`FacadeCall`] and the input as it decoded it;
-//! the row admits the call and runs it, and its answer names the rows it was
-//! derived from.
+DISPATCH_DOC = '''// The facade's one admission and typed call per verb-table row (OF-489).
+// Every server transport runs a facade verb here: each HTTP route through
+// `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
+// transport hands a row its [`FacadeCall`] and the input as it decoded it;
+// the row admits the call and runs it, and its answer names the rows it was
+// derived from.
 '''
 DISPATCH_SIGNATURE = "server: &Arc<SyncServer>, call: &FacadeCall<'_>, input: Result<serde_json::Value, FacadeApiError>"
 
@@ -1957,12 +1958,11 @@ match verb {{
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
-HOST_DOOR_ROWS_DOC = '''//! The host-door rows whose door checks its caller before the row's verb
-//! hooks run (FIX 1763), one variant each, named as `AgentVerb` names it.
-//! `host_doors::door_admits` matches every one with no catch-all arm, so a
-//! new host door fails to compile until it names its check there. A row
-//! whose table entry says `"host_door_precheck": false` checks nothing
-//! before its hooks; those rows:
+HOST_DOOR_ROWS_DOC = '''// The host-door rows whose door checks its caller before the row's verb
+// hooks run (FIX 1763), one variant each, named as `AgentVerb` names it, and
+// the proof each names (`host_door_proof`), which `host_doors::door_admits`
+// matches with no catch-all arm. A row whose table entry says
+// `"host_door_precheck": false` checks nothing before its hooks; those rows:
 '''
 
 def host_door_rows(facade_rows):
@@ -1970,7 +1970,7 @@ def host_door_rows(facade_rows):
     variant = lambda r: ''.join(part.title() for part in r['name'].replace('.', '_').split('_'))
     doors = [r for r in facade_rows if r.get('host_door')]
     checked = [r for r in doors if r.get('host_door_precheck', True)]
-    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'//! - `{r["name"]}`\n' for r in doors if r not in checked)
+    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'// - `{r["name"]}`\n' for r in doors if r not in checked)
     out += '/// A host-door row whose door checks its caller first.\n'
     out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorRow {\n'
     out += ''.join(f'    {variant(r)},\n' for r in checked) + '}\n'
@@ -2025,6 +2025,28 @@ def core_cfg(row):
     'The cfg attribute gating one CORE Rust typed emission of this row, or empty.'
     feature = row.get('rust_feature')
     return f'#[cfg(feature = "{feature}")] ' if feature else ''
+
+# Untangle slice 4.3 (S4-2 G1): these outputs are produced at build time by crates/oneiron-sdk-build, which
+# runs `--out-dir` once per input digest and copies each crate's own into its OUT_DIR. They are not in git:
+# the default run neither writes nor checks them in the tree.
+BUILD_TIME_OUTPUTS = {
+    'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs',
+    'crates/oneiron-remote/src/generated/agent_verbs.rs',
+    'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs',
+    'crates/oneiron-server/src/api/facade/generated/dispatch.rs',
+    'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs',
+    'crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs',
+    'crates/oneiron-uniffi/src/generated/facade_generated.rs',
+    'crates/oneiron-uniffi/src/generated/facade_types_generated.rs',
+    'crates/oneiron/src/verbs/generated/catalog_fragment.d.ts',
+    'crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs',
+    'crates/oneiron/src/verbs/generated/code-mode.d.ts',
+    'crates/oneiron/src/verbs/generated/run_verb_catalog.rs',
+    'crates/oneiron/src/verbs/generated/sdk_generated.rs',
+    'crates/oneiron/src/verbs/generated/verb_catalog.rs',
+}
+# rustfmt shapes the committed outputs; a build-time run (`--out-dir`) leaves them as emitted.
+FORMAT = True
 
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
@@ -2235,7 +2257,7 @@ def outputs():
     # `#[napi]` copies a method's attributes onto the glue it generates, where
     # the lint never fires, so a long verb's expectation sits on the module.
     long_napi = any(len(native_args(r)) + 1 > 7 for r in facade_rows)
-    napi = HEADER + (f'#![{LONG_SIGNATURE}]\n' if long_napi else '') + 'use super::*;\n#[napi]\nimpl NativeClient {\n'
+    napi = HEADER + 'use super::*;\n' + (f'#[{LONG_SIGNATURE}]\n' if long_napi else '') + '#[napi]\nimpl NativeClient {\n'
     py = ''
     for r in facade_rows:
         method=r['name'].replace('.','_')
@@ -2320,8 +2342,9 @@ def outputs():
         b = mcp_text.index(mcp_end, a) + len(mcp_end)
         seam = (
             'use super::{board_setup, skill_execution, verb_hooks};\n'
-            '#[path = "generated/agent_verb_dispatch.rs"]\n'
-            'mod agent_verb_dispatch;\n'
+            'mod agent_verb_dispatch {\n'
+            '    include!(concat!(env!("OUT_DIR"), "/agent_verb_dispatch.rs"));\n'
+            '}\n'
             'use agent_verb_dispatch::execute_mcp_agent_verb;\n'
             'pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};'
         )
@@ -2366,7 +2389,7 @@ def outputs():
     # revision; its own inventory leaves the facade types above as they are.
     files.update(catalog_fragment(ROOT, CODE_MODE_ROWS, HEADER))
     for path, text in list(files.items()):
-        if path.endswith('.rs'):
+        if path.endswith('.rs') and FORMAT:
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
             files[path] = result.stdout
     files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi',
@@ -2708,9 +2731,20 @@ def uniffi_facade(facade_rows):
     return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
+    global FORMAT
+    parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true')
+    parser.add_argument('--out-dir',type=Path,help='write every output under this directory (the build scripts read it)')
+    args=parser.parse_args()
+    if args.out_dir is not None:
+        FORMAT=False
+        for path,text in outputs().items():
+            if text is None:continue
+            target=args.out_dir/path
+            target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text)
+        return
     stale=[]
     for path,text in outputs().items():
+        if path in BUILD_TIME_OUTPUTS:continue
         p=ROOT/path
         if text is None:
             if p.exists():
