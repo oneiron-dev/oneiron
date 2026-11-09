@@ -2,16 +2,20 @@
 //! Steward role, owner 9 Nov 2026; S63-RULED, lead 9 Nov 18:0x).
 //!
 //! The Dreamer is an ordinary actor: it reads and lands through one
-//! revocable FEDERATION_GRANT, role and preset Steward, that the host mints
-//! as the embedded owner's signed act when it opens the vault
-//! ([`Vault::provision_system_agent_grants`]). The first mint copies the
+//! revocable FEDERATION_GRANT, role and preset Steward, that the engine
+//! stands as its default when the host opens the vault
+//! ([`Vault::provision_system_agent_grants`]). That grant is the engine's
+//! act, never the owner's: its receipt is an [`EngineDefaultGrant`] of the
+//! class "engine default at vault creation", which the owner reads on first
+//! open ([`Vault::engine_default_grants`]; lead 10 Nov 06:5x, S6C-PLACE-1 =
+//! A). The owner narrows or revokes it as any Steward grant. The first mint copies the
 //! vault's live policy rows one to one: the read row gives `read`; the two
 //! landing rows (the Auto actor ceiling and the `Generated` permit) give
 //! `derive` and `archive`, the pair the strength archive already judges as
 //! one verdict (X02); all three give the whole Steward default (`read`,
 //! `derive`, `archive`, `delete`). A vault whose owner had removed all three
-//! gets no grant, and its opt-out is recorded. Either way the host never
-//! mints again on its own: a later grant is the owner's act
+//! gets no grant, and its opt-out is recorded. Either way the engine never
+//! stands one again on its own: a later grant is the owner's signed act
 //! ([`Vault::grant_dreamer_weave`]).
 //!
 //! From the first mint on, the policy fold reads the agent's reach from the
@@ -22,11 +26,11 @@
 //! live delegation an ordinary agent's slip carries (census X04). A vault no
 //! host has opened keeps reading by its manifest rows, as before.
 //!
-//! The Coach holds one too (untangle 6.6, S66-1/S66-2): `read` and
-//! `engine.controls`, minted by the same host default with no rows to copy.
-//! Its `read` gives one core-read row in the fold, beside its own offer row,
-//! which stays; `engine.controls` lets it tune the engine's knobs
-//! ([`Vault::engine_control_allowed`]).
+//! The Coach holds one too (untangle 6.6, S66-1/S66-2): `read` and the four
+//! `engine.controls` classes, minted by the same host default with no rows
+//! to copy. Its `read` gives one core-read row in the fold, beside its own
+//! offer row, which stays; each `engine.controls` class lets it tune the
+//! engine's knobs of that class ([`Vault::engine_control_allowed`]).
 
 use std::collections::BTreeSet;
 
@@ -57,6 +61,35 @@ pub use narrowing::{
 /// agent's principal.
 const SYSTEM_AGENT_GRANT: SideTable<EntityId, SystemAgentGrantState, Named> =
     SideTable::new(&side_table::FEDERATION_SYSTEM_AGENT_GRANT);
+
+/// The receipt of every grant the engine stood by default, by the grant's
+/// id.
+const ENGINE_DEFAULT_GRANT: SideTable<EntityId, EngineDefaultGrant, Named> =
+    SideTable::new(&side_table::FEDERATION_ENGINE_DEFAULT_GRANT);
+
+/// Why the engine stood a grant on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineDefaultOrigin {
+    /// The engine's default at vault creation: a base agent's Steward grant,
+    /// stood when a host first opened the vault.
+    EngineDefaultAtVaultCreation,
+}
+
+/// The receipt of a grant the engine stood by default (lead 10 Nov 06:5x):
+/// the engine's act, which no owner signed. The owner reads it on first
+/// open and narrows or revokes the grant as any Steward grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDefaultGrant {
+    /// The agent the grant names.
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub agent: EntityId,
+    /// The verbs it held when the engine stood it.
+    pub verbs: BTreeSet<String>,
+    pub origin: EngineDefaultOrigin,
+    pub created_at: u64,
+}
 
 /// Where a base agent's Steward grant stands on this vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,13 +145,16 @@ impl SystemAgent {
     }
 
     /// The verbs its default grant holds: the whole Steward default for the
-    /// Dreamer; `read` and `engine.controls` for the Coach.
+    /// Dreamer; `read` and the four `engine.controls` classes for the Coach.
     fn default_verbs(self) -> BTreeSet<String> {
         let verbs: &[&str] = match self {
             Self::Dreamer => &grant_scope::STEWARD_VERBS,
             Self::Coach => &[
                 grant_scope::STEWARD_READ_VERB,
-                grant_scope::ENGINE_CONTROLS_VERB,
+                grant_scope::ENGINE_CONTROLS_MAINTENANCE_CADENCE_VERB,
+                grant_scope::ENGINE_CONTROLS_WORK_BUDGET_VERB,
+                grant_scope::ENGINE_CONTROLS_WAKE_CADENCE_VERB,
+                grant_scope::ENGINE_CONTROLS_KNOWLEDGE_RECIPE_VERB,
             ],
         };
         verbs.iter().map(|verb| (*verb).to_owned()).collect()
@@ -286,18 +322,18 @@ impl Vault {
         }))
     }
 
-    /// The host's default for every base agent whose reach a Steward grant
-    /// carries (untangle 6.3, 6.6): once per vault and agent, as the
-    /// embedded owner's signed act. The Dreamer's first mint copies its live
-    /// policy rows into its grant, or records the opt-out when the owner had
-    /// removed them all; the Coach's holds `read` and `engine.controls`. An
-    /// agent already marked is left as it is: the host never mints again.
-    /// Hosts call it after `provision_engine_machine_identities`.
+    /// The engine's default for every base agent whose reach a Steward grant
+    /// carries (untangle 6.3, 6.6): once per vault and agent, the engine's
+    /// own act with its [`EngineDefaultGrant`] receipt, never the owner's
+    /// signed act (lead 10 Nov 06:5x). The Dreamer's first grant copies its
+    /// live policy rows, or records the opt-out when the owner had removed
+    /// them all; the Coach's holds `read` and the four `engine.controls`
+    /// classes. An agent already marked is left as it is: the engine never
+    /// stands one again. Hosts call it after
+    /// `provision_engine_machine_identities`.
     ///
-    /// A vault whose embedded owner cannot act here (no owner PERSON yet,
-    /// not this vault's owner, or no machine profile to carry the act) is
-    /// left unmarked, so its rows still stand; a later open tries again.
-    /// Nothing here stops a host from opening: a refusal is logged by kind.
+    /// Nothing here stops a host from opening: a refusal is logged by kind,
+    /// and the agent's rows still stand until a later open.
     ///
     /// # Errors
     ///
@@ -320,9 +356,6 @@ impl Vault {
         if unmarked.is_empty() {
             return Ok(());
         }
-        let Some(owner) = self.embedded_owner_proof()? else {
-            return Ok(());
-        };
         for (agent, actor) in unmarked {
             let outcome = self.with_write_txn_grouped(|txn| {
                 if SYSTEM_AGENT_GRANT.contains(&self.store, &*txn, &actor)? {
@@ -340,7 +373,7 @@ impl Vault {
                 let state = if verbs.is_empty() {
                     SystemAgentGrantState::OptedOut
                 } else {
-                    let grant = self.mint_steward_grant_in_txn(txn, &owner, actor, verbs)?;
+                    let grant = self.stand_engine_default_grant_in_txn(txn, actor, verbs)?;
                     SystemAgentGrantState::Minted { grant }
                 };
                 SYSTEM_AGENT_GRANT.put(&self.store, txn, &actor, &state)
@@ -351,12 +384,12 @@ impl Vault {
                     // commit moved is judged again at once (FIX 5505).
                     self.apply_pending_rebinds_after_commit();
                 }
-                // The embedded owner could not act here: the agent's reach
-                // stays as its rows give it.
+                // The grant could not stand here: the agent's reach stays as
+                // its rows give it.
                 Err(error) => tracing::warn!(
                     agent = ?agent,
                     kind = ?error.kind(),
-                    "a base agent's Steward grant was not minted at this open; its policy rows stand"
+                    "a base agent's default Steward grant did not stand at this open; its policy rows stand"
                 ),
             }
         }
@@ -372,7 +405,7 @@ impl Vault {
     }
 
     /// The owner's act: the Coach holds its default grant (`read`,
-    /// `engine.controls`) from now on, the way back after he narrowed or
+    /// the four `engine.controls` classes) from now on, the way back after he narrowed or
     /// revoked it (6.6). `false` when a grant the marker names already holds
     /// it.
     ///
@@ -420,23 +453,30 @@ impl Vault {
     }
 
     /// The owner's act (S66-1): `agent`, any agent principal that is not a
-    /// base agent, may tune the engine's knobs from now on. Mints it a
-    /// Steward grant naming `engine.controls` alone, as `owner`'s signed act,
-    /// and returns the grant. The Coach's own grant comes back through
-    /// [`Self::grant_coach_steward`].
+    /// base agent, may tune the engine's knobs of `classes` from now on.
+    /// Mints it a Steward grant naming those classes' verbs alone, as
+    /// `owner`'s signed act, and returns the grant. The Coach's own grant
+    /// comes back through [`Self::grant_coach_steward`].
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` for a base agent; an owner refusal; a store failure;
-    /// `AuthorityRefused` when this install cannot carry the owner's act.
+    /// `InvalidConfig` for a base agent or no class; an owner refusal; a
+    /// store failure; `AuthorityRefused` when this install cannot carry the
+    /// owner's act.
     pub fn grant_engine_controls(
         &self,
         owner: &AuthenticatedOwner,
         agent: EntityId,
+        classes: &BTreeSet<super::EngineControlClass>,
     ) -> Result<EntityId> {
         if SystemAgent::of(agent).is_some() {
             return Err(crate::error::Error::InvalidConfig(
                 "a base agent's grant is its default grant".into(),
+            ));
+        }
+        if classes.is_empty() {
+            return Err(crate::error::Error::InvalidConfig(
+                "an engine.controls grant names at least one class".into(),
             ));
         }
         let grant = self.with_write_txn_grouped(|txn| {
@@ -445,7 +485,10 @@ impl Vault {
                 txn,
                 owner,
                 agent,
-                BTreeSet::from([grant_scope::ENGINE_CONTROLS_VERB.to_owned()]),
+                classes
+                    .iter()
+                    .map(|class| class.grant_verb().to_owned())
+                    .collect(),
             )
         })?;
         self.apply_pending_rebinds_after_commit();
@@ -475,18 +518,7 @@ impl Vault {
         agent: EntityId,
         verbs: BTreeSet<String>,
     ) -> Result<EntityId> {
-        let scope = self.steward_root_scope_in_txn(txn)?;
-        let mut grant = FederationGrant::new(
-            scope,
-            agent,
-            FederationGrantRole::Steward,
-            FederationGrantPreset::Steward,
-        );
-        grant.authority_scope.verbs = ScopeAxis::Some(verbs);
-        // Encoding validates: nothing is signed for a grant that cannot stand.
-        let data = encode_federation_grant_body(&grant)?;
-        let id = EntityId::now();
-        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let (id, grant) = self.put_steward_grant_row_in_txn(txn, agent, verbs)?;
         self.append_agent_grant_act_in_txn(
             txn,
             owner,
@@ -494,7 +526,7 @@ impl Vault {
             AgentGrantAct::Mint {
                 grant: id,
                 member: agent,
-                scope: grant.authority_scope.clone(),
+                scope: grant.authority_scope,
                 expires_at: None,
                 repo_bounds: None,
                 grant_kind: FederationGrantKind::Access,
@@ -504,6 +536,56 @@ impl Vault {
                 steward: true,
             },
         )?;
+        Ok(id)
+    }
+
+    /// Stands `agent`'s Steward grant with `verbs` as the engine's default at
+    /// vault creation, in the caller's writer: the FEDERATION_GRANT row and
+    /// its [`EngineDefaultGrant`] receipt, and no owner act.
+    fn stand_engine_default_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: EntityId,
+        verbs: BTreeSet<String>,
+    ) -> Result<EntityId> {
+        let (id, _) = self.put_steward_grant_row_in_txn(txn, agent, verbs.clone())?;
+        let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        ENGINE_DEFAULT_GRANT.put(
+            &self.store,
+            txn,
+            &id,
+            &EngineDefaultGrant {
+                agent,
+                verbs,
+                origin: EngineDefaultOrigin::EngineDefaultAtVaultCreation,
+                created_at,
+            },
+        )?;
+        Ok(id)
+    }
+
+    /// Puts `agent`'s Steward grant row with `verbs` on this vault's root in
+    /// the caller's writer, with no act, and marks a base agent's grant
+    /// system-critical. Returns its id and body.
+    fn put_steward_grant_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: EntityId,
+        verbs: BTreeSet<String>,
+    ) -> Result<(EntityId, FederationGrant)> {
+        let scope = self.steward_root_scope_in_txn(txn)?;
+        let mut grant = FederationGrant::new(
+            scope,
+            agent,
+            FederationGrantRole::Steward,
+            FederationGrantPreset::Steward,
+        );
+        grant.authority_scope.verbs = ScopeAxis::Some(verbs);
+        // Encoding validates: no row stands, and nothing is signed, for a
+        // grant that cannot stand.
+        let data = encode_federation_grant_body(&grant)?;
+        let id = EntityId::now();
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         apply_ops(
             &self.store,
             &self.config,
@@ -533,22 +615,24 @@ impl Vault {
         if let Some(system_agent) = SystemAgent::of(agent) {
             self.mark_system_critical_in_txn(txn, id, system_agent.functions())?;
         }
-        Ok(id)
+        Ok((id, grant))
     }
 
-    /// The embedded owner's proof on this install, when its owner PERSON
-    /// stands and owns the vault; `None` otherwise (before the owner is
-    /// seeded, for one).
-    fn embedded_owner_proof(&self) -> Result<Option<AuthenticatedOwner>> {
-        let owner = crate::vault::embedded_owner_actor_id()?;
-        Ok(self
-            .authenticate_owner(
-                owner,
-                &owner.to_hex(),
-                true,
-                crate::store::GateDecisionId::now(),
-            )
-            .ok())
+    /// Every grant the engine stood by default, oldest first, with its
+    /// receipt: what the owner is shown on first open (lead 10 Nov 06:5x).
+    ///
+    /// # Errors
+    ///
+    /// An owner refusal; a store failure.
+    pub fn engine_default_grants(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Vec<(EntityId, EngineDefaultGrant)>> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let mut grants = ENGINE_DEFAULT_GRANT.scan(&self.store, &txn)?;
+        grants.sort_by_key(|(id, receipt)| (receipt.created_at, *id));
+        Ok(grants)
     }
 }
 
@@ -564,44 +648,10 @@ impl Vault {
         verbs: &[&str],
     ) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
-            let scope = self
-                .shared_vault_creation_in_txn(txn)?
-                .map_or_else(own_device_residence_scope, |shared| {
-                    FederationGrantScope::vault(shared.vault_id)
-                });
-            let mut grant = FederationGrant::new(
-                scope,
-                agent,
-                FederationGrantRole::Steward,
-                FederationGrantPreset::Steward,
-            );
-            grant.authority_scope.verbs =
-                ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
-            let id = EntityId::now();
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
+            let (id, _) = self.put_steward_grant_row_in_txn(
                 txn,
-                vec![BatchOp::Put {
-                    id,
-                    entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                    occurred: TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    learned_at: now,
-                    row_version: None,
-                    data: encode_federation_grant_body(&grant)?,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
-                }],
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                true,
+                agent,
+                verbs.iter().map(|verb| (*verb).to_owned()).collect(),
             )?;
             SYSTEM_AGENT_GRANT.put(
                 &self.store,
@@ -609,9 +659,6 @@ impl Vault {
                 &agent,
                 &SystemAgentGrantState::Minted { grant: id },
             )?;
-            if let Some(system_agent) = SystemAgent::of(agent) {
-                self.mark_system_critical_in_txn(txn, id, system_agent.functions())?;
-            }
             Ok(id)
         })
     }

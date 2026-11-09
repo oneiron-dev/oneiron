@@ -8,8 +8,20 @@ use crate::federation::grant_scope;
 use crate::vault::Vault;
 use crate::workspace_roster::{GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord};
 
-/// The Steward verb that lets its holder tune the engine's stored knobs.
-pub const ENGINE_CONTROLS_VERB: &str = grant_scope::ENGINE_CONTROLS_VERB;
+/// The four Steward verbs that let their holder tune the engine's stored
+/// knobs, one per class of knob.
+pub const ENGINE_CONTROLS_VERBS: [&str; 4] = grant_scope::ENGINE_CONTROLS_VERBS;
+
+/// The work-budget class verb alone.
+pub const ENGINE_CONTROLS_WORK_BUDGET_VERB: &str = grant_scope::ENGINE_CONTROLS_WORK_BUDGET_VERB;
+
+/// The Coach's default verbs: `read` and the four `engine.controls` classes.
+#[must_use]
+pub fn read_and_engine_controls() -> Vec<&'static str> {
+    let mut verbs = vec![grant_scope::STEWARD_READ_VERB];
+    verbs.extend(grant_scope::ENGINE_CONTROLS_VERBS);
+    verbs
+}
 
 /// The Coach's actor id.
 ///

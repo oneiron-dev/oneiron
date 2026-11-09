@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 use oneiron::federation::{SharedActExecutionReceipt, SharedMemberAsk};
 use oneiron::task_verb::sdk::{
-    self, EmptyRequest, EngineControlChangeEntry, SharedMemberAskIdRequest, SharedMemberAskRequest,
-    SharedVaultRequest, SystemAgentGrantNarrowRequest, SystemAgentGrantNarrowed,
+    self, EmptyRequest, EngineControlChangeEntry, EngineDefaultGrantEntry,
+    SharedMemberAskIdRequest, SharedMemberAskRequest, SharedVaultRequest,
+    SystemAgentGrantNarrowRequest, SystemAgentGrantNarrowed,
 };
 
 use super::host_doors::support::{Listed, MaybeListed};
@@ -135,6 +136,23 @@ pub(crate) async fn vault_engine_controls_changes(
         "vault.engine.controls.changes",
         move |server, owner| sdk::engine_control_changes_as(server.vault(), owner, input),
         |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.engine.defaults`: the owner reads the grants the engine stood by
+/// default; each lists its grant row.
+pub(crate) async fn vault_engine_defaults(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EmptyRequest,
+) -> Listed<Vec<EngineDefaultGrantEntry>> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.engine.defaults",
+        move |server, owner| sdk::engine_default_grants_as(server.vault(), owner, input),
+        |entries| entries.iter().map(|entry| entry.grant).collect(),
     )
     .await
 }

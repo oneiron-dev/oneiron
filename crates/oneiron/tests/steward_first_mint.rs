@@ -1,7 +1,6 @@
 //! The host's first mint of the Dreamer's Steward grant (untangle 6.3b,
-//! S63-2 = A). On an install that carries the embedded owner's signed acts,
-//! the first mint copies the live rows one to one: the shipped rows give the
-//! whole default, and the Dreamer reads and lands through the grant. A policy
+//! S63-2 = A). On an install a host has opened, the first mint copies the
+//! live rows one to one: the shipped rows give the whole default, and the Dreamer reads and lands through the grant. A policy
 //! with none of the rows records the opt-out and mints nothing, and the
 //! Dreamer reads and lands nothing. A second open changes nothing. On the
 //! base there is no mint.
