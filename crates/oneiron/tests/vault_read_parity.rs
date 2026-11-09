@@ -443,9 +443,11 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
     }
     assert_eq!(denied_direct, denied_wire);
     assert_eq!(missing_direct, missing_wire);
-    // Both adapters keep NOT_FOUND; mandatory receipts distinguish policy
-    // exclusions from refs which never resolved, without returning row data.
-    for (error, expected) in [(&denied_direct, 1), (&missing_direct, 0)] {
+    // Both adapters keep NOT_FOUND, and every resolved read carries its
+    // receipt. A row the reader's own key can never read is absent, not
+    // withheld: its receipt counts nothing and names no row authority, the
+    // same as a ref that never resolved (ARCH-0067 F21(b)/(c), #5241).
+    for (error, expected) in [(&denied_direct, 0), (&missing_direct, 0)] {
         let VaultReadError::Engine {
             narrowing: Some(receipt),
             ..
