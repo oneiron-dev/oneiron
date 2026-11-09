@@ -796,6 +796,7 @@ def ts_facade_module(tree):
     sources = []
     for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./key-value.js', 'packages/oneiron/src/key-value.ts')]:
         names = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', (ROOT/path).read_text(), re.M)))
+        used -= set(names)
         if names: sources.append((module, names))
     agent = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', AGENT_VERBS_TS, re.M)))
     if agent: sources.append(('./agent-verbs.js', agent))
@@ -819,10 +820,12 @@ def ts_native_module(signatures, facade_types):
     'The native client\'s generated verb signatures, as the interface `NativeClient` extends.'
     used = set(re.findall(r'\b([A-Z]\w*)\b', signatures))
     out = HEADER
+    # The hand-written types first, as native.ts named them; a facade type of the same name is not imported twice.
     for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./facade-types.js', None)]:
         text = facade_types if path is None else (ROOT/path).read_text()
         declared = set(re.findall(r'^export (?:type|interface) (\w+)', text, re.M))
         names = sorted(used & declared)
+        used -= set(names)
         if names: out += f'import type {{ {", ".join(names)} }} from "{module}"\n'
     return out + '\n/** The native client\'s generated verb methods, as napi-rs exposes them. */\nexport interface NativeAgentVerbs {\n' + signatures + '\n}\n'
 
