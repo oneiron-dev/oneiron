@@ -203,7 +203,7 @@ pub(crate) fn restored_in_txn(
 pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
     let actor = vault.dreamer_actor_for_attempt(attempt)?;
     vault.with_write_txn_grouped(|txn| {
-        let Some(frontier) = crate::gate::dreamer_landing_verdict_in_txn(&vault.store, txn, actor)?
+        let Some(verdict) = crate::gate::dreamer_landing_verdict_in_txn(&vault.store, txn, actor)?
         else {
             return Ok(0);
         };
@@ -304,7 +304,7 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
             vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
             let link = vault.attempt_action_link_in_txn(&*txn, attempt);
-            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, frontier);
+            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, &verdict);
             vault.store.append_gate_decision_in_txn(txn, &receipt)?;
             archived += 1;
         }
@@ -315,15 +315,16 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
 /// and the owner reverts): the Dreamer's, naming the claim and the revision
 /// its snapshot scored, so the owner finds it and restores the claim through
 /// the cleanup restore door. `link` is the scoring attempt's (FIX 7500). The
-/// verdict is the policy's (X02): the rows it was judged by, and the policy
-/// frontier `frontier` it was judged under.
+/// verdict is the policy's (X02): what it was judged by (the Dreamer's
+/// Steward grant once a host minted it, else its landing rows), and the
+/// policy frontier it was judged under.
 fn archive_receipt(
     actor: WriteActor,
     claim: EntityId,
     snapshot: &ConsolidationStrengthSnapshot,
     now_ms: u64,
     link: crate::store::GateLoopLink,
-    frontier: [u8; 32],
+    verdict: &crate::gate::DreamerLandingVerdict,
 ) -> crate::store::GateDecisionRecord {
     crate::store::GateDecisionRecord {
         version: crate::store::GATE_DECISION_LEDGER_VERSION,
@@ -341,20 +342,16 @@ fn archive_receipt(
         content_kind: "dreamer_strength_archive".to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: Some(*claim.as_bytes()),
-        grant_ref: Some(crate::gate::DREAMER_LANDING_ROWS_REF.to_owned()),
+        grant_ref: Some(verdict.grant_ref.clone()),
         diff_handle: snapshot.revision.to_vec(),
-        read_frontier_hash: frontier,
+        read_frontier_hash: verdict.frontier,
         context: crate::store::GateDecisionContext::linked(link, None),
         redacted_at: None,
     }
 }
 
 fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
-    ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidClaimBody(
+    ScopedReadActorKey::for_engine_actor(actor).ok_or(Error::InvalidClaimBody(
         "invalid consolidation strength reader",
     ))
 }

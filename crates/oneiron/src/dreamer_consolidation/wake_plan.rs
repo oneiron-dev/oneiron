@@ -322,11 +322,8 @@ impl PreparedWake {
             ));
         }
         let actor = vault.dreamer_authority()?;
-        let key = ScopedReadActorKey::with_actor_class(
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
+        let key = ScopedReadActorKey::for_engine_actor(actor)
+            .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
         let read = vault.scoped_read(key);
         let source_ids: Vec<_> = ids.into_iter().collect();
         let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;

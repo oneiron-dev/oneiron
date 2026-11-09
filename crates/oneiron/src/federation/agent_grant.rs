@@ -251,6 +251,7 @@ impl Vault {
                     git_push_bounds: None,
                     verb_classes: grant.verb_classes.clone(),
                     wallet_ref: grant.wallet_ref.clone(),
+                    steward: false,
                 },
             )?;
             self.apply_agent_grant_op_in_txn(

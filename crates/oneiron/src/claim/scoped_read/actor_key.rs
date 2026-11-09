@@ -70,6 +70,9 @@ pub struct ScopedReadActorKey {
     /// A saved lane's records caveat, carried with no proof (OF-506); see
     /// [`Self::within_records`].
     pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
+    /// Set only on a base agent's own key (untangle 6.3, X04); see
+    /// [`Self::for_engine_actor`].
+    system_agent: Option<EntityId>,
 }
 
 pub use crate::settings::CallerLocality;
@@ -381,6 +384,7 @@ impl ScopedReadActorKey {
             owner_proof: None,
             owner_by_census: false,
             record_bound: None,
+            system_agent: None,
         })
     }
 
@@ -422,6 +426,7 @@ impl ScopedReadActorKey {
             owner_proof: None,
             owner_by_census: false,
             record_bound: None,
+            system_agent: None,
         }
     }
 
@@ -462,6 +467,31 @@ impl ScopedReadActorKey {
     /// The host action this key reads for, when it is one's.
     pub(crate) fn host_action_guard(&self) -> Option<&crate::authority::HostActionGuard> {
         self.host_action.as_ref()
+    }
+
+    /// The read key of the engine actor `reader` (untangle 6.3, census X04):
+    /// [`Self::with_actor_class`] for its id and class, and, for a base
+    /// agent that holds a Steward grant (the Dreamer), held to that grant and
+    /// to its live MACHINE binding. Every read proves both again in its own
+    /// snapshot ([`crate::Vault::system_agent_reads_live_in`]), as a client
+    /// slip proves its issuance, vault and revocation, so a revoked grant or
+    /// binding reads nothing. A vault no host has given the grant yet keeps
+    /// reading by its policy rows.
+    #[must_use]
+    pub(crate) fn for_engine_actor(reader: crate::WriteActor) -> Option<Self> {
+        let actor = reader.entity_ref();
+        let mut key =
+            Self::with_actor_class(actor.to_hex(), reader.actor_class().gate_actor_class())?;
+        if crate::federation::holds_system_agent_grant(actor) {
+            key.system_agent = Some(actor);
+        }
+        Some(key)
+    }
+
+    /// The base agent whose Steward grant and MACHINE binding this key is
+    /// held to, when it is one's.
+    pub(crate) fn system_agent_guard(&self) -> Option<EntityId> {
+        self.system_agent
     }
 
     /// This key, held to the owner proof a request authenticated (WILL-PLAN
