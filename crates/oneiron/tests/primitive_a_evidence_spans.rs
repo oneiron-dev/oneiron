@@ -41,7 +41,7 @@ fn said(content: &str, order: u32) -> WitnessMessage {
 /// `"hello there\nsecond line"`.
 fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::Error>> {
     let receipt = memory.witness(&WitnessTurn {
-        conversation_ref: String::new(),
+        conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
         messages: vec![said("hello there", 0), said("second line", 1)],
