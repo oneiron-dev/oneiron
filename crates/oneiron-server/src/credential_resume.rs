@@ -168,8 +168,7 @@ impl VerbAskCredentialCheck for ServerVerbAskCredentialCheck {
         // 4744); the drain proves it again and verifies the retained root.
         if let VerbAskCredentialWitness::HostAction(recorded) = witness {
             let instrument = &reference.instrument;
-            return instrument
-                .slip()
+            return oneiron::runtime_hooks::verb::verb_ask_instrument_slip(&instrument)
                 .is_some_and(|slip| recorded.acts_under(&slip, &instrument.vault))
                 && recorded.holds_in(vault, txn).is_ok();
         }
@@ -364,8 +363,7 @@ fn host_action_refusal(
 /// missing, revoked, expired, else changed, and unavailable when the fold
 /// does not read.
 fn root_standing(vault: &oneiron::Vault, instrument: &VerbAskInstrument) -> VerbAskRefusal {
-    instrument
-        .slip()
+    oneiron::runtime_hooks::verb::verb_ask_instrument_slip(&instrument)
         .map_or(VerbAskRefusal::CredentialChanged, |slip| {
             standing(vault, &slip)
         })

@@ -232,7 +232,7 @@ impl Vault {
         &self,
         decision: &VoiceRenderDecision,
     ) -> Result<VoiceRenderConsentWrite> {
-        decision.validate()?;
+        crate::verbs::voice_records::voice_render_decision_validate(&decision)?;
         let _guard = self
             .voice_ref_guard
             .write()

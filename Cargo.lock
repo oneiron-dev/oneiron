@@ -8006,6 +8006,7 @@ dependencies = [
  "oneiron-browser",
  "oneiron-code-check",
  "oneiron-code-source",
+ "oneiron-consent-state",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
@@ -8242,6 +8243,20 @@ dependencies = [
  "oxc_transformer",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-consent-state"
+version = "0.1.0"
+dependencies = [
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "oneiron-store",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]
