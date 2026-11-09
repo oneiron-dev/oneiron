@@ -20,6 +20,7 @@ use oneiron::learning_setting_doors::{
 use oneiron::memory::{MemoryError, MemoryResult};
 
 use super::host_doors::support::{Listed, internal};
+use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -58,34 +59,45 @@ async fn as_owner_listing(
     + 'static,
 ) -> Listed<LearningSettingsView> {
     let answer = as_owner(server, auth, verb, act).await;
-    let rows = answer.as_ref().map_or_else(
-        |_| Vec::new(),
-        |view| {
-            view.rows
-                .iter()
-                .flat_map(|row| row.goal.iter().chain(row.project.iter()))
-                .filter_map(|hex| EntityId::from_hex(hex).ok())
-                .collect()
-        },
-    );
+    let rows = answer.as_ref().map_or_else(|_| Vec::new(), settings_rows);
     (answer, rows)
 }
 
-/// `vault.settings.learning`: the catalog and the owner's rows.
+/// The goal claim and the project each row of `view` is scoped to.
+fn settings_rows(view: &LearningSettingsView) -> Vec<EntityId> {
+    view.rows
+        .iter()
+        .flat_map(|row| row.goal.iter().chain(row.project.iter()))
+        .filter_map(|hex| EntityId::from_hex(hex).ok())
+        .collect()
+}
+
+/// `vault.settings.learning`: the catalog and the rows, for the owner under
+/// its proof or a holder of `engine.controls` (untangle 6.6c, the read side
+/// of the dials it may tune), which the engine checks at the read.
 pub(crate) async fn vault_settings_learning(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingsRequest,
 ) -> Listed<LearningSettingsView> {
-    as_owner_listing(
-        server,
-        auth,
-        "vault.settings.learning",
-        move |server, owner| {
-            learning_setting_doors::learning_settings_as_owner(server.vault(), owner, &input)
-        },
-    )
-    .await
+    const VERB: &str = "vault.settings.learning";
+    match substrate_reader(server, auth, VERB) {
+        Ok(Some(_)) => {
+            as_owner_listing(server, auth, VERB, move |server, owner| {
+                learning_setting_doors::learning_settings_as_owner(server.vault(), owner, &input)
+            })
+            .await
+        }
+        Ok(None) => {
+            let answer = as_reader(server, auth, VERB, move |server, reader| {
+                learning_setting_doors::learning_settings_as_holder(server.vault(), reader, &input)
+            })
+            .await;
+            let rows = answer.as_ref().map_or_else(|_| Vec::new(), settings_rows);
+            (answer, rows)
+        }
+        Err(refusal) => (Err(refusal), Vec::new()),
+    }
 }
 
 /// `vault.settings.learning.put`: one seed or pin.

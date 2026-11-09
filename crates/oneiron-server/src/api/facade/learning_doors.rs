@@ -12,6 +12,7 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::receipt::PackAttributionFields;
 
 use super::host_doors::support::{Listed, internal, owner_proof, refused};
+use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -65,32 +66,55 @@ fn provenance_rows(view: &LearningProvenanceView, rows: &mut Vec<EntityId>) {
     }
 }
 
-/// Reads the estimate and its own and borrowed provenance, without writing.
+/// The rows a learning read lists: its project and every provenance row.
+fn learning_read_rows(project: Option<EntityId>, view: &LearningCellView) -> Vec<EntityId> {
+    let mut rows = Vec::new();
+    rows.extend(project);
+    provenance_rows(&view.view.provenance, &mut rows);
+    if let Some(prior) = &view.view.prior_provenance {
+        provenance_rows(prior, &mut rows);
+    }
+    rows
+}
+
+/// Reads the estimate and its own and borrowed provenance, without writing:
+/// the owner under its proof, or a holder of a Steward grant naming `read`
+/// (untangle 6.6c), which the engine checks at the read.
 pub(crate) async fn vault_learning_read(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningReadRequest,
 ) -> Listed<LearningCellView> {
+    const VERB: &str = "vault.learning.read";
     let project = input
         .project_ref
         .as_deref()
         .and_then(|id| EntityId::from_hex(id).ok());
-    as_owner(
-        server,
-        auth,
-        "vault.learning.read",
-        move |server, owner| doors::read_learning_as_owner(server.vault(), owner, &input),
-        move |view| {
-            let mut rows = Vec::new();
-            rows.extend(project);
-            provenance_rows(&view.view.provenance, &mut rows);
-            if let Some(prior) = &view.view.prior_provenance {
-                provenance_rows(prior, &mut rows);
-            }
-            rows
-        },
-    )
-    .await
+    match substrate_reader(server, auth, VERB) {
+        Ok(Some(_)) => {
+            as_owner(
+                server,
+                auth,
+                VERB,
+                move |server, owner| doors::read_learning_as_owner(server.vault(), owner, &input),
+                move |view| learning_read_rows(project, view),
+            )
+            .await
+        }
+        Ok(None) => {
+            let answer = as_reader(server, auth, VERB, move |server, reader| {
+                doors::read_learning_as_reader(server.vault(), reader, &input)
+            })
+            .await;
+            let mut listed = answer
+                .as_ref()
+                .map_or_else(|_| Vec::new(), |view| learning_read_rows(project, view));
+            listed.sort_unstable();
+            listed.dedup();
+            (answer, listed)
+        }
+        Err(refusal) => refused(refusal),
+    }
 }
 
 /// Observes a committed projection receipt, including no-blame projections.
