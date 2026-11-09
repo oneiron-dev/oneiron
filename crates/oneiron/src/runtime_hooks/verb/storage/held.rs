@@ -72,9 +72,11 @@ impl SessionHooks<'_> {
         };
         let kept = match &self.target {
             HooksTarget::Room { session, route, .. } => session.stage_hook_records(route, rows)?,
-            HooksTarget::Kept { vault, key } => {
-                vault.verb_hook_state.session.stage(vault, key, rows)?
-            }
+            HooksTarget::Kept { vault, key } => vault
+                .runtime()
+                .verb_hook_state()
+                .session
+                .stage(vault, key, rows)?,
         };
         self.dispositions
             .borrow_mut()

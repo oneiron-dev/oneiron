@@ -23,7 +23,7 @@ impl Memory<'_> {
     /// one has none. So does a TASK a device-local world keeps from the
     /// caller's machine (FIX 9000), as the section leaves it out.
     pub fn describe(&self, task_ref: Option<EntityId>) -> MemoryResult<TaskDescription> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
+        let _provenance = facade_provenance(crate::verb_names::DESCRIBE);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(task_ref) = task_ref else {
             let rows = self.credential_rows(self.section_rows()?)?;
@@ -63,7 +63,7 @@ impl Memory<'_> {
     /// what it withheld. An acknowledged failure, which the section never
     /// renders, is not among them.
     pub fn describe_rows(&self) -> MemoryResult<TasksSectionRows> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
+        let _provenance = facade_provenance(crate::verb_names::DESCRIBE);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         self.section_rows()
     }
@@ -220,7 +220,7 @@ impl Memory<'_> {
         task_ref: EntityId,
         witness: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<TaskUpdateReceipt> {
-        let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksUpdate));
+        let _provenance = facade_provenance(crate::verb_names::TASKS_UPDATE);
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         if self.credential_withholds(task_ref)? {
             return Err(MemoryError::from(Error::EntityNotFound));

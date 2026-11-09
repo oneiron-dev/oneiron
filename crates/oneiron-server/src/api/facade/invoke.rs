@@ -71,7 +71,12 @@ pub(super) fn facade_invoke_concern_move(
             // refused here exactly as in [`facade_invoke_in_turn`]; the wake
             // reports false on a path that never commits.
             let (output, wake) = match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(VERB, value)?, false),
+                Some(room) => (
+                    memory
+                        .for_room_turn(room)?
+                        .invoke(&oneiron::verbs::VERB_TABLE, VERB, value)?,
+                    false,
+                ),
                 None => {
                     // Same authorship as [`facade_invoke_in_turn`]; this verb
                     // never takes the guest-revoking host-issuer path.
@@ -84,6 +89,7 @@ pub(super) fn facade_invoke_concern_move(
                     let mut wake = false;
                     let output = oneiron::task_verb::verb_hook_boundary::row_tapped(
                         &memory,
+                        &oneiron::verbs::VERB_TABLE,
                         VERB,
                         value,
                         |value| {
@@ -188,7 +194,11 @@ pub(super) fn facade_invoke_in_turn_with_notice(
             // Settlement's run of the call enters its boundary here as the drain's.
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
             let (result, hook_notice) = match call.room_turn()? {
-                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(verb, value),
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(
+                    &oneiron::verbs::VERB_TABLE,
+                    verb,
+                    value,
+                ),
                 None => {
                     // The owner's own request on the owner's own full credential:
                     // owner-authored writes carry their own confirmation. Any other
@@ -388,7 +398,11 @@ pub(super) fn facade_invoke_born_with_notice(
             let memory = facade_rewrites_admitted(server, auth, &value, memory);
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
             let (result, hook_notice) = match call.room_turn()? {
-                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(verb, value),
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(
+                    &oneiron::verbs::VERB_TABLE,
+                    verb,
+                    value,
+                ),
                 None => {
                     let memory = match direct_authorship(auth, server, verb)? {
                         Some(owner) => memory
