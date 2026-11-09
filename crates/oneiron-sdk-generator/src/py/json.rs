@@ -2,9 +2,13 @@
 //! messages and positions, and `dumps` as `json.dumps` writes.
 //!
 //! `loads` keeps a duplicate key at its first position with its last value, takes `NaN`, `Infinity` and `-Infinity`,
-//! reads `1` as an int and `1.0`/`1e3` as floats, and counts positions in code points. Two inputs Python accepts are
-//! refused (DESIGN 3): an integer outside `i64`, and a `\uXXXX` escape that leaves a lone surrogate (no Rust `String`
-//! holds one).
+//! reads `1` as an int and `1.0`/`1e3` as floats, and counts positions in code points. An integer of more than 4,300
+//! digits is Python's own `ValueError` (`sys.get_int_max_str_digits()`), raised where the scanner meets it.
+//!
+//! Two values Python reads are refused (DESIGN 3 and 9.5): an integer outside `i64`, and a `\uXXXX` escape that leaves
+//! a lone surrogate (no Rust `String` holds one). Each is refused only once the whole text has decoded, and only if
+//! it survives into the result (a duplicate key's later value drops an earlier one), so a text Python refuses fails
+//! with Python's own error first and a result that holds neither is never refused.
 
 use std::fmt;
 
@@ -13,8 +17,12 @@ use crate::py::value::{Dict, Value, float_json};
 
 /// The deepest nesting `loads` reads. CPython's limit is its C stack: on nelly (8 MiB) it reads 52,184 nested arrays
 /// or objects and refuses one more with `RecursionError: Stack overflow (used ... kB) while decoding a JSON array from
-/// a unicode string`. The port refuses past this depth with the older wording (a documented divergence).
-pub(crate) const MAX_DEPTH: usize = 50_000;
+/// a unicode string`. The port reads every depth Python reads and refuses past this one with the older wording
+/// (recursion depth counted by the port, DESIGN 9.5). The binary runs on a 256 MiB stack, which this depth fits.
+pub(crate) const MAX_DEPTH: usize = 100_000;
+
+/// `sys.get_int_max_str_digits()` on nelly's Python 3.14.7: `int()` of a longer decimal text is a `ValueError`.
+pub(crate) const INT_MAX_STR_DIGITS: usize = 4300;
 
 /// Why `loads` refused its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +42,11 @@ pub(crate) enum JsonError {
     Recursion {
         /// `array` or `object`.
         container: &'static str,
+    },
+    /// Python's `ValueError` for an integer of more than `INT_MAX_STR_DIGITS` digits.
+    IntDigitLimit {
+        /// Its digits, the sign aside.
+        digits: usize,
     },
     /// An integer outside `i64` (Python reads it; the port refuses it).
     IntOutOfRange {
@@ -69,6 +82,10 @@ impl JsonError {
                     "maximum recursion depth exceeded while decoding a JSON {container} from a unicode string"
                 ),
             ),
+            Self::IntDigitLimit { digits } => GenerateError::value(format!(
+                "Exceeds the limit ({INT_MAX_STR_DIGITS} digits) for integer string conversion: value has {digits} \
+                 digits; use sys.set_int_max_str_digits() to increase the limit"
+            )),
             Self::IntOutOfRange {
                 text,
                 lineno,
@@ -104,6 +121,7 @@ impl fmt::Display for JsonError {
                 f,
                 "nested deeper than {MAX_DEPTH} levels in a JSON {container}"
             ),
+            Self::IntDigitLimit { digits } => write!(f, "an integer of {digits} digits"),
             Self::IntOutOfRange { text, pos, .. } => {
                 write!(f, "integer {text} at char {pos} is outside i64")
             }
@@ -129,13 +147,27 @@ impl From<JsonError> for Fail {
 
 type Scan<T> = Result<(T, usize), Fail>;
 
+/// A value Python reads and the port cannot hold, refused only if it survives the decode.
+enum Unheld {
+    /// An integer outside `i64`, its text (a placeholder `0` stands in).
+    Int(String),
+    /// A lone surrogate's code (a placeholder U+FFFD stands in).
+    Surrogate(u32),
+}
+
+struct Deferred {
+    unheld: Unheld,
+    /// Where it starts (code points).
+    pos: usize,
+    /// False once a duplicate key's later value has dropped the value holding it.
+    alive: bool,
+}
+
 struct Scanner<'a> {
     s: &'a [char],
     depth: usize,
-    /// The first `\uXXXX` escape that left a lone surrogate (its code and its backslash's offset). Python reads one;
-    /// the port stands U+FFFD in for it and refuses the text only once the text has decoded, so a malformed text
-    /// fails with Python's own error first.
-    lone_surrogate: Option<(u32, usize)>,
+    /// Every unheld value met, in text order.
+    deferred: Vec<Deferred>,
 }
 
 fn is_ws(c: char) -> bool {
@@ -229,7 +261,7 @@ impl Scanner<'_> {
 
     /// `_match_number_unicode`: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?`, an exponent with no digit left
     /// unread.
-    fn match_number(&self, start: usize) -> Scan<Value> {
+    fn match_number(&mut self, start: usize) -> Scan<Value> {
         let digit = |idx: usize| self.at(idx).is_some_and(|c| c.is_ascii_digit());
         let mut idx = start;
         if self.at(idx) == Some('-') {
@@ -277,19 +309,20 @@ impl Scanner<'_> {
                 .map_err(|_| Fail::Error(self.error("Expecting value", start)))?;
             return Ok((Value::Float(value), idx));
         }
-        match text.parse::<i64>() {
-            Ok(value) => Ok((Value::Int(value), idx)),
-            Err(_) => {
-                let (lineno, colno) = self.line_col(start);
-                Err(JsonError::IntOutOfRange {
-                    text,
-                    pos: start,
-                    lineno,
-                    colno,
-                }
-                .into())
-            }
+        if let Ok(value) = text.parse::<i64>() {
+            return Ok((Value::Int(value), idx));
         }
+        // Python's int(): past the digit limit a ValueError at once; else an int the port does not hold.
+        let digits = text.trim_start_matches('-').len();
+        if digits > INT_MAX_STR_DIGITS {
+            return Err(JsonError::IntDigitLimit { digits }.into());
+        }
+        self.deferred.push(Deferred {
+            unheld: Unheld::Int(text),
+            pos: start,
+            alive: true,
+        });
+        Ok((Value::Int(0), idx))
     }
 
     /// `scanstring_unicode`: `end` is just past the opening quote.
@@ -354,7 +387,11 @@ impl Scanner<'_> {
                 }
             }
             let c = char::from_u32(code).unwrap_or_else(|| {
-                self.lone_surrogate.get_or_insert((code, u_at - 1));
+                self.deferred.push(Deferred {
+                    unheld: Unheld::Surrogate(code),
+                    pos: u_at - 1,
+                    alive: true,
+                });
                 char::REPLACEMENT_CHARACTER
             });
             out.push(c);
@@ -364,6 +401,8 @@ impl Scanner<'_> {
     /// `_parse_object_unicode`: `idx` is just past `{`.
     fn parse_object(&mut self, idx: usize) -> Scan<Value> {
         let mut dict = Dict::new();
+        // Per entry, the unheld values its value holds (a range of `deferred`).
+        let mut held: Vec<(usize, usize)> = Vec::new();
         let mut idx = self.skip_ws(idx);
         if self.at(idx) != Some('}') {
             loop {
@@ -378,9 +417,22 @@ impl Scanner<'_> {
                     return Err(self.error("Expecting ':' delimiter", idx).into());
                 }
                 idx = self.skip_ws(idx + 1);
+                let first = self.deferred.len();
                 let (value, after_value) = self.scan_once(idx)?;
-                // A duplicate key keeps its first position and takes the last value, as Python's dict does.
-                dict.insert(key, value);
+                let span = (first, self.deferred.len());
+                // A duplicate key keeps its first position and takes the last value, as Python's dict does; the
+                // dropped value's unheld values go with it.
+                if let Some(at) = dict.get_index_of(&key) {
+                    let (from, to) = held[at];
+                    for dropped in &mut self.deferred[from..to] {
+                        dropped.alive = false;
+                    }
+                    held[at] = span;
+                    dict[at] = value;
+                } else {
+                    dict.insert(key, value);
+                    held.push(span);
+                }
                 idx = self.skip_ws(after_value);
                 if self.at(idx) == Some('}') {
                     break;
@@ -434,7 +486,7 @@ pub(crate) fn loads(text: &str) -> Result<Value, JsonError> {
     let mut scanner = Scanner {
         s: &s,
         depth: 0,
-        lone_surrogate: None,
+        deferred: Vec::new(),
     };
     if s.first() == Some(&'\u{feff}') {
         return Err(scanner.error("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0));
@@ -449,13 +501,22 @@ pub(crate) fn loads(text: &str) -> Result<Value, JsonError> {
     if end != s.len() {
         return Err(scanner.error("Extra data", end));
     }
-    if let Some((code, pos)) = scanner.lone_surrogate {
+    if let Some(first) = scanner.deferred.iter().find(|deferred| deferred.alive) {
+        let pos = first.pos;
         let (lineno, colno) = scanner.line_col(pos);
-        return Err(JsonError::LoneSurrogate {
-            code,
-            pos,
-            lineno,
-            colno,
+        return Err(match &first.unheld {
+            Unheld::Int(text) => JsonError::IntOutOfRange {
+                text: text.clone(),
+                pos,
+                lineno,
+                colno,
+            },
+            Unheld::Surrogate(code) => JsonError::LoneSurrogate {
+                code: *code,
+                pos,
+                lineno,
+                colno,
+            },
         });
     }
     Ok(value)
@@ -867,6 +928,58 @@ mod tests {
         );
         assert!(
             matches!(loads(r#""\ud800\udc00""#).expect("a pair"), Value::Str(s) if s == "\u{10000}")
+        );
+    }
+
+    // Python 3.14.7 on nelly: json.loads of each text (Sol's G1a review, P1-2 and P1-3). A text Python refuses fails
+    // with Python's error first; a value a duplicate key drops is not refused; past 4,300 digits Python's own
+    // ValueError comes at once, before a later syntax error.
+    #[test]
+    fn unheld_values_are_refused_only_when_they_survive() {
+        let error =
+            loads(r#"{"name":"x","extra":9223372036854775808,}"#).expect_err("trailing comma");
+        assert_eq!(
+            error.to_string(),
+            "Illegal trailing comma before end of object: line 1 column 40 (char 39)"
+        );
+        let error = loads(r#"{"name":"x","extra":"\ud800",}"#).expect_err("trailing comma");
+        assert_eq!(
+            error.to_string(),
+            "Illegal trailing comma before end of object: line 1 column 29 (char 28)"
+        );
+        // python3 -c "import json; print(json.loads('{\"name\":\"x\",\"discard\":\"\\\\ud800\",\"discard\":\"ok\"}'))"
+        // prints: {'name': 'x', 'discard': 'ok'}
+        let value = loads(r#"{"name":"x","discard":"\ud800","discard":"ok"}"#).expect("dropped");
+        assert_eq!(value.repr(), "{'name': 'x', 'discard': 'ok'}");
+        let value =
+            loads(r#"{"a": {"b": [99999999999999999999]}, "c": 1, "a": 2}"#).expect("dropped");
+        assert_eq!(value.repr(), "{'a': 2, 'c': 1}");
+        let error =
+            loads(r#"{"a": 1, "a": 99999999999999999999, "b": "\udc00"}"#).expect_err("kept");
+        assert!(
+            matches!(error, JsonError::IntOutOfRange { pos: 14, .. }),
+            "{error:?}"
+        );
+        let error = loads(r#"{"\ud800": 1, "a": 1, "a": 2}"#).expect_err("a key survives");
+        assert!(
+            matches!(error, JsonError::LoneSurrogate { pos: 2, .. }),
+            "{error:?}"
+        );
+        // python3 -c "import json; json.loads('[' + '1' * 4301 + ',]')": the traceback's last line.
+        let error = loads(&format!("[{},]", "1".repeat(4301))).expect_err("digit limit");
+        assert_eq!(
+            error.into_error("x.json").to_string(),
+            "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use \
+             sys.set_int_max_str_digits() to increase the limit"
+        );
+        let error = loads(&format!("-{}", "1".repeat(4301))).expect_err("digit limit");
+        assert!(matches!(error, JsonError::IntDigitLimit { digits: 4301 }));
+        assert!(matches!(
+            loads(&"1".repeat(4300)).expect_err("outside i64"),
+            JsonError::IntOutOfRange { .. }
+        ));
+        assert!(
+            matches!(loads(&format!("{}.5", "1".repeat(4301))).expect("a float"), Value::Float(f) if f.is_infinite())
         );
     }
 
