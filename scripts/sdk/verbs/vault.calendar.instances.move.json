@@ -1,0 +1,16 @@
+{
+  "name": "vault.calendar.instances.move",
+  "description": "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances.",
+  "input": "crate::calendar::ingest::door::CalendarInstanceMoveRequest",
+  "output": "crate::calendar::ingest::door::CalendarIcsImportReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.instances.move\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

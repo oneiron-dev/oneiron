@@ -1,0 +1,14 @@
+{
+  "name": "vault.scope.ceiling",
+  "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
+  "input": "EmptyRequest",
+  "output": "crate::memory::CredentialCeiling",
+  "call": "memory.credential_ceiling()?",
+  "scope": "Read",
+  "admission": {
+    "credential_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

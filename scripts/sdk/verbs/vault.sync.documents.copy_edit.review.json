@@ -1,0 +1,17 @@
+{
+  "name": "vault.sync.documents.copy_edit.review",
+  "description": "The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority.",
+  "input": "crate::task_verb::sdk::RepoCopyEditReviewRequest",
+  "output": "Option<crate::task_verb::sdk::RepoCopyEditReviewView>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.review\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_precheck": false,
+  "rust_feature": "sync",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

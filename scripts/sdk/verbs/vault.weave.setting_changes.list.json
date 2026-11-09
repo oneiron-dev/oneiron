@@ -1,0 +1,17 @@
+{
+  "name": "vault.weave.setting_changes.list",
+  "description": "Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::claim::WeaveDigestSettingChange>",
+  "call": "crate::task_verb::sdk::weave_setting_changes(memory, &memory.embedded_owner(\"vault.weave.setting_changes.list\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

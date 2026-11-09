@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.observe",
+  "description": "Observes the run's browser page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles.",
+  "input": "crate::task_verb::sdk::BrowserObserveInput",
+  "output": "crate::task_verb::sdk::BrowserObservationPage",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.observe_page(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
+    "description": "Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

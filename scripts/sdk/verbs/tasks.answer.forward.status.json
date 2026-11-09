@@ -1,0 +1,23 @@
+{
+  "name": "tasks.answer.forward.status",
+  "description": "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result.",
+  "input": "crate::task_verb::sdk::TaskAnswerForwardStatusRequest",
+  "output": "crate::task_verb::AskForwardReceipt",
+  "mcp_served": "[input.intent_ref]",
+  "call": "memory.tasks_answer_forward_status(input.intent_ref)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "intent_ref",
+        "type": "crate::EntityId"
+      }
+    ]
+  }
+}

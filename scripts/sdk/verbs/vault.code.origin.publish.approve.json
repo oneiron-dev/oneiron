@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.publish.approve",
+  "description": "Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked.",
+  "input": "crate::origin::publish::OriginPublishApproveRequest",
+  "output": "crate::origin::publish::OriginPublishRequestView",
+  "call": "memory.origin_publish_approve_as(&memory.origin_publish_proof(\"vault.code.origin.publish.approve\"), input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "origin_publish"
+}

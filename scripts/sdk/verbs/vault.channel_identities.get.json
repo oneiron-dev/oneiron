@@ -1,0 +1,13 @@
+{
+  "name": "vault.channel_identities.get",
+  "description": "Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send.",
+  "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+  "output": "crate::memory::channel_doors::ChannelIdentityView",
+  "call": "memory.channel_identity_get(input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

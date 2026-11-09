@@ -1,0 +1,17 @@
+{
+  "name": "vault.esign.signing.signature",
+  "description": "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes.",
+  "input": "crate::blob_artifact::esign::EsignSigningSignatureRequest",
+  "output": "crate::blob_artifact::esign::EsignSigningSignatureView",
+  "call": "memory.esign_signing_signature(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

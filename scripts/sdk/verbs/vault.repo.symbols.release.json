@@ -1,0 +1,20 @@
+{
+  "name": "vault.repo.symbols.release",
+  "description": "Removes the attached run's own symbol declaration.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsReleaseInput>",
+  "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.release\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

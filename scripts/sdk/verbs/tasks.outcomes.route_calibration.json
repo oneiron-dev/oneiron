@@ -1,0 +1,28 @@
+{
+  "name": "tasks.outcomes.route_calibration",
+  "description": "Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only.",
+  "input": "crate::task_verb::TaskAskHandle",
+  "output": "crate::llm::decision::questions::RouteCalibrationReport",
+  "mcp_served": "[input.group_ref]",
+  "mcp_served_output": "output.derived_from.iter().copied()",
+  "call": "memory.tasks_ask_route_calibration(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "handle",
+        "field": "$",
+        "type": "crate::task_verb::TaskAskHandle"
+      }
+    ]
+  }
+}

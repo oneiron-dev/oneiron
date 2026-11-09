@@ -1,0 +1,13 @@
+{
+  "name": "self.skills.save",
+  "description": "An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it.",
+  "input": "crate::skill::helper::SkillSaveRequest",
+  "output": "crate::memory::SkillAuthoringReceipt",
+  "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

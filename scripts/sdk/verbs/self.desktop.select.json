@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.select",
+  "description": "Sets the value of a combo box or list target by its option label and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
+  "input": "oneiron_browser::SelectInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
+  "call": "oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| driver.select(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

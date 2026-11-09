@@ -1,0 +1,9 @@
+{
+  "name": "self.team.submit",
+  "input": "crate::code_run::TeamSubmitInput",
+  "output": "crate::code_run::TeamSubmitAnswer",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Team",
+  "run_surface": "live"
+}

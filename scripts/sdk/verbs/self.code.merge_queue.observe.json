@@ -1,0 +1,8 @@
+{
+  "name": "self.code.merge_queue.observe",
+  "input": "crate::memory::repo_doors::RepoMergeQueueObserveInput",
+  "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "RepoMergeQueueObserve"
+}

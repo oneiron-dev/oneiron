@@ -1,0 +1,13 @@
+{
+  "name": "self.standing.list",
+  "description": "Every standing block configured for this agent, one per world, in world order.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::StandingBlockView>",
+  "call": "crate::task_verb::sdk::list_own_standing_blocks(memory)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

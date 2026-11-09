@@ -1,0 +1,16 @@
+{
+  "name": "feedback.send",
+  "description": "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate.",
+  "input": "crate::task_verb::sdk::FeedbackSendSubjectRequest",
+  "output": "crate::task_verb::sdk::FeedbackSubjectSent",
+  "call": "crate::task_verb::sdk::host_only(memory, \"feedback.send\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

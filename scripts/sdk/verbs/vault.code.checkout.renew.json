@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.checkout.renew",
+  "description": "Renew the caller's still-live checkout under its exact holder and epoch fence.",
+  "input": "crate::memory::checkout_doors::CheckoutRenewInput",
+  "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.renew\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}

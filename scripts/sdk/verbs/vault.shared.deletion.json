@@ -1,0 +1,16 @@
+{
+  "name": "vault.shared.deletion",
+  "description": "The executed delete-the-vault act, if any.",
+  "input": "EmptyRequest",
+  "output": "Option<crate::federation::SharedVaultDeletion>",
+  "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.measure",
+  "description": "Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms.",
+  "input": "SkillOptimizeMeasureRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeMeasurement",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.optimize.measure\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
