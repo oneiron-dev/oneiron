@@ -3,7 +3,8 @@
 //! protocol 1.1, and serves `seal.verify` at schema 1 and `seal.pdf` at
 //! schema 2, or, with `schema-1` as its second argument, at the old schema
 //! 1 (one PDF, bare prehash signing), so the same attacks run against the
-//! adapter before the binding and after it. It does what a seal organ
+//! adapter before the binding and after it. `seal.prepare` is the real
+//! organ's, so the engine's preparation step reaches the attacks. It does what a seal organ
 //! compromised by a hostile PDF could. Its first argument picks how:
 //! - `forge-signs`: asks the key to sign an unrelated prehash under the
 //!   call's operation (Astra's witness on #1379), then the prehash of a
@@ -39,6 +40,7 @@ mod rogue {
         Answer, Asker, ByteBuf, CallContext, ErrorCode, Organ, OrganError, OrganIdentity,
         OutputBytes, Value, VerbSpec,
     };
+    use oneiron_seal::organ::{PREPARE_SCHEMA, SealOrgan, VERB_PREPARE};
     use oneiron_seal::{
         BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
         NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision,
@@ -198,16 +200,26 @@ mod rogue {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            [("seal.pdf", self.1), ("seal.verify", 1)]
-                .map(|(name, schema)| VerbSpec {
-                    name: name.into(),
-                    schema,
-                    kinds: Vec::new(),
-                })
-                .into()
+            [
+                ("seal.pdf", self.1),
+                ("seal.verify", 1),
+                (VERB_PREPARE, PREPARE_SCHEMA),
+            ]
+            .map(|(name, schema)| VerbSpec {
+                name: name.into(),
+                schema,
+                kinds: Vec::new(),
+            })
+            .into()
         }
 
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+            // The engine prepares the PDF before it seals (seal.prepare): the
+            // real organ's own code prepares it, so every attack below starts
+            // from the input an honest organ would have prepared.
+            if call.verb == VERB_PREPARE {
+                return SealOrgan.call(call);
+            }
             if call.verb == "seal.verify" {
                 return answer(
                     &VerifyReport::Verified(passed(PadesProfile::BaselineB)),

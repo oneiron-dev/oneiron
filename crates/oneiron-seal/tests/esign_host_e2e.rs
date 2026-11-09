@@ -12,7 +12,7 @@
 //! commits, whatever the organ's verdicts say.
 #![cfg(unix)]
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
@@ -34,6 +34,10 @@ use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost, OrganState};
 use oneiron_seal::organ::MAX_REPORT_JSON_BYTES;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
+
+mod support;
+
+use support::GrantAllFloor;
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-seal-organ");
 const ORIGINAL: &[u8] = include_bytes!(concat!(
@@ -336,7 +340,7 @@ fn claim(vault: &Vault, lease_owner: &str) -> TestResult<AttemptRecord> {
 #[test]
 fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original() -> TestResult {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let Ready {
@@ -636,7 +640,7 @@ fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult 
             keys: &keys,
             panics,
         };
-        let host = OrganHost::new(HostConfig::default());
+        let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         host.install(seal_spec(ORGAN, FetchGrant::default()));
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -677,7 +681,7 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
         keys: &keys,
         panics: false,
     };
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -708,7 +712,7 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
 fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -774,7 +778,7 @@ fn many_long_named_fields() -> Vec<u8> {
 fn a_verdict_whose_report_is_too_large_still_crosses()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -798,7 +802,7 @@ mod hostile {
 
     /// The hostile organ installed as the seal, in one of its modes.
     fn rogue_host(mode: &str) -> OrganHost {
-        let host = OrganHost::new(HostConfig::default());
+        let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         let mut spec = seal_spec(ROGUE, FetchGrant::default());
         spec.args = vec![mode.into()];
         host.install(spec);
@@ -977,7 +981,7 @@ mod hostile {
     #[test]
     fn a_signature_stripped_of_its_chain_is_not_admitted() -> TestResult {
         let (keys, cert) = synthetic_keys_with_chain()?;
-        let honest = OrganHost::new(HostConfig::default());
+        let honest = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         honest.install(seal_spec(ORGAN, FetchGrant::default()));
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
