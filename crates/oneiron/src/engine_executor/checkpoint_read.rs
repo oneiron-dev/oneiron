@@ -90,8 +90,18 @@ pub fn checkpoint_as_owner(
     owner: &AuthenticatedOwner,
     input: &CheckpointReadRequest,
 ) -> MemoryResult<Option<CheckpointView>> {
+    owner.revalidate(memory.vault())?;
+    checkpoint_projection(memory, input)
+}
+
+/// [`checkpoint_as_owner`]'s page once its caller is admitted: the owner on
+/// its proof, or the run's own actor (`crate::snapshot_read`, slice 6.4c).
+/// Every source is read through `memory`'s own lane, as before.
+pub(crate) fn checkpoint_projection(
+    memory: &Memory<'_>,
+    input: &CheckpointReadRequest,
+) -> MemoryResult<Option<CheckpointView>> {
     let vault = memory.vault();
-    owner.revalidate(vault)?;
     let run = EntityId::from_hex(input.run_ref.trim())
         .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
     let limit = match input.limit {

@@ -3322,7 +3322,7 @@ export class Oneiron {
         /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
         get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
       },
-      /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+      /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with: the owner reads any run, another caller a run it is the actor of. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
       /** Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused. */
       pause: (input: Facade.RunControlRequest): Facade.RunControlReceipt => this.#call(() => this.#client.vaultRunsPause(input) as Facade.RunControlReceipt),
@@ -3344,7 +3344,7 @@ export class Oneiron {
       settle: (input: Facade.RunSettleRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettle(input) as Facade.RunSettlement),
       /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
       settlement: (input: Facade.RunSettlementRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettlement(input) as Facade.RunSettlement),
-      /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+      /** Reads one committed model step of an attempt by job reference and step hash, without calling a model or admitting work: the owner reads any attempt, another caller an attempt it is the actor of. */
       step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
     },
     scope: {

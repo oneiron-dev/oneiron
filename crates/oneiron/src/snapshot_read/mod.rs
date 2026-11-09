@@ -13,6 +13,7 @@
 //! filters, source finality and deletion apply to each row.
 
 mod evidence_spans;
+mod run_reader;
 mod settings_doors;
 mod snapshot;
 mod source_version;
@@ -21,6 +22,9 @@ pub(crate) mod tables;
 pub use evidence_spans::{
     EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus,
     EvidenceSpan, EvidenceSpans, EvidenceSpansRequest, evidence_spans, validate_evidence_spans,
+};
+pub use run_reader::{
+    checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
 };
 pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
 pub(crate) use snapshot::erase_snapshot_handles_of_actor_in_txn;

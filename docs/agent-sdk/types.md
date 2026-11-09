@@ -4304,7 +4304,7 @@ class Oneiron:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
-            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with: the owner reads any run, another caller a run it is the actor of."""
         def pause(self, spec: Facade.RunControlRequest) -> Facade.RunControlReceipt:
             """Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."""
         def program(self, spec: Facade.ProgramRunRequest) -> Facade.ProgramRunView | None:
@@ -4324,7 +4324,7 @@ class Oneiron:
         def settlement(self, spec: Facade.RunSettlementRequest) -> Facade.RunSettlement:
             """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
         def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
-            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+            """Reads one committed model step of an attempt by job reference and step hash, without calling a model or admitting work: the owner reads any attempt, another caller an attempt it is the actor of."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""

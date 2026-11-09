@@ -85,6 +85,11 @@ pub struct CodeRunLiveRunBinding {
 }
 
 impl CodeRunLiveRunBinding {
+    /// The actor the live run was attached under.
+    pub(crate) fn actor(&self) -> WriteActor {
+        WriteActor::new(self.actor, self.actor_class)
+    }
+
     /// The handle id the host issued at attach.
     #[must_use]
     pub const fn issued(&self) -> [u8; LIVE_RUN_ISSUED_LEN] {
