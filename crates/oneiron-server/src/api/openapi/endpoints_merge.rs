@@ -115,6 +115,7 @@ pub(crate) fn openapi_document() -> Value {
     super::facade_paths::merge_facade_paths(&mut spec);
     super::openai_proxy_paths::merge_openai_proxy_paths(&mut spec);
     super::anonymous_chat_paths::merge_anonymous_chat_paths(&mut spec);
+    super::off_record_room_paths::merge_off_record_room_paths(&mut spec);
     super::signing_paths::merge_signing_paths(&mut spec);
     super::signing_paths::merge_editor_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);

@@ -6,6 +6,7 @@ mod descriptions;
 mod endpoints_merge;
 mod facade_paths;
 mod left_slip_paths;
+mod off_record_room_paths;
 mod openai_proxy_paths;
 mod owner_paths;
 mod pairing_paths;
