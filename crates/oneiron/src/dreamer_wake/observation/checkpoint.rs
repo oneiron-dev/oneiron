@@ -34,7 +34,7 @@ pub(crate) fn record_checkpoint_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     park: &DreamerParkedAttemptRecord,
 ) {
-    if !park.cause.resumes_on_later_pass() {
+    if !park.resumable_by(crate::dreamer_runner::ParkResumer::LaterPass) {
         return;
     }
     let planned = match plan_checkpoint_in_txn(vault, wtxn, park) {
@@ -154,7 +154,9 @@ pub(crate) fn checkpoint_resumable_in_txn(
     park: &DreamerParkedAttemptRecord,
     record: &AttemptRecord,
 ) -> Result<Option<CheckpointCut>> {
-    if !park.cause.resumes_on_later_pass() || record.id != park.attempt_id {
+    if !park.resumable_by(crate::dreamer_runner::ParkResumer::LaterPass)
+        || record.id != park.attempt_id
+    {
         return Ok(None);
     }
     let Some(latest) = LATEST.get(&vault.store, txn, &latest_key(park.attempt_id))? else {

@@ -58,7 +58,7 @@ use super::step::{StepFault, StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
 use crate::decision_host::DecisionHost;
 
-const LEASE_OWNER: &str = "oneiron-server-workflows";
+const LEASE_OWNER: &str = oneiron::dreamer_runner::WORKFLOWS_PARK_OWNER;
 /// Project questions lease apart from workflow steps, so a failed step's
 /// settlement never reads one as its own.
 const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";

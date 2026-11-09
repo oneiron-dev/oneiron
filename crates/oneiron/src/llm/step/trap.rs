@@ -38,7 +38,8 @@ use rmpv::Value;
 #[must_use]
 pub fn trap_park_owner(trap_claim_id: &EntityId) -> String {
     format!(
-        "dreamer.trap:{}",
+        "{}{}",
+        crate::dreamer_runner::TRAP_PARK_OWNER_PREFIX,
         bytes_to_hex_lower(trap_claim_id.as_bytes())
     )
 }
@@ -428,7 +429,9 @@ pub(crate) fn trap_consume_precheck_in_txn(
     let Some(parked) = store.parked_attempt_in_txn(txn, binding.attempt_id)? else {
         return Ok(TrapConsumePrecheck::Proceed);
     };
-    if parked.park_owner != binding.park_owner {
+    if parked.park_owner != binding.park_owner
+        || !parked.resumable_by(crate::dreamer_runner::ParkResumer::TrapConsume)
+    {
         return Ok(TrapConsumePrecheck::Skip {
             reason: TrapBrokenPark::OtherOwner,
             attempt_id: binding.attempt_id,

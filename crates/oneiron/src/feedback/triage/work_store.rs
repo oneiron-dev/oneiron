@@ -129,7 +129,7 @@ fn owed_node<'h>(
 fn parked_on_graph_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, parent: AttemptId) -> Result<bool> {
     Ok(DreamerRunnerStore::new(vault)
         .parked_attempt_in_txn(txn, parent)?
-        .is_some_and(|park| park.park_owner == COACH_FEEDBACK_TRIAGE_PARK_OWNER))
+        .is_some_and(|park| park.resumable_by(crate::dreamer_runner::ParkResumer::FeedbackTriage)))
 }
 
 /// Wakes `parent`, parked on its graph, as the same try.

@@ -443,7 +443,7 @@ pub(crate) fn resume_payer_parks(
             continue;
         };
         if park.park_owner != owner
-            || park.cause != DreamerParkCause::Signal
+            || !park.resumable_by(oneiron::dreamer_runner::ParkResumer::PayerFunding)
             || !park.reason.starts_with(PAYER_PARK_REASON)
         {
             continue;
