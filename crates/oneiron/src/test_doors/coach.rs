@@ -58,6 +58,7 @@ pub fn write_root_goal(vault: &Vault, owner: &AuthenticatedOwner) -> Result<Enti
         exploration_budget: GoalExplorationBudget {
             max_spend: 1000,
             exploration_slice: 100,
+            unit: crate::run_budget::LeaseUnit::tokens(),
             human_minutes: 20,
         },
     };
