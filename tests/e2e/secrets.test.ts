@@ -3,12 +3,10 @@ import { inflateRawSync } from "node:zlib";
 import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
-import { PublicHttpClient, PublicHttpError, McpRpcError, CliError, type WireReply } from "./support/clients.ts";
+import { PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile, redactor } from "./support/run.ts";
-import { ScriptedProviders, type Json, type ProviderStep, openaiText } from "./support/providers.ts";
-import { randomBytes } from "node:crypto";
-import { decode } from "@msgpack/msgpack";
+import { ScriptedProviders, openaiText, type ProviderStep } from "./support/providers.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -331,6 +329,8 @@ suite.test(test, "SECRETS-01", "Mask-on-write and reveal should work", async () 
 // Full request order and independent facts: secrets-blocked-scenarios.
 suite.todo(test, "SECRETS-02", "waits on typed benchmark result/report read with secret-scan mode metadata");
 
+// No additional imports; the merged test file already imports every dependency.
+
 interface secrets03Scenario {
   "SECRETS-03": {
     rungs: { tier_ceiling: number; valuePlacement: string }[];
@@ -388,7 +388,7 @@ function secrets03Exchange(id: string, admission: boolean, marker: string, resul
       } } } },
     { id: `${id}-initialized`, origin: "connector", role: "custody-sink", purpose: "MCP ready notification",
       request: { method: "POST", path: "/mcp", fields: { jsonrpc: "2.0", method: "notifications/initialized" } },
-      response: { kind: "bytes", body: new Uint8Array(), contentType: "application/json", status: 204 } },
+      response: { kind: "bytes", body: new Uint8Array(), contentType: "application/json", status: 202 } },
     { id: `${id}-result`, origin: "connector", role: "custody-sink", purpose: admission ? "List approved tool" : "Use custody credential",
       request: { method: "POST", path: "/mcp", fields: admission
         ? { jsonrpc: "2.0", id: "tools/list:0", method: "tools/list", params: {} }
@@ -403,6 +403,7 @@ function secrets03Exchange(id: string, admission: boolean, marker: string, resul
  * refuses the next use after either custody or connector permission is lost.
  * Doors: owner REST admission/bind/unbind/consent; typed HTTP facade use,
  * rotate, reveal, receipts, recall and stripped export; tool-first MCP use.
+ * Wrong-actor rotate is no-record; value-free revoke supplies the refusal receipt.
  * Restart reads old receipts and uses the same handle/credential at generation 1.
  * Partial: no genuine attached-run fixture, T1 host consumer, T2 file consumer,
  * old-grant redemption, expiry or full cross-surface parity is claimed.
@@ -459,13 +460,17 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
         result => result.receipts.some(row => row.receipt_ref === ref), { label: "SECRETS-03 Gate receipt" });
       expect(page.receipts.some(row => row.receipt_ref === ref)).toBe(true);
     };
-    const secrets03Refuse = async <V extends FacadeVerb>(client: PublicHttpClient, verb: V, input: FacadeInput<V>, status: number, code: string) => {
+    const secrets03Refuse = async <V extends FacadeVerb>(client: PublicHttpClient, verb: V, input: FacadeInput<V>, status: number, code: string, noRecord = false) => {
       const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input);
       secrets03ObserveWire(reply, secrets03ScanBytes);
       const error = secrets03Object(secrets03Object(reply.body).error);
       expect(reply.status === status && error.code === code && typeof error.message === "string"
         && typeof error.requestId === "string" && Array.isArray(error.suggestions)).toBe(true);
       const ref = reply.headers.get("x-oneiron-receipt-ref");
+      if (noRecord) {
+        expect(ref === "none; no-record" && error.receiptRef == null).toBe(true);
+        return;
+      }
       if (!ref || !ref.startsWith("call:")) throw new Error("SECRETS-03 refusal lacks its public call receipt");
       expect(error.receiptRef === ref).toBe(true);
       const receipt = await secrets03Facade(client, "vault.receipts.get", { receipt_ref: ref });
@@ -546,9 +551,13 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       expect(providers.seenFixtureCalls.length === before && answer.receipt.presented_generation == null).toBe(true);
     };
     await secrets03Held(noConnectorGrant.client, "no-connector-grant"); // Never consent this held actor later.
-    const wrongActorReceipt = await secrets03Refuse(agent.client, "vault.secrets.rotate", {
+    await secrets03Refuse(agent.client, "vault.secrets.rotate", {
       name: "secrets03-custody", value_base64: Buffer.from(value1).toString("base64"),
+    }, 403, "FORBIDDEN", true);
+    const wrongActorReceipt = await secrets03Refuse(agent.client, "vault.secrets.revoke", {
+      name: "secrets03-custody",
     }, 403, "FORBIDDEN");
+    if (!wrongActorReceipt) throw new Error("SECRETS-03 value-free refusal has no call receipt");
 
     const secrets03UseResult = async (answer: FacadeResult<"self.use">, generation: number) => {
       const result = secrets03Object(answer.result);
@@ -581,7 +590,8 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const persistedRefusal = await secrets03Facade(agent.client, "vault.receipts.get", { receipt_ref: wrongActorReceipt });
     if (!persistedRefusal) throw new Error("SECRETS-03 wrong-actor refusal did not survive restart");
     expect(persistedRefusal.receipt_ref === wrongActorReceipt && persistedRefusal.actor_ref === agent.principalRef
-      && typeof persistedRefusal.outcome === "object" && persistedRefusal.outcome.refused.code === "FORBIDDEN").toBe(true);
+      && persistedRefusal.verb === "vault.secrets.revoke" && typeof persistedRefusal.outcome === "object"
+      && persistedRefusal.outcome.refused.code === "FORBIDDEN").toBe(true);
     const restartedCard = await secrets03Facade(agent.client, "reveal.describe", { handle });
     expect(restartedCard.handle === handle && restartedCard.status === "active" && restartedCard.reveal === "refused").toBe(true);
     secrets03ScanBytes(await agent.mcp.initialize());
@@ -712,7 +722,7 @@ function secrets06Contains(bytes: Uint8Array, needles: readonly string[]): boole
  * replay. No model, clock change, store access, sleeps or private drains are used.
  */
 suite.test(test, "SECRETS-06",
-  "Private person names stay behind channel ceilings and only owner-approved reveals disclose them",
+  "Public-ceiling agents see private person names only through owner-approved reveals",
   async () => {
     const catalog = await loadFixtures();
     const data = (await catalog.readJson<secrets06ScenarioFixture>("secrets-blocked-scenarios"))["SECRETS-06"];
@@ -1009,7 +1019,21 @@ suite.test(test, "SECRETS-06",
       expect(cli.exitCode).toBe(0);
       const cliRow = secrets06Object(JSON.parse(cli.stdout));
       expect(cliRow.person === person.id_hex && cliRow.name === handle && cliRow.handle === handle).toBe(true);
-      const mcp = await agent.mcp.rpc("tools/call", { name: "vault.people.get", arguments: { spec: { pr: handle } } });
+      const listing = await agent.mcp.rpc("tools/list");
+      secrets06ScanJson("mcp:tools-list", listing);
+      if ("error" in listing) throw new Error("SECRETS-06 MCP listing returned a JSON-RPC refusal (body withheld)");
+      const tools = secrets06Object(listing.result).tools;
+      if (!Array.isArray(tools)) throw new Error("SECRETS-06 MCP listing has no tools");
+      const peopleTool: unknown = tools.find((item: unknown) => secrets06Object(item).name === "vault.people.get");
+      if (peopleTool === undefined) throw new Error("SECRETS-06 MCP people tool is absent");
+      const properties = secrets06Object(secrets06Object(secrets06Object(peopleTool).inputSchema).properties);
+      const schemaVersion = secrets06Object(properties.schema_version).const;
+      if (typeof schemaVersion !== "string") throw new Error("SECRETS-06 MCP people tool has no schema version");
+      const mcp = await agent.mcp.rpc("tools/call", { name: "vault.people.get", arguments: {
+        schema_version: schemaVersion,
+        consent: { policy_ref: "policy:secrets-06", purpose: "Read a private person through its channel ceiling" },
+        arguments: { spec: { pr: handle } },
+      } });
       secrets06ScanJson("mcp:outer", mcp);
       if ("error" in mcp) throw new Error("SECRETS-06 MCP read returned a JSON-RPC refusal (body withheld)");
       const mcpResult = secrets06Object(mcp.result);
@@ -1463,6 +1487,8 @@ enabled = false
  * Report: <workspace>/Desktop/temp/vibe-build-20261017/lanes/kimi/OPUS-E2E-5/cases/SECRETS-08.report.md
  */
 suite.todo(test, "SECRETS-08", "waits on owner-revocable agent Grant admission for vault.trusted_contacts.concern.propose, vault.trusted_contacts.concern.asks and vault.trusted_contacts.list");
+
+// No additional imports; all dependencies are already imported by secrets.test.ts.
 
 interface secrets09Fixture {
   "SECRETS-09": {
