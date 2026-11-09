@@ -1002,7 +1002,7 @@ def mcp_input_dispatch(row):
         surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
-        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
+        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, &oneiron::verbs::VERB_TABLE, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
         paced_arg = 'super::mcp_paced_call(actor, &memory), ' if row.get('host_door_paced') else ''
         door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
@@ -2325,7 +2325,7 @@ def outputs():
     # hooks can retain even a hash or an ask containing the anonymous input.
     core += 'if verb == "ai.anonymous_chat" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
-    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {\n"
+    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, &VERB_TABLE, verb, value, |value| match verb {\n"
     invokers = ''
     for r in facade_rows:
         method = r['name'].replace('.', '_')
