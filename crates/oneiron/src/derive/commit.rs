@@ -121,6 +121,9 @@ impl Vault {
                     DerivationItem::Claim(claim) => {
                         super::claim::stage_in_txn(self, txn, &context, claim)?
                     }
+                    DerivationItem::Evidence(evidence) => {
+                        super::evidence::stage_in_txn(self, txn, &context, evidence)?
+                    }
                     DerivationItem::Supersede(supersede) => {
                         super::supersede::stage_in_txn(self, txn, &context, supersede)?
                     }

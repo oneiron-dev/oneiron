@@ -25,6 +25,7 @@ mod artifact;
 mod batch;
 mod claim;
 mod commit;
+mod evidence;
 mod record;
 mod settle;
 mod supersede;
@@ -36,10 +37,11 @@ pub use artifact::{
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, ItemRef, MAX_BATCH_ITEMS,
+    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
+pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use supersede::{SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE};
@@ -57,3 +59,14 @@ pub const DEPENDENCY_REFUSED: &str = "derive.dependency_refused";
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.
 pub const DERIVE_ITEM_CONTENT_KIND: &str = "vault.derive.item";
+
+/// `actor`'s own scoped read: what it may derive from and cite.
+fn actor_read(
+    vault: &crate::Vault,
+    actor: crate::write_envelope::WriteActor,
+) -> crate::error::Result<crate::claim::ScopedRead<'_>> {
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(actor).ok_or(
+        crate::error::Error::InvalidClaimBody("a derivation actor has no read"),
+    )?;
+    Ok(vault.scoped_read(key))
+}

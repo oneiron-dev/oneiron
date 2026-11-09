@@ -327,66 +327,24 @@ fn attach_evidence(
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
-        let original = vault
-            .get_claim_in_txn(txn, &head)?
-            .ok_or(Error::EntityNotFound)?;
-        // Gate the evidence assertion, not an overwrite of the approved head.
-        // Copy the head's complete scope so sensitivity/persona policy cannot be
-        // lowered by a minimally scoped extraction, and its own facet and
-        // project stamps so the decision and its receipt sit where the head
-        // does. Keep the normal Dreamer validity, source/lineage, isolation,
-        // checker and receipt machinery.
-        let gate_candidate = candidate
-            .candidate
-            .clone()
-            .with_scope(scope_with_taint(original.scope.clone(), source))
-            .with_scope_stamps(original.scope_facet, original.scope_project)
-            .with_evidence(evidence.envelope(Vec::new()));
-        let gate_body =
-            gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-        crate::gate::check_claim_policy_for_write_with_record_with_reader_carrying_refusal(
-            &vault.store,
+        let assertion = EvidenceAssertion {
+            actor: run.agent_actor,
+            envelope: &envelope,
+            head,
+            candidate: &candidate.candidate,
+            sources: &refs,
+            evidence,
+            answers,
+            now_ms: run.now_ms,
+        };
+        let (original, stored) = assert_evidence_in_txn(
+            vault,
             txn,
-            &head,
-            crate::gate::ClaimGateWrite {
-                body: &gate_body,
-                envelope: Some(&envelope),
-                auto_checker: checker.as_ref(),
-                defer_metrics_until_commit: false,
-                transition: None,
-                owner_authored: None,
-                pending_prompt: None,
-            },
-            &policy,
-            crate::gate::GateWriteMode {
-                record_decision: true,
-                persist_pending_consent: false,
-                resolve_pending: false,
-                can_resolve_pending_consent: false,
-                include_source_in_gate_input: true,
-            },
-            &mut None,
+            &assertion,
+            checker.as_ref(),
             &reader,
+            auto_write_rate,
             &mut carried,
-        )?;
-        // The gate is not an authority-granting preflight: all materialization
-        // below and its receipt share this transaction, including live pins.
-        let mut stored = Vec::new();
-        for source_id in &refs {
-            let cited = evidence.for_source(*source_id);
-            stored.extend(attach_ref(
-                vault,
-                txn,
-                run,
-                (head, *source_id),
-                &cited,
-                answers,
-                auto_write_rate,
-            )?);
-        }
-        crate::dreamer_consolidation::strength::record_verified_in_txn(
-            vault, txn, head, evidence, run.now_ms,
         )?;
         vault
             .batch_in()
@@ -433,6 +391,111 @@ fn attach_evidence(
     }
 }
 
+/// One evidence assertion: `evidence` supports the stored claim `head`, as
+/// `actor` asserts it under `envelope`. The Dreamer's sealed attachment and
+/// the derivation commit's evidence item (untangle 6.7a) make it alike.
+pub(crate) struct EvidenceAssertion<'a> {
+    pub(crate) actor: WriteActor,
+    pub(crate) envelope: &'a WriteEnvelope,
+    pub(crate) head: EntityId,
+    /// What the assertion says, gated over the head's scope.
+    pub(crate) candidate: &'a crate::ClaimCandidate,
+    /// The sources it cites, each landing one support.
+    pub(crate) sources: &'a BTreeSet<EntityId>,
+    pub(crate) evidence: &'a VerifiedEvidenceSet,
+    /// The answers the head gives (FIX 7381).
+    pub(crate) answers: &'a [ResolvedConflictOutput],
+    pub(crate) now_ms: u64,
+}
+
+/// Gates `assertion` in `txn` and lands one support of each of its sources
+/// for the head, never an overwrite of the head: the gate judges the
+/// assertion over a copy of the head's complete scope, with the head's own
+/// facet and project stamps, under `reader`, and every support, its
+/// provenance row and the head's verified-support stamp share `txn`. The
+/// head as it stood, for the caller's check that it is unchanged, and the
+/// answers a replay reads back.
+pub(crate) fn assert_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    assertion: &EvidenceAssertion<'_>,
+    checker: Option<&BoundedAutoChecker>,
+    reader: &crate::claim::ScopedRead<'_>,
+    auto_write_rate: crate::store::own_rate_record::OwnRate,
+    carried: &mut Option<String>,
+) -> Result<(crate::claim::ClaimBody, Vec<ResolvedConflictOutput>)> {
+    let EvidenceAssertion {
+        actor,
+        envelope,
+        head,
+        candidate,
+        sources,
+        evidence,
+        answers,
+        now_ms,
+    } = *assertion;
+    let original = vault
+        .get_claim_in_txn(txn, &head)?
+        .ok_or(Error::EntityNotFound)?;
+    // Gate the evidence assertion, not an overwrite of the approved head.
+    // Copy the head's complete scope so sensitivity/persona policy cannot be
+    // lowered by a minimally scoped extraction, and its own facet and
+    // project stamps so the decision and its receipt sit where the head
+    // does. Keep the normal validity, source/lineage, isolation, checker and
+    // receipt machinery.
+    let gate_candidate = candidate
+        .clone()
+        .with_scope(scope_with_taint(original.scope.clone(), evidence.meet()))
+        .with_scope_stamps(original.scope_facet, original.scope_project)
+        .with_evidence(evidence.envelope(Vec::new()));
+    let gate_body = gate_candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    crate::gate::check_claim_policy_for_write_with_record_with_reader_carrying_refusal(
+        &vault.store,
+        txn,
+        &head,
+        crate::gate::ClaimGateWrite {
+            body: &gate_body,
+            envelope: Some(envelope),
+            auto_checker: checker,
+            defer_metrics_until_commit: false,
+            transition: None,
+            owner_authored: None,
+            pending_prompt: None,
+        },
+        &policy,
+        crate::gate::GateWriteMode {
+            record_decision: true,
+            persist_pending_consent: false,
+            resolve_pending: false,
+            can_resolve_pending_consent: false,
+            include_source_in_gate_input: true,
+        },
+        &mut None,
+        reader,
+        carried,
+    )?;
+    // The gate is not an authority-granting preflight: all materialization
+    // below and its receipt share this transaction, including live pins.
+    let mut stored = Vec::new();
+    for source_id in sources {
+        let cited = evidence.for_source(*source_id);
+        stored.extend(attach_ref(
+            vault,
+            txn,
+            (actor, now_ms),
+            (head, *source_id),
+            &cited,
+            answers,
+            auto_write_rate,
+        )?);
+    }
+    crate::dreamer_consolidation::strength::record_verified_in_txn(
+        vault, txn, head, evidence, now_ms,
+    )?;
+    Ok((original, stored))
+}
+
 /// One support assertion of `source` for `head`, carrying the `answers` the
 /// head gives (FIX 7381). Returns the answers the assertion already keeps
 /// when this attempt wrote it before: a replay compares everything else
@@ -440,7 +503,7 @@ fn attach_evidence(
 fn attach_ref(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    run: &DreamerRunContext,
+    (actor, now_ms): (WriteActor, u64),
     (head, source): (EntityId, EntityId),
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
@@ -511,18 +574,15 @@ fn attach_ref(
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     let id =
         EntityId::from_bytes(id).map_err(|_| Error::InvalidClaimBody("reserved attachment id"))?;
-    let mut record = EdgeProvenanceClaimBody::new(
-        run.agent_actor.entity_ref(),
-        1.0,
-        SupersessionStatus::Confirmed,
-    );
+    let mut record =
+        EdgeProvenanceClaimBody::new(actor.entity_ref(), 1.0, SupersessionStatus::Confirmed);
     record.source_revision_ref = Some(
         source_revision.as_bytes()[..16]
             .try_into()
             .expect("hash prefix"),
     );
     record.body_snapshot_ref = Some(head_hash.as_bytes()[..16].try_into().expect("hash prefix"));
-    record.actor_class = Some(run.agent_actor.actor_class());
+    record.actor_class = Some(actor.actor_class());
     let derived_evidence = evidence.envelope(Vec::new());
     if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
         let expected_scope = Value::Map(vec![
@@ -563,7 +623,7 @@ fn attach_ref(
                 edge.provenance
                     != Some(crate::edge::EdgeProvenanceFlags {
                         confirmation_status: crate::edge::EdgeConfirmationStatus::Confirmed,
-                        actor_class: run.agent_actor.actor_class(),
+                        actor_class: actor.actor_class(),
                     })
             })
             || existing.source != Some(evidence_meet)
@@ -580,12 +640,12 @@ fn attach_ref(
             txn,
             &existing,
             &record,
-            run.agent_actor.actor_class(),
+            actor.actor_class(),
             &policy,
         )?;
         return Ok(stored_answers);
     }
-    let at = run.now_ms / 1_000;
+    let at = now_ms / 1_000;
     if vault
         .store
         .port_edge_get(txn, &source, EdgeKind::Supports, &head)?
@@ -604,7 +664,7 @@ fn attach_ref(
             claim_id: &id,
             subject: &edge,
             body: &record,
-            actor_class: run.agent_actor.actor_class(),
+            actor_class: actor.actor_class(),
             learned_at: at,
             explicit_prior: None,
             scope_project: None,
@@ -622,7 +682,7 @@ fn attach_ref(
         &vault.store,
         txn,
         crate::store::own_rate_record::OwnRateKind::AutoWrite,
-        run.agent_actor.entity_ref(),
+        actor.entity_ref(),
         vault.store.clock.now_recorded_at(),
         auto_write_rate,
     )?;

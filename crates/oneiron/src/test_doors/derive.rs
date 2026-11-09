@@ -6,8 +6,8 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimSource;
 use crate::derive::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, ItemOutcome, ItemRef,
+    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
@@ -31,6 +31,14 @@ pub struct Claim {
     pub subject: Named,
     pub value: serde_json::Value,
     pub evidence: Vec<Named>,
+}
+
+/// Evidence for a door batch: `sources` support the claim `head`.
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    pub local: &'static str,
+    pub head: Named,
+    pub sources: Vec<Named>,
 }
 
 /// A supersession for a door batch: `new` replaces `old`.
@@ -92,6 +100,7 @@ pub struct Profile {
 #[derive(Debug, Clone)]
 pub enum Derived {
     Claim(Claim),
+    Evidence(Evidence),
     Supersede(Supersede),
     Settle(Settle),
     About(About),
@@ -188,6 +197,11 @@ pub fn commit_in_attempt(
                         value: claim.value.clone(),
                         confidence: 0.9,
                         evidence: claim.evidence.iter().map(named).collect(),
+                    }),
+                    Derived::Evidence(evidence) => DerivationItem::Evidence(DerivedEvidence {
+                        local: evidence.local.to_owned(),
+                        head: named(&evidence.head),
+                        sources: evidence.sources.iter().map(named).collect(),
                     }),
                     Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
                         local: supersede.local.to_owned(),
@@ -340,6 +354,60 @@ pub fn profile_stored(vault: &Vault, subject: EntityId) -> Result<bool> {
         world: None,
     });
     Ok(vault.get_psych_profile(&id)?.is_some())
+}
+
+/// Witnesses one user TURN saying `words`, as a new speaker; its id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn witness_turn(vault: &Vault, words: &str) -> Result<EntityId> {
+    use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+    let speaker = EntityId::now();
+    vault.put_entity(
+        &speaker,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"witness",
+    )?;
+    let turn = EntityId::now();
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: words.to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 10,
+            assertions: WitnessAssertions::default(),
+        })
+        .map_err(|error| crate::error::Error::InvalidConfig(format!("witness: {error:?}")))?;
+    Ok(turn)
+}
+
+/// Whether `source` holds a `supports` edge to `head`.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn supports(vault: &Vault, source: EntityId, head: EntityId) -> Result<bool> {
+    use crate::ports::EdgeStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .port_edge_get(&txn, &source, crate::edge::EdgeKind::Supports, &head)?
+        .is_some())
 }
 
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
