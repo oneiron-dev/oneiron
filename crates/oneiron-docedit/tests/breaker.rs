@@ -2,7 +2,7 @@
     clippy::disallowed_methods,
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
-use oneiron_docedit::resource::Resources;
+use oneiron_docedit::resource::{Dimension, Resources, wide};
 use oneiron_docedit::retained_opc::{Editability, Error, Limits, Package};
 const PART: &str = "word/document.xml";
 const PATH: &[&str] = &["root", "item"];
@@ -207,7 +207,8 @@ fn checked_patch_rejects_archive_budget_before_state_changes() {
         .expect("archive at exact input ceiling");
     assert!(matches!(
         package.replace_text(PART, PATH, "old", &"&".repeat(100)),
-        Err(Error::Edit("edited archive size limit"))
+        Err(Error::Capacity(hit))
+            if hit.dimension == Dimension::ArchiveBytes && hit.limit == wide(input.len())
     ));
     assert_eq!(package.export().expect("no change"), input);
 }
