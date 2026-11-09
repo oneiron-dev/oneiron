@@ -95,7 +95,7 @@ impl ClaimSettler<'_> {
                     .ok_or_else(holder_refused)?;
                 if !row.is_active()
                     || row.bypass.is_some()
-                    || row.grant_ref() != grant_ref
+                    || crate::consent::consent_grant_row_grant_ref(&row) != grant_ref
                     || !row.grant.bound().contains(&required)
                     || !is_root_owner(memory.vault, txn, row.owner_stamp.actor)?
                 {

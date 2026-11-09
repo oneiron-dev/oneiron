@@ -31,7 +31,7 @@ pub(super) fn predecessors_at_filing(
         .scan(&vault.store, txn)?
         .into_iter()
         .filter(|(_, row)| is_widen_predecessor(row, bound, owner))
-        .map(|(_, row)| row.grant_ref())
+        .map(|(_, row)| crate::consent::consent_grant_row_grant_ref(&row))
         .collect())
 }
 

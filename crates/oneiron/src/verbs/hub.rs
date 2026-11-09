@@ -63,7 +63,7 @@ impl From<ConsentReceipt> for HubConsentReceipt {
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
-            grant_ref: receipt.grant_ref(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
         }
     }
 }

@@ -134,8 +134,8 @@ impl From<ConsentReceipt> for ConsentActReceipt {
             decision_ref: receipt.decision_id().to_hex(),
             outcome: receipt.gate_outcome().to_owned(),
             reason_code: receipt.reason_code().to_owned(),
-            grant_ref: receipt.grant_ref(),
-            diff_handle: receipt.diff_handle(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
         }
     }
 }
