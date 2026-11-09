@@ -18,6 +18,7 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::{EntityId, ErrorKind, Vault};
 
+use crate::sync_harness::open_vault_with_memory_keystore;
 use crate::sync_harness::{
     T0, WINDOW, clear_policy_manifests, entity_blob, map_insert_bytes, test_config, time_range,
 };
@@ -129,7 +130,7 @@ fn revoked_definition(vault: &Vault) -> (EntityId, AgentDefinition) {
 #[test]
 fn a_federation_peer_turns_no_agent_definition_back_on() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(dir.path(), test_config());
     clear_policy_manifests(&vault);
     let widenings: [(&str, fn(&mut AgentDefinition)); 4] = [
         ("enabled", |def| def.enabled = true),

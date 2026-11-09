@@ -49,18 +49,21 @@ use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncResidenceMode};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
-use oneiron::sync::transport::{self, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::temporal::TimeRange;
 use oneiron::{EntityId, Vault};
 
-use crate::sync_harness::{T0, WINDOW, clear_policy_manifests, map_insert_bytes, test_config};
+use crate::sync_harness::open_vault_with_memory_keystore;
+use crate::sync_harness::{
+    ENTITY_METADATA_HEADER_LEN, T0, WINDOW, clear_policy_manifests, map_insert_bytes, test_config,
+    window_update_frame,
+};
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     clear_policy_manifests(&vault);
     (dir, vault)
 }
@@ -77,15 +80,16 @@ fn seed(vault: &Vault, id: &EntityId, entity_type: u8) {
         .unwrap();
 }
 
-/// The pinned 25-byte entity envelope (contracts.ts `entityValueEnvelope`)
+/// The pinned entity metadata header (`record_layout`, row version zero)
 /// built from LITERAL parts, so a CRDT-side expectation never rides an engine
 /// encode path.
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     blob.push(entity_type);
     for _ in 0..3 {
         blob.extend_from_slice(&T0.to_be_bytes());
     }
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(body);
     blob
 }
@@ -463,11 +467,7 @@ fn observer_b_is_the_only_gate_on_the_plain_window_update_arm() {
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
 
-    let frame = transport::encode_window_sync(WINDOW, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .unwrap();
-    let mut message = vec![TAG_WINDOW_SYNC];
-    message.extend_from_slice(&frame[1..]);
+    let message = window_update_frame(WINDOW, &update);
     client
         .handle_server_message(&message)
         .expect("a forged row must not fail the window-sync arm closed");

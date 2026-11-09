@@ -11,6 +11,7 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
 use crate::sync_harness::{
     T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, sync_through_doors,
     time_range, vault_pair,
@@ -68,7 +69,8 @@ fn asset_of(vault: &Vault, bytes: &[u8]) -> Option<EntityId> {
         .into_iter()
         .find(|id| {
             vault.get_raw(id).unwrap().is_some_and(|raw| {
-                raw.first() == Some(&ENTITY_TYPE_ASSET) && raw.get(25..) == Some(bytes)
+                raw.first() == Some(&ENTITY_TYPE_ASSET)
+                    && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(bytes)
             })
         })
 }

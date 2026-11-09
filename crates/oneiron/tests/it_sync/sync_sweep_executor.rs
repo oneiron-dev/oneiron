@@ -19,6 +19,8 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
@@ -52,7 +54,7 @@ fn test_config() -> VaultConfig {
 
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     (dir, vault)
 }
 
@@ -115,7 +117,7 @@ fn map_get_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
 
 fn receipt_body(vault: &Vault, receipt_id: &EntityId) -> serde_json::Value {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
-    rmp_serde::from_slice(&raw[25..]).expect("receipt body decodes")
+    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body decodes")
 }
 
 /// End-to-end ONE-1087 acceptance: write → index → hard delete → sweep,
@@ -412,11 +414,12 @@ fn swept_node_converges_with_fresh_import_and_stale_echo() {
     // (iii) Forward continuity: a NEW post-sweep commit from the replica
     // imports cleanly into the swept doc (identity/VV preserved).
     let newcomer = EntityId::now();
-    let mut blob = Vec::with_capacity(25 + 9);
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 9);
     blob.push(1u8);
     for _ in 0..3 {
         blob.extend_from_slice(&(LEARNED_FEB + 120).to_be_bytes());
     }
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(b"new-after");
     window_b
         .doc
@@ -615,10 +618,10 @@ fn replay_door_skips_stale_receipt_echo_after_finalization() {
     // A REAL divergence (valid body, different requested_at) still
     // quarantines — the exception is exactly one shape wide.
     let mut divergent_body: serde_json::Value =
-        rmp_serde::from_slice(&pre_finalization_raw[25..]).unwrap();
+        rmp_serde::from_slice(&pre_finalization_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
     divergent_body["requested_at"] =
         serde_json::Value::from(divergent_body["requested_at"].as_u64().unwrap() + 1);
-    let mut divergent_raw = pre_finalization_raw[..25].to_vec();
+    let mut divergent_raw = pre_finalization_raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
     divergent_raw.extend_from_slice(&rmp_serde::to_vec_named(&divergent_body).unwrap());
     let doc2 = LoroDoc::new();
     doc2.get_map("entities")

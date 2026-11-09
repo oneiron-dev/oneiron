@@ -2,6 +2,8 @@
 #![allow(clippy::unwrap_used)]
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
@@ -40,7 +42,7 @@ fn test_config() -> VaultConfig {
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(dir.path(), test_config());
     (dir, vault)
 }
 
@@ -210,11 +212,12 @@ fn authority_blob_with_times(
     learned_at: u64,
 ) -> Vec<u8> {
     let body = encode_authority_log_entry_body(entry).unwrap();
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     blob.push(ENTITY_TYPE_AUTHORITY_LOG);
     blob.extend_from_slice(&occurred_start.to_be_bytes());
     blob.extend_from_slice(&occurred_end.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(&body);
     blob
 }
