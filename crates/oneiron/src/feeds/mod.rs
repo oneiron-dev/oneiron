@@ -684,10 +684,32 @@ pub(crate) fn remember_withdrawn_type_in_txn(
     id: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    if !changes_followed_in_txn(store, txn)? {
+    if !changes_followed_in_txn(store, txn)? || erase_fenced_in_txn(store, txn, id)? {
         return Ok(());
     }
     WITHDRAWN_TYPES.put(store, txn, id, &WithdrawnType { entity_type })
+}
+
+/// Whether an erase fences `id` in this write: its permanent hard-delete marker, or a cleanup
+/// archive's marker. The hook carriers keep such an id out by the same rule
+/// (`runtime_hooks::store::source_erased_in_txn`). An erase scrubs the feed rows naming `id`
+/// before its tear, so a feed write the tear makes after the scrub (a cascaded edge removal, a
+/// withdrawn type) keeps the id out too, and the erase leaves no feed row naming it (review
+/// #6942).
+///
+/// # Errors
+///
+/// The marker reads.
+pub(crate) fn erase_fenced_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    Ok(
+        store.port_deletion_marked(txn, DeletionMarker::HardDelete, id)?
+            || store.port_deletion_marked(txn, DeletionMarker::Archive, id)?,
+    )
 }
 
 /// Whether any subscription follows the change log in `txn`: one seek.
