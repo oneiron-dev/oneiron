@@ -1,0 +1,13 @@
+{
+  "name": "self.admission.receipts",
+  "description": "Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay.",
+  "input": "crate::receipt::admission::AdmissionReceiptsRequest",
+  "output": "Vec<crate::receipt::admission::AdmissionReceipt>",
+  "call": "memory.admission_receipts(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

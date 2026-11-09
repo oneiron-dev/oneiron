@@ -1,0 +1,20 @@
+{
+  "name": "vault.repo.export",
+  "description": "Exports one finalized, promoted revision from the attached run's own checkout when one Grant lists publish over the revision's paths; otherwise it holds with a typed code. git_push never implies an export.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoExportInput>",
+  "output": "crate::memory::repo_doors::RepoExportOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.export\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

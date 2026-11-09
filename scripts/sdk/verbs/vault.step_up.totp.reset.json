@@ -1,0 +1,16 @@
+{
+  "name": "vault.step_up.totp.reset",
+  "description": "The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged.",
+  "input": "crate::authority::StepUpTotpResetRequest",
+  "output": "crate::authority::StepUpTotpReset",
+  "call": "crate::task_verb::sdk::reset_step_up_totp_as(memory.vault(), &memory.embedded_owner(\"vault.step_up.totp.reset\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_precheck": false,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.model_pack.revert",
+  "description": "Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing.",
+  "input": "crate::llm::model_pack::ModelPackRevertRequest",
+  "output": "crate::llm::model_pack::ModelPackRevert",
+  "call": "crate::task_verb::sdk::revert_model_pack(memory, input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

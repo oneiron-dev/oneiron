@@ -1,0 +1,16 @@
+{
+  "name": "vault.questions.outcomes",
+  "description": "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label.",
+  "input": "crate::receipt::QuestionOutcomesRequest",
+  "output": "crate::receipt::QuestionOutcomes",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

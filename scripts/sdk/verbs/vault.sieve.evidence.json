@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.evidence",
+  "description": "Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner.",
+  "input": "crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest",
+  "output": "crate::dreamer_wake::sieve_evidence::SieveEvidenceView",
+  "call": "crate::dreamer_wake::sieve_evidence::evidence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.evidence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

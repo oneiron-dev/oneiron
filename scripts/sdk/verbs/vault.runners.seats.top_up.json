@@ -1,0 +1,16 @@
+{
+  "name": "vault.runners.seats.top_up",
+  "description": "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so.",
+  "input": "crate::dispatch_byoa::RunnerSeatCreditTopUpRequest",
+  "output": "crate::dispatch_byoa::RunnerSeatTopUpReceipt",
+  "call": "memory.vault().top_up_runner_seat_as_owner(&memory.embedded_owner(\"vault.runners.seats.top_up\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

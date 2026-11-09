@@ -1,0 +1,14 @@
+{
+  "name": "vault.connectors.slates.narrow",
+  "description": "The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it.",
+  "input": "ConnectorSlateNarrowRequest",
+  "output": "crate::task_verb::sdk::ConnectorSlateNarrowView",
+  "call": "crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "section": false,
+  "openapi": true
+}

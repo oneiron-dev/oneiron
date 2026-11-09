@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.click",
+  "description": "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
+  "input": "crate::task_verb::sdk::BrowserClickInput",
+  "output": "crate::task_verb::sdk::BrowserObservationPage",
+  "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.click(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserClickInput>",
+    "description": "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

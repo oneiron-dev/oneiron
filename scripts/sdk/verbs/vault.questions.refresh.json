@@ -1,0 +1,16 @@
+{
+  "name": "vault.questions.refresh",
+  "description": "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it.",
+  "input": "crate::receipt::QuestionRefreshRequest",
+  "output": "Vec<crate::receipt::QuestionAnswer>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false
+}

@@ -1,0 +1,20 @@
+{
+  "name": "vault.repo.merge_queue.enqueue",
+  "description": "Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoMergeQueueEnqueueInput>",
+  "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.merge_queue.enqueue\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

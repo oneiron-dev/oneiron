@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.coping.aggregate",
+  "description": "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs.",
+  "input": "crate::memory::coping_doors::CopingAggregateRequest",
+  "output": "crate::memory::coping_doors::CopingAggregate",
+  "call": "memory.coping_aggregate_as_owner(&memory.embedded_owner(\"vault.affect.coping.aggregate\")?, &input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "vault.kv.get",
+  "description": "Exact key lookup in the bound actor's worldless key-value namespace; never recall.",
+  "input": "crate::memory::KeyValueAddress",
+  "output": "Option<crate::memory::KeyValueItem>",
+  "call": "memory.key_value_get(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+      "ts": "/** Exact actor-owned worldless key lookup, never recall. */",
+      "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+    }
+  }
+}

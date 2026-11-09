@@ -1,0 +1,17 @@
+{
+  "name": "vault.identity.facet",
+  "description": "The owner mints identity facets and forks assigned claims under their masks without restamping original claims.",
+  "input": "crate::task_verb::sdk::IdentityFacetRequest",
+  "output": "crate::task_verb::sdk::IdentityTopologyResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.facet\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

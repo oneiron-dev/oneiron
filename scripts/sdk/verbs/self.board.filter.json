@@ -1,0 +1,12 @@
+{
+  "name": "self.board.filter",
+  "description": "Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn.",
+  "input": "crate::task_verb::sdk::BoardFilterRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_filter_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

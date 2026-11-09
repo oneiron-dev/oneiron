@@ -1,0 +1,18 @@
+{
+  "name": "vault.off_record.rooms.suggest_save",
+  "description": "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms.",
+  "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+  "output": "crate::task_verb::sdk::OffRecordRoomView",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.suggest_save\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "credential_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "proposes": true,
+  "mcp_scope": "filtered",
+  "host_door_proof": "off_record_room"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "vault.summaries.regenerate",
+  "description": "Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch.",
+  "input": "crate::scope_summary::SummaryRegenerateRequest",
+  "output": "crate::scope_summary::SummaryMutationResult",
+  "call": "memory.regenerate_summary(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryRegenerateRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true
+}

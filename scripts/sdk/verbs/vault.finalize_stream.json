@@ -1,0 +1,14 @@
+{
+  "name": "vault.finalize_stream",
+  "description": "Commits the stream as final and releases its handle, returning the immutable terminal receipt.",
+  "input": "crate::memory::MessageStreamRequest",
+  "output": "crate::memory::MessageStreamReceipt",
+  "call": "memory.messages_finalize_stream(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "lands_turn": true
+}

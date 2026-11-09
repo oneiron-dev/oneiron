@@ -1,0 +1,28 @@
+{
+  "name": "vault.remember",
+  "description": "Commits one claim through the gate, the same as vault.claims.upsert.",
+  "refs": [
+    "/subject_ref",
+    "/world_ref",
+    "/relationship_ref/*"
+  ],
+  "uniffi": {
+    "args": {
+      "claim": "ClaimInput"
+    },
+    "output": "CommitReceipt"
+  },
+  "input": "crate::memory::ClaimInput",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.claim_upsert(&input)?",
+  "scope": "Write",
+  "admission": {
+    "validate": "crate::memory::caps::check_claim_input(&input)?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "proposes": true
+}

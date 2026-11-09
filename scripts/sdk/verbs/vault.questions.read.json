@@ -1,0 +1,14 @@
+{
+  "name": "vault.questions.read",
+  "input": "crate::receipt::QuestionReadRequest",
+  "output": "Option<crate::llm::decision::questions::QuestionRecord>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false
+}

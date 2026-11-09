@@ -1,0 +1,27 @@
+{
+  "name": "vault.rooms.claim",
+  "description": "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed.",
+  "input": "RoomClaimRequest",
+  "output": "crate::workspace_roster::RoomClaimOutcome",
+  "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
+  "scope": "Write",
+  "mcp_fields": {
+    "room_ref": "room_ref",
+    "turn_ref": "turn_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "room_ref",
+        "type": "String"
+      },
+      {
+        "name": "turn_ref",
+        "type": "String"
+      }
+    ]
+  }
+}

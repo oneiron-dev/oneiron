@@ -1,0 +1,12 @@
+{
+  "name": "vault.lenses.list",
+  "description": "One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree.",
+  "input": "crate::lens::LensListRequest",
+  "output": "crate::lens::LensListPage",
+  "call": "memory.lenses_list(input)?",
+  "scope": "Read",
+  "admission": {
+    "projection_record_scope": true
+  },
+  "section": false
+}

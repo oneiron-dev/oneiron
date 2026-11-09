@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.sync",
+  "description": "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities.",
+  "input": "HubSkillRequest",
+  "output": "crate::task_verb::sdk::HubSkillSyncReceipt",
+  "call": "crate::task_verb::sdk::hub_skill_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.sync\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

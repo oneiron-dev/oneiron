@@ -1,0 +1,14 @@
+{
+  "name": "vault.export.scoped",
+  "description": "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding.",
+  "input": "crate::memory::ScopedExportRequest",
+  "output": "crate::memory::ScopedExport",
+  "call": "memory.export_scoped(&input)?",
+  "scope": "Read",
+  "admission": {
+    "scoped_export": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

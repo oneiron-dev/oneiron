@@ -39,8 +39,6 @@ use crate::{EntityId, Vault};
 
 pub use self::surface_seal::seal_custody_submit;
 
-pub use crate::verb_catalog::CUSTODY_VALUE_ROWS;
-
 /// The ref a manifest is read at when the request names none, as on the
 /// owner's register route.
 const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";

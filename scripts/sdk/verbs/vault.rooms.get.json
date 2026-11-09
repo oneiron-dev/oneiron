@@ -1,0 +1,30 @@
+{
+  "name": "vault.rooms.get",
+  "description": "One thread of a room by its turn, even when every list omits it.",
+  "input": "RoomTurnRequest",
+  "output": "Option<crate::workspace_roster::RoomThread>",
+  "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "room_ref": "room_ref",
+    "turn_ref": "turn_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "room_ref",
+        "type": "String"
+      },
+      {
+        "name": "turn_ref",
+        "type": "String"
+      }
+    ]
+  }
+}
