@@ -22,6 +22,10 @@ const PACKAGE_JSON: &str = "../../packages/oneiron/package.json";
 
 fn main() {
     napi_build::setup();
+    // The SDK outputs this crate includes, generated at build time (crates/oneiron-sdk-build).
+    oneiron_sdk_build::generate(&[
+        "crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs",
+    ]);
     // `napi_build::setup` links the cdylib with the N-API symbols left
     // undefined for the importing Node process. The crate's own test binary
     // has no such host, and macOS's linker refuses undefined symbols unless

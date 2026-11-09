@@ -12,6 +12,13 @@ use std::process::Command;
 const RELEASE_REVISION: &str = "ONEIRON_ENGINE_REVISION";
 
 fn main() {
+    // The SDK outputs this crate includes, generated at build time (crates/oneiron-sdk-build).
+    oneiron_sdk_build::generate(&[
+        "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
+        "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
+        "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
+        "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
+    ]);
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed={RELEASE_REVISION}");
     let build = std::env::var(RELEASE_REVISION)
