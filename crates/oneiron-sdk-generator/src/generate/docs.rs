@@ -84,7 +84,7 @@ pub(crate) fn generated_artifacts(
 /// universal newlines, so a CRLF copy of the same text stays as it is).
 pub(crate) fn write(files: &[(&str, String)], out: &Path) -> Result<(), GenerateError> {
     for (name, contents) in files {
-        let path = out.join(name);
+        let path = super::outputs::join(out, name);
         if path.exists() && read_text(&path)? == *contents {
             continue;
         }

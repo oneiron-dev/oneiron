@@ -9,7 +9,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
@@ -157,6 +157,16 @@ pub(crate) fn pure_path(text: &str) -> String {
         ".".to_owned()
     } else {
         joined
+    }
+}
+
+/// `dir / path` as `pathlib` joins: a `.` (or empty) directory adds no part (`Path('.') / 'a/b'` is `a/b`), so an
+/// error under `--out-dir .` names the path Python names.
+pub(crate) fn join(dir: &Path, path: &str) -> PathBuf {
+    if dir.as_os_str().is_empty() || dir == Path::new(".") {
+        PathBuf::from(path)
+    } else {
+        dir.join(path)
     }
 }
 
@@ -479,7 +489,7 @@ impl Generator {
         let files = self.outputs()?;
         for (path, text) in files.iter() {
             let Some(text) = text else { continue };
-            let target = dir.join(path);
+            let target = join(dir, path);
             if let Some(parent) = target.parent() {
                 mkdir_parents(parent)?;
             }
@@ -739,6 +749,23 @@ mod tests {
         ];
         for (text, expected) in cases {
             assert_eq!(pure_path(text), expected, "{text:?}");
+        }
+    }
+
+    // python3 -c "from pathlib import Path; print([str(Path(d) / 'a/b.ts') for d in ['.', '', 'out', '/']])"
+    #[test]
+    fn join_is_pathlibs() {
+        for (dir, expected) in [
+            (".", "a/b.ts"),
+            ("", "a/b.ts"),
+            ("out", "out/a/b.ts"),
+            ("/", "/a/b.ts"),
+        ] {
+            assert_eq!(
+                join(Path::new(dir), "a/b.ts"),
+                Path::new(expected),
+                "{dir:?}"
+            );
         }
     }
 
