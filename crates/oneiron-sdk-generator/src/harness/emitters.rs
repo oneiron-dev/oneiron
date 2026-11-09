@@ -207,6 +207,7 @@ pub(crate) const EMITTERS: &[Emitter] = &[
             crate::generate::emit_native::native_boundary(generator, id, language).map(Value::Str)
         },
         files: |_| Vec::new(),
+    },
     // G3: generate.py:2902-2926. outputs()'s `facade_rows` (generate.py:2242) is FACADE_ROWS's expression
     // (generate.py:339) over the same rows, so it is `Generator::facade_rows`.
     Emitter {
