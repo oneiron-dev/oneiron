@@ -4,7 +4,8 @@
 
 use crate::claim::ClaimSource;
 use crate::derive::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, ItemOutcome, ItemRef,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSupersede,
+    ItemOutcome, ItemRef,
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
@@ -28,6 +29,21 @@ pub struct Claim {
     pub subject: Named,
     pub value: serde_json::Value,
     pub evidence: Vec<Named>,
+}
+
+/// A supersession for a door batch: `new` replaces `old`.
+#[derive(Debug, Clone)]
+pub struct Supersede {
+    pub local: &'static str,
+    pub new: Named,
+    pub old: Named,
+}
+
+/// One item of a door batch.
+#[derive(Debug, Clone)]
+pub enum Derived {
+    Claim(Claim),
+    Supersede(Supersede),
 }
 
 /// One item's outcome, as the commit answered it or the batch record keeps
@@ -69,23 +85,44 @@ pub fn commit_claims(
     run: &str,
     claims: &[Claim],
 ) -> Result<Committed> {
+    let items: Vec<Derived> = claims.iter().cloned().map(Derived::Claim).collect();
+    commit(vault, actor, class, run, &items)
+}
+
+/// Commits `items` as one batch by `actor` of `class`, in run `run`.
+///
+/// # Errors
+///
+/// The commit's: a malformed batch or a storage error.
+pub fn commit(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    items: &[Derived],
+) -> Result<Committed> {
     let stamp = DerivationStamp {
         actor: WriteActor::new(actor, class),
         run: Some(run.to_owned()),
         lineage: SourceLineage::of(ClaimSource::Generated),
     };
     let batch = DerivationBatch {
-        items: claims
+        items: items
             .iter()
-            .map(|claim| {
-                DerivationItem::Claim(DerivedClaim {
+            .map(|item| match item {
+                Derived::Claim(claim) => DerivationItem::Claim(DerivedClaim {
                     local: claim.local.to_owned(),
                     predicate: claim.predicate.to_owned(),
                     subject: named(&claim.subject),
                     value: claim.value.clone(),
                     confidence: 0.9,
                     evidence: claim.evidence.iter().map(named).collect(),
-                })
+                }),
+                Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
+                    local: supersede.local.to_owned(),
+                    new: named(&supersede.new),
+                    old: named(&supersede.old),
+                }),
             })
             .collect(),
     };
@@ -96,7 +133,7 @@ pub fn commit_claims(
             .items
             .into_iter()
             .map(|item| match item.outcome {
-                ItemOutcome::Landed { rows, approval } => Item {
+                ItemOutcome::Landed { rows, approval, .. } => Item {
                     local: item.local,
                     kind: item.kind.to_owned(),
                     landed: true,
@@ -115,6 +152,21 @@ pub fn commit_claims(
             })
             .collect(),
     })
+}
+
+/// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
+/// when it is a stored claim.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_lifecycle(vault: &Vault, id: EntityId) -> Result<Option<String>> {
+    let Some(raw) = vault.get(&id)? else {
+        return Ok(None);
+    };
+    Ok(crate::claim::decode_claim_body(&raw, true)
+        .ok()
+        .map(|body| body.lifecycle.as_str().to_owned()))
 }
 
 /// The items of the committed batch `batch`, as its record keeps them.
