@@ -236,6 +236,21 @@ impl<'a> ScopedRead<'a> {
             })
     }
 
+    /// Whether this read's credential still holds in `txn`, with its owner
+    /// binding where it reads as the owner, asking nothing of any row's grant:
+    /// a door that reaches only the reader's own state (its change feed
+    /// subscriptions, untangle slice 6.8a) checks it in that state's own
+    /// transaction, so a key revoked or lapsed since it was made reaches
+    /// nothing (review #6897).
+    ///
+    /// # Errors
+    ///
+    /// The owner binding's refusal ([`Self::owner_live_in`]), or the read.
+    pub(crate) fn credential_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        self.owner_live_in(txn)?;
+        self.proof_live_in(txn)
+    }
+
     pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         // A host action's key reads nothing once its root, its owner binding
         // or its owner lapses, whichever door asks (FIX 2222).

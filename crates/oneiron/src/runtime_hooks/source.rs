@@ -490,7 +490,7 @@ pub(super) fn claim_fact_in_txn(
 /// The newest position in `source`, or `None` while it is empty, in the
 /// caller's snapshot, including a binding lifecycle write's own settlement
 /// head.
-pub(super) fn head_in_txn(
+pub(crate) fn head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: FactSource,
@@ -509,7 +509,8 @@ pub(super) fn head_in_txn(
 
 /// Whether a fact of `kind` that a write appends to `source`, one of the
 /// engine's own hook feeds, has a reader in that write's `txn` (FIX 22141,
-/// FIX 22154): hooks are on, and an enabled fact binding whose selector
+/// FIX 22154): a change feed subscription follows `source` (untangle slice
+/// 6.8), or hooks are on and an enabled fact binding whose selector
 /// takes `kind` follows `source` from an unpaused cursor. No other binding
 /// takes the fact: one with no cursor there, or a paused one, starts past it
 /// at the feed head; a disabled one takes nothing; one whose selector takes
@@ -524,6 +525,11 @@ pub(super) fn has_reader_in_txn(
     source: FactSource,
     kind: FactKind,
 ) -> Result<bool> {
+    // A change feed subscription that follows `source` reads each of its
+    // facts, hooks on or off (untangle slice 6.8).
+    if crate::feeds::followed_in_txn(vault, txn, source)? {
+        return Ok(true);
+    }
     if !vault.hooks_enabled_in_txn(txn)? {
         return Ok(false);
     }
@@ -545,6 +551,76 @@ pub(super) fn has_reader_in_txn(
         }
     }
     Ok(false)
+}
+
+/// One settled proposal as a change feed delivers it (untangle slice 6.8):
+/// its position, the settled entity, who settled it and when, and the read
+/// of that entity its subscriber's lane must pass, `None` once its pinned
+/// history is gone.
+pub(crate) struct SettledFeedFact {
+    pub(crate) position: SettlementPosition,
+    pub(crate) entity: EntityId,
+    pub(crate) actor: EntityId,
+    pub(crate) recorded_at: u64,
+    pub(crate) revision: Option<RevisionRef>,
+    pub(crate) point: Option<crate::claim::PointRead<'static>>,
+}
+
+/// One bounded read of the settlement feed for a change feed.
+pub(crate) struct SettledFeedFacts {
+    pub(crate) facts: Vec<SettledFeedFact>,
+    /// The last position scanned, kept or not.
+    pub(crate) through: Option<SettlementPosition>,
+    /// The read stopped at its bound before the feed's end.
+    pub(crate) more: bool,
+}
+
+/// Up to `max_entries` settled proposals after `after` (exclusive) in the
+/// caller's snapshot: the settlement feed the hooks follow, read for a change
+/// feed subscription (untangle slice 6.8).
+pub(crate) fn settled_feed_facts_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<SettlementPosition>,
+    max_entries: usize,
+) -> Result<SettledFeedFacts> {
+    let batch = read_after_in_txn(
+        vault,
+        txn,
+        FactSource::Settlement,
+        after.map(FactPosition::Settlement),
+        max_entries,
+    )?;
+    let through = match batch.through {
+        None => None,
+        Some(FactPosition::Settlement(position)) => Some(position),
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "the settlement feed answered another source",
+            ));
+        }
+    };
+    let mut facts = Vec::with_capacity(batch.entries.len());
+    for entry in batch.entries {
+        let FactPosition::Settlement(position) = entry.position else {
+            return Err(Error::InvariantViolation(
+                "the settlement feed answered another source",
+            ));
+        };
+        facts.push(SettledFeedFact {
+            position,
+            entity: entry.entity,
+            actor: entry.actor,
+            recorded_at: entry.recorded_at,
+            revision: entry.revision,
+            point: super::read::fact_point(&entry),
+        });
+    }
+    Ok(SettledFeedFacts {
+        facts,
+        through,
+        more: batch.more,
+    })
 }
 
 /// The hook feed rows at or before `floor`, the lowest cursor of every
@@ -594,7 +670,8 @@ pub(super) fn scrub_hook_feeds_in_txn(
 ) -> Result<()> {
     settlement::scrub_settlements_in_txn(vault, txn, ids)?;
     schedule::scrub_task_ticks_in_txn(vault, txn, ids)?;
-    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)?;
+    crate::feeds::scrub_withdrawn_types_in_txn(&vault.store, txn, ids)
 }
 
 /// The changelog position of a binding claim's latest write, in the
