@@ -23,8 +23,8 @@ use oneiron::{
         AsrEvent, AsrEventKind, AsrUpdate, PartialEnricher, PartialEnrichment, TtsCommand,
         TtsSeamClient, VoiceCascadeSession, VoiceSessionConfig,
         voxcpm2::{
-            MODEL, RenderTarget, VoiceServingLimits, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Queue,
-            VoxCpm2Work, WarmTarget, http::VoxCpm2HttpQueue,
+            MODEL, RenderTarget, VoiceServingLimits, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2PcmBody,
+            VoxCpm2Queue, VoxCpm2Work, WarmTarget, http::VoxCpm2HttpQueue,
         },
     },
     voice_identity::ref_bank::{VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip},
@@ -68,12 +68,15 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     let owner = EntityId::now();
+    grant_render(&vault, "owner-voice", owner, "owner-grant")?;
     vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "owner-ref".into(),
         voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: "owner-grant".into(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -114,6 +117,7 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
         Arc::clone(&vault),
         "owner-voice",
         "neutral",
+        WORKER_LOCALITY,
         Capture {
             limits: Some(vault.voice_serving_limits(None)?),
             ..Capture::default()
@@ -127,6 +131,7 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     })?;
     tts.submit(TtsCommand::End { generation })?;
     let target = tts.target().expect("target").clone();
+    let selected = vault.prepare_voice_clone("owner-voice", "voxcpm2", false, WORKER_LOCALITY)?;
     assert_eq!(
         target,
         RenderTarget {
@@ -136,10 +141,10 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
                 owner,
                 // Minted by the bank at identity birth; the digest binds the refs.
                 incarnation: target.fence.incarnation,
-                ref_digest: vault
-                    .prepare_voice_clone("owner-voice", "voxcpm2", false)?
-                    .ref_digest,
+                ref_digest: selected.ref_digest,
                 include_generated: false,
+                // The render consent the refs reach the worker under.
+                grant: selected.grant,
             },
             limits: vault.voice_serving_limits(None)?,
             warm: WarmTarget {
@@ -151,15 +156,15 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
             }
         }
     );
-    let pcm = tts.handle_pcm(VoxCpm2Audio {
+    let mut pcm = tts.handle_pcm(VoxCpm2Audio {
         generation,
         submission: 1,
         chunk_index: 0,
         target: target.clone(),
         channels: 1,
-        bytes: &[1, 0, 255, 255],
+        body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0, 255, 255])),
     })?;
-    let (frame, origin) = pcm.filter_pcm(&cascade).expect("active cascade PCM");
+    let (frame, origin) = pcm.next_window(&cascade)?.expect("active cascade PCM");
     assert_eq!(frame.samples, [1, -1]);
     assert_eq!(frame.sample_rate, 48_000);
     assert_eq!(origin, target);
@@ -170,6 +175,7 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
         Arc::clone(&vault),
         "owner-voice",
         "neutral",
+        WORKER_LOCALITY,
         Capture {
             limits: Some(vault.voice_serving_limits(None)?),
             ..Capture::default()
@@ -182,13 +188,13 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     })?;
     second.submit(TtsCommand::End { generation })?;
     let second_target = second.target().unwrap().clone();
-    let pending = second.handle_pcm(VoxCpm2Audio {
+    let mut pending = second.handle_pcm(VoxCpm2Audio {
         generation,
         submission: 1,
         chunk_index: 0,
         target: second_target,
         channels: 1,
-        bytes: &[1, 0],
+        body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0])),
     })?;
     vault.withdraw_voice_consent(&oneiron::voice_identity::VoiceWithdrawalRequest {
         event_id: "withdraw-before-playback".into(),
@@ -200,12 +206,10 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
             notice: "withdraw".into(),
         },
     })?;
-    assert!(pending.filter_pcm(&cascade).is_none());
+    assert!(pending.next_window(&cascade)?.is_none());
     Ok(())
 }
 
-/// Tiny wire peer: proves the production queue really posts banked bytes to
-/// an already-ready process and rejects a different target in its response.
 /// Where the host's worker runs in these tests: its own server, never a
 /// third party, as the reference clip is the person's raw voice.
 const WORKER_LOCALITY: ModelLocality = ModelLocality::OwnServer;
@@ -275,6 +279,8 @@ fn worker_seat() -> WireSeat {
     )
 }
 
+/// Tiny wire peer: proves the production queue really posts banked bytes to
+/// an already-ready process and rejects a different target in its response.
 #[test]
 fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     let dir = tempfile::tempdir()?;

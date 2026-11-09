@@ -350,6 +350,9 @@ fn context_pack_request() -> CoreContextPackRequest {
         max_neighbors: Some(4),
         budget: None,
         filter: None,
+        type_ref: None,
+        axis: None,
+        media: None,
     }
 }
 
@@ -360,6 +363,8 @@ fn hydrate_request(reference: &str) -> CoreHydrateRequest {
         content_hash: None,
         view: Some(View::Full),
         filter: None,
+        image_input: false,
+        task: None,
     }
 }
 
@@ -459,6 +464,8 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
         refs: vec![reference.to_owned()],
         view: Some(View::Full),
         filter: None,
+        image_input: false,
+        task: None,
     };
     let denied_item = in_process
         .hydrate_many(batch(&fixture.denied_ref))
