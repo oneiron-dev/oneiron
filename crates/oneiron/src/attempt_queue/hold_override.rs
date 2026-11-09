@@ -26,9 +26,6 @@ use crate::store::Store;
 use super::AttemptQueue;
 use super::types::{AttemptId, AttemptPause, AttemptRecord};
 
-/// The actor an erased actor's override records read as.
-const ERASED_OVERRIDE_ACTOR: &str = "erased";
-
 /// An engine hold released on one attempt by a generic Resume.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AttemptHoldOverride {
@@ -96,18 +93,19 @@ pub(super) fn delete_hold_override_in_txn(
     Ok(())
 }
 
-/// Leaves every override record `actor` made without its actor: the release
-/// stands, and the record names no erased person.
-pub(crate) fn scrub_hold_override_actor_in_txn(
-    store: &Store,
+/// The table's actor scrub (an actor's erase, and a restore's rerun of it):
+/// every override record `actor` made reads as made by an erased actor. The
+/// release stands, and the record names no erased person.
+pub(crate) fn erase_hold_override_actor_in_txn(
+    vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
     let actor = actor.to_hex();
-    for (id, mut row) in HOLD_OVERRIDE.scan(store, wtxn)? {
+    for (id, mut row) in HOLD_OVERRIDE.scan(&vault.store, wtxn)? {
         if row.actor == actor {
-            row.actor = ERASED_OVERRIDE_ACTOR.to_owned();
-            HOLD_OVERRIDE.put(store, wtxn, &id, &row)?;
+            row.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
+            HOLD_OVERRIDE.put(&vault.store, wtxn, &id, &row)?;
         }
     }
     Ok(())

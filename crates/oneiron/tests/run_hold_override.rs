@@ -13,8 +13,8 @@
 mod fixture;
 
 use fixture::{
-    KIND, WORKER, annotation_held_row, claim, claimed, enqueued, last_note, open, person, read,
-    resume, unix_now,
+    HeldWave, KIND, WORKER, annotation_held_row, claim, claimed, enqueued, held_wave_planner,
+    last_note, open, person, read, resume, unix_now, wave_plan,
 };
 use oneiron::EdgeActorClass;
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease, BudgetHoldState};
@@ -22,10 +22,7 @@ use oneiron::attempt_queue::{
     AttemptInterventionEffect, AttemptQueue, AttemptResumePoint, AttemptState, ClaimOutcome,
     EnqueueAttempt, PauseKind, RunState,
 };
-use oneiron::task_verb::TaskCreateSpec;
-use oneiron::wave_orchestration::{
-    PlannedTask, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION, WaveApplyOutcome, WavePlan,
-};
+use oneiron::wave_orchestration::{WAVE_PLAN_ATTEMPT_KIND, WaveApplyOutcome};
 
 /// The audit's case: a person resumes a run the spend cap parked. The plan
 /// hold reads Resumed under that person and owes no held Ask any more.
@@ -127,51 +124,12 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
     let (_dir, vault) = open();
     let queue = AttemptQueue::new(&vault);
     let now = unix_now();
-    let actor = person(&vault, now);
-    let epic = vault
-        .memory(actor, EdgeActorClass::Human)
-        .tasks_create(&TaskCreateSpec::new(
-            rmpv::Value::from("split the epic"),
-            Some("epic".into()),
-            None,
-            Some(now),
-        ))
-        .expect("the epic is created")
-        .task_ref
-        .expect("open task effects");
-    let plan = || WavePlan {
-        schema_version: WAVE_PLAN_SCHEMA_VERSION,
-        plan_ref: "run-hold-plan".to_owned(),
-        epic_task_ref: epic,
-        tasks: ["a", "b"]
-            .into_iter()
-            .map(|key| PlannedTask {
-                local_key: key.to_owned(),
-                label: format!("task {key}"),
-                spec: serde_json::Value::Null,
-                assignee_ref: None,
-                blocked_by: Vec::new(),
-            })
-            .collect(),
-    };
-    let row = enqueued(
-        vault
-            .enqueue_wave_plan(epic, "split the epic", serde_json::json!({}), now)
-            .expect("enqueue the planning attempt"),
-    );
-    let first = claimed(claim(&queue, WAVE_PLAN_ATTEMPT_KIND, now + 1));
-    let launch = match vault
-        .apply_wave_plan_attempt_gated(actor, EdgeActorClass::Human, &first, plan(), None, now + 2)
-        .expect("the gated apply")
-    {
-        WaveApplyOutcome::Paused(receipt) => receipt.launch_ref,
-        WaveApplyOutcome::Applied(_) => panic!("with no decider the cut waits for the owner"),
-    };
-    let parked = read(&queue, row.id);
-    assert!(
-        parked.fanout_hold_for(launch),
-        "the planner waits on the launch"
-    );
+    let HeldWave {
+        row,
+        launch,
+        actor,
+        epic,
+    } = held_wave_planner(&vault, &queue, now);
 
     let resumed = resume(&queue, row.id, &actor.to_hex(), now + 3);
     assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
@@ -179,7 +137,14 @@ fn raw_resume_of_fanout_hold_completes_the_planner() {
     let second = claimed(claim(&queue, WAVE_PLAN_ATTEMPT_KIND, now + 4));
     assert_eq!(second.id, row.id);
     let outcome = vault
-        .apply_wave_plan_attempt_gated(actor, EdgeActorClass::Human, &second, plan(), None, now + 5)
+        .apply_wave_plan_attempt_gated(
+            actor,
+            EdgeActorClass::Human,
+            &second,
+            wave_plan(epic),
+            None,
+            now + 5,
+        )
         .expect("the gated apply again");
     assert!(
         matches!(&outcome, WaveApplyOutcome::Paused(receipt) if receipt.launch_ref == launch),

@@ -8,7 +8,8 @@ crate::side_table::side_tables! {
     /// RUN-HOLD: an engine hold a generic Resume released on one attempt (the hold, the actor,
     /// the instant), so a later claim does not pause the row again. Key: id16.
     ATTEMPT_HOLD_OVERRIDE: VaultMeta b"job:hold_override:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::attempt_queue::erase_hold_override_actor_in_txn;
     /// Attempt kind to attempt ids, empty markers. Key: u64be len + kind + id16.
     ATTEMPT_KIND_INDEX: VaultMeta b"job:kind_index:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

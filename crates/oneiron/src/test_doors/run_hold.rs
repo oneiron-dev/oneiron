@@ -1,6 +1,6 @@
 //! Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook
-//! runtime writes, the hold override record, and the row deletion and actor
-//! scrub that override records join.
+//! runtime writes, the override records, and the row deletion and actor
+//! erasure those records join.
 
 use crate::Vault;
 use crate::attempt_queue::{
@@ -51,11 +51,32 @@ pub fn drop_kind(vault: &Vault, kind: &str) -> Result<usize> {
     Ok(dropped)
 }
 
-/// The override records' part of an actor erasure: every record `actor`
-/// made loses its actor.
-pub fn scrub_hold_override_actor(vault: &Vault, actor: &EntityId) -> Result<()> {
+/// The tables whose rows record who overrode a hold.
+const RUN_HOLD_TABLES: [&str; 3] = [
+    "ATTEMPT_HOLD_OVERRIDE",
+    "TASK_FANOUT_LAUNCH",
+    "AGENT_DISPATCH_PLAN_HOLD",
+];
+
+/// The part of `actor`'s erase that runs over the override records: the
+/// actor scrub each of [`RUN_HOLD_TABLES`] registers, as an erase and a
+/// restore's rerun run it. Returns how many of those tables registered one.
+pub fn erase_actor_in_run_hold_tables(vault: &Vault, actor: &EntityId) -> Result<usize> {
     let mut wtxn = vault.store.env.write_txn()?;
-    crate::attempt_queue::scrub_hold_override_actor_in_txn(&vault.store, &mut wtxn, actor)?;
+    let mut ran = 0;
+    for (decl, scrub) in crate::side_table::actor_scrubs() {
+        if RUN_HOLD_TABLES.contains(&decl.name) {
+            scrub(vault, &mut wtxn, actor)?;
+            ran += 1;
+        }
+    }
     wtxn.commit()?;
-    Ok(())
+    Ok(ran)
+}
+
+/// The actors of the planner releases recorded on the fan-out launch
+/// `launch_ref`, in order.
+pub fn launch_override_actors(vault: &Vault, launch_ref: EntityId) -> Result<Vec<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    crate::task_verb::launch_override_actors_in_txn(vault, &rtxn, launch_ref)
 }
