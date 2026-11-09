@@ -125,7 +125,12 @@ impl<'c> Chain<'c> {
         let mut context = HookRunContext::new(binding.selector.budget_ms);
         let ran = match self.runtime {
             Err(reason) => Err(Error::InvalidConfig(reason.to_owned())),
-            Ok(runtime) => match self.vault.verb_hook_state.body(self.vault, binding) {
+            Ok(runtime) => match self
+                .vault
+                .runtime()
+                .verb_hook_state()
+                .body(self.vault, binding)
+            {
                 Err(reason) => Err(Error::InvalidConfig(reason)),
                 Ok(body) => {
                     let mut answer = |request: &str| match (&lane, &cap) {
