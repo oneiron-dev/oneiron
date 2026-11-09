@@ -24,7 +24,12 @@ use oneiron::blob_artifact::esign::{
     EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, RecipientRole, SealProfile,
     SealVerdict, SigningAction, SigningOutcome,
 };
+use oneiron::connector_key::{PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier};
 use oneiron::office_body::Resources;
+use oneiron::secret_custody::{
+    CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
+};
+use oneiron::skill_hub::pack_catalog::{PackInstallStatus, PackSetupAnswer};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_organ_host::seal::{
     ASK_SIGN, HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings,
@@ -34,6 +39,7 @@ use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost, OrganState};
 use oneiron_seal::organ::MAX_REPORT_JSON_BYTES;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
+use sha2::{Digest, Sha256};
 
 mod support;
 
@@ -206,6 +212,30 @@ fn unix_seconds_now() -> u64 {
 }
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The host's Gmail profile check, offline: the provider boundary of the
+/// built-in email pack's setup. Installation, custody, permission grants and
+/// qualification still run through the engine's own doors. The account and
+/// the evidence are synthetic.
+struct FixtureGmailProfile;
+
+impl PackConnectionVerifier for FixtureGmailProfile {
+    fn verify(
+        &self,
+        _vault: &Vault,
+        check: &PackConnectionCheck<'_>,
+    ) -> Result<PackConnectionEvidence, String> {
+        assert_eq!(check.pack, "oneiron.email");
+        assert_eq!(check.connection, "gmail");
+        assert_eq!(check.check, "gmail.profile");
+        Ok(PackConnectionEvidence {
+            account: "sender@example.test".into(),
+            provider_account: Some("sender@example.test".into()),
+            scopes: vec!["https://www.googleapis.com/auth/gmail.readonly".into()],
+            evidence: format!("{:x}", Sha256::digest(b"fixture-gmail-profile")),
+        })
+    }
+}
 
 /// One document its one recipient has completed, awaiting its seal: the
 /// real ceremony, not a fabricated ready flag.
@@ -520,6 +550,46 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         EntityId::now(),
         &rmp_serde::to_vec_named(&mail_policy)?,
     )?;
+    // The email channel runs as its built-in pack (OF-519): install
+    // `oneiron.email` Active with its connection checked, through the
+    // owner's setup doors, before either notice reaches the dispatch gate.
+    let setup = vault.prepare_pack_setup(&owner, "oneiron.email", None)?;
+    vault.register_secret_as_owner(
+        &owner,
+        &OwnerSecretRegistration {
+            name: "gmail.oauth",
+            class: CustodyClass::CustodyDeviceBound,
+            device_only: true,
+            rung: CustodyTier::T0Doored,
+            bindings: vec![RequestedBinding {
+                effector: "connector:gmail".into(),
+                tier_ceiling: None,
+                scopes: vec!["read".into()],
+            }],
+            manifest: None,
+            value: b"fixture-gmail-oauth",
+        },
+        unix_seconds_now(),
+    )?;
+    vault.answer_pack_setup(
+        &owner,
+        "oneiron.email",
+        Some(&setup.content_hash),
+        &PackSetupAnswer::Allow {
+            connection: "gmail".into(),
+            permissions: vec!["read".into(), "identity".into(), "inbound".into()],
+        },
+    )?;
+    let checked = vault.verify_pack_connection(
+        &owner,
+        "oneiron.email",
+        Some(&setup.content_hash),
+        "gmail",
+        &FixtureGmailProfile,
+    )?;
+    assert!(checked.ready);
+    assert_eq!(checked.status, PackInstallStatus::Active);
+    vault.require_builtin_channel_pack("email")?;
     let outgoing = |notice: &EsignNotice, key: &str| {
         oneiron::outbound::OutboundDispatchRequest::new(
             format!("receipt:{key}"),
