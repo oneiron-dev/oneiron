@@ -4,7 +4,7 @@
 //! `Generator::new` (rows.rs) keeps that order; the emitters of later PRs read and mutate the one `Generator` in
 //! `outputs()`'s call order.
 
-mod common;
+pub(crate) mod common;
 mod docs;
 pub(crate) mod emit_core;
 mod emit_http;
@@ -17,13 +17,15 @@ mod emit_ts;
 mod outputs;
 mod row_access;
 mod rows;
-mod uniffi;
+pub(crate) mod uniffi;
 
 use std::ops::Index;
 use std::path::PathBuf;
 
 use crate::facade_types::Inventory;
 use crate::py::value::{Dict, Value};
+
+pub(crate) use outputs::write_out_dir;
 
 /// Port of generate.py:66 (SESSION_READS).
 pub(crate) const SESSION_READS: &[&str] =
@@ -144,6 +146,9 @@ pub(crate) struct Generator {
     pub(crate) schema_rows: Vec<RowId>,
     /// `FACADE_ROWS`.
     pub(crate) facade_rows: Vec<RowId>,
+    /// facade_types.py's `TYPE_NAMES` (read once, at the import's place): every `Inventory` is built over it, as
+    /// catalog_fragment's second one reads the same module global.
+    pub(crate) type_names: Value,
     /// `INVENTORY` (generate.py:343). `None` only from `Generator::rows_only` (the rows harness, where Python's
     /// stub builds none); the emitters run on `Generator::new`'s.
     pub(crate) inventory: Option<Inventory>,
