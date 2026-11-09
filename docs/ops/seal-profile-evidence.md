@@ -136,12 +136,23 @@ The rule, by cause:
   without cRLSign or an OCSP responder without the delegation, EKU or key usage
   it needs; and a CRL signed by a shadow of a covered certificate's issuer. A
   `/Root` that cannot be read as a catalog reports the same, never absent.
-- Genuine material that says no still fails (`fail`,
+- Genuine material that says no about the signer's chains still fails (`fail`,
   `validation_material_invalid`): a CRL or OCSP response stale or future-dated at
   the applicable time, a delta or IDP-scoped CRL, an OCSP delegate outside its
   validity, and a revoked serial or status. Authenticity is judged first, so a
   forged response that claims any of these is unverifiable, never a failure.
   A failure outranks every unresolved result.
+- What genuine material says no to counts only when it is about the signer's
+  chains: a CRL whose signer is the issuer of a covered non-anchor certificate,
+  by key or by a key a trust anchor vouches for under that issuer's name, or an
+  OCSP SingleResponse whose issuer and serial name a covered non-anchor
+  certificate. Anything else claims nothing: an unrelated CA's stale CRL, an
+  extra certificate revoking itself, or a responder's no about a certificate
+  outside the chains changes nothing. A shadow's stale CRL is about nothing in
+  the chains, and still reads as possible tampering (below).
+- Judgement is per item. A response or array that is unverifiable as a whole is
+  discarded as a whole, with whatever it says. This gives a third party nothing
+  more than omitting the item, which an appended DSS revision can always do.
 
 A CRL signed by a shadow of a covered certificate's issuer is forged. The shadow
 carries the issuer's subject, did not sign the certificate, and holds a key no
@@ -150,7 +161,13 @@ or covered chain certificate issued a certificate for them. A CA's separate
 CRL-signing key, a key rollover's link certificate and a same-subject anchored
 CA are vouched for, so they are never shadows. A shadow reports possible
 tampering wherever the result would otherwise be unavailable or unknown; beside
-complete genuine coverage it is disregarded, and the material passes.
+complete genuine coverage it is disregarded, and the material passes. A vouched
+key's CRL is about the chain it vouches for: its listing of a covered certificate
+is a revocation, and fails.
+
+Validation material decides only B-LT and B-LTA. A failed or `not_run`
+validation-material check never takes away the B-B or B-T profile the signature
+earned, so a broken DSS appended to a B-T document leaves it B-T.
 
 Anyone holding a signed PDF can append a DSS without breaking its signatures, so
 presented material must not turn an unresolved check into a failed verdict. These
