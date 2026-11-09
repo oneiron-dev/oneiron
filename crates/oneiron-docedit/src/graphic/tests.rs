@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::ooxml::{Node, XmlTree};
-use crate::retained_opc::XmlLimits;
 
 const PX: i64 = EMU_PER_PX;
 const BOUNDS: Rect = Rect {
@@ -47,14 +46,17 @@ fn run(
         handle: record.artifact.clone(),
         media: record.media,
     };
-    compile_graphic(&GraphicInput {
-        binding: &binding,
-        requested,
-        record,
-        bytes,
-        bounds,
-        limits,
-    })
+    compile_graphic(
+        &GraphicInput {
+            binding: &binding,
+            requested,
+            record,
+            bytes,
+            bounds,
+            limits,
+        },
+        &Resources::measuring(),
+    )
 }
 
 fn document(bytes: &str, limits: GraphicLimits) -> Result<Drawing, GraphicError> {
@@ -710,14 +712,7 @@ fn the_drawingml_fragment_is_well_formed_and_placed() {
     let wrapped = format!(
         r#"<p:spTree xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">{xml}</p:spTree>"#
     );
-    let tree = XmlTree::parse(
-        wrapped.as_bytes(),
-        XmlLimits {
-            max_depth: 32,
-            max_nodes: 10_000,
-        },
-    )
-    .unwrap();
+    let tree = XmlTree::parse(wrapped.as_bytes(), &Resources::measuring()).unwrap();
     let ids: Vec<&str> = named(&tree, "cNvPr")
         .map(|node| node.attr("id").unwrap())
         .collect();
@@ -892,14 +887,17 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
         handle: "artifact-2".to_owned(),
         media: MediaType::Png,
     };
-    let other = compile_graphic(&GraphicInput {
-        binding: &binding,
-        requested: illustration,
-        record: &held,
-        bytes: Some(&bytes),
-        bounds: BOUNDS,
-        limits,
-    });
+    let other = compile_graphic(
+        &GraphicInput {
+            binding: &binding,
+            requested: illustration,
+            record: &held,
+            bytes: Some(&bytes),
+            bounds: BOUNDS,
+            limits,
+        },
+        &Resources::measuring(),
+    );
     assert_eq!(other, Err(GraphicError::BindingMismatch));
     let unsourced = AssetRecord {
         provenance: Vec::new(),
