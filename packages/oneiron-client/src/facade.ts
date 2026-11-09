@@ -3922,11 +3922,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.skills.convert": { description: "Converts selected messages through the configured refiner; user initiation approves conversion, never admission.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.fit.set": { description: "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.fork": { description: "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.skills.get": { description: "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.skills.get": { description: "Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.governance.get": { description: "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.governance.set": { description: "The owner marks or clears one skill governance tier; the mark changes no instruction content or version.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.import": { description: "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.skills.list": { description: "Lists a page of the owner skill library, including inactive skills and their retained evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.skills.list": { description: "Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.optimize.admit": { description: "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.optimize.goal.bind": { description: "Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.optimize.goal.get": { description: "Reads the optimizer goal identity, effective axes, revision and joined project goal claim.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -7305,7 +7305,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
         fork: (input: Facade.SkillLibraryForkRequest, options?: O): FacadeReturns<"vault.skills.fork">[K] => invoke("vault.skills.fork", input, options, newInvocation()),
-        /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+        /** Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence. */
         get: (input: Facade.HubSkillRequest, options?: O): FacadeReturns<"vault.skills.get">[K] => invoke("vault.skills.get", input, options, newInvocation()),
         governance: {
           /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
@@ -7315,7 +7315,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
         import: (input: Facade.HubImportRequest, options?: O): FacadeReturns<"vault.skills.import">[K] => invoke("vault.skills.import", input, options, newInvocation()),
-        /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+        /** Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence. */
         list: (input: Facade.SkillLibraryListRequest, options?: O): FacadeReturns<"vault.skills.list">[K] => invoke("vault.skills.list", input, options, newInvocation()),
         optimize: {
           /** Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks. */

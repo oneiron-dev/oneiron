@@ -206,7 +206,7 @@ impl Vault {
 
     /// `id`'s record and stored files while it is a live, shared, loadable
     /// skill with a runtime package, read on `txn`; `None` otherwise.
-    fn loadable_skill_files_in_txn(
+    pub(crate) fn loadable_skill_files_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
