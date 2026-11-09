@@ -466,10 +466,12 @@ pub(crate) mod tests {
                 material.iter().any(|(status, finding)| if valid_material {
                     *status == VerifyCheckStatus::Pass
                 } else {
+                    // Lead ruling F: a reference cycle is malformed presented
+                    // material, NotRun with ValidationMaterialPossibleTampering.
                     (*status, *finding)
                         == (
-                            VerifyCheckStatus::Fail,
-                            Some(VerifyFindingCode::ValidationMaterialInvalid),
+                            VerifyCheckStatus::NotRun,
+                            Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
                         )
                 }),
                 "{mode}: {material:?}"
@@ -566,7 +568,13 @@ pub(crate) mod tests {
         let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), b"not zlib".to_vec());
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     /// Signature dictionary body with patchable /ByteRange and /Contents,

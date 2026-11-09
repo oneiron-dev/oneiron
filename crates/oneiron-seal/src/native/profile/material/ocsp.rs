@@ -273,7 +273,7 @@ pub(super) async fn fetch_valid_ocsp(
             memory,
         )
         .map_err(resource_error)?;
-        if evidence.is_some_and(|evidence| {
+        if evidence.is_ok_and(|evidence| {
             evidence.unknown_statuses.is_empty() && evidence.good_targets.contains(&cert_der)
         }) {
             return Ok(Some(response.body));
