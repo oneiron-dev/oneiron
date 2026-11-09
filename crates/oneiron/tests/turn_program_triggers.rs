@@ -1,5 +1,5 @@
 //! Turn programs on timer, idle and feed triggers (untangle slice 6.8c, B-3), on the public
-//! crate surface only: `Memory::arm_program`, the release doors and `Vault::wake_turn_programs`,
+//! crate surface only: `Memory::arm_turn_program`, the release doors and `Vault::wake_turn_programs`,
 //! the one drain that admits each wake. Run with
 //! `cargo test -p oneiron --all-features --test turn_program_triggers`.
 
@@ -89,19 +89,20 @@ impl Fixture {
         }
     }
 
-    fn input(&self, conversation: Option<EntityId>) -> ArmTurnProgram {
+    fn input(&self, conversation: Option<EntityId>, trigger: ProgramTrigger) -> ArmTurnProgram {
         ArmTurnProgram {
             skill: self.skill,
             executor: "fixture.executor@1".into(),
             args: serde_json::json!({"value": 41}),
             conversation,
+            trigger,
         }
     }
 
     fn arm(&self, vault: &Vault, trigger: ProgramTrigger) -> EntityId {
         vault
             .memory(self.owner, EdgeActorClass::Human)
-            .arm_program(&self.input(None), trigger)
+            .arm_turn_program(&self.input(None, trigger))
             .expect("arm")
             .registration
     }
@@ -350,7 +351,7 @@ fn a_trigger_is_refused_outside_its_bounds() {
     };
     assert!(
         memory
-            .arm_program(&fixture.input(Some(EntityId::now())), timer)
+            .arm_turn_program(&fixture.input(Some(EntityId::now()), timer))
             .is_err()
     );
     for trigger in [
@@ -364,15 +365,17 @@ fn a_trigger_is_refused_outside_its_bounds() {
         },
     ] {
         assert!(
-            memory.arm_program(&fixture.input(None), trigger).is_err(),
+            memory
+                .arm_turn_program(&fixture.input(None, trigger))
+                .is_err(),
             "{trigger:?}"
         );
     }
     let first = memory
-        .arm_program(&fixture.input(None), timer)
+        .arm_turn_program(&fixture.input(None, timer))
         .expect("arm");
     let again = memory
-        .arm_program(&fixture.input(None), timer)
+        .arm_turn_program(&fixture.input(None, timer))
         .expect("arm again");
     assert!(first.newly_armed && !again.newly_armed);
     assert_eq!(first.registration, again.registration);
@@ -420,13 +423,13 @@ fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
         .memory(fixture.owner, EdgeActorClass::Human)
         .with_read_proof(&proof)
         .with_invocation_slip(&binding)
-        .arm_program(
-            &fixture.input(None),
+        .arm_turn_program(&fixture.input(
+            None,
             ProgramTrigger::Timer {
                 first_at: expires_at,
                 every_secs: 0,
             },
-        )
+        ))
         .expect("arm under the live slip");
 
     vault
@@ -452,4 +455,32 @@ fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
         (0, 0, 1),
         "{drain:?}"
     );
+}
+
+/// The arm verb takes the trigger (slice 6.8d): `vault.turn_programs.arm` with a timer arms a
+/// timer program, and the same input with no trigger arms a turn program, as before.
+#[test]
+fn the_arm_verb_takes_a_trigger() {
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let memory = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let timer = ProgramTrigger::Timer {
+        first_at: T0,
+        every_secs: 3_600,
+    };
+    let input = serde_json::to_value(fixture.input(None, timer)).expect("encode");
+    assert!(input.get("trigger").is_some(), "{input}");
+    let armed = oneiron::task_verb::sdk::invoke(&memory, "vault.turn_programs.arm", input)
+        .expect("arm through the verb");
+    assert_eq!(armed["newly_armed"], serde_json::json!(true), "{armed}");
+    assert_eq!(vault.release_timer_program_wakes(T0).expect("release"), 1);
+
+    let turn = serde_json::to_value(fixture.input(None, ProgramTrigger::Turn)).expect("encode");
+    assert!(
+        turn.get("trigger").is_none(),
+        "a turn trigger is the default: {turn}"
+    );
+    let armed = oneiron::task_verb::sdk::invoke(&memory, "vault.turn_programs.arm", turn)
+        .expect("arm a turn program through the verb");
+    assert_eq!(armed["newly_armed"], serde_json::json!(true), "{armed}");
 }
