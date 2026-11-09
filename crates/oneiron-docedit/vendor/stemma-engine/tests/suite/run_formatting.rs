@@ -168,6 +168,7 @@ fn format_tx(block_id: &str, expect: &str, marks: InlineMarkSet) -> EditTransact
         steps: vec![EditStep::SetRunFormatting {
             block_id: NodeId::from(block_id),
             expect: expect.to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks,
             style: RunStyleEdit::default(),
@@ -433,6 +434,7 @@ fn format_style_tx(block_id: &str, expect: &str, style: RunStyleEdit) -> EditTra
         steps: vec![EditStep::SetRunFormatting {
             block_id: NodeId::from(block_id),
             expect: expect.to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet::default(),
             style,
@@ -835,6 +837,7 @@ fn span_refuses_when_any_covered_run_has_an_independent_format_revision() {
             EditStep::SetRunFormatting {
                 block_id: NodeId::from("p1"),
                 expect: "Alpha".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 marks: bold(),
                 style: RunStyleEdit::default(),
@@ -843,6 +846,7 @@ fn span_refuses_when_any_covered_run_has_an_independent_format_revision() {
             EditStep::SetRunFormatting {
                 block_id: NodeId::from("p1"),
                 expect: "Alpha Beta".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 marks: InlineMarkSet {
                     italic: true,
