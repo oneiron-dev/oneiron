@@ -747,13 +747,13 @@ def python_verb(row, stub=False, name=None):
 def python_namespace_class(path):
     return '_' + ''.join(part.title() for part in '_'.join(path).split('_')) + 'Verbs'
 
-def python_class_verbs(tree, stub=False):
-    'The facade class body: a bare verb is a method, a namespace a property whose class nests in it.'
+def python_class_verbs(tree, stub=False, owner='Oneiron'):
+    'The facade class body: a bare verb is a method, a namespace a property whose class nests in it, under `owner`.'
     members, classes = '', ''
     def accessor(name, path):
         cls = python_namespace_class(path)
-        body = ' ...' if stub else f'\n        return Oneiron.{cls}(self._client)'
-        return f'    @property\n    def {name}(self) -> "Oneiron.{cls}":{body}\n'
+        body = ' ...' if stub else f'\n        return {owner}.{cls}(self._client)'
+        return f'    @property\n    def {name}(self) -> "{owner}.{cls}":{body}\n'
     def namespace(path, node):
         nonlocal classes
         body = '' if stub else '    def __init__(self, client: _NativeClient) -> None:\n        self._client = client\n'
@@ -768,6 +768,79 @@ def python_class_verbs(tree, stub=False):
         else:
             members += accessor(name, [name]); namespace([name], node)
     return members + ''.join('    ' + line + '\n' if line else '\n' for line in classes.splitlines())
+
+FACADE_VERBS_TS_DOC = """// The facade verbs of `Oneiron` (untangle slice 4.3): its verb namespaces, made per
+// handle, and its top-level verbs, installed on its prototype. Both reach the
+// native client through the handle's `facadeCall`, which turns a native throw
+// into `OneironError`, and its `facadeClient`.
+"""
+
+def ts_facade_module(tree):
+    'The facade verbs as a module `Oneiron` imports: namespaces per handle, top-level verbs on its prototype.'
+    namespaces, methods = '', ''
+    for name, node in tree.items():
+        members = ts_members(node['children'], 3)
+        if node['row'] and not node['children']:
+            doc, params, output, body = ts_verb(node['row'])
+            params = 'this: FacadeHost' + (', ' + params if params else '')
+            methods += ('  ' + doc + '\n' if doc else '') + f'  {name}({params}): {output} {{ return this.#call(() => {body}) }},\n'
+        elif node['row']:
+            doc, params, output, body = ts_verb(node['row'])
+            namespaces += ('    ' + doc + '\n' if doc else '') + f'    {name}: Object.assign(({params}): {output} => this.#call(() => {body}), {{\n{members}    }}),\n'
+        else:
+            namespaces += f'    {name}: {{\n{members}    }},\n'
+    namespaces = namespaces.replace('this.#call(', 'host[facadeCall](').replace('this.#client.', 'host[facadeClient].')
+    methods = methods.replace('this.#call(', 'this[facadeCall](').replace('this.#client.', 'this[facadeClient].')
+    body = namespaces + methods
+    used = set(re.findall(r'\b([A-Z]\w*)\b', body))
+    sources = []
+    for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./key-value.js', 'packages/oneiron/src/key-value.ts')]:
+        names = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', (ROOT/path).read_text(), re.M)))
+        used -= set(names)
+        if names: sources.append((module, names))
+    agent = sorted(used & set(re.findall(r'^export (?:type|interface) (\w+)', AGENT_VERBS_TS, re.M)))
+    if agent: sources.append(('./agent-verbs.js', agent))
+    out = HEADER + FACADE_VERBS_TS_DOC + 'import type * as Facade from "./facade-types.js"\nimport type { NativeClient } from "./native.js"\n'
+    out += ''.join(f'import type {{ {", ".join(names)} }} from "{module}"\n' for module, names in sources)
+    helpers = sorted(set(re.findall(r'(?<![\w.])(\w+)\(', body))
+                     & set(re.findall(r'^export function (\w+)', (ROOT/'packages/oneiron/src/key-value.ts').read_text(), re.M)))
+    if helpers: out += f'import {{ {", ".join(helpers)} }} from "./key-value.js"\n'
+    out += '\n/** A handle\'s guarded call: runs `operation` and turns a native throw into `OneironError`. */\n'
+    out += 'export const facadeCall: unique symbol = Symbol("oneiron.facadeCall")\n'
+    out += '/** A handle\'s native client. */\nexport const facadeClient: unique symbol = Symbol("oneiron.facadeClient")\n\n'
+    out += '/** What the facade verbs need of a handle. */\nexport interface FacadeHost {\n'
+    out += '  [facadeCall]<T>(operation: () => T): T\n  readonly [facadeClient]: NativeClient\n}\n\n'
+    out += '/** One handle\'s verb namespaces, made when the handle is. */\nexport function facadeNamespaces(host: FacadeHost) {\n  return {\n' + namespaces + '  }\n}\n'
+    out += 'export type FacadeNamespaces = Readonly<ReturnType<typeof facadeNamespaces>>\n\n'
+    out += '/** The top-level verbs, installed on the handle\'s prototype. */\nexport const facadeMethods = {\n' + methods + '}\n'
+    out += 'export type FacadeMethods = typeof facadeMethods\n'
+    return out
+
+def ts_native_module(signatures, facade_types):
+    'The native client\'s generated verb signatures, as the interface `NativeClient` extends.'
+    used = set(re.findall(r'\b([A-Z]\w*)\b', signatures))
+    out = HEADER
+    # The hand-written types first, as native.ts named them; a facade type of the same name is not imported twice.
+    for module, path in [('./types.js', 'packages/oneiron/src/types.ts'), ('./facade-types.js', None)]:
+        text = facade_types if path is None else (ROOT/path).read_text()
+        declared = set(re.findall(r'^export (?:type|interface) (\w+)', text, re.M))
+        names = sorted(used & declared)
+        used -= set(names)
+        if names: out += f'import type {{ {", ".join(names)} }} from "{module}"\n'
+    return out + '\n/** The native client\'s generated verb methods, as napi-rs exposes them. */\nexport interface NativeAgentVerbs {\n' + signatures + '\n}\n'
+
+def python_facade_module(tree, stub):
+    'The facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from.'
+    body = python_class_verbs(tree, stub, '_FacadeVerbs')
+    out = HEADER.replace('//', '#') + '"""The facade verbs of ``Oneiron`` (untangle slice 4.3), as the mixin it derives from."""\n\n'
+    out += 'from __future__ import annotations\n\n'
+    if stub:
+        names = sorted(set(re.findall(r'\b([A-Z]\w*)\b', body)) & hand_declared('py'))
+        out += 'from typing import Any, overload\n\nfrom . import facade_types as Facade\n'
+        if names: out += 'from . import ' + ', '.join(names) + '\n'
+    else:
+        out += 'import json\nfrom typing import Any\n\n# Defined in the package before it imports this module.\nfrom . import _NativeClient, _translate\n'
+    return out + '\n\nclass _FacadeVerbs:\n' + body
 
 def ts_native_signature(row):
     binding = native_binding(row); method = js_method(row['name'])
@@ -2030,6 +2103,7 @@ def core_cfg(row):
 # runs `--out-dir` once per input digest and copies each crate's own into its OUT_DIR. They are not in git:
 # the default run neither writes nor checks them in the tree.
 BUILD_TIME_OUTPUTS = {
+    'crates/oneiron-py/src/generated/agent_verbs.rs',
     'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs',
     'crates/oneiron-remote/src/generated/agent_verbs.rs',
     'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs',
@@ -2045,6 +2119,32 @@ BUILD_TIME_OUTPUTS = {
     'crates/oneiron/src/verbs/generated/sdk_generated.rs',
     'crates/oneiron/src/verbs/generated/verb_catalog.rs',
 }
+# Untangle slice 4.3: the package outputs are not in git either. Each package's build writes its own
+# (`--package <name>`): the npm packages' scripts, oneiron-py's build script, and the docs job. A run with no
+# flags writes them all, for a local tree.
+PACKAGE_OUTPUTS = {
+    'oneiron': [
+        'packages/oneiron/src/facade-types.ts',
+        'packages/oneiron/src/agent-verbs.ts',
+        'packages/oneiron/src/facade-verbs.ts',
+        'packages/oneiron/src/native-verbs.ts',
+    ],
+    'oneiron-client': [
+        'packages/oneiron-client/src/facade.ts',
+        'packages/oneiron-client/src/facade-types.ts',
+    ],
+    'oneiron-py': [
+        'crates/oneiron-py/python/oneiron/_facade_verbs.py',
+        'crates/oneiron-py/python/oneiron/_facade_verbs.pyi',
+        'crates/oneiron-py/python/oneiron/facade_types.pyi',
+    ],
+    'docs': [
+        'docs/agent-sdk/facade-types.md',
+        'docs/agent-sdk/types.md',
+        'docs/agent-sdk/verbs.md',
+    ],
+}
+PACKAGE_PATHS = {path for paths in PACKAGE_OUTPUTS.values() for path in paths}
 # rustfmt shapes the committed outputs; a build-time run (`--out-dir`) leaves them as emitted.
 FORMAT = True
 
@@ -2330,6 +2430,11 @@ def outputs():
         # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.
         'crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs': HEADER + 'use super::*;\n' + mcp_dispatch(),
         'packages/oneiron/src/agent-verbs.ts':ts,
+        # Untangle slice 4.3 (S4-3): what were marked blocks are whole files their hosts import.
+        'packages/oneiron/src/facade-verbs.ts': ts_facade_module(verb_tree(facade_rows)),
+        'crates/oneiron-py/python/oneiron/_facade_verbs.py': python_facade_module(verb_tree(facade_rows), False),
+        'crates/oneiron-py/python/oneiron/_facade_verbs.pyi': python_facade_module(verb_tree(facade_rows), True),
+        'crates/oneiron-py/src/generated/agent_verbs.rs': HEADER + '#[pymethods]\nimpl NativeClient {\n' + py + '}\n',
     }
     # FIX 8907: the old marked MCP block gives way to the seam that mounts
     # the whole-file dispatch above; once replaced, no marker remains.
@@ -2351,11 +2456,6 @@ def outputs():
         files[mcp_path] = mcp_text[:a] + seam + mcp_text[b:]
     for path, start, end, body in [
         ('crates/oneiron/src/board_verb.rs', '// BEGIN GENERATED BOARD CATALOG', '// END GENERATED BOARD CATALOG', None),
-        ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows), stub=True)),
-        ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ts_class_verbs(verb_tree(facade_rows))),
-        ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows))),
-        ('crates/oneiron-py/src/lib.rs', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', py),
-        ('packages/oneiron/src/native.ts', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', ts_native),
     ]:
         text=(ROOT/path).read_text()
         if body is None and start not in text: continue
@@ -2382,6 +2482,7 @@ def outputs():
     census = INVENTORY.census(FACADE_ROWS)
     facade_types = INVENTORY.typescript(census)
     files['packages/oneiron/src/facade-types.ts'] = facade_types
+    files['packages/oneiron/src/native-verbs.ts'] = ts_native_module(ts_native, facade_types)
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
@@ -2734,17 +2835,37 @@ def main():
     global FORMAT
     parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true')
     parser.add_argument('--out-dir',type=Path,help='write every output under this directory (the build scripts read it)')
+    parser.add_argument('--package',action='append',choices=sorted(PACKAGE_OUTPUTS),help='write this package\'s outputs in the tree')
     args=parser.parse_args()
+    if args.package:
+        # A package build writes no Rust output, so it needs no rustfmt.
+        FORMAT=False
+        files=outputs()
+        packages=set(args.package)
+        # The docs mirror reads the TypeScript and Python facade outputs.
+        if 'docs' in packages: packages|={'oneiron','oneiron-py'}
+        for name in sorted(packages):
+            for path in PACKAGE_OUTPUTS[name]:
+                if path.startswith('docs/'):continue
+                p=ROOT/path
+                if not p.exists() or p.read_text()!=files[path]:
+                    p.parent.mkdir(parents=True,exist_ok=True);p.write_text(files[path])
+        if 'docs' in packages:
+            subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), '--generated'], check=True)
+        return
     if args.out_dir is not None:
         FORMAT=False
         for path,text in outputs().items():
             if text is None:continue
             target=args.out_dir/path
             target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text)
+        # The agent-SDK reference too, read from the outputs just written: a build keeps a local copy of it.
+        subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), '--from', str(args.out_dir), '--out', str(args.out_dir)], check=True)
         return
     stale=[]
     for path,text in outputs().items():
         if path in BUILD_TIME_OUTPUTS:continue
+        if path in PACKAGE_PATHS and args.check:continue
         p=ROOT/path
         if text is None:
             if p.exists():
@@ -2763,6 +2884,7 @@ def main():
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
     # The mirror follows the generated SDK files and checks its authored text too.
-    docs_args = ['--check'] if args.check else []
+    # --check reads the committed mirror files only; a write also writes the generated ones.
+    docs_args = ['--check'] if args.check else ['--generated']
     subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), *docs_args], check=True)
 if __name__=='__main__': main()
