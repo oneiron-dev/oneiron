@@ -70,6 +70,11 @@ pub(crate) use scope::HookScope;
 )]
 pub(crate) use source::record_settlement_in_txn;
 pub(crate) use source::record_timeout_demotion_in_txn;
+// Untangle slice 6.8: change feed subscriptions read the hooks' positions, heads and settlement
+// feed, and filter claims with the hooks' glob.
+pub(crate) use filter::glob_match;
+pub(crate) use source::head_in_txn as fact_source_head_in_txn;
+pub(crate) use source::settled_feed_facts_after_in_txn;
 pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SchedulePosition,
     SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
