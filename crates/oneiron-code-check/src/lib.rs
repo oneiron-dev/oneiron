@@ -565,7 +565,9 @@ const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Fallback};
+    use super::{
+        BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Fallback, ProgramLanguage,
+    };
 
     /// A checker that answers every program the same way.
     struct Fixed {
@@ -586,6 +588,7 @@ mod tests {
                 backend: self.backend(),
                 diagnostics: Vec::new(),
                 peak_memory_bytes: None,
+                incomplete: None,
             })
         }
     }
@@ -605,6 +608,7 @@ mod tests {
     const PROGRAM: CheckInput<'static> = CheckInput {
         declarations: &[],
         program: "",
+        language: ProgramLanguage::JavaScript,
     };
 
     /// When the fallback fails too, the failure is the fallback's own, under

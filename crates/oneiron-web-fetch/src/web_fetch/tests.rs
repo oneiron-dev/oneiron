@@ -7,8 +7,14 @@ use std::thread;
 
 use serde_json::{Value, json};
 
-use super::render::normalize_link_list;
+use super::render::{REDACTED_USERINFO, normalize_link_list};
 use super::*;
+
+/// The readability rung's client as a self-hosted node builds it: no proxy,
+/// following no redirect, no egress guard (FIX 4734).
+fn single_hop() -> SingleHopClient {
+    build_single_hop_client(None).expect("single-hop client")
+}
 
 // ---------------------------------------------------------------------------
 // Fixture renderers
@@ -35,7 +41,7 @@ impl Renderer for ScriptedRenderer {
         self.kind
     }
 
-    fn render(&self, _url: &str) -> RendererResult<RenderedPage> {
+    fn render(&self, _url: &str, _context: &RenderContext) -> RendererResult<RenderedPage> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.log.lock().expect("call log").push(self.kind);
         self.outcome.clone()
@@ -96,7 +102,7 @@ impl Renderer for SiteRenderer {
         self.kind
     }
 
-    fn render(&self, url: &str) -> RendererResult<RenderedPage> {
+    fn render(&self, url: &str, _context: &RenderContext) -> RendererResult<RenderedPage> {
         self.attempts
             .lock()
             .expect("site attempts")
@@ -547,7 +553,7 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
         .expect("self-hosted scrape endpoint");
 
     let page = renderer
-        .render("https://example.test/page")
+        .render("https://example.test/page", &RenderContext::single_page())
         .expect("firecrawl envelope");
 
     let requests = recorded.lock().expect("recorded requests").clone();
@@ -586,7 +592,7 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
 
     let witnessed = FirecrawlRenderer::new(client.clone(), &format!("{base}/with-final"))
         .expect("endpoint")
-        .render("https://request.example/page")
+        .render("https://request.example/page", &RenderContext::single_page())
         .expect("envelope with distinct canonical and final identities");
     assert_eq!(
         witnessed.canonical_url, "https://canonical.example/page",
@@ -612,7 +618,7 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
     ] {
         let broken = FirecrawlRenderer::new(client.clone(), &format!("{base}{path}"))
             .expect("endpoint")
-            .render("https://example.test/page")
+            .render("https://example.test/page", &RenderContext::single_page())
             .expect_err("a malformed 2xx envelope is an invalid response");
         assert_eq!(
             broken.kind,
@@ -623,13 +629,13 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
 
     let status_error = FirecrawlRenderer::new(client.clone(), &format!("{base}/boom"))
         .expect("endpoint")
-        .render("https://example.test/page")
+        .render("https://example.test/page", &RenderContext::single_page())
         .expect_err("a non-2xx status is a transport failure");
     assert_eq!(status_error.kind, RendererErrorKind::Transport);
 
     let refused = FirecrawlRenderer::new(client.clone(), REFUSED_ENDPOINT)
         .expect("endpoint")
-        .render("https://example.test/page")
+        .render("https://example.test/page", &RenderContext::single_page())
         .expect_err("a refused connection is a transport failure");
     assert_eq!(refused.kind, RendererErrorKind::Transport);
 
@@ -971,7 +977,7 @@ fn userinfo_credentials_are_refused_and_never_reach_a_diagnostic() {
         &format!("{base}/v1/scrape"),
     )
     .expect("endpoint")
-    .render(CREDENTIALED_URL)
+    .render(CREDENTIALED_URL, &RenderContext::single_page())
     .expect_err("a credentialed target is refused before transport");
     assert_eq!(refused.kind, RendererErrorKind::Transport);
     assert_no_credential(&refused.message, "the firecrawl refusal");
@@ -980,8 +986,8 @@ fn userinfo_credentials_are_refused_and_never_reach_a_diagnostic() {
         "the credentialed URL never reached the provider"
     );
 
-    let native = NativeReadabilityRenderer::new(reqwest::blocking::Client::new())
-        .render(CREDENTIALED_URL)
+    let native = NativeReadabilityRenderer::new(single_hop())
+        .render(CREDENTIALED_URL, &RenderContext::single_page())
         .expect_err("a credentialed target is refused before the GET");
     assert_eq!(native.kind, RendererErrorKind::Transport);
     assert_no_credential(&native.message, "the native refusal");
@@ -1019,9 +1025,7 @@ fn userinfo_credentials_are_refused_and_never_reach_a_diagnostic() {
 
     // A credentialed link never enters a frontier.
     assert!(
-        normalize_link_list([CREDENTIALED_URL], &fixture_url("https://example.test/"))
-            .expect("one bounded link normalizes")
-            .is_empty(),
+        normalize_link_list([CREDENTIALED_URL], &fixture_url("https://example.test/")).is_empty(),
         "a credentialed link is not walkable"
     );
 }
@@ -1138,7 +1142,11 @@ fn assert_no_userinfo(haystack: &str, context: &str) {
 struct UnreachableHeadless;
 
 impl HeadlessRenderer for UnreachableHeadless {
-    fn render_html(&self, url: &str) -> RendererResult<HeadlessDocument> {
+    fn render_html(
+        &self,
+        url: &str,
+        _context: &RenderContext,
+    ) -> RendererResult<HeadlessDocument> {
         panic!("the browser boundary was reached with {url:?}");
     }
 }
@@ -1218,20 +1226,20 @@ fn noncanonical_userinfo_spellings_are_sanitized_in_every_public_diagnostic() {
     .expect("endpoint");
 
     for (raw, _) in NONCANONICAL_CREDENTIALED_URLS {
-        let native = NativeReadabilityRenderer::new(reqwest::blocking::Client::new())
-            .render(raw)
+        let native = NativeReadabilityRenderer::new(single_hop())
+            .render(raw, &RenderContext::single_page())
             .expect_err("a credentialed target is refused before the GET");
         assert_eq!(native.kind, RendererErrorKind::Transport);
         assert_no_userinfo(&native.message, "the native refusal");
 
         let headless = NativeHeadlessRenderer::new(Arc::new(UnreachableHeadless))
-            .render(raw)
+            .render(raw, &RenderContext::single_page())
             .expect_err("a credentialed target is refused before the browser");
         assert_eq!(headless.kind, RendererErrorKind::Transport);
         assert_no_userinfo(&headless.message, "the headless refusal");
 
         let refused = firecrawl
-            .render(raw)
+            .render(raw, &RenderContext::single_page())
             .expect_err("a credentialed target is refused before the payload");
         assert_eq!(refused.kind, RendererErrorKind::Transport);
         assert_no_userinfo(&refused.message, "the firecrawl refusal");
@@ -1308,7 +1316,7 @@ fn a_credentialed_provider_identity_and_crawl_reason_stay_sanitized() {
         &format!("{base}/v1/scrape"),
     )
     .expect("endpoint")
-    .render("https://example.test/page")
+    .render("https://example.test/page", &RenderContext::single_page())
     .expect_err("a credentialed provider final URL is not a usable identity");
     assert_eq!(error.kind, RendererErrorKind::InvalidResponse);
     assert_no_userinfo(&error.message, "the firecrawl final URL rejection");
@@ -1446,9 +1454,9 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     // 1. The direct native rung. The post-redirect status failure is still a
     //    transport failure, the smuggled credential is absent, and the
     //    destination is still reported — redacted rather than dropped.
-    let renderer = NativeReadabilityRenderer::new(reqwest::blocking::Client::new());
+    let renderer = NativeReadabilityRenderer::new(single_hop());
     let status_error = renderer
-        .render(&redirect_url)
+        .render(&redirect_url, &RenderContext::single_page())
         .expect_err("the redirected request fails at the destination");
     assert_eq!(status_error.kind, RendererErrorKind::Transport);
     assert_no_redirect_credential(&status_error.message, "the native GET status error");
@@ -1466,7 +1474,7 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
     // 2. The send boundary, reached by redirecting onto a refused loopback port
     //    so the error is produced while connecting rather than after a status.
     let send_error = renderer
-        .render(&format!("{origin}/refused-redirect"))
+        .render(&format!("{origin}/refused-redirect"), &RenderContext::single_page())
         .expect_err("the redirected request cannot connect");
     assert_eq!(send_error.kind, RendererErrorKind::Transport);
     assert_no_redirect_credential(&send_error.message, "the native GET send error");
@@ -1478,7 +1486,7 @@ fn a_redirect_location_carrying_userinfo_never_reaches_a_public_diagnostic() {
 
     // 3. The same failure through the real ladder, with renderer identity and
     //    ladder order unchanged and the rendered attempt trace credential-safe.
-    let native = NativeReadabilityRenderer::new(reqwest::blocking::Client::new());
+    let native = NativeReadabilityRenderer::new(single_hop());
     let rung: Arc<dyn Renderer> = Arc::new(native);
     let ladder_error = WebFetcher::new(Arc::clone(&rung))
         .expect("readability slot")
@@ -1666,10 +1674,10 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
         _ => http_response_bytes("404 Not Found", "text/plain", b"missing"),
     });
 
-    let renderer = NativeReadabilityRenderer::new(reqwest::blocking::Client::new());
+    let renderer = NativeReadabilityRenderer::new(single_hop());
 
     let latin = renderer
-        .render(&format!("{base}/windows-1252"))
+        .render(&format!("{base}/windows-1252"), &RenderContext::single_page())
         .expect("a declared legacy charset decodes");
     assert!(
         latin.title.contains("Café"),
@@ -1683,7 +1691,7 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     );
 
     let bom = renderer
-        .render(&format!("{base}/bom"))
+        .render(&format!("{base}/bom"), &RenderContext::single_page())
         .expect("a BOM decodes");
     assert!(
         bom.title.contains("Café"),
@@ -1696,12 +1704,12 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     );
 
     let undeclared = renderer
-        .render(&format!("{base}/undeclared"))
+        .render(&format!("{base}/undeclared"), &RenderContext::single_page())
         .expect("an undeclared charset defaults to UTF-8");
     assert!(undeclared.title.contains("Café"));
 
     let unknown = renderer
-        .render(&format!("{base}/unknown"))
+        .render(&format!("{base}/unknown"), &RenderContext::single_page())
         .expect_err("an unsupported declared charset fails the rung closed");
     assert_eq!(unknown.kind, RendererErrorKind::InvalidResponse);
     assert!(
@@ -1711,7 +1719,7 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     );
 
     let broken = renderer
-        .render(&format!("{base}/malformed"))
+        .render(&format!("{base}/malformed"), &RenderContext::single_page())
         .expect_err("a malformed byte sequence fails the rung closed");
     assert_eq!(broken.kind, RendererErrorKind::InvalidResponse);
     assert!(
@@ -1725,7 +1733,7 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     // declared charset. windows-1252 accepts every byte, so honoring the decoy
     // would silently mojibake the UTF-8 bytes instead of failing closed.
     let decoy = renderer
-        .render(&format!("{base}/quoted-decoy"))
+        .render(&format!("{base}/quoted-decoy"), &RenderContext::single_page())
         .expect("the real top-level charset parameter decodes");
     assert!(
         decoy.title.contains("Café") && decoy.markdown.contains("café"),
@@ -1740,7 +1748,7 @@ fn a_bounded_native_read_honors_declared_charset_and_bom_and_fails_closed() {
     // The streaming ceiling still runs first, and still fails closed.
     let capped = renderer
         .with_max_response_bytes(NonZeroUsize::new(64).expect("non-zero ceiling"))
-        .render(&format!("{base}/windows-1252"))
+        .render(&format!("{base}/windows-1252"), &RenderContext::single_page())
         .expect_err("the byte ceiling is enforced before anything is decoded");
     assert_eq!(capped.kind, RendererErrorKind::InvalidResponse);
     assert!(

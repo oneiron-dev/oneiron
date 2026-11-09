@@ -10,8 +10,8 @@ use std::thread;
 
 use oneiron_organ_protocol::{
     Answer, AskCode, Call, CallContext, DEFAULT_FRAME_LIMIT, FromOrgan, Hello, Limits, Organ,
-    OrganError, OrganIdentity, Outcome, PROTOCOL, ProtocolVersion, ToOrgan, VerbSpec, recv_frame,
-    send_frame, serve_stream,
+    OrganError, OrganIdentity, Outcome, PROTOCOL, ProtocolVersion, ToOrgan, Value, VerbSpec,
+    recv_frame, send_frame, serve_stream, to_value,
 };
 
 /// Asks once and reports the refusal code it got.
@@ -34,9 +34,9 @@ impl Organ for Asking {
     }
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
-        let report = match call.ask("anything", rmpv::Value::Nil) {
+        let report = match call.ask("anything", Value::Nil) {
             Ok(_) => "answered".into(),
-            Err(refusal) => rmpv::ext::to_value(refusal.code).unwrap_or(rmpv::Value::Nil),
+            Err(refusal) => to_value(&refusal.code).unwrap_or(Value::Nil),
         };
         Ok(Answer {
             report,
@@ -74,7 +74,7 @@ fn a_1_1_organ_under_a_1_0_engine_sends_no_ask() {
         id: 1,
         verb: "asking.ask".into(),
         schema: 1,
-        args: rmpv::Value::Nil,
+        args: Value::Nil,
         body: None,
         inputs: Vec::new(),
         deadline_ms: 10_000,
@@ -90,7 +90,7 @@ fn a_1_1_organ_under_a_1_0_engine_sends_no_ask() {
     };
     assert_eq!(
         proposal.report,
-        rmpv::ext::to_value(AskCode::Unsupported).expect("code")
+        to_value(&AskCode::Unsupported).expect("code")
     );
     drop(engine);
     served.join().expect("served").expect("clean end");
