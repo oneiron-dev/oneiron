@@ -64,7 +64,7 @@ enum DraftScope {
 
 /// The guest may request composition and self-limits, not authorship,
 /// provenance, a parent attempt, an approval stamp, or a system logical id.
-pub(crate) fn parse_agent_put_request(
+pub fn parse_agent_put_request(
     id: &str,
     definition: JsonValue,
     now: u64,

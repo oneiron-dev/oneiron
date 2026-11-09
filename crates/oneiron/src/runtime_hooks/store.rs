@@ -591,7 +591,8 @@ pub(super) fn hook_verb_run_source_rows_in(
         return Ok(None);
     };
     if run.unattributed
-        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+        || crate::task_verb::verb_hook_boundary::row_domain(&crate::verbs::VERB_TABLE, &run.verb)
+            == super::VerbDomain::Write
     {
         return Ok(None);
     }
