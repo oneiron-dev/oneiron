@@ -271,7 +271,9 @@ async fn register_agent_connector(
 #[tokio::test]
 async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
     use crate::mcp::McpConnectorScope;
-    use oneiron::context_board::{CommunicationLimits, SelfBriefState};
+    use oneiron::context_board::{
+        BriefCredentialCeiling, BriefWorkingSet, CommunicationLimits, SelfBriefState,
+    };
     use oneiron::federation::{Scope, ScopeAxis, ScopeId};
     use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
     let (_dir, server) = auth_test_server();
@@ -298,20 +300,29 @@ async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
             actor,
             "wide-run".into(),
             1,
+            // The run's scope rides the brief's credential ceiling since
+            // 4094ec063a6 (#6647, FIX 17594): the effective scope is gone.
             SelfBriefState {
                 self_ref: actor,
-                principal: actor,
-                cast: vec![actor],
-                grant_revision: 1,
-                effective_scope,
+                principal: Some(actor),
+                grants: None,
+                run_ceiling: None,
+                credential_ceiling: Some(BriefCredentialCeiling {
+                    scope: effective_scope,
+                    records: std::collections::BTreeSet::new(),
+                    channels: std::collections::BTreeSet::new(),
+                    read_scope: None,
+                    connector: None,
+                }),
+                parent_ceiling: None,
                 communication: CommunicationLimits {
-                    scope: Scope::default(),
-                    recipients: vec![],
-                    max_messages: None,
+                    reach: None,
+                    credential_ceiling: None,
                 },
-                classes: vec![],
-                budget_lease_id: "lease".into(),
-                budget: BudgetRead {
+                ceilings: None,
+                class_verdicts: None,
+                budget_lease_id: Some("lease".into()),
+                budget: Some(BudgetRead {
                     attempt_id: "run".into(),
                     limit_units: 10,
                     cap_units: 10,
@@ -320,10 +331,14 @@ async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
                     remaining_units: 10,
                     on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
                     fired_thresholds: vec![],
-                },
+                }),
                 clock_ms: 1,
                 skill_index: vec![],
-                working_set: vec![],
+                working_set: BriefWorkingSet {
+                    scratchpad: Some(vec![]),
+                    pins: Some(vec![]),
+                    replay: Some(vec![]),
+                },
             },
         )
         .await

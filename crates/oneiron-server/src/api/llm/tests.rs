@@ -100,6 +100,8 @@ fn request() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -125,12 +127,16 @@ fn seed_models(vault: &Vault) {
                         output_per_million: "1".into(),
                         cache_read_per_million: None,
                         cache_write_per_million: None,
+                        currency: None,
                     }),
                     capabilities: vec![LlmCapability::Streaming],
                     metadata: BTreeMap::new(),
                 },
                 scores: BTreeMap::new(),
                 fetched_at: BTreeMap::new(),
+                tokens_per_o200k: None,
+                stale_since: None,
+                source_rows: None,
             })
             .unwrap();
     }
