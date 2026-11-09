@@ -1,6 +1,6 @@
 {
   "name": "vault.feeds.ack",
-  "description": "Moves one of the caller's change feed subscriptions' cursors forward to a page's through positions.",
+  "description": "Moves one of the caller's change feed subscriptions' cursors forward to tokens its pages gave, refreshing each.",
   "input": "crate::feeds::FeedAckRequest",
   "output": "crate::feeds::FeedSubscription",
   "call": "memory.feed_ack(&input)?",
