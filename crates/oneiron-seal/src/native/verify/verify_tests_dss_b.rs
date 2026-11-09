@@ -13,7 +13,7 @@ pub(crate) mod tests {
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_time_lta_a::tests::*;
     use super::super::*;
-    use crate::api::VerifyCheckKind;
+    use crate::api::{VerifyCheckKind, VerifyFindingCode};
     use crate::memory::testing::{operation_ledger, operation_limits};
 
     #[test]
@@ -25,7 +25,11 @@ pub(crate) mod tests {
         let doc = dss_doc(&[ca.cert_der.clone(), leaf_der.clone()], &[], &[]);
         let covered = covered_of(&[&ca.cert_der, &leaf_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Rule D (23c390695c2, #5937; docs/ops/seal-profile-evidence.md):
+        // bound certificate-only material without revocation coverage is
+        // unresolved, NotRun with ValidationMaterialUnavailable. That is
+        // never a pass, so it cannot inflate B-LT.
+        assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
 
     #[test]
