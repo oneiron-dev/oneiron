@@ -210,6 +210,7 @@ vaultAgentsDreamingSet(input: unknown): unknown
 vaultAgentsExportPack(requestJson: string): string
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsGrantsMint(input: unknown): unknown
+vaultAgentsGrantsNarrow(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
 vaultAgentsSpawn(input: unknown): unknown
@@ -617,6 +618,7 @@ vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesRetire(input: unknown): unknown
+vaultEngineControlsChanges(input: unknown): unknown
 vaultEntitiesLookBeforeMint(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
@@ -792,6 +794,10 @@ vaultMailThreadsUnshare(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
 vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
+vaultMembersAsk(input: unknown): unknown
+vaultMembersAsksApply(input: unknown): unknown
+vaultMembersAsksDecline(input: unknown): unknown
+vaultMembersAsks(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersDelegate(input: unknown): unknown
