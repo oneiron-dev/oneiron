@@ -2,13 +2,15 @@
 //! behaviour tests of X01 (#6878), X02 (#6879), CONSENT-RAMP (#6872) and the
 //! repeat revoke (#6874), run from an integration target because the lib test
 //! target does not compile. Crate-private items are reached through the
-//! hidden doors in `oneiron::test_support::untangle_regressions`; every
-//! assertion is here.
+//! hidden doors in `oneiron::test_doors::untangle_regressions`, built only
+//! under `--cfg oneiron_test_support`; every assertion is here. Without that
+//! cfg this target is empty, so a plain `cargo test` still builds.
+#![cfg(oneiron_test_support)]
 
 use oneiron::Vault;
 use oneiron::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
 use oneiron::identity_topology::ProposalOutcome;
-use oneiron::test_support::untangle_regressions as doors;
+use oneiron::test_doors::untangle_regressions as doors;
 
 /// The authenticated owner every consent and graduation door needs: the
 /// vault's embedded owner.
