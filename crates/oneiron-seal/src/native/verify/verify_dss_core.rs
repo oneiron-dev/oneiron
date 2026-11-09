@@ -243,6 +243,11 @@ fn material_valid(
     // Anchor certificates ride anchor trust and need no coverage. A
     // cert-only DSS or otherwise insufficient valid coverage is unresolved,
     // never a profile pass. Invalid evidence has already failed above.
+    // Evidence authenticated by a same-subject/different-key shadow of a
+    // covered certificate's issuer fails here: a CRL that names the
+    // issuer's subject but does not verify under the key that signed the
+    // certificate is forged material about it, so it is invalid, never
+    // merely unavailable (#5937 kept missing evidence unresolved).
     let mut covered_ok = true;
     for cert in covered {
         if anchors.iter().any(|anchor| anchor.der == cert.der) {
@@ -255,10 +260,16 @@ fn material_valid(
                 break;
             }
         }
-        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
-            covered_ok = false;
-            break;
+        if crl_covered || ocsp_targets.contains(&cert.der.as_slice()) {
+            continue;
         }
+        let shadowed = crl_issuers
+            .iter()
+            .any(|issuer| issuer.cert.tbs_certificate.subject == cert.cert.tbs_certificate.issuer);
+        if shadowed {
+            return Ok(MaterialValidity::Invalid);
+        }
+        covered_ok = false;
     }
     if ocsp_unknown {
         return Ok(MaterialValidity::Unresolved(
