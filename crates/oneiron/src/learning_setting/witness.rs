@@ -59,24 +59,32 @@ pub(super) fn put_in_txn(
 
 /// What a PUT act's witness names: the key, the mode and the scope's kind.
 fn act_value(scope: &SettingScope, row: &SettingRow) -> Value {
+    Value::Map(act_entries(scope, row))
+}
+
+/// [`act_value`]'s entries.
+fn act_entries(scope: &SettingScope, row: &SettingRow) -> Vec<(Value, Value)> {
     let scope_tag = match scope {
         SettingScope::Vault => "vault",
         SettingScope::Goal(_) => "goal",
         SettingScope::Project(_) => "project",
         SettingScope::Type(_) => "type",
     };
-    Value::Map(vec![
+    vec![
         (Value::from("key"), Value::from(row.key.as_str())),
         (Value::from("mode"), Value::from(row.mode.as_str())),
         (Value::from("scope_tag"), Value::from(scope_tag)),
-    ])
+    ]
 }
 
 /// The PUT act of a holder of `engine.controls` (untangle 6.6b): the
 /// engine observed an act its one check admitted in this writer, so the
-/// witness is `Observed` and `Auto`, about the holder. It is never the
-/// owner's own word (`UserStated`), and the engine-control receipt beside it
-/// names the holder, the class and the value.
+/// witness is `Observed` and `Auto`. It is never the owner's own word
+/// (`UserStated`). The setting is the vault owner's, so the witness is about
+/// the owner and lives on the owner's substrate facet, as the owner's own
+/// PUT does; a holder such as the Coach is no PERSON and has no facet. Its
+/// value names the holder, and the engine-control receipt beside it names
+/// the holder, the class and the value.
 pub(super) fn holder_put_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -84,14 +92,21 @@ pub(super) fn holder_put_in_txn(
     scope: &SettingScope,
     row: &SettingRow,
 ) -> Result<EntityId> {
+    let owner = crate::policy_model::owners_in_txn(vault, &*txn)?
+        .first()
+        .copied()
+        .ok_or_else(|| crate::error::Error::InvalidConfig("this vault has no owner".into()))?;
+    let mut value = act_entries(scope, row);
+    value.push((Value::from("holder"), Value::from(holder.to_hex())));
     let mut body = ClaimBody::new(
         PREDICATE,
-        ClaimSubject::Entity(holder),
-        act_value(scope, row),
+        ClaimSubject::Entity(owner),
+        Value::Map(value),
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    body.scope_facet = crate::claim::substrate_facet_id(owner)?;
     body.valid_from = Some(row.at);
     body.source = Some(ClaimSource::Observed);
     let id = vault.store.clock.entity_id()?;
