@@ -246,7 +246,12 @@ impl Vault {
                 code: refusal.code().to_owned(),
                 refused_at_ms: super::settle::now_ms(),
             });
-            put_code_consent_wait_in_txn(self, txn, &mut row)?;
+            put_code_consent_wait_in_txn(
+                self,
+                txn,
+                &mut row,
+                crate::consent::CodeWaitCommand::RefuseResume,
+            )?;
             Ok(true)
         })
     }

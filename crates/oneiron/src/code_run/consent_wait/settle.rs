@@ -420,7 +420,12 @@ fn answer_in_txn(
         }),
         answered_at_ms: now_ms(),
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::Answer,
+    )?;
     if input.choice == CodeConsentChoice::Deny {
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_DENIED])?;
     } else if !active_authority_holds_in_txn(vault, txn, &row) {
@@ -774,7 +779,12 @@ pub(super) fn settle_with_reply_in_txn(
         external_reply,
         settled_at_ms: now,
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::Settle,
+    )?;
     Ok(true)
 }
 

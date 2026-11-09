@@ -231,6 +231,18 @@ impl Vault {
             bypass: Some(extent),
         };
         let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
+        let from = GRANTS
+            .get(&self.store, &*wtxn, &grant_ref)?
+            .map(|stored| stored.status);
+        // The bypass mint writes no companion rows (no reason retirement, no widen bookkeeping).
+        let super::GrantStep::Write { status, .. } =
+            super::ConsentLifecycle::grant(from, super::GrantCommand::MintBypass)
+        else {
+            return Err(Error::InvariantViolation(
+                "the grant table refused a bypass mint",
+            ));
+        };
+        let row = ConsentGrantRow { status, ..row };
         GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
         let receipt = ConsentReceipt::BypassCreated {
             decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),

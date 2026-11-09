@@ -880,7 +880,7 @@ impl Vault {
                 Ok(grant_ref.clone())
             }
             (ShapeChange::Retire, ShapeTarget::Grant { grant_ref }, _) => {
-                let _receipt = self.revoke_consent_grant(owner, grant_ref)?;
+                self.consent_revocation(owner, grant_ref)?;
                 Ok(grant_ref.clone())
             }
             (
