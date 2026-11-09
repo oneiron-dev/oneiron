@@ -81,15 +81,18 @@ pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
     dreamer_run_id_from_provenance(envelope.provenance().value())
 }
 
-/// Whether `envelope` is an agent's live-run claim put asking Auto (FIX 3983): a Generated producer the host's
+/// Whether `envelope` is an agent's live-run claim put (FIX 3983): a Generated producer the host's
 /// auto checker reviews as it reviews a Dreamer write (review 6881 P1). The live-run door stamps the marker on
-/// its Auto request only, so a Proposed resubmission is never consulted.
+/// its Auto request and on that request's Proposed resubmission: a checker hold on the resubmission pends it at
+/// Proposed, which persists its pending review (review 6908 P1). Code mode's Proposed put carries no marker.
 pub(in crate::gate) fn live_run_claim_put_from_write_envelope(envelope: &WriteEnvelope) -> bool {
     if !matches!(
         envelope.actor().actor_class(),
         EdgeActorClass::Agent | EdgeActorClass::System
-    ) || envelope.approval() != ClaimApprovalStatus::Auto
-    {
+    ) || !matches!(
+        envelope.approval(),
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+    ) {
         return false;
     }
     let Value::Map(entries) = envelope.provenance().value() else {
