@@ -3,6 +3,7 @@
 
 Each subcommand dumps generate.py's state the way `oneiron-sdk-generator port-harness <subcommand>` dumps the Rust
 port's, so a `diff` of the two files proves the port:
+  rows --out <file>      generate.py's module-level row sets and constants (the tree is this file's grandparent)
   unicode --out <file>   every character property and case mapping the port's py::text reproduces
   record --log <file> --out-dir <dir> [--marker-out-dir <dir>]
                          runs outputs() (FORMAT=False) with every Inventory call logged, then dumps each
@@ -13,6 +14,66 @@ import json
 import sys
 import zlib
 from pathlib import Path
+
+
+def rows_dump(out):
+    '''generate.py's module level, stopped before the type walk: `facade_types.Inventory` is replaced by a recorder
+    before `import generate`, so INVENTORY records the rows it is handed and reads no Rust source.
+
+    ROW_OBJECTS holds every row object once, after the module-level mutations, in first-seen order over MANIFEST,
+    ROWS and BOARD_HOST_ROWS (the verb rows, then the synthetic host rows); each set is the list of its rows'
+    indexes there, so the dump also shows which sets share an object.'''
+    import facade_types
+    calls = []
+
+    class InventoryRecorder:
+        'Stands in for facade_types.Inventory: records the rows generate.py hands it.'
+        def __init__(self, root, rows):
+            calls.append(rows)
+
+    facade_types.Inventory = InventoryRecorder
+    import generate as g
+    objects, index = [], {}
+
+    def ids(rows):
+        found = []
+        for row in rows:
+            if id(row) not in index:
+                index[id(row)] = len(objects)
+                objects.append(row)
+            found.append(index[id(row)])
+        return found
+
+    ids(g.MANIFEST['verbs'])
+    ids(g.ROWS)
+    ids(g.BOARD_HOST_ROWS)
+    dump = {
+        'ROW_OBJECTS': objects,
+        'MANIFEST': {'verbs': ids(g.MANIFEST['verbs'])},
+        'HOST_ROWS': ids(g.HOST_ROWS),
+        'HOST_RUN_ROWS': ids(g.HOST_RUN_ROWS),
+        'HOST_BROWSER_ROWS': ids(g.HOST_BROWSER_ROWS),
+        'HOST_BOARD_ROWS': ids(g.HOST_BOARD_ROWS),
+        'BROWSER_ROWS': ids(g.BROWSER_ROWS),
+        'ROWS': ids(g.ROWS),
+        'BOARD_HOST_ROWS': ids(g.BOARD_HOST_ROWS),
+        'BOARD_HOST_NAMES': sorted(g.BOARD_HOST_NAMES, key=repr),
+        'DEFINITIONS': ids(g.DEFINITIONS),
+        'RUN_ROWS': ids(g.RUN_ROWS),
+        'SESSION_READS': list(g.SESSION_READS),
+        'CODE_MODE_ROWS': ids(g.CODE_MODE_ROWS),
+        'SCHEMA_ROWS': ids(g.SCHEMA_ROWS),
+        'MCP_NONE_CONTEXTS': list(g.MCP_NONE_CONTEXTS),
+        'MCP_SCOPES': sorted(g.MCP_SCOPES),
+        'HEADER': g.HEADER,
+        'FACADE_ROWS': ids(g.FACADE_ROWS),
+        'INVENTORY': [ids(rows) for rows in calls],
+        'mcp_rows()': ids(g.mcp_rows()),
+        'CORE_VERB_NAMES': g.CORE_VERB_NAMES,
+        'CORE_COUNT_DEFAULTS': g.CORE_COUNT_DEFAULTS,
+        'CORE_VERB_NAMES_PATH': g.CORE_VERB_NAMES_PATH,
+    }
+    Path(out).write_text(json.dumps(dump, indent=1) + '\n')
 
 
 def ranges(name, chars, predicate):
@@ -221,6 +282,8 @@ def record(log_path, out_dir, marker_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
+    rows_parser = sub.add_parser('rows')
+    rows_parser.add_argument('--out', required=True)
     unicode_parser = sub.add_parser('unicode')
     unicode_parser.add_argument('--out', required=True)
     record_parser = sub.add_parser('record')
@@ -228,9 +291,11 @@ def main():
     record_parser.add_argument('--out-dir', required=True)
     record_parser.add_argument('--marker-out-dir')
     args = parser.parse_args()
-    if args.command == 'unicode':
+    if args.command == 'rows':
+        rows_dump(args.out)
+    elif args.command == 'unicode':
         unicode_dump(args.out)
-    if args.command == 'record':
+    elif args.command == 'record':
         record(args.log, args.out_dir, args.marker_out_dir)
 
 
