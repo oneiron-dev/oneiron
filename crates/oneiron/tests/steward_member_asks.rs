@@ -66,6 +66,17 @@ fn a_stewards_add_member_call_becomes_an_ask_an_owner_applies() {
             1,
         )
         .expect("a shared vault with a Steward");
+    // A founding member other than the creator joins by invitation (OF-531):
+    // the Steward accepts its own before it acts as a member.
+    let invitation = vault
+        .shared_invitations(&steward_proof, SHARED)
+        .expect("the Steward's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward's founding invitation");
+    vault
+        .accept_shared_invitation(&steward_proof, SHARED, &invitation.id)
+        .expect("the Steward accepts");
     let add = MemberAskChange::Add {
         member: invitee.to_hex(),
         role: None,
