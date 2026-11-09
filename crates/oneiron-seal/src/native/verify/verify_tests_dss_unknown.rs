@@ -14,7 +14,7 @@ mod tests {
     use super::super::verify_sig_pipeline::Checks;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::*;
-    use crate::api::{VerifyCheckKind, VerifyFindingCode};
+    use crate::api::{VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
     use crate::memory::testing::process_operation_limits;
 
     const THIS_UPDATE: u64 = AT_UNIX - 3600;
@@ -107,170 +107,120 @@ mod tests {
     }
 
     #[test]
-    fn dss_ocsp_unknown_for_covered_certificate_counts_through_a_second_encoding() {
-        // /Certs carries a second encoding of the leaf (same TBSCertificate,
-        // another valid signature) before the leaf itself. The response's
-        // CertID binds to the first certificate that matches it, the second
-        // encoding, but the `unknown` still names the leaf: NotRun with
-        // RevocationStatusUnknown, as in the control above.
+    fn dss_ocsp_unknown_counts_for_its_covered_certificate_whichever_certificate_it_binds_first() {
+        // Hostile input, one row per shape. A CertID names a certificate by
+        // issuer and serial number and binds to the first certificate in
+        // /Certs that matches it. In each row another certificate that
+        // matches comes before the leaf; the anchor's genuine CRL covers the
+        // leaf, and the anchor's authenticated `unknown` still names the
+        // leaf: NotRun with RevocationStatusUnknown, as in the control above.
         let anchor = test_ca("issuer-a");
-        let leaf_der = leaf_under(&anchor, "leaf");
-        let second_der = second_encoding(&anchor, &leaf_der);
-        let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let unknown = unknown_for(&anchor, &leaf_der);
-        let doc = dss_doc(&[second_der, leaf_der.clone()], &[crl], &[unknown]);
-        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
-        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
-    }
-
-    #[test]
-    fn dss_shadow_failure_survives_the_missing_root_probe() {
-        // A shadow CRL beside the anchor's genuine CRL, and the anchor's
-        // authenticated `unknown` for the leaf: Invalid under the real
-        // anchors. With a certificate path left unresolved, the missing-root
-        // probe re-runs the material with every covered certificate as a
-        // provisional anchor, which exempts the leaf from its `unknown` and
-        // from the shadow scan. A forged-material failure is never a
-        // missing-root symptom, so it stays Fail / ValidationMaterialInvalid.
-        let anchor = test_ca("issuer");
-        let leaf_der = leaf_under(&anchor, "leaf");
-        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
-        let shadow = test_ca("issuer");
-        let genuine = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let unknown = build_ocsp_full(
-            &anchor,
-            leaf.tbs_certificate.serial_number,
-            AT_UNIX - 60,
-            NEXT_UPDATE,
-            x509_ocsp::CertStatus::unknown(),
-            AT_UNIX - 60,
-            &anchor,
-            true,
-        );
-        let doc = dss_doc(
-            &[
-                leaf_der.clone(),
-                shadow.cert_der.clone(),
-                anchor.cert_der.clone(),
-            ],
-            &[genuine, forged],
-            &[unknown],
-        );
-        let limits = process_operation_limits();
-        let memory = limits.memory.ledger().unwrap();
-        let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
-        let covered = covered_of(&[&leaf_der]);
-        let mut checks = Checks::new(limits);
-        verify_dss(
-            &doc,
-            &anchors,
-            &covered,
-            AT_UNIX,
-            &memory,
-            &mut checks,
-            limits,
-        )
-        .unwrap();
-        assert_material_fails(&checks);
-        checks
-            .not_run(VerifyCheckKind::TimestampCertificatePath)
-            .unwrap();
-        classify_missing_material_root(
-            &doc,
-            &anchors,
-            &covered,
-            AT_UNIX,
-            &memory,
-            limits,
-            &mut checks,
-        )
-        .unwrap();
-        assert_material_fails(&checks);
-    }
-
-    #[test]
-    fn dss_ocsp_unknown_counts_for_a_covered_certificate_sharing_its_serial() {
-        // The anchor issued two certificates with one serial number (RFC 5280
-        // forbids it, but both verify): an unrelated one first in /Certs,
-        // then the leaf. An `unknown` for that issuer and serial binds to the
-        // first, and still names the leaf, whose issuer and serial it
-        // carries: NotRun with RevocationStatusUnknown.
-        let anchor = test_ca("issuer-a");
-        let other_der = leaf_with_serial(&anchor, "other", 7);
         let leaf_der = leaf_with_serial(&anchor, "leaf", 7);
-        let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let unknown = unknown_for(&anchor, &leaf_der);
-        let doc = dss_doc(&[other_der, leaf_der.clone()], &[crl], &[unknown]);
-        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
-        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
+        // Row 1: a second encoding of the leaf (same TBSCertificate, another
+        // valid signature).
+        let second_encoding_der = second_encoding(&anchor, &leaf_der);
+        // Row 2: a second certificate the anchor gave the same serial number
+        // (RFC 5280 forbids it, but both verify).
+        let same_serial_der = leaf_with_serial(&anchor, "other", 7);
+        for (row, first_der) in [
+            ("second encoding of the leaf", second_encoding_der),
+            ("second certificate with the leaf's serial", same_serial_der),
+        ] {
+            let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+            let unknown = unknown_for(&anchor, &leaf_der);
+            let doc = dss_doc(&[first_der, leaf_der.clone()], &[crl], &[unknown]);
+            let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+            assert_eq!(
+                dss_finding(&checks),
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::RevocationStatusUnknown)
+                ),
+                "{row}"
+            );
+        }
     }
 
     #[test]
-    fn dss_shadow_behind_a_stale_crl_survives_the_missing_root_probe() {
-        // At the verification time the shadow's CRL is stale, so the
-        // material fails early, before the shadow scan. The missing-root
-        // probe re-reads it at the earlier provisional time, when that CRL is
-        // fresh, with every covered certificate as a provisional root, which
-        // exempts the leaf from its `unknown` and from the shadow scan. Under
-        // the real anchors at that time the shadow is found, so the failure
-        // stays Fail / ValidationMaterialInvalid.
-        let verified_at = AT_UNIX + 7200;
-        let later = Some(AT_UNIX + 10_800);
+    fn dss_shadow_is_possible_tampering_after_the_missing_root_probe() {
+        // Hostile input, one row per shape. A shadow CRL beside the anchor's
+        // genuine CRL, and the anchor's authenticated `unknown` for the leaf.
+        // A certificate path is left unresolved, so the missing-root probe
+        // re-reads the material at the provisional time with every covered
+        // certificate as a provisional root, which exempts the leaf from its
+        // `unknown` and from the shadow scan. Whatever the probe finds, the
+        // shadow stays visible: NotRun with
+        // ValidationMaterialPossibleTampering (lead ruling F).
         let anchor = test_ca("issuer");
         let leaf_der = leaf_under(&anchor, "leaf");
         let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
         let shadow = test_ca("issuer");
-        let genuine = build_crl(&anchor, THIS_UPDATE, later, None, vec![]);
-        let stale_forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
-        let unknown = build_ocsp_full(
-            &anchor,
-            leaf.tbs_certificate.serial_number,
-            AT_UNIX - 60,
-            later,
-            x509_ocsp::CertStatus::unknown(),
-            AT_UNIX - 60,
-            &anchor,
-            true,
-        );
-        let doc = dss_doc(
-            &[
-                leaf_der.clone(),
-                shadow.cert_der.clone(),
-                anchor.cert_der.clone(),
-            ],
-            &[genuine, stale_forged],
-            &[unknown],
-        );
-        let limits = process_operation_limits();
-        let memory = limits.memory.ledger().unwrap();
-        let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
-        let covered = covered_of(&[&leaf_der]);
-        let mut checks = Checks::new(limits);
-        verify_dss(
-            &doc,
-            &anchors,
-            &covered,
-            verified_at,
-            &memory,
-            &mut checks,
-            limits,
-        )
-        .unwrap();
-        assert_material_fails(&checks);
-        checks
-            .not_run(VerifyCheckKind::TimestampCertificatePath)
+        let later = Some(AT_UNIX + 10_800);
+        // Row 1: read at the provisional time itself; the shadow is found at
+        // once. Row 2: read two hours later, when the shadow's CRL is stale,
+        // so the material fails early, before the shadow scan; the probe's
+        // re-read at the provisional time, under the real anchors, finds it.
+        for (row, verified_at) in [
+            ("shadow CRL fresh", AT_UNIX),
+            ("shadow CRL stale at the verification time", AT_UNIX + 7200),
+        ] {
+            let genuine = build_crl(&anchor, THIS_UPDATE, later, None, vec![]);
+            let forged = build_crl(&shadow, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+            let unknown = build_ocsp_full(
+                &anchor,
+                leaf.tbs_certificate.serial_number.clone(),
+                AT_UNIX - 60,
+                later,
+                x509_ocsp::CertStatus::unknown(),
+                AT_UNIX - 60,
+                &anchor,
+                true,
+            );
+            let doc = dss_doc(
+                &[
+                    leaf_der.clone(),
+                    shadow.cert_der.clone(),
+                    anchor.cert_der.clone(),
+                ],
+                &[genuine, forged],
+                &[unknown],
+            );
+            let limits = process_operation_limits();
+            let memory = limits.memory.ledger().unwrap();
+            let anchors = vec![EmbeddedCert::from_der(&anchor.cert_der).unwrap()];
+            let covered = covered_of(&[&leaf_der]);
+            let mut checks = Checks::new(limits);
+            verify_dss(
+                &doc,
+                &anchors,
+                &covered,
+                verified_at,
+                &memory,
+                &mut checks,
+                limits,
+            )
             .unwrap();
-        classify_missing_material_root(
-            &doc,
-            &anchors,
-            &covered,
-            AT_UNIX,
-            &memory,
-            limits,
-            &mut checks,
-        )
-        .unwrap();
-        assert_material_fails(&checks);
+            checks
+                .not_run(VerifyCheckKind::TimestampCertificatePath)
+                .unwrap();
+            classify_missing_material_root(
+                &doc,
+                &anchors,
+                &covered,
+                AT_UNIX,
+                &memory,
+                limits,
+                &mut checks,
+            )
+            .unwrap();
+            assert_eq!(
+                dss_finding(&checks),
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering)
+                ),
+                "{row}"
+            );
+        }
     }
 }
