@@ -121,7 +121,13 @@ generated Rust files are not committed: the crates that include them (`oneiron`,
 `oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`) run `scripts/sdk/generate.py` from
 their build scripts, once per change of the verb table (`scripts/sdk/verbs/`) or the Rust types it names, into
 the target directory. It uses the Python standard library only. A Rust port of the generator, which ends this
-requirement, comes before the first crates.io release.
+requirement, is the first change after the untangle.
+
+The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron`, `bun run
+prepare` in `packages/oneiron-client`, and `maturin build` for `oneiron-py`. The agent-SDK reference generated from
+the verb table (`types.md`, `facade-types.md`, `verbs.md`) is published from main at
+https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build keeps a local copy in
+`target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
 
 ## Web frontend
 

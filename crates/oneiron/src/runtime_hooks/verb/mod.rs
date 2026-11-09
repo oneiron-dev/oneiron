@@ -240,7 +240,8 @@ impl Vault {
     ///
     /// Reading the saved calls.
     pub(crate) fn verb_hook_invocation_saved(&self, invocation: InvocationId) -> Result<bool> {
-        Ok(self.verb_hook_state.drain_holds(invocation) || ask::saved(self, invocation)?)
+        Ok(self.runtime().verb_hook_state().drain_holds(invocation)
+            || ask::saved(self, invocation)?)
     }
 
     /// Observes a retained call's hook wait without consuming its answer.
@@ -327,7 +328,8 @@ impl Vault {
     ///
     /// Reading the binding list.
     pub fn verb_hooks_running(&self) -> Result<bool> {
-        Ok(!self.verb_hook_state.suppressed() && self.verb_hook_state.bindings(self)?.enabled)
+        Ok(!self.runtime().verb_hook_state().suppressed()
+            && self.runtime().verb_hook_state().bindings(self)?.enabled)
     }
 
     /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
@@ -395,7 +397,12 @@ impl Vault {
         credential: Option<VerbAskCredential>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let credential = credential.filter(|_| self.verb_hook_state.credential_check().is_some());
+        let credential = credential.filter(|_| {
+            self.runtime()
+                .verb_hook_state()
+                .credential_check()
+                .is_some()
+        });
         let resume = credential
             .as_ref()
             .map(|credential| VerbResume::Credential {
@@ -464,10 +471,11 @@ impl Vault {
             return false;
         };
         if let Some(key) = pre.session() {
-            return self
-                .verb_hook_state
-                .session
-                .unuse_ask(key, token.key(), token.ask());
+            return self.runtime().verb_hook_state().session.unuse_ask(
+                key,
+                token.key(),
+                token.ask(),
+            );
         }
         self.with_write_txn_grouped(|txn| ask::reopen_in_txn(self, txn, token))
             .inspect_err(|error| {
