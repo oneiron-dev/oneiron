@@ -268,7 +268,7 @@ export class EngineFixture {
       .finally(()=>this.launch());
     this.schema=undefined;
     try {
-      if(minted.exitCode!==0) throw new CliError(minted,"agent-token");
+      if(minted.exitCode!==0) throw new CliError(minted);
       const credential=(await readFile(file,"utf8")).trim();
       credentialParts(credential); // checks the paired form and registers credential, bearer and seed with the redactor
       const printed=JSON.parse(minted.stdout) as {principal_ref:string;actor_class:string;ceiling:string;slip_id:string;revoked_slip_ids:string[]};
