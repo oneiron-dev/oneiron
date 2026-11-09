@@ -19,8 +19,11 @@
     "bun": ">=1.3.0"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "generate": "python3 ../../scripts/sdk/generate.py --package oneiron-client",
+    "prepare": "bun run generate",
+    "prepublishOnly": "bun run generate",
+    "typecheck": "bun run generate && tsc --noEmit",
+    "test": "bun run generate && bun test",
     "check": "bun run typecheck && bun test"
   },
   "dependencies": {},

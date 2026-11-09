@@ -1,0 +1,17 @@
+{
+  "name": "self.run.attach",
+  "description": "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls.",
+  "input": "crate::code_run::fold_api::RunAttachRequest",
+  "output": "crate::code_run::fold_api::RunAttached",
+  "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

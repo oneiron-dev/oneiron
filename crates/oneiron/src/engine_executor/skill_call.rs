@@ -72,7 +72,8 @@ fn live_skill_call(
     let seq = record.bridge_calls.len() as u64;
     let skill = EntityId::from_hex(&input.skill)?;
     let root = vault
-        .attempt_cancels
+        .runtime()
+        .attempt_cancels()
         .register(leased.id, leased.attempt_count);
     let storage = ExecutorStorage::Canonical(vault);
     dispatcher.observe_bridge_history(&record.bridge_calls);

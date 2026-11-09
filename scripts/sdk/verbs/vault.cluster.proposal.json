@@ -1,0 +1,14 @@
+{
+  "name": "vault.cluster.proposal",
+  "description": "Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable.",
+  "input": "crate::memory::clustering::ClusterProposalRequest",
+  "output": "crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>",
+  "call": "memory.cluster_proposal(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

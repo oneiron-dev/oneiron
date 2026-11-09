@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.governance.set",
+  "description": "The owner marks or clears one skill governance tier; the mark changes no instruction content or version.",
+  "input": "SkillGovernanceSetRequest",
+  "output": "crate::task_verb::sdk::SkillGovernanceView",
+  "call": "crate::task_verb::sdk::skill_governance_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.set\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

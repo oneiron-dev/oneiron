@@ -150,7 +150,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry = self.vault.enter_off_record_session_entry(
             &key,
             backend,
-            self.vault.config.off_record_overlay_budget_bytes,
+            self.vault.runtime().off_record_overlay_budget_bytes(),
             Some((room, by)),
         )?;
         Ok(self.handle(key, entry))

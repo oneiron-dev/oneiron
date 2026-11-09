@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.status",
+  "description": "The owner reads this install's pact activation, consent epoch and local inactivity reason.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::task_verb::sdk::FederationStatus",
+  "call": "crate::task_verb::sdk::federation_status(memory)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "mcp_fields": {},
+  "host_door_proof": "owner"
+}

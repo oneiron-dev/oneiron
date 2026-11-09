@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.wellness.derive",
+  "description": "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs.",
+  "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+  "output": "crate::memory::wellness_doors::WellnessProjection",
+  "call": "memory.wellness_derive_as_owner(&memory.embedded_owner(\"vault.affect.wellness.derive\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

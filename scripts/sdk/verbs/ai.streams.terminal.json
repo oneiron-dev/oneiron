@@ -1,0 +1,15 @@
+{
+  "name": "ai.streams.terminal",
+  "description": "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model.",
+  "input": "crate::llm::model_stream::ModelStreamTerminalRequest",
+  "output": "crate::llm::model_stream::ModelStreamTerminal",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.terminal\", &input)?",
+  "host_door": true,
+  "openapi": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.mirror.push",
+  "description": "Push one origin's published refs to its schedule or full_auto mirror now as a reviewed, leased plan (full_auto: green heads only), recording the real outcome; ask_me refuses publish_request_required. Refs are not LFS readiness.",
+  "input": "crate::memory::origin_doors::OriginRepoRequest",
+  "output": "crate::origin::mirror::OriginMirrorRun",
+  "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

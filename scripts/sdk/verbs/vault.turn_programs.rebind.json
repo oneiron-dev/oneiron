@@ -1,0 +1,13 @@
+{
+  "name": "vault.turn_programs.rebind",
+  "description": "Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes.",
+  "input": "crate::dreamer_runner::TurnProgramRebindRequest",
+  "output": "crate::dreamer_runner::TurnProgramRebindReceipt",
+  "call": "crate::dreamer_runner::rebind_turn_program(memory, &input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

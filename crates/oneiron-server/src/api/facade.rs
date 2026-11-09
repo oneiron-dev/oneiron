@@ -8,10 +8,10 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! The route projection is generated from `scripts/sdk/agent-verbs.json`.
+//! The route projection is generated from `scripts/sdk/verbs/`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
-//! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one
+//! route runs its row through the generated dispatch (`dispatch.rs`, built into `OUT_DIR`), the one
 //! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
 //! admission on both. Live subscriptions remain owned by the held socket
 //! rather than this router.
@@ -32,8 +32,9 @@ mod agent_definition_doors;
 mod agent_grant_doors;
 mod agent_run_effect_doors;
 mod agent_verb_class_doors;
-#[path = "facade/generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 mod aging_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
@@ -89,8 +90,9 @@ pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod device_succession_doors;
 mod disclosure_doors;
-#[path = "facade/generated/dispatch.rs"]
-mod dispatch;
+mod dispatch {
+    include!(concat!(env!("OUT_DIR"), "/dispatch.rs"));
+}
 mod drafter_doors;
 mod embedding_space_doors;
 mod errors;
@@ -118,8 +120,9 @@ mod hook_check_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
-#[path = "facade/generated/host_door_rows.rs"]
-mod host_door_rows;
+mod host_door_rows {
+    include!(concat!(env!("OUT_DIR"), "/host_door_rows.rs"));
+}
 pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;

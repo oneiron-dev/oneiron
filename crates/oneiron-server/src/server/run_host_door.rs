@@ -674,34 +674,35 @@ fn board_as_agent(
     let name = verb.as_str();
     let mut rows = Vec::new();
     let mut hooks = None;
-    let output = verb_hook_boundary::row(&memory, name, input, |input| {
-        sdk::validate_input(name, &input)?;
-        let call = match verb {
-            AgentVerb::SelfFocusRefresh => BoardVerbCall::Refresh {
-                frame_epoch: decode::<BoardRefreshRequest>(input)?.frame_epoch,
-            },
-            AgentVerb::SelfFocusSubscribe => BoardVerbCall::Subscribe {
-                scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
-            },
-            AgentVerb::SelfFocusUnsubscribe => BoardVerbCall::Unsubscribe {
-                scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
-            },
-            _ => {
-                let request: DescribeRequest = decode(input)?;
-                BoardVerbCall::Expand {
-                    key: request
-                        .key
-                        .ok_or_else(|| MemoryError::bad_request("describe names its board key"))?,
-                    frame_epoch: request.frame_epoch,
+    let output =
+        verb_hook_boundary::row(&memory, &oneiron::verbs::VERB_TABLE, name, input, |input| {
+            sdk::validate_input(name, &input)?;
+            let call = match verb {
+                AgentVerb::SelfFocusRefresh => BoardVerbCall::Refresh {
+                    frame_epoch: decode::<BoardRefreshRequest>(input)?.frame_epoch,
+                },
+                AgentVerb::SelfFocusSubscribe => BoardVerbCall::Subscribe {
+                    scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
+                },
+                AgentVerb::SelfFocusUnsubscribe => BoardVerbCall::Unsubscribe {
+                    scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
+                },
+                _ => {
+                    let request: DescribeRequest = decode(input)?;
+                    BoardVerbCall::Expand {
+                        key: request.key.ok_or_else(|| {
+                            MemoryError::bad_request("describe names its board key")
+                        })?,
+                        frame_epoch: request.frame_epoch,
+                    }
                 }
-            }
-        };
-        let (output, served) = tokio::runtime::Handle::current().block_on(
-            execute_run_board_verb(server, actor, board, call, &mut hooks),
-        )?;
-        rows = served;
-        Ok(output)
-    })?;
+            };
+            let (output, served) = tokio::runtime::Handle::current().block_on(
+                execute_run_board_verb(server, actor, board, call, &mut hooks),
+            )?;
+            rows = served;
+            Ok(output)
+        })?;
     if let Some(hooks) = hooks {
         tokio::runtime::Handle::current().block_on(deliver_run_board_hooks(server, hooks))?;
     }
@@ -792,7 +793,7 @@ fn answer_as_agent_with_run(
     // 5461), and a connector call's passes picked (FIX 5455).
     let mut evidence = Some(Vec::new());
     let output = if served_by_host(verb) {
-        verb_hook_boundary::row(&memory, name, input, |input| {
+        verb_hook_boundary::row(&memory, &oneiron::verbs::VERB_TABLE, name, input, |input| {
             sdk::validate_input(name, &input)?;
             HELD_IMAGE.sync_scope(held, || {
                 host_row(

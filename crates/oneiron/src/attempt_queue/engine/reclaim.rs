@@ -8,6 +8,7 @@ use crate::attempt_queue::cancel::{
 use crate::attempt_queue::encoding::{
     decode_record, lease_expired, ready_at, ready_key, waiting_on_backoff,
 };
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::emit_attempt_queue_cleanup_span;
 use crate::attempt_queue::types::{
     AttemptId, AttemptLeaseExpiry, AttemptQueueCleanupReport, AttemptQueueRetryReason,
@@ -64,15 +65,18 @@ impl AttemptQueue<'_> {
                         report.increment_retry_reason(waiting_reason(&record, input.now));
                     }
                 }
-                AttemptState::Leased | AttemptState::Landing
-                    if !held.contains(&id)
-                        && lease_expired(&record, input.now, input.lease_timeout_secs) =>
-                {
-                    report.running += 1;
-                    expired_candidates.push(id);
-                }
                 AttemptState::Leased | AttemptState::Landing => {
                     report.running += 1;
+                    let reclaim = RunEvent::Reclaim {
+                        expired: lease_expired(&record, input.now, input.lease_timeout_secs),
+                        held: held.contains(&id),
+                    };
+                    if matches!(
+                        RunLifecycle::step(RunRow::of(&record), reclaim),
+                        RunStep::Move { .. }
+                    ) {
+                        expired_candidates.push(id);
+                    }
                 }
                 AttemptState::Completed => {
                     report.done += 1;
@@ -104,10 +108,17 @@ impl AttemptQueue<'_> {
                     continue;
                 };
                 let mut record = decode_record(&raw_record, id)?;
-                match record.state {
-                    AttemptState::Leased
-                        if lease_expired(&record, input.now, input.lease_timeout_secs) =>
-                    {
+                // Rechecked under the writer: a candidate was not held when
+                // the scan read it.
+                let reclaim = RunLifecycle::step(
+                    RunRow::of(&record),
+                    RunEvent::Reclaim {
+                        expired: lease_expired(&record, input.now, input.lease_timeout_secs),
+                        held: false,
+                    },
+                );
+                match (record.state, reclaim) {
+                    (AttemptState::Leased, RunStep::Move { to, pause }) => {
                         // A reclaimed lease resumes the SAME try — the row was
                         // never finalized, so this is a lease-generation reset,
                         // not a logical retry, and mints no new row. FIX 9932:
@@ -128,7 +139,8 @@ impl AttemptQueue<'_> {
                             observed_at: input.now,
                             lease_timeout_secs: input.lease_timeout_secs,
                         });
-                        record.state = AttemptState::Queued;
+                        record.state = to;
+                        record.active_pause = pause;
                         record.lease_owner = None;
                         record.scheduled_at = None;
                         record.backoff_until = None;
@@ -158,9 +170,9 @@ impl AttemptQueue<'_> {
                     // rung's runtime ground, so the runtime authors a terminal
                     // force cancellation and the landing's own accounting rides
                     // the receipt.
-                    AttemptState::Landing
-                        if lease_expired(&record, input.now, input.lease_timeout_secs) =>
-                    {
+                    // The table answers Cancelled; force_cancel_record writes
+                    // it with the landing's own accounting.
+                    (AttemptState::Landing, RunStep::Move { .. }) => {
                         // The runtime's own ground, minted through the same
                         // authority token the owner path uses — cleanup never
                         // hand-writes an actor onto a terminal receipt.
@@ -200,27 +212,27 @@ impl AttemptQueue<'_> {
                         report.landing_force_cancelled += 1;
                         lost_leases.push((record.id, record.attempt_count));
                     }
-                    AttemptState::Leased | AttemptState::Landing => {}
-                    AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
+                    (AttemptState::Leased | AttemptState::Landing, _) => {}
+                    (AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled, _) => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.pending += 1;
                         if waiting_on_backoff(&record) {
                             report.increment_retry_reason(waiting_reason(&record, input.now));
                         }
                     }
-                    AttemptState::Completed => {
+                    (AttemptState::Completed, _) => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                     }
-                    AttemptState::Failed => {
+                    (AttemptState::Failed, _) => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.failed += 1;
                     }
-                    AttemptState::Cancelled => {
+                    (AttemptState::Cancelled, _) => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                     }
-                    AttemptState::Abandoned => {
+                    (AttemptState::Abandoned, _) => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                         report.abandoned += 1;

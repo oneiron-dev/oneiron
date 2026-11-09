@@ -1,0 +1,16 @@
+{
+  "name": "self.saved_query.evaluate",
+  "description": "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity.",
+  "input": "crate::campaign::surface::SavedQueryEvaluateRequest",
+  "output": "crate::campaign::surface::SavedQueryEvaluationReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"self.saved_query.evaluate\", &input)?",
+  "host_door": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "saved_query"
+}

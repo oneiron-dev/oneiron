@@ -1,0 +1,20 @@
+{
+  "name": "vault.esign.send_for_signature",
+  "description": "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope.",
+  "refs": [
+    "/document_ref"
+  ],
+  "input": "crate::blob_artifact::esign::EsignDispatchRequest",
+  "output": "crate::blob_artifact::esign::EsignDispatchView",
+  "call": "memory.esign_send_for_signature(&input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false
+}

@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.find",
+  "description": "Finds the window rows whose role and name match, in pages read on with find and next; a cut tree with no match walks on, and an answer still cut is partial, with a walk_next that find searches on with.",
+  "input": "oneiron_browser::FindInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::FindOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.find(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

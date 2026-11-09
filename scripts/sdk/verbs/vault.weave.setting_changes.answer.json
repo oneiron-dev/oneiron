@@ -1,0 +1,17 @@
+{
+  "name": "vault.weave.setting_changes.answer",
+  "description": "Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing.",
+  "input": "crate::claim::WeaveDigestSettingAnswer",
+  "output": "crate::claim::WeaveDigestSettingChange",
+  "call": "crate::task_verb::sdk::weave_setting_change_answer(memory, &memory.embedded_owner(\"vault.weave.setting_changes.answer\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

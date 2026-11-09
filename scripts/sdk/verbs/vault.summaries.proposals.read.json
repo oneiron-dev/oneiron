@@ -1,0 +1,24 @@
+{
+  "name": "vault.summaries.proposals.read",
+  "description": "Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable.",
+  "input": "crate::scope_summary::SummaryProposalRequest",
+  "output": "crate::scope_summary::SummaryProposalView",
+  "call": "memory.read_summary_proposal(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryProposalRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "mcp_scope": "filtered"
+}

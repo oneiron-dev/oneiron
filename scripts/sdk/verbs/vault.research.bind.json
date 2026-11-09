@@ -1,0 +1,12 @@
+{
+  "name": "vault.research.bind",
+  "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
+  "input": "crate::task_verb::sdk::ResearchBindWire",
+  "output": "crate::autoreason_campaign::research::ResearchBinding",
+  "call": "crate::task_verb::sdk::research_bind(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

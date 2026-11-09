@@ -1,0 +1,16 @@
+{
+  "name": "vault.decisions.bands.enforce",
+  "description": "The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority.",
+  "input": "crate::llm::decision::DecisionBandEnforceRequest",
+  "output": "crate::llm::decision::LearnedBand",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.enforce\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
