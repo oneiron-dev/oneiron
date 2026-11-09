@@ -448,4 +448,3 @@ async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     assert_eq!(first.seen().len(), 3);
     assert!(second.seen().is_empty(), "the text stayed here");
 }
-
