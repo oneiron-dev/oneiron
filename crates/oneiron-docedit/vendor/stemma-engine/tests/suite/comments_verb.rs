@@ -129,6 +129,7 @@ fn t1_comment_round_trips_body_and_anchored_span() {
     let edited = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "Net Revenue".to_string(),
             occurrence: None,
             semantic_hash: None,
@@ -192,6 +193,7 @@ fn comments_survive_accept_all_and_reject_all() {
     let edited = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "Confidential Information".to_string(),
             occurrence: None,
             semantic_hash: None,
@@ -230,6 +232,7 @@ fn comment_delete_removes_story_and_all_markers() {
     let created = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "Indemnity".to_string(),
             occurrence: None,
             semantic_hash: None,
@@ -266,6 +269,7 @@ fn comment_delete_orphan_fails_loud() {
     let created = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "Liability".to_string(),
             occurrence: None,
             semantic_hash: None,
@@ -328,6 +332,7 @@ fn comment_range_survives_a_tracked_paragraph_edit() {
     let commented = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "text".to_string(),
             occurrence: None,
             semantic_hash: None,
@@ -433,6 +438,7 @@ fn create_comment(base: &Document, expect: &str, body: &str) -> (Document, Strin
     let edited = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: expect.to_string(),
             occurrence: None,
             semantic_hash: None,

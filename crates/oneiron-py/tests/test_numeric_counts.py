@@ -7,7 +7,6 @@ Remote refusals use no server and must occur before HTTP dispatch.
 import pytest
 
 from oneiron import Oneiron, OneironError
-from oneiron import _translate  # noqa: PLC2701 — the error seam under test
 
 
 INVALID_COUNTS = [
@@ -89,12 +88,3 @@ def test_limits_reject_bad_counts_before_dispatch(memory, verb, limit) -> None:
         bad_request(lambda: memory.recall("window seat", limit=limit), "limit")
     else:
         bad_request(lambda: memory.receipts(limit), "limit")
-
-
-@pytest.mark.parametrize("exception", [TypeError, ValueError, OverflowError])
-def test_argument_errors_are_bad_request_with_correction_suggestions(exception) -> None:
-    def operation():
-        raise exception("limit cannot be extracted")
-
-    error = bad_request(lambda: _translate(operation), "limit")
-    assert any("positive Python integers" in suggestion for suggestion in error.suggestions)

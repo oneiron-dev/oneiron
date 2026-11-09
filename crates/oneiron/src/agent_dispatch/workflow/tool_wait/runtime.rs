@@ -14,7 +14,6 @@ use crate::attempt_queue::{
 };
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::VerbHookWaitStatus;
-use crate::task_verb::sdk::AgentVerb;
 use crate::{Result, Vault};
 
 /// The original admitted transcript and its exact settled cursor. Reading
@@ -234,7 +233,7 @@ impl AgentDispatcher<'_> {
         let (attempt, generation, actor, class, wait) = retained;
         let status = self.vault.verb_hook_wait_status(
             InvocationId(wait.invocation),
-            AgentVerb::SelfUse.as_str(),
+            crate::verb_names::SELF_USE,
             actor,
             crate::runtime_hooks::hook_class(class),
             wait.ask,

@@ -52,6 +52,7 @@ fn main() {
         "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
         "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
         "crates/oneiron/src/verbs/generated/code-mode.d.ts",
+        "crates/oneiron/src/generated/core_verb_names.rs",
     ]);
     let manifest =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));

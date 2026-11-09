@@ -421,6 +421,7 @@ fn doc_with_run_bold_change(id: u32) -> Document {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target.id.clone(),
             expect: "Centered".to_string(),
+            occurrence: None,
             semantic_hash: Some(target.guard.clone()),
             marks: InlineMarkSet {
                 bold: true,
@@ -509,6 +510,7 @@ fn a_run_formatting_change_gets_a_stamped_id_even_when_the_caller_sends_the_zero
             steps: vec![EditStep::SetRunFormatting {
                 block_id: target.id.clone(),
                 expect: "Centered".to_string(),
+                occurrence: None,
                 semantic_hash: Some(target.guard.clone()),
                 marks: InlineMarkSet {
                     bold: true,

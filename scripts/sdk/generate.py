@@ -1002,7 +1002,7 @@ def mcp_input_dispatch(row):
         surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
-        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
+        caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, &oneiron::verbs::VERB_TABLE, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
         paced_arg = 'super::mcp_paced_call(actor, &memory), ' if row.get('host_door_paced') else ''
         door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
@@ -1630,6 +1630,95 @@ def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
     return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
 
+# Untangle slice 5.0a (S5-2): the rows core reads by name, the count defaults it applies, the section verbs
+# and the custody rows. They are written to core's own table (`crate::verb_names`), so no core module names the
+# runtime's catalog; the catalog asserts at compile time that the table is its own rows.
+CORE_VERB_NAMES = [
+    'cancel',
+    'describe',
+    'tasks.create',
+    'tasks.update',
+    'reveal.wait',
+    'self.use',
+    'vault.calendar.check_in.answer',
+    'vault.calendar.transcript.ingest',
+    'vault.channel_identities.provision',
+    'vault.channel_identities.bind',
+    'vault.channel_identities.rotate',
+    'vault.channel_identities.release',
+    'vault.channel_identities.route_inbound',
+]
+CORE_COUNT_DEFAULTS = ['VAULT_RECALL_LIMIT_DEFAULT', 'VAULT_RECEIPTS_LIMIT_DEFAULT']
+CORE_VERB_NAMES_PATH = 'crates/oneiron/src/generated/core_verb_names.rs'
+
+def core_name_const(name):
+    'The core constant that holds one row name.'
+    return name.replace('.', '_').upper()
+
+def count_defaults():
+    'Every usize binding default the verb table states, by its engine constant.'
+    return {default_const(r, a): (r, a) for r in ROWS for a in r.get('binding', {}).get('args', [])
+            if 'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize'}
+
+def check_core_verb_names():
+    'Fails the run when core\'s table lists a row or a default the verb table does not have.'
+    names = {r['name'] for r in ROWS}
+    missing = [name for name in CORE_VERB_NAMES if name not in names]
+    if missing:
+        raise SystemExit(f'CORE_VERB_NAMES names rows the verb table does not have: {missing}')
+    defaults = count_defaults()
+    missing = [const for const in CORE_COUNT_DEFAULTS if const not in defaults]
+    if missing:
+        raise SystemExit(f'CORE_COUNT_DEFAULTS names defaults the verb table does not state: {missing}')
+    return defaults
+
+def core_verb_names(custody):
+    'Core\'s table: `crate::verb_names`, included from OUT_DIR.'
+    defaults = check_core_verb_names()
+    text = HEADER
+    for name in CORE_VERB_NAMES:
+        text += f'/// The `{name}` row.\npub const {core_name_const(name)}: &str = {json.dumps(name)};\n'
+    for const in CORE_COUNT_DEFAULTS:
+        r, a = defaults[const]
+        text += f"/// `{r['name']}`'s `{a['name']}` when a caller names none.\npub const {const}: usize = {a['default']};\n"
+    section = [r['name'] for r in ROWS if r['section']]
+    text += '/// The rows a context board section may advertise (`section` on the row), in catalog order.\n'
+    text += f'pub const SECTION_VERBS: [&str; {len(section)}] = [' + ', '.join(json.dumps(name) for name in section) + '];\n'
+    text += "/// The custody rows, whose input carries a secret's value or its sealed input. The action registry\n/// offers none of them: an action keeps its whole input in its replay record.\n"
+    text += f'pub const CUSTODY_VALUE_ROWS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['name']) for r in custody) + '];\n'
+    text += "/// The member of each [`CUSTODY_VALUE_ROWS`] row's input that holds the secret's value or its sealed\n/// input (`custody` on the row), in the same order.\n"
+    text += f'pub const CUSTODY_VALUE_MEMBERS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['custody']) for r in custody) + '];\n'
+    text += "/// The member of custody row `verb`'s input that holds the secret's value or its sealed input; `None`\n/// for any other row.\n"
+    text += "#[must_use]\npub fn custody_member(verb: &str) -> Option<&'static str> {\n"
+    text += '    CUSTODY_VALUE_ROWS.iter().position(|row| *row == verb).map(|at| CUSTODY_VALUE_MEMBERS[at])\n}\n'
+    return text
+
+def core_verb_names_check(variants, custody):
+    'The catalog\'s compile-time check that core\'s table (`crate::verb_names`) holds its own rows.'
+    check_core_verb_names()
+    section = [r for r in ROWS if r['section']]
+    text = "// Core reads these rows by name from `crate::verb_names` (untangle slice 5.0a). A name, section verb\n"
+    text += "// or custody member there that is not this catalog's does not compile.\n"
+    text += 'const _: () = {\n'
+    text += 'const fn same(left: &str, right: &str) -> bool {\n'
+    text += 'let (left, right) = (left.as_bytes(), right.as_bytes());\n'
+    text += 'if left.len() != right.len() { return false; }\n'
+    text += 'let mut at = 0;\nwhile at < left.len() { if left[at] != right[at] { return false; } at += 1; }\ntrue\n}\n'
+    for name in CORE_VERB_NAMES:
+        text += f'assert!(same(crate::verb_names::{core_name_const(name)}, AgentVerb::{variants[name]}.as_str()));\n'
+    text += 'let mut sections = 0;\nlet mut at = 0;\n'
+    text += 'while at < AgentVerb::ALL.len() { if AgentVerb::ALL[at].is_section() { sections += 1; } at += 1; }\n'
+    text += 'assert!(sections == crate::verb_names::SECTION_VERBS.len());\n'
+    for at, r in enumerate(section):
+        variant = variants[r['name']]
+        text += f'assert!(AgentVerb::{variant}.is_section() && same(crate::verb_names::SECTION_VERBS[{at}], AgentVerb::{variant}.as_str()));\n'
+    for at, r in enumerate(custody):
+        variant = variants[r['name']]
+        text += f'assert!(same(crate::verb_names::CUSTODY_VALUE_ROWS[{at}], AgentVerb::{variant}.as_str()));\n'
+        text += f'assert!(matches!(AgentVerb::{variant}.custody_member(), Some(member) if same(member, crate::verb_names::CUSTODY_VALUE_MEMBERS[{at}])));\n'
+    text += '};\n'
+    return text
+
 # OF-489 socket-first: one admission and one typed call per facade row, which
 # every server transport runs. A transport hands the row a `FacadeCall` (the
 # credential it is bound to, and what it carried beside the input) and the
@@ -2118,6 +2207,7 @@ BUILD_TIME_OUTPUTS = {
     'crates/oneiron/src/verbs/generated/run_verb_catalog.rs',
     'crates/oneiron/src/verbs/generated/sdk_generated.rs',
     'crates/oneiron/src/verbs/generated/verb_catalog.rs',
+    'crates/oneiron/src/generated/core_verb_names.rs',
 }
 # Untangle slice 4.3: the package outputs are not in git either. Each package's build writes its own
 # (`--package <name>`): the npm packages' scripts, oneiron-py's build script, and the docs job. A run with no
@@ -2157,6 +2247,9 @@ def outputs():
     for r in ROWS:
         for a in r.get('binding', {}).get('args', []):
             if 'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize':
+                if default_const(r, a) in CORE_COUNT_DEFAULTS:
+                    core += f"pub use crate::verb_names::{default_const(r, a)};\n"
+                    continue
                 core += f"/// `{r['name']}`'s `{a['name']}` when a caller names none.\npub const {default_const(r, a)}: usize = {a['default']};\n"
     core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n"
     # GLOBAL STATE: these schemas depend only on compiled verb types, never vault or actor data.
@@ -2232,7 +2325,7 @@ def outputs():
     # hooks can retain even a hash or an ask containing the anonymous input.
     core += 'if verb == "ai.anonymous_chat" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
-    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {\n"
+    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, &VERB_TABLE, verb, value, |value| match verb {\n"
     invokers = ''
     for r in facade_rows:
         method = r['name'].replace('.', '_')
@@ -2411,8 +2504,8 @@ def outputs():
     catalog += ''.join('Self::' + variants[r['name']] + ' => Some(crate::memory::SessionRead::' + r['session_read'] + '),\n' for r in ROWS if 'session_read' in r)
     catalog += '_ => None,\n} }\n'
     catalog += '}\n'
-    catalog += "/// The custody rows, whose input carries a secret's value or its sealed input. The action registry\n/// offers none of them: an action keeps its whole input in its replay record.\n"
-    catalog += f'pub const CUSTODY_VALUE_ROWS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['name']) for r in custody) + '];\n'
+    catalog += 'pub use crate::verb_names::CUSTODY_VALUE_ROWS;\n'
+    catalog += core_verb_names_check(variants, custody)
     uniffi, uniffi_types = uniffi_facade(facade_rows)
     http = http_facade()
     files = {
@@ -2422,6 +2515,7 @@ def outputs():
         'crates/oneiron-uniffi/src/generated/facade_types_generated.rs': uniffi_types,
         'crates/oneiron/src/verbs/generated/sdk_generated.rs':core,
         'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
+        CORE_VERB_NAMES_PATH: core_verb_names(custody),
         'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
         'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
         'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs':host_door_rows(facade_rows),

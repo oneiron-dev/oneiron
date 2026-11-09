@@ -109,7 +109,7 @@ impl HostSelfDispatcher<'_> {
                 scope: None::<VerbCallScope>,
                 board_epoch: None,
                 turn: None,
-                domain: row_domain(verb),
+                domain: row_domain(&crate::verbs::VERB_TABLE, verb),
                 reader: None,
             },
         };

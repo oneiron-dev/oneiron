@@ -56,6 +56,7 @@ pub fn invoke_blob_input(
     let _held = crate::runtime_hooks::verb::hold_member(CONTENT_MEMBER, held);
     crate::task_verb::verb_hook_boundary::row_holding_member(
         memory,
+        &crate::verbs::VERB_TABLE,
         verb,
         head,
         |value, untouched| {
