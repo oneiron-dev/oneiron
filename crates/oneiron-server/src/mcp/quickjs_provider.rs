@@ -11,8 +11,6 @@ use oneiron::code_run::{
     CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
     ScopedChildPorts, ScopedChildProfile,
 };
-use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
-use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
     RunCompaction, TypeFeedback,
@@ -22,6 +20,10 @@ use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
 use oneiron::llm::seat::SeatDecisions;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, ModelId, ModelLocality, Vault,
+};
+use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
+use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::{
+    ComponentBudget, WasmtimeComponentRuntime,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
