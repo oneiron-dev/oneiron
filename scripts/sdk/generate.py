@@ -27,7 +27,7 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi'}
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'host_door_proof', 'openapi'}
             or ('output' in host and row.get('context') != 'board')
             or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi') if key in host)):
         raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags')
@@ -43,6 +43,7 @@ def host_synthetic(row):
      # `MaybeListed` as an explicit host row does.
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
      'host_door_precheck': row['host'].get('host_door_precheck', True),
+     **({'host_door_proof': row['host']['host_door_proof']} if 'host_door_proof' in row['host'] else {}),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
@@ -54,12 +55,28 @@ BOARD_HOST_NAMES = {row['name'] for row in BOARD_HOST_ROWS}
 DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row and 'host' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
+# VERB-METADATA (untangle slice 4.1): a verb's roles are fields on its own row, never names in a
+# handwritten list: `custody` (the input member holding a secret's value or sealed input),
+# `overlay_write` (a session-bound run stages it in its room), `session_read` (the room's read it is,
+# a `SessionRead` variant; never "every verb that writes nothing"), `run_surface` (a run row the action
+# registry serves: `memory` needs no live run, `live` acts on the caller's live run) and
+# `host_door_proof` (the proof `door_admits` runs before a checked host door's hooks).
+SESSION_READS = ('Get', 'Hydrate', 'RefsResolve', 'SearchBm25', 'Receipts')
+for row in MANIFEST['verbs']:
+    if 'custody' in row and (row.get('scope') != 'Write' or not isinstance(row['custody'], str)):
+        raise ValueError(f'{row["name"]}: `custody` names the input member of a Write row')
+    if 'overlay_write' in row and (row['overlay_write'] is not True or row.get('scope') != 'Write'):
+        raise ValueError(f'{row["name"]}: `overlay_write` is `true` on a Write row')
+    if 'session_read' in row and (row['session_read'] not in SESSION_READS or row.get('scope') != 'Read'):
+        raise ValueError(f'{row["name"]}: `session_read` is one of {SESSION_READS} on a Read row')
+    if 'run_surface' in row and (row['run_surface'] not in ('memory', 'live') or row.get('context') != 'run'):
+        raise ValueError(f'{row["name"]}: `run_surface` is `memory` or `live` on a run row')
 # Code mode always reads the run/browser input; the served schema reads its host input.
 CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + HOST_BOARD_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
-    if set(row) - {'output', 'outputs_by_input', 'host'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
+    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output, per-input outputs and run surface, and nothing else')
 # `outputs_by_input` maps an input field, by its wire name, to the reply code
 # mode answers when that field is present and not null (`describe({fold})`
 # answers the fold, `tasks.update({resultRef})` the reader's report). Each type
@@ -1505,6 +1522,11 @@ def run_catalog():
     out += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r['name']) + ',\n' for r in RUN_ROWS) + '} }\n'
     writes = ['Self::' + variants[r['name']] for r in RUN_ROWS if r['scope'] == 'Write']
     out += 'pub const fn writes(self) -> bool { matches!(self, ' + (' | '.join(writes) if writes else '_ if false') + ') }\n'
+    for const, surface, doc in [
+            ('MEMORY_RUN', 'memory', 'The run rows the action registry serves on ordinary storage: they need no live run.'),
+            ('LIVE_RUN', 'live', 'The run rows that act on their caller\'s live agent run, served only under that run\'s lease.')]:
+        selected = ['Self::' + variants[r['name']] for r in RUN_ROWS if r.get('run_surface') == surface]
+        out += f'/// {doc} (`run_surface: "{surface}"` on the row.)\npub const {const}: [Self; {len(selected)}] = [' + ','.join(selected) + '];\n'
     out += 'pub const fn effect(self) -> crate::code_run::SelfEffect { match self {\n'
     out += ''.join('Self::' + variants[r['name']] + ' => crate::code_run::SelfEffect::' + r['effect'] + ',\n' for r in RUN_ROWS) + '} }\n'
     return out + '}\n'
@@ -1955,6 +1977,20 @@ def host_door_rows(facade_rows):
     out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
     out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
     out += '            _ => return None,\n        })\n    }\n}\n'
+    # VERB-METADATA (untangle slice 4.1): every checked row names the proof its door runs first, and a new
+    # proof kind fails to compile until `door_admits` has its arm (FIX 1763).
+    unnamed = [r['name'] for r in checked if not r.get('host_door_proof')]
+    if unnamed:
+        raise ValueError(f'checked host doors without `host_door_proof`: {unnamed}')
+    proof_variant = lambda kind: ''.join(part.title() for part in kind.split('_'))
+    kinds = list(dict.fromkeys(r['host_door_proof'] for r in checked))
+    out += '/// The proof a checked host door runs before its hooks (`host_door_proof` on the row).\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorProof {\n'
+    out += ''.join(f'    {proof_variant(kind)},\n' for kind in kinds) + '}\n'
+    out += 'impl HostDoorRow {\n    /// The proof this row\'s door runs first.\n'
+    out += '    pub(in crate::api::facade) const fn proof(self) -> HostDoorProof {\n        match self {\n'
+    out += ''.join(f'            Self::{variant(r)} => HostDoorProof::{proof_variant(r["host_door_proof"])},\n' for r in checked)
+    out += '        }\n    }\n}\n'
     # FIX 4794: the MCP rows whose handler takes the caller's credential
     # before it runs, as `mcp_input_dispatch` emits them, so the hook
     # admission refuses a call with none before the row's pre hooks. Most are
@@ -2227,6 +2263,7 @@ def outputs():
         ('proposes', lambda r: r.get('proposes', False)),
         ('is_task_work', lambda r: r.get('task_work', False)),
         ('takes_task_decisions', takes_task_decisions),
+        ('overlay_write', lambda r: r.get('overlay_write', False)),
     ]:
         selected = ['Self::' + variants[r['name']] for r in ROWS if select(r)]
         catalog += f'pub const fn {method}(self) -> bool {{ matches!(self, ' + (' | '.join(selected) if selected else '_ if false') + ') }\n'
@@ -2241,7 +2278,18 @@ def outputs():
     catalog += "pub const fn description(self) -> &'static str { match self {\n"
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r.get('description', '')) + ',\n' for r in ROWS)
     catalog += '} }\n'
+    custody = [r for r in ROWS if 'custody' in r]
+    catalog += "/// The member of a custody row's input that holds the secret's value or its sealed input (`custody` on the row).\n"
+    catalog += "pub const fn custody_member(self) -> Option<&'static str> { match self {\n"
+    catalog += ''.join('Self::' + variants[r['name']] + ' => Some(' + json.dumps(r['custody']) + '),\n' for r in custody)
+    catalog += '_ => None,\n} }\n'
+    catalog += '/// The read a run bound to a session serves through its room\'s view (`session_read` on the row).\n'
+    catalog += 'pub(crate) const fn session_read(self) -> Option<crate::memory::SessionRead> { match self {\n'
+    catalog += ''.join('Self::' + variants[r['name']] + ' => Some(crate::memory::SessionRead::' + r['session_read'] + '),\n' for r in ROWS if 'session_read' in r)
+    catalog += '_ => None,\n} }\n'
     catalog += '}\n'
+    catalog += "/// The custody rows, whose input carries a secret's value or its sealed input. The action registry\n/// offers none of them: an action keeps its whole input in its replay record.\n"
+    catalog += f'pub const CUSTODY_VALUE_ROWS: [&str; {len(custody)}] = [' + ', '.join(json.dumps(r['name']) for r in custody) + '];\n'
     uniffi, uniffi_types = uniffi_facade(facade_rows)
     http = http_facade()
     files = {

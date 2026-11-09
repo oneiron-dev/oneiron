@@ -13,7 +13,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.get",
@@ -28,7 +29,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.ledger",
@@ -59,7 +61,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.proposals",
@@ -74,7 +77,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.fulfill",
@@ -89,7 +93,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.release",
@@ -104,7 +109,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.supersede",
@@ -119,7 +125,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.reminder_route.get",
@@ -134,7 +141,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.commitments.reminder_route.set",
@@ -149,7 +157,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "fetch",
@@ -165,7 +174,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "facade_actor"
     },
     {
       "name": "crawl",
@@ -182,7 +192,8 @@
         "validate": "crate::web_fetch::CrawlPageBudget::new(input.page_budget).map_err(|error| MemoryError::bad_request(error.to_string()))?;"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "facade_actor"
     },
     {
       "name": "report",
@@ -212,7 +223,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "feedback.send",
@@ -227,7 +239,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.reports.disclosure",
@@ -242,7 +255,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.reports.route",
@@ -257,7 +271,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.reports.outbound",
@@ -272,7 +287,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "self.focus.refresh",
@@ -565,7 +581,8 @@
       "host_door_caller": true,
       "host_door_lists": true,
       "host_door_surface": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "self.identity.settle",
@@ -736,7 +753,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.entities.look_before_mint",
@@ -752,7 +770,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.mention",
@@ -768,7 +787,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.shape.read",
@@ -916,7 +936,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "self.grants.answer",
@@ -928,7 +949,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {},
-      "section": false
+      "section": false,
+      "host_door_proof": "grants_answer"
     },
     {
       "name": "vault.proactivity.digest.get",
@@ -959,7 +981,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.personas.export",
@@ -974,7 +997,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.personas.edit",
@@ -989,7 +1013,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "self.memory.diary.query",
@@ -1004,7 +1029,8 @@
         "unrestricted_record_scope": true,
         "validate": "input.validate()?;"
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "diary_reader"
     },
     {
       "name": "self.memory.pads.read",
@@ -1019,7 +1045,8 @@
         "unrestricted_record_scope": true,
         "validate": "input.validate()?;"
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "diary_reader"
     },
     {
       "name": "self.memory.pads.admin_reads",
@@ -1033,7 +1060,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "diary_reader"
     },
     {
       "name": "cancel",
@@ -1288,7 +1316,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.lease",
@@ -1303,7 +1332,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.lease.top_up",
@@ -1318,7 +1348,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.hold",
@@ -1333,7 +1364,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.hold.resume",
@@ -1348,7 +1380,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.local",
@@ -1363,7 +1396,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.reservations",
@@ -1378,7 +1412,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.settlements",
@@ -1393,7 +1428,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.rsi.configure",
@@ -1408,7 +1444,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.rsi",
@@ -1423,7 +1460,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.rsi.top_up",
@@ -1438,7 +1476,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.rsi.hold",
@@ -1453,7 +1492,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.rsi.hold.resume",
@@ -1468,7 +1508,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.budgets.resident_shares",
@@ -1515,7 +1556,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runners.seats.top_up",
@@ -1530,7 +1572,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runners.seats.resume",
@@ -1545,7 +1588,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.fanout.resume",
@@ -1559,7 +1603,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.fanout.resume_as",
@@ -1573,7 +1618,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "decision_holder"
     },
     {
       "name": "vault.fanout.ack",
@@ -1587,7 +1633,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "tasks.update",
@@ -1771,7 +1818,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.messages.durability",
@@ -1835,7 +1883,8 @@
       },
       "section": false,
       "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "overlay_write": true
     },
     {
       "name": "vault.recall",
@@ -1945,7 +1994,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.aging.configure",
@@ -1960,7 +2010,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.weights.get",
@@ -1975,7 +2026,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.weights.configure",
@@ -1990,7 +2042,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.hyde.configure",
@@ -2005,7 +2058,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.hyde.get",
@@ -2020,7 +2074,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.hyde.pending",
@@ -2035,7 +2090,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "hyde_caller"
     },
     {
       "name": "vault.retrieval.hyde.complete",
@@ -2050,7 +2106,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "hyde_caller"
     },
     {
       "name": "vault.retrieval.hyde.receipt",
@@ -2065,7 +2122,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "hyde_caller"
     },
     {
       "name": "vault.affect.annotations.put",
@@ -2169,7 +2227,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.coping.record",
@@ -2184,7 +2243,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.coping.update",
@@ -2199,7 +2259,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.coping.aggregate",
@@ -2214,7 +2275,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.wellness.policy.get",
@@ -2229,7 +2291,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.wellness.policy.configure",
@@ -2244,7 +2307,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.wellness.derive",
@@ -2259,7 +2323,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.affect.wellness.get",
@@ -2274,7 +2339,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.cluster",
@@ -2385,7 +2451,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.runs",
@@ -2400,7 +2467,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.run",
@@ -2415,7 +2483,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.turn",
@@ -2430,7 +2499,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.outcomes.put",
@@ -2445,7 +2515,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.outcomes.end",
@@ -2460,7 +2531,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.trace",
@@ -2475,7 +2547,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.export",
@@ -2490,7 +2563,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.replay",
@@ -2505,7 +2579,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.get",
@@ -2520,7 +2595,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.pin",
@@ -2535,7 +2611,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.train",
@@ -2550,7 +2627,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.evaluate",
@@ -2565,7 +2643,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.admit",
@@ -2580,7 +2659,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.retrieval.policy.update",
@@ -2595,7 +2675,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.export",
@@ -2670,7 +2751,8 @@
       },
       "mcp_scope": "filtered",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "credential_holder"
     },
     {
       "name": "self.actor",
@@ -2779,7 +2861,8 @@
           "after": "Option<String>"
         },
         "output": "FacadeReceiptPage"
-      }
+      },
+      "session_read": "Receipts"
     },
     {
       "name": "vault.assets.ingest",
@@ -3082,7 +3165,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.compliance.amend",
@@ -3111,7 +3195,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.compliance.reject",
@@ -3127,7 +3212,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.compliance.verify",
@@ -3143,7 +3229,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.compliance.result",
@@ -3360,7 +3447,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "saved_query"
     },
     {
       "name": "vault.weave.report",
@@ -3433,7 +3521,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.item.wrong",
@@ -3462,7 +3551,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.admin.report",
@@ -3553,7 +3643,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.step_up.totp.reset",
@@ -3585,7 +3676,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.schedules.list",
@@ -3601,7 +3693,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.schedules.put",
@@ -3617,7 +3710,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.schedules.clear",
@@ -3633,7 +3727,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.setting_changes.list",
@@ -3649,7 +3744,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.setting_changes.answer",
@@ -3665,7 +3761,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.setting_changes.undo",
@@ -3681,7 +3778,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.digest_feedback.put",
@@ -3697,7 +3795,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.weave.owner.digest.render",
@@ -3713,7 +3812,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.inbox.concerns.review",
@@ -3729,7 +3829,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.proactivity.digest",
@@ -3745,7 +3846,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.inbox.lens",
@@ -3761,7 +3863,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.inbox.groups",
@@ -3783,7 +3886,8 @@
         "within": "after"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.inbox.groups.resolve",
@@ -3890,7 +3994,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.default.get",
@@ -3905,7 +4010,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.restoreDefaults",
@@ -3920,7 +4026,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.put",
@@ -3935,7 +4042,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.get",
@@ -3950,7 +4058,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.clawhub.search",
@@ -3997,7 +4106,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.publishers.revoke",
@@ -4012,7 +4122,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.refs.get",
@@ -4027,7 +4138,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skill_hubs.refs.set",
@@ -4042,7 +4154,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.install",
@@ -4057,7 +4170,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.sync",
@@ -4072,7 +4186,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.get",
@@ -4087,7 +4202,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.import",
@@ -4102,7 +4218,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.sync",
@@ -4117,7 +4234,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.proposal.settle",
@@ -4148,7 +4266,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.convert",
@@ -4163,7 +4282,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.get",
@@ -4178,7 +4298,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.list",
@@ -4193,7 +4314,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.archive",
@@ -4208,7 +4330,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.restore",
@@ -4223,7 +4346,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.fork",
@@ -4239,7 +4363,8 @@
         "require_granted_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "skill_forker"
     },
     {
       "name": "vault.skills.rules.set",
@@ -4254,7 +4379,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.code_auto_install.set",
@@ -4269,7 +4395,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.fit.set",
@@ -4285,7 +4412,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.advisory_ask.set",
@@ -4301,7 +4429,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.permissions.approve",
@@ -4316,7 +4445,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.start",
@@ -4331,7 +4461,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.result",
@@ -4346,7 +4477,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.projects.goal.intake.complete",
@@ -4361,7 +4493,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.projects.goal.get",
@@ -4376,7 +4509,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.propose",
@@ -4391,7 +4525,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.measure",
@@ -4406,7 +4541,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.score",
@@ -4421,7 +4557,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.admit",
@@ -4436,7 +4573,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.goal.get",
@@ -4451,7 +4589,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.goal.bind",
@@ -4466,7 +4605,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.preferences.get",
@@ -4481,7 +4621,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.preferences.set",
@@ -4496,7 +4637,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.optimize.tradeoff_asks",
@@ -4511,7 +4653,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "tradeoff_picker"
     },
     {
       "name": "vault.skills.optimize.tradeoff_asks.pick",
@@ -4526,7 +4669,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "tradeoff_picker"
     },
     {
       "name": "vault.skills.optimize.tradeoff_asks.resolve",
@@ -4557,7 +4701,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.governance.set",
@@ -4572,7 +4717,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.hooks.bind",
@@ -4587,7 +4733,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.hooks.list",
@@ -4602,7 +4749,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.hooks.grant.set",
@@ -4617,7 +4765,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.hooks.grant.get",
@@ -4632,7 +4781,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.hooks.qualify",
@@ -4647,7 +4797,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.put",
@@ -4661,7 +4812,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "packs_setup"
     },
     {
       "name": "vault.packs.preview",
@@ -4674,7 +4826,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.prepare",
@@ -4689,7 +4842,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.get",
@@ -4704,7 +4858,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.qualify",
@@ -4719,7 +4874,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.accept",
@@ -4734,7 +4890,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.update",
@@ -4749,7 +4906,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.grants.get",
@@ -4764,7 +4922,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.connector.grants.put",
@@ -4779,7 +4938,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.remove",
@@ -4793,7 +4953,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.sections.propose",
@@ -4847,7 +5008,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.sections.revoke",
@@ -4863,7 +5025,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.sections.suggest",
@@ -4896,7 +5059,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.sections.suggestions.set",
@@ -4912,7 +5076,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.chat.completions",
@@ -4946,7 +5111,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.proxy.revoke_write",
@@ -4961,7 +5127,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.redraft",
@@ -4976,7 +5143,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.narrow",
@@ -5005,7 +5173,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.revision_offers",
@@ -5020,7 +5189,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.defer_revision",
@@ -5035,7 +5205,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.accept_revision",
@@ -5050,7 +5221,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.slates.reask_issuer",
@@ -5065,7 +5237,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.subscriptions.put",
@@ -5079,7 +5252,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.subscriptions.list",
@@ -5093,7 +5267,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.subscriptions.revoke",
@@ -5107,7 +5282,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.packs.setup.prepare",
@@ -5121,7 +5297,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "packs_setup"
     },
     {
       "name": "vault.packs.setup.get",
@@ -5135,7 +5312,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "packs_setup"
     },
     {
       "name": "vault.packs.setup.answer",
@@ -5149,7 +5327,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "packs_setup"
     },
     {
       "name": "vault.packs.setup.verify",
@@ -5163,7 +5342,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "packs_setup"
     },
     {
       "name": "vault.authority.audit",
@@ -5177,7 +5357,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.authority.history.export",
@@ -5193,7 +5374,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.authority.history.import",
@@ -5208,7 +5390,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.authority.clock.repair",
@@ -5223,7 +5406,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.wire_health.thresholds.get",
@@ -5238,7 +5422,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.wire_health.thresholds.set",
@@ -5253,7 +5438,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.slim.policy",
@@ -5268,7 +5454,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.slim.state",
@@ -5283,7 +5470,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.slim.resume_step",
@@ -5298,7 +5486,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.slim.drop_heavy",
@@ -5313,7 +5502,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.slim.resume",
@@ -5328,7 +5518,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.path_receipts",
@@ -5344,7 +5535,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.identity",
@@ -5359,7 +5551,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.bind_machine",
@@ -5374,7 +5567,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.set_alpn_grant",
@@ -5389,7 +5583,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.revoke_machine",
@@ -5404,7 +5599,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mesh.dial",
@@ -5420,7 +5616,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.outbox.diverged.list",
@@ -5476,7 +5673,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.propose_transfer",
@@ -5490,7 +5688,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.propose_remove_owner",
@@ -5504,7 +5703,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.propose_add_owner",
@@ -5519,7 +5719,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.execute",
@@ -5533,7 +5734,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.receipt",
@@ -5547,7 +5749,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.outcomes",
@@ -5561,7 +5764,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.deletion",
@@ -5592,7 +5796,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.org_admin.powers",
@@ -5636,7 +5841,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.projection",
@@ -5663,7 +5869,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.invitation_slip",
@@ -5677,7 +5884,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.invitation_code",
@@ -5691,7 +5899,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.change",
@@ -5705,7 +5914,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.remove",
@@ -5719,7 +5929,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.leave",
@@ -5733,7 +5944,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.invitations",
@@ -5747,7 +5959,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.accept",
@@ -5761,7 +5974,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.accept_with_credential",
@@ -5776,7 +5990,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.decline",
@@ -5790,7 +6005,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.members.withdraw_invitation",
@@ -5804,7 +6020,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.object",
@@ -5818,7 +6035,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.withdraw_objection",
@@ -5832,7 +6050,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.started",
@@ -5846,7 +6065,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.matured",
@@ -5860,7 +6080,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.erase_ask",
@@ -5874,7 +6095,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.erase_asks",
@@ -5888,7 +6110,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.close_erase_ask",
@@ -5902,7 +6125,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.policy.get",
@@ -5917,7 +6141,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.shared.policy.propose",
@@ -5932,7 +6157,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.policy.answer",
@@ -5947,7 +6173,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.policy.change",
@@ -5962,7 +6189,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.shared.policy.changes",
@@ -5977,7 +6205,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.shared.owner_change_wait.set",
@@ -5993,7 +6222,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.shared.owner_change_wait.get",
@@ -6009,7 +6239,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.coreference.link",
@@ -6024,7 +6255,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.coreference.confirm",
@@ -6039,7 +6271,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.coreference.share_consent",
@@ -6055,7 +6288,8 @@
         "validate": "input.pact_id()?;"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.coreference.unlink",
@@ -6070,7 +6304,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.baseline",
@@ -6086,7 +6321,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.policy",
@@ -6102,7 +6338,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.policy.set",
@@ -6118,7 +6355,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sync.quarantine.held_edits",
@@ -6135,7 +6373,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sync.documents.copy_edit.review",
@@ -6186,7 +6425,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.ingress",
@@ -6202,7 +6442,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.disposition",
@@ -6218,7 +6459,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.review",
@@ -6235,7 +6477,8 @@
       },
       "section": false,
       "openapi": true,
-      "mcp_fields": {}
+      "mcp_fields": {},
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.review.release",
@@ -6251,7 +6494,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.review.reject",
@@ -6267,7 +6511,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.burst.replay",
@@ -6283,7 +6528,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.status",
@@ -6299,7 +6545,8 @@
       },
       "section": false,
       "openapi": true,
-      "mcp_fields": {}
+      "mcp_fields": {},
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.identity",
@@ -6315,7 +6562,8 @@
       },
       "section": false,
       "openapi": true,
-      "mcp_fields": {}
+      "mcp_fields": {},
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.grants.mint",
@@ -6330,7 +6578,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.offer",
@@ -6345,7 +6594,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.accept",
@@ -6360,7 +6610,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.narrow",
@@ -6375,7 +6626,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.rescope.offer",
@@ -6390,7 +6642,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.rescope.accept",
@@ -6405,7 +6658,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.disconnect",
@@ -6420,7 +6674,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.export",
@@ -6435,7 +6690,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.rejoin",
@@ -6450,7 +6706,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.world_privacy.export",
@@ -6464,7 +6721,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.federation.connect.world_privacy.receive",
@@ -6478,7 +6736,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.trusted_contacts.name",
@@ -6493,7 +6752,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "trusted_contact_person"
     },
     {
       "name": "vault.trusted_contacts.list",
@@ -6508,7 +6768,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.trusted_contacts.consent",
@@ -6523,7 +6784,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.trusted_contacts.revoke",
@@ -6538,7 +6800,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.trusted_contacts.dial.set",
@@ -6553,7 +6816,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "trusted_contact_person"
     },
     {
       "name": "vault.trusted_contacts.tier.set",
@@ -6568,7 +6832,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.trusted_contacts.concern.asks",
@@ -6583,7 +6848,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "trusted_contact_person"
     },
     {
       "name": "vault.trusted_contacts.concern.authorize",
@@ -6598,7 +6864,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "trusted_contact_person"
     },
     {
       "name": "vault.trusted_contacts.concern.propose",
@@ -6614,7 +6881,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "trusted_contact_person"
     },
     {
       "name": "vault.trusted_contacts.concern.deliver",
@@ -6646,7 +6914,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.guests.export_envelope",
@@ -6661,7 +6930,8 @@
         "lane_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "guest_document_reader"
     },
     {
       "name": "vault.guests.propose",
@@ -6676,7 +6946,8 @@
         "lane_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "guest_document_reader"
     },
     {
       "name": "vault.guests.reshare",
@@ -6691,7 +6962,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.guests.revoke",
@@ -6705,7 +6977,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.guests.mint_slip",
@@ -6720,7 +6993,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.support_grants.mint",
@@ -6735,7 +7009,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.support_grants.list",
@@ -6750,7 +7025,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.support_grants.revoke",
@@ -6765,7 +7041,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.attach",
@@ -6780,7 +7057,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.rescan",
@@ -6795,7 +7073,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.detach",
@@ -6810,7 +7089,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.list",
@@ -6825,7 +7105,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.files",
@@ -6840,7 +7121,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.files.sources.exclude",
@@ -6870,7 +7152,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.residence.open",
@@ -6884,7 +7167,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.residence.index",
@@ -6898,7 +7182,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.residence.prune",
@@ -6912,7 +7197,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.residence.directives",
@@ -6929,7 +7215,8 @@
         "validate": "input.validate()?;"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.off_record.start",
@@ -6945,7 +7232,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.status",
@@ -6961,7 +7249,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.witness",
@@ -6977,7 +7266,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.discard",
@@ -6993,7 +7283,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.recall",
@@ -7009,7 +7300,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.notes.create",
@@ -7025,7 +7317,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.artifacts.save",
@@ -7041,7 +7334,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.claims.upsert",
@@ -7057,7 +7351,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "self.off_record.execute",
@@ -7073,7 +7368,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "self.off_record.results.list",
@@ -7089,7 +7385,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "self.off_record.results.read",
@@ -7105,7 +7402,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "self.off_record.waits.get",
@@ -7121,7 +7419,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "self.off_record.waits.answer",
@@ -7137,7 +7436,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record"
     },
     {
       "name": "vault.off_record.rooms.status",
@@ -7152,7 +7452,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.start",
@@ -7167,7 +7468,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.witness",
@@ -7182,7 +7484,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.save",
@@ -7197,7 +7500,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.save_from_here",
@@ -7212,7 +7516,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.export",
@@ -7228,7 +7533,8 @@
       },
       "section": false,
       "openapi": true,
-      "attachment": "off-record-talk.json"
+      "attachment": "off-record-talk.json",
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.suggest_save",
@@ -7245,7 +7551,8 @@
       "section": false,
       "openapi": true,
       "proposes": true,
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.confirm_save",
@@ -7260,7 +7567,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.off_record.rooms.decline_save",
@@ -7275,7 +7583,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "off_record_room"
     },
     {
       "name": "vault.records.erase_preview",
@@ -7289,7 +7598,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.records.erase_confirm",
@@ -7303,7 +7613,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.records.erase_sweep",
@@ -7318,7 +7629,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.outbound_calls.request.erase",
@@ -7334,7 +7646,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.outbound.uncertain_send.answer",
@@ -7349,7 +7662,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agent.run_effect.answer",
@@ -7364,7 +7678,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.research.create_child",
@@ -7379,7 +7694,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.research.archive",
@@ -7485,7 +7801,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.cohorts.setup",
@@ -7500,7 +7817,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.author_now",
@@ -7515,7 +7833,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.authoring.result",
@@ -7530,7 +7849,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.families",
@@ -7545,7 +7865,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.families.assign",
@@ -7560,7 +7881,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.cases",
@@ -7575,7 +7897,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.cases.record",
@@ -7590,7 +7913,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.cohorts",
@@ -7605,7 +7929,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.cohorts.open",
@@ -7620,7 +7945,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.exposure",
@@ -7635,7 +7961,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.sufficiency",
@@ -7650,7 +7977,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.labels.blocked",
@@ -7665,7 +7993,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.evals.labels.pick",
@@ -7680,7 +8009,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers",
@@ -7695,7 +8025,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.get",
@@ -7710,7 +8041,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.trigger",
@@ -7725,7 +8057,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.result",
@@ -7740,7 +8073,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.answer",
@@ -7755,7 +8089,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.undo",
@@ -7770,7 +8105,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.candidates",
@@ -7785,7 +8121,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.candidates.prepare",
@@ -7800,7 +8137,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.pilots.prepare",
@@ -7815,7 +8153,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.pilots.complete",
@@ -7830,7 +8169,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.pilots.get",
@@ -7845,7 +8185,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_offers.sources",
@@ -7860,7 +8201,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.coach.training_runs.cancel",
@@ -7876,7 +8218,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.drafters.list",
@@ -7891,7 +8234,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.drafters.list_as",
@@ -7922,7 +8266,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.drafters.policy.set",
@@ -7937,7 +8282,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.drafters.revert",
@@ -7952,7 +8298,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.drafters.revert_as",
@@ -8042,7 +8389,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.research.mark_invalid",
@@ -8204,7 +8552,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
@@ -8219,7 +8568,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.roots.requests.cancel",
@@ -8252,7 +8602,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.roots.requests.list",
@@ -8267,7 +8618,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.owner_work.get",
@@ -8282,7 +8634,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.cleanup.run",
@@ -8297,7 +8650,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.cleanup.review",
@@ -8312,7 +8666,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.cleanup.decide",
@@ -8327,7 +8682,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.archive.delete.preview",
@@ -8408,7 +8764,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "usage_repair_list"
     },
     {
       "name": "vault.usage.events.remove_undecodable",
@@ -8424,7 +8781,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "usage_repair_remove"
     },
     {
       "name": "vault.usage.repair.receipts",
@@ -8439,7 +8797,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "usage_repair_receipts"
     },
     {
       "name": "vault.entities.mention",
@@ -8454,7 +8813,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.place",
@@ -8469,7 +8829,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.widen",
@@ -8484,7 +8845,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.list",
@@ -8500,7 +8862,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.log",
@@ -8516,7 +8879,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
@@ -8531,7 +8895,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.legal_holds.withdraw_erase",
@@ -8546,7 +8911,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.courtesy_delete.send",
@@ -8560,7 +8926,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.courtesy_delete.sent",
@@ -8575,7 +8942,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.courtesy_delete.incoming",
@@ -8590,7 +8958,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.courtesy_delete.answer",
@@ -8604,7 +8973,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.list",
@@ -8620,7 +8990,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.declare",
@@ -8635,7 +9006,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.bind",
@@ -8650,7 +9022,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.one_space",
@@ -8665,7 +9038,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.retire",
@@ -8680,7 +9054,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.move",
@@ -8695,7 +9070,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.move_check",
@@ -8710,7 +9086,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.move_approve",
@@ -8725,7 +9102,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.move_undo",
@@ -8740,7 +9118,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.move_abandon",
@@ -8755,7 +9134,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.probes.list",
@@ -8771,7 +9151,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.probes.put",
@@ -8786,7 +9167,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.embedding_spaces.probes.delete",
@@ -8801,7 +9183,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.policy.owner.get",
@@ -8816,7 +9199,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.policy.owner.configure",
@@ -8831,7 +9215,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.policy.owner.row.change",
@@ -8846,7 +9231,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.policy.outbound.decide",
@@ -8895,7 +9281,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.held",
@@ -8910,7 +9297,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.campaign.approve_once",
@@ -8925,7 +9313,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.calls.approve_once",
@@ -8940,7 +9329,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.replies.retry_failed",
@@ -8971,7 +9361,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.create_standing_grant",
@@ -8986,7 +9377,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.create_auto_weave_grant",
@@ -9001,7 +9393,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.create_nightly_link_grant",
@@ -9016,7 +9409,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.registry",
@@ -9031,7 +9425,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.failure_signals_held",
@@ -9046,7 +9441,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.revoke",
@@ -9061,7 +9457,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.bypass_grant_warning",
@@ -9076,7 +9473,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.create_bypass_grant",
@@ -9091,7 +9489,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.active_bypass_grants",
@@ -9106,7 +9505,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.bypassed_effect_receipts",
@@ -9121,7 +9521,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.policy",
@@ -9136,7 +9537,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.policy.set",
@@ -9151,7 +9553,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.policy.clear",
@@ -9166,7 +9569,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.stats",
@@ -9181,7 +9585,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.outcome",
@@ -9196,7 +9601,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.offers",
@@ -9211,7 +9617,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.answer",
@@ -9226,7 +9633,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.trust_table",
@@ -9241,7 +9649,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.settings.unpin",
@@ -9256,7 +9665,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consent.graduation.demote",
@@ -9271,7 +9681,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "self.consent.graduation.demote",
@@ -9296,7 +9707,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.gate.policy.put",
@@ -9312,7 +9724,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "policy_putter"
     },
     {
       "name": "vault.gate.policy.propose",
@@ -9341,7 +9754,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.gate.checker.set",
@@ -9356,7 +9770,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.learning.read",
@@ -9371,7 +9786,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.learning.projection",
@@ -9386,7 +9802,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.confess",
@@ -9401,7 +9818,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.audit",
@@ -9416,7 +9834,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.receipt",
@@ -9431,7 +9850,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.pending",
@@ -9446,7 +9866,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.run",
@@ -9461,7 +9882,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.seal.complete",
@@ -9476,7 +9898,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.learning",
@@ -9490,7 +9913,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.learning.put",
@@ -9504,7 +9928,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.learning.clear",
@@ -9518,7 +9943,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.code_run_lifts",
@@ -9533,7 +9959,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.code_run_room_lifts",
@@ -9548,7 +9975,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.lift_history",
@@ -9579,7 +10007,9 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "custody": "value_base64",
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.rotate",
@@ -9595,7 +10025,9 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "custody": "value_base64",
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.rewrap",
@@ -9610,7 +10042,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.revoke",
@@ -9625,7 +10058,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.custody.get",
@@ -9639,7 +10073,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.secrets.custody.submit",
@@ -9655,7 +10090,9 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "custody": "input_base64",
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.widen_proposals",
@@ -9669,7 +10106,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.widen_proposals.approve",
@@ -9683,7 +10121,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.widen_proposals.decline",
@@ -9697,7 +10136,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.claims.review",
@@ -9710,7 +10150,8 @@
       "host_door_caller": true,
       "scope": "Read",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "claim_settler"
     },
     {
       "name": "vault.claims.settle",
@@ -9723,7 +10164,8 @@
       "host_door_caller": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "claim_settler"
     },
     {
       "name": "vault.craft_candidates",
@@ -9737,7 +10179,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.craft_candidates.answer",
@@ -9751,7 +10194,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.wake_policy.set",
@@ -9766,7 +10210,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.inference_defaults",
@@ -9838,7 +10283,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.lenses.deactivate",
@@ -9852,7 +10298,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.lenses.list",
@@ -9972,7 +10419,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.disclosure.ceiling.set",
@@ -9987,7 +10435,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.disclosure.ceiling.clear",
@@ -10002,7 +10451,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.disclosure.reveals",
@@ -10017,7 +10467,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.disclosure.reveals.answer",
@@ -10032,7 +10483,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "reveal",
@@ -10228,7 +10680,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "host.wake",
@@ -10244,7 +10697,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "host.budget.hit",
@@ -10260,7 +10714,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.checks",
@@ -10276,7 +10731,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.replay",
@@ -10297,7 +10753,8 @@
         "resume": "spec",
         "within": "cursor"
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.due",
@@ -10312,7 +10769,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.get",
@@ -10327,7 +10785,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.history",
@@ -10342,7 +10801,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.revert",
@@ -10357,7 +10817,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.run",
@@ -10372,7 +10833,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.adopt",
@@ -10387,7 +10849,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.hooks.regen.cancel",
@@ -10402,7 +10865,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.publish_approval",
@@ -10417,7 +10881,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.publish",
@@ -10433,7 +10898,8 @@
         "lane_record_scope": true,
         "require_granted_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "artifact_publisher"
     },
     {
       "name": "vault.artifacts.repoint",
@@ -10449,7 +10915,8 @@
         "lane_record_scope": true,
         "require_granted_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "artifact_publisher"
     },
     {
       "name": "vault.artifacts.pointer",
@@ -10464,7 +10931,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.unpublish",
@@ -10479,7 +10947,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.link_token",
@@ -10494,7 +10963,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.register",
@@ -10509,7 +10979,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.read",
@@ -10541,7 +11012,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.invite",
@@ -10556,7 +11028,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.revoke_invite",
@@ -10571,7 +11044,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.share",
@@ -10586,7 +11060,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.live_preview.revoke_share",
@@ -10601,7 +11076,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.view",
@@ -11019,7 +11495,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.symbols.renew",
@@ -11033,7 +11510,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.symbols.release",
@@ -11047,7 +11525,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_submit",
@@ -11062,7 +11541,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_rereview",
@@ -11077,7 +11557,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.conflict_record",
@@ -11092,7 +11573,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.conflict_view",
@@ -11107,7 +11589,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_resolve",
@@ -11122,7 +11605,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_resolve_rereview",
@@ -11137,7 +11621,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_review",
@@ -11152,7 +11637,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_settle",
@@ -11167,7 +11653,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.proposal_settlement",
@@ -11182,7 +11669,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.oplog",
@@ -11196,7 +11684,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.secrets.get",
@@ -11211,7 +11700,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.secrets.propose",
@@ -11226,7 +11716,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "execute_code",
@@ -11243,7 +11734,8 @@
       "host_door_lists": true,
       "host_door_session": true,
       "mcp_scope": "filtered",
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "foreign_code"
     },
     {
       "name": "vault.code.model_heal_count",
@@ -11258,7 +11750,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.session_model_heal_count",
@@ -11273,7 +11766,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.corrections",
@@ -11288,7 +11782,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.step_evidence",
@@ -11303,7 +11798,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.type_diagnostics",
@@ -11318,7 +11814,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.waits.rebind_prepare",
@@ -11346,7 +11843,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.waits.resolve",
@@ -11361,7 +11859,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.code.waits.receipt",
@@ -11376,7 +11875,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.results.status",
@@ -11391,7 +11891,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.results.recover",
@@ -11406,7 +11907,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.results.read",
@@ -11421,7 +11923,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.results.slice",
@@ -11436,7 +11939,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.repo_diff",
@@ -11477,7 +11981,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.export.preview",
@@ -11494,7 +11999,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "code_export_preview"
     },
     {
       "name": "vault.code.export.preview.read",
@@ -11511,7 +12017,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "code_export_preview"
     },
     {
       "name": "vault.code.import",
@@ -11526,7 +12033,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.repos.get",
@@ -11540,7 +12048,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.forks.get",
@@ -11554,7 +12063,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.imports.create",
@@ -11568,7 +12078,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "code_import"
     },
     {
       "name": "vault.code.imports.get",
@@ -11582,7 +12093,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "code_import"
     },
     {
       "name": "vault.code.ingress.get",
@@ -11596,7 +12108,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.register",
@@ -11611,7 +12124,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.get",
@@ -11626,7 +12140,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.plan",
@@ -11641,7 +12156,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.set",
@@ -11656,7 +12172,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.strategy",
@@ -11671,7 +12188,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.clear",
@@ -11686,7 +12204,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.mirror.push",
@@ -11701,7 +12220,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.publish.request",
@@ -11716,7 +12236,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.code.origin.publish.review",
@@ -11731,7 +12252,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.code.origin.publish.get",
@@ -11746,7 +12268,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.code.origin.publish.approve",
@@ -11761,7 +12284,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.code.origin.publish.execute",
@@ -11776,7 +12300,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.code.origin.publish.cancel",
@@ -11791,7 +12316,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "origin_publish"
     },
     {
       "name": "vault.devices.predecessor.name",
@@ -11807,7 +12333,8 @@
       "host_door": true,
       "host_door_precheck": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.authority.get",
@@ -11822,7 +12349,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.authority.set",
@@ -11837,7 +12365,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.origin.publications",
@@ -11852,7 +12381,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.secrets.purge.request",
@@ -11867,7 +12397,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.secrets.purge.get",
@@ -11882,7 +12413,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.secrets.purge.execute",
@@ -11897,7 +12429,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.checkout.holder.bind",
@@ -11915,7 +12448,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "checkout_holder"
     },
     {
       "name": "vault.code.checkout.bind",
@@ -11930,7 +12464,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.checkout.claim",
@@ -12073,7 +12608,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.views.get",
@@ -12088,7 +12624,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.views.read",
@@ -12103,7 +12640,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.views.action",
@@ -12118,7 +12656,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.views.build",
@@ -12133,7 +12672,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.cache.get",
@@ -12148,7 +12688,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.cache.reuse",
@@ -12163,7 +12704,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.snapshots.ingest",
@@ -12178,7 +12720,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.snapshots.capture",
@@ -12209,7 +12752,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.snapshots.read",
@@ -12224,7 +12768,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.symbols.definitions",
@@ -12239,7 +12784,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.symbols.neighbors",
@@ -12269,7 +12815,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.stage",
@@ -12283,7 +12830,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.observe",
@@ -12297,7 +12845,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.requeue_survivors",
@@ -12311,7 +12860,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.land_reviewed",
@@ -12325,7 +12875,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.settle_slow",
@@ -12339,7 +12890,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.recover",
@@ -12353,7 +12905,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.init",
@@ -12367,7 +12920,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.check",
@@ -12381,7 +12935,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.diagnose",
@@ -12395,7 +12950,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.check_status",
@@ -12409,7 +12965,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.checks.get",
@@ -12423,7 +12980,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.code.merge_queue.review_policy.get",
@@ -12441,7 +12999,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "review_policy"
     },
     {
       "name": "vault.code.merge_queue.review_policy.set",
@@ -12458,7 +13017,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "review_policy"
     },
     {
       "name": "vault.code.merge_queue.export_green",
@@ -12473,7 +13033,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.export",
@@ -12514,7 +13075,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.get",
@@ -12529,7 +13091,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.update",
@@ -12544,7 +13107,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.dreaming.get",
@@ -12559,7 +13123,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.dreaming.set",
@@ -12574,7 +13139,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.grants.mint",
@@ -12590,7 +13156,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.grants.revoke",
@@ -12606,7 +13173,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.verb_classes.get",
@@ -12621,7 +13189,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.verb_classes.configure",
@@ -12636,7 +13205,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.oauth.authorization.answer",
@@ -12652,7 +13222,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.repo.git_push.mint",
@@ -12668,7 +13239,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.repo.git_push.revoke",
@@ -12684,7 +13256,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.connectors.read_grants.grant",
@@ -12733,7 +13306,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.repo.snapshots.get",
@@ -13081,7 +13655,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.standing_blocks.configure",
@@ -13096,7 +13671,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.standing_blocks.reconfigure",
@@ -13111,7 +13687,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.standing_blocks.get",
@@ -13126,7 +13703,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.standing_blocks.list",
@@ -13141,7 +13719,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workflows.save",
@@ -13156,7 +13735,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workflows.get",
@@ -13171,7 +13751,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workflows.update",
@@ -13186,7 +13767,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workflows.dispatch",
@@ -13201,7 +13783,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workflows.dispatch_bound",
@@ -13218,7 +13801,8 @@
       },
       "mcp_scope": "filtered",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "workflow_member"
     },
     {
       "name": "vault.workflows.status",
@@ -13233,7 +13817,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.task_types.pin",
@@ -13248,7 +13833,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.task_types.get",
@@ -13263,7 +13849,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.spawn.get",
@@ -13278,7 +13865,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.spawn",
@@ -13293,7 +13881,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.tasks.cancel.force",
@@ -13308,7 +13897,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.tasks.comm_widen.revoke",
@@ -13324,7 +13914,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runs.branches.get",
@@ -13339,7 +13930,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runs.pause",
@@ -13378,7 +13970,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.workspace.establish",
@@ -13393,7 +13986,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.workspace.members.onboard",
@@ -13408,7 +14002,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "shared_person"
     },
     {
       "name": "vault.workspace.roster",
@@ -13423,7 +14018,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.agents.export_pack",
@@ -13578,7 +14174,8 @@
           "ts": "/** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */",
           "py": "Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."
         }
-      }
+      },
+      "host_door_proof": "slide_reviewer"
     },
     {
       "name": "vault.artifacts.ask",
@@ -13590,7 +14187,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {},
-      "section": false
+      "section": false,
+      "host_door_proof": "artifact_asker"
     },
     {
       "name": "vault.artifacts.admit",
@@ -13603,7 +14201,8 @@
       "scope": "Write",
       "admission": {},
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "artifact_asker"
     },
     {
       "name": "vault.critic.review",
@@ -13661,7 +14260,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.decline_outline",
@@ -13677,7 +14277,8 @@
       "openapi": true,
       "host_door": true,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.artifacts.design_deck",
@@ -14608,7 +15209,8 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.projects.roster.write",
@@ -15087,7 +15689,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.outcomes.project",
@@ -15101,7 +15704,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.outcomes.get",
@@ -15115,7 +15719,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.models.responses_store.read",
@@ -15131,7 +15736,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.models.responses_store.set",
@@ -15147,7 +15753,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.manifest.read",
@@ -15162,7 +15769,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.manifest.replace",
@@ -15177,7 +15785,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.settings.web_connector",
@@ -15288,7 +15897,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.routes.read",
@@ -15303,7 +15913,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.routes.replace",
@@ -15318,7 +15929,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.roles.read",
@@ -15333,7 +15945,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.roles.invoke",
@@ -15348,7 +15961,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.settle",
@@ -15362,7 +15976,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.read",
@@ -15376,7 +15991,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.evidence.record",
@@ -15390,7 +16006,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.project",
@@ -15404,7 +16021,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.judgments",
@@ -15418,7 +16036,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.proposals",
@@ -15432,7 +16051,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.skills.attribution.positive.retire",
@@ -15446,7 +16066,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.steps.submit",
@@ -15461,7 +16082,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.steps.receipt",
@@ -15476,7 +16098,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.open",
@@ -15490,7 +16113,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.subscribe",
@@ -15504,7 +16128,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.events",
@@ -15518,7 +16143,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.detach",
@@ -15532,7 +16158,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.abort",
@@ -15546,7 +16173,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.terminal",
@@ -15560,7 +16188,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.streams.release",
@@ -15592,7 +16221,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.receipts.context",
@@ -15633,7 +16263,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.asr.hypothesis",
@@ -15649,7 +16280,8 @@
         "validate": "input.validate()?;"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.asr.finalize",
@@ -15665,7 +16297,8 @@
         "validate": "input.validate()?;"
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.asr.close",
@@ -15680,7 +16313,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.start",
@@ -15695,7 +16329,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.audio",
@@ -15710,7 +16345,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.events",
@@ -15724,7 +16360,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.ack",
@@ -15739,7 +16376,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.usage",
@@ -15754,7 +16392,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.tool",
@@ -15769,7 +16408,8 @@
       },
       "section": false,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.end",
@@ -15784,7 +16424,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.voice.close",
@@ -15799,7 +16440,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.anonymous_chat",
@@ -15827,7 +16469,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.catalog.get",
@@ -15842,7 +16485,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.catalog.diff",
@@ -15857,7 +16501,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.trials.nominate",
@@ -15872,7 +16517,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.trials.get",
@@ -15887,7 +16533,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.trials.approve",
@@ -15902,7 +16549,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.trials.run",
@@ -15917,7 +16565,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.trials.resend_arm",
@@ -15948,7 +16597,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.bindings.propose",
@@ -15963,7 +16613,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.bindings.get",
@@ -15978,7 +16629,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.bindings.read",
@@ -15993,7 +16645,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.bindings.accept",
@@ -16008,7 +16661,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.models.bindings.deny",
@@ -16023,7 +16677,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "ai.options",
@@ -16052,7 +16707,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "media_owner_grade"
     },
     {
       "name": "ai.speech",
@@ -16067,7 +16723,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "media_owner_grade"
     },
     {
       "name": "vault.voices.packs.put",
@@ -16082,7 +16739,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "vault.voices.render_consent",
@@ -16097,7 +16755,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "vault.voices.targets.provision",
@@ -16112,7 +16771,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "vault.voices.targets.evict",
@@ -16127,7 +16787,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "vault.voices.inspect",
@@ -16142,7 +16803,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "vault.voices.lineage",
@@ -16157,7 +16819,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "voice_bank"
     },
     {
       "name": "ai.transcribe",
@@ -16171,7 +16834,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "media_owner_grade"
     },
     {
       "name": "ai.embed",
@@ -16185,7 +16849,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "media_owner_grade"
     },
     {
       "name": "ai.video",
@@ -16199,7 +16864,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "media_owner_grade"
     },
     {
       "name": "ai.video.poll",
@@ -16213,7 +16879,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "video_job_owner_grade"
     },
     {
       "name": "ai.video.cancel",
@@ -16227,7 +16894,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "video_job_owner_grade"
     },
     {
       "name": "ai.ask_image",
@@ -16258,7 +16926,8 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "verdict_asker"
     },
     {
       "name": "vault.graph.ask",
@@ -16525,7 +17194,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.decisions.bands.learn",
@@ -16540,7 +17210,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.decisions.bands.enforce",
@@ -16555,7 +17226,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.decisions.asks.answer",
@@ -16568,7 +17240,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "decision_holder"
     },
     {
       "name": "vault.decisions.asks.climb",
@@ -16581,7 +17254,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "decision_holder"
     },
     {
       "name": "vault.decisions.asks.confirm_grant",
@@ -16608,7 +17282,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "decision_holder"
     },
     {
       "name": "connector.list",
@@ -17482,7 +18157,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "booking_owner_act"
     },
     {
       "name": "vault.booking.book",
@@ -17497,7 +18173,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "booking_owner_act"
     },
     {
       "name": "vault.booking.reschedule",
@@ -17512,7 +18189,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "booking_owner_act"
     },
     {
       "name": "vault.booking.cancel",
@@ -17527,7 +18205,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "booking_owner_act"
     },
     {
       "name": "vault.booking.constraint_turn",
@@ -17542,7 +18221,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "booking_owner_act"
     },
     {
       "name": "vault.booking.page_token",
@@ -17557,7 +18237,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.invite",
@@ -17585,7 +18266,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.ics.poll",
@@ -17600,7 +18282,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.ics.status",
@@ -17615,7 +18298,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.passports.read",
@@ -17658,7 +18342,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.connector.get",
@@ -17673,7 +18358,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.connector.pull",
@@ -17688,7 +18374,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.connector.write",
@@ -17703,7 +18390,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.connector.kill",
@@ -17718,7 +18406,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.imip.configure",
@@ -17733,7 +18422,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "calendar.imip.get",
@@ -17748,7 +18438,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.create",
@@ -17776,7 +18467,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.occurrences",
@@ -17806,7 +18498,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.read",
@@ -17893,7 +18586,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.check_in.answer",
@@ -17908,7 +18602,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.outcome_policy.get",
@@ -17923,7 +18618,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.outcome_policy.set",
@@ -17938,7 +18634,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.calendar.transcript.ingest",
@@ -18099,7 +18796,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.writes.critical_confirm.clear",
@@ -18115,7 +18813,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.writes.critical_confirm.decline",
@@ -18131,7 +18830,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.writes.critical_confirm.receipt",
@@ -18147,7 +18847,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.writes.pending",
@@ -18193,7 +18894,8 @@
         "native": "agent_verb",
         "request": true
       },
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "session_read": "Hydrate"
     },
     {
       "name": "vault.get",
@@ -18216,7 +18918,8 @@
         "native": "agent_verb",
         "request": true
       },
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "session_read": "Get"
     },
     {
       "name": "vault.refs.resolve",
@@ -18229,7 +18932,8 @@
         "lane_record_scope": true
       },
       "section": false,
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "session_read": "RefsResolve"
     },
     {
       "name": "vault.refs.links",
@@ -18272,7 +18976,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.search.hybrid",
@@ -18335,7 +19040,8 @@
         "native": "agent_verb",
         "request": true
       },
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "session_read": "SearchBm25"
     },
     {
       "name": "vault.neighbors",
@@ -18473,7 +19179,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.ingest.ag_ui.read",
@@ -19664,7 +20371,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runs.checkpoint",
@@ -19680,7 +20388,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.turn_programs.admission",
@@ -19763,7 +20472,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.home.get",
@@ -19778,7 +20488,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.home.pick",
@@ -19794,7 +20505,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.lineage",
@@ -19809,7 +20521,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.candidate_decisions",
@@ -19824,7 +20537,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.promote",
@@ -19840,7 +20554,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.pin",
@@ -19856,7 +20571,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.frontier",
@@ -19872,7 +20588,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.accounting",
@@ -19888,7 +20605,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.consolidation.evidence",
@@ -19903,7 +20621,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.evidence",
@@ -19918,7 +20637,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.evidence.replay",
@@ -19933,7 +20653,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.cadence",
@@ -19948,7 +20669,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.settlements",
@@ -19963,7 +20685,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.settlements.get",
@@ -19978,7 +20701,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.queue",
@@ -19993,7 +20717,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.retained",
@@ -20008,7 +20733,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.receipts",
@@ -20023,7 +20749,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.policy",
@@ -20038,7 +20765,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.policy.set",
@@ -20053,7 +20781,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.recipe_policy",
@@ -20068,7 +20797,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.recipe_policy.set",
@@ -20083,7 +20813,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.lease",
@@ -20098,7 +20829,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sieve.lease.refill",
@@ -20113,7 +20845,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.free_time.policy.get",
@@ -20128,7 +20861,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.free_time.policy.set",
@@ -20144,7 +20878,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.free_time.policy.set_as",
@@ -20175,7 +20910,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.free_time.cycle",
@@ -20190,7 +20926,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.claims.vet",
@@ -20206,7 +20943,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.claims.vetting",
@@ -20222,7 +20960,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.memory.signal_extraction",
@@ -20239,7 +20978,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.memory.signal_extraction.result",
@@ -20256,7 +20996,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.claims.seed",
@@ -20297,7 +21038,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_paced": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.bind",
@@ -20313,7 +21055,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_paced": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.fulfill",
@@ -20328,7 +21071,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.rotate",
@@ -20344,7 +21088,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_paced": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.release",
@@ -20360,7 +21105,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_paced": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.route_inbound",
@@ -20376,7 +21122,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_paced": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.channel_identities.get",
@@ -20472,7 +21219,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.delivery_window.policy.list",
@@ -20500,7 +21248,8 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.delivery_window.evaluate",
@@ -20542,7 +21291,8 @@
       "output": "crate::code_run::MemorySearchOutput",
       "scope": "Read",
       "context": "run",
-      "effect": "MemorySearch"
+      "effect": "MemorySearch",
+      "run_surface": "memory"
     },
     {
       "name": "vault.claims.put",
@@ -20550,7 +21300,8 @@
       "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemoryPutClaim"
+      "effect": "MemoryPutClaim",
+      "run_surface": "memory"
     },
     {
       "name": "vault.claims.supersede",
@@ -20564,7 +21315,8 @@
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
         "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override.",
         "host_door_lists": true
-      }
+      },
+      "run_surface": "memory"
     },
     {
       "name": "vault.edges.put",
@@ -20572,7 +21324,8 @@
       "output": "crate::code_run::MemoryEdgeOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemoryPutEdge"
+      "effect": "MemoryPutEdge",
+      "run_surface": "memory"
     },
     {
       "name": "vault.summaries.create",
@@ -20935,7 +21688,8 @@
       "binding": {
         "native": "agent_verb",
         "request": true
-      }
+      },
+      "overlay_write": true
     },
     {
       "name": "vault.notes.author_take",
@@ -21207,7 +21961,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.notes.history_purge_execute",
@@ -21222,7 +21977,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.notes.history_purge_receipts",
@@ -21237,7 +21993,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.notes.editor.bind",
@@ -21501,7 +22258,8 @@
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.compact",
@@ -21517,7 +22275,8 @@
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.unfold",
@@ -21533,7 +22292,8 @@
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.folds",
@@ -21549,7 +22309,8 @@
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "tasks.consult.result",
@@ -21557,7 +22318,8 @@
       "output": "crate::task_verb::run_doors::ConsultLandReply",
       "scope": "Write",
       "context": "run",
-      "effect": "ConsultResult"
+      "effect": "ConsultResult",
+      "run_surface": "live"
     },
     {
       "name": "tasks.refuse",
@@ -21571,7 +22333,8 @@
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
         "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay.",
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.report_blocked",
@@ -21586,7 +22349,8 @@
         "description": "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task.",
         "openapi": true,
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.agents.spawn",
@@ -21600,7 +22364,8 @@
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
         "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity.",
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.workflows.dispatch_bound",
@@ -21608,7 +22373,8 @@
       "output": "crate::task_verb::sdk::WorkflowRunView",
       "scope": "Write",
       "context": "run",
-      "effect": "WorkflowDispatch"
+      "effect": "WorkflowDispatch",
+      "run_surface": "live"
     },
     {
       "name": "self.code.snapshots.get",
@@ -21752,7 +22518,8 @@
       "output": "crate::agent_dispatch::LeaderAdvice",
       "scope": "Read",
       "context": "run",
-      "effect": "Leader"
+      "effect": "Leader",
+      "run_surface": "live"
     },
     {
       "name": "self.leader.pattern",
@@ -21760,7 +22527,8 @@
       "output": "crate::code_run::LeaderPatternOutput",
       "scope": "Read",
       "context": "run",
-      "effect": "Leader"
+      "effect": "Leader",
+      "run_surface": "live"
     },
     {
       "name": "self.leader.split",
@@ -21774,7 +22542,8 @@
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
         "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope.",
         "host_door_lists": true
-      }
+      },
+      "run_surface": "live"
     },
     {
       "name": "self.skills.call",
@@ -21796,7 +22565,8 @@
       "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
-      "effect": "Team"
+      "effect": "Team",
+      "run_surface": "live"
     },
     {
       "name": "self.team.record",
@@ -21804,7 +22574,8 @@
       "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
-      "effect": "Team"
+      "effect": "Team",
+      "run_surface": "live"
     },
     {
       "name": "self.team.vote",
@@ -21812,7 +22583,8 @@
       "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
-      "effect": "Team"
+      "effect": "Team",
+      "run_surface": "live"
     },
     {
       "name": "self.team.submit",
@@ -21820,7 +22592,8 @@
       "output": "crate::code_run::TeamSubmitAnswer",
       "scope": "Write",
       "context": "run",
-      "effect": "Team"
+      "effect": "Team",
+      "run_surface": "live"
     },
     {
       "name": "self.spawn",
@@ -21936,7 +22709,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runs.settle",
@@ -21953,7 +22727,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.runs.settlement",
@@ -21969,7 +22744,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.revert_run",
@@ -21986,7 +22762,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.merge",
@@ -22002,7 +22779,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.split",
@@ -22018,7 +22796,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.facet",
@@ -22034,7 +22813,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.assert_distinct",
@@ -22050,7 +22830,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.propose",
@@ -22066,7 +22847,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.undo",
@@ -22082,7 +22864,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.resolve",
@@ -22097,7 +22880,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.events.get",
@@ -22112,7 +22896,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.proposals.resolve",
@@ -22128,7 +22913,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.identity.proposals.for_pair",
@@ -22143,7 +22929,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.custody.members.drain.begin",
@@ -22157,7 +22944,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.custody.members.drain.commit",
@@ -22171,7 +22959,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.custody.members.drain.folder",
@@ -22185,7 +22974,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.custody.members.reenrol",
@@ -22199,7 +22989,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mail.pack.install",
@@ -22212,7 +23003,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door": true
+      "host_door": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mail.sources.connect",
@@ -22355,7 +23147,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door": true
+      "host_door": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mail.compliance.setting",
@@ -22430,7 +23223,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door": true
+      "host_door": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mail.sources.search",
@@ -22443,7 +23237,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door": true
+      "host_door": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.mail.inbox",
@@ -22511,7 +23306,8 @@
       },
       "section": false,
       "openapi": true,
-      "host_door_precheck": true
+      "host_door_precheck": true,
+      "host_door_proof": "owner"
     },
     {
       "name": "vault.sync.repo_manifests.conflict.review",
