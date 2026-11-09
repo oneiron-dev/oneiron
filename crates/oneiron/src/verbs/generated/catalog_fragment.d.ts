@@ -224,7 +224,7 @@ declare namespace Sdk {
   type IdentityResolutionView = { ask: string; target_ref: string; source: string; owner_ref?: string | null; owner_evidence_refs: string[]; resolved_at: number; original: TaggedMentionView; original_provenance: DerivationEnvelopeView };
   type IdentityMentionView = { mention: MentionProvenance; name: string; state: IdentityMentionState; candidate_refs: string[]; target_ref?: string | null; current: TaggedMentionView; provenance: DerivationEnvelopeView; resolution?: IdentityResolutionView | null };
   type ShapePreset = "personal" | "family" | "team" | "org" | "community";
-  type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
+  type ShapeMemberRole = "owner" | "admin" | "steward" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
   type ShapeSkillSource = { from: "library"; subtree: string } | { from: "hub"; hub: string; folder: string; pin_type: string; pin_value: string; publisher: string };
   type ShapeSelfHeld = "dedicated_address" | "dedicated_handle" | "shared_presence";
@@ -1427,7 +1427,7 @@ declare namespace Sdk {
   type EntityView = { id_hex: string; short_ref?: string | null; kind: string; occurred_start: number; occurred_end: number; learned_at: number; body?: unknown | null; made_by?: MadeBy | null };
   type InspectionResolved = { state: InspectionState; handle: InspectionHandle; item?: EntityView | null; narrowing: ScopedReadReceipt };
   type SharedVaultRequest = { vault_id: string };
-  type FederationGrantRole = "owner" | "admin" | "member" | "viewer" | "auditor" | "delegate" | "guest";
+  type FederationGrantRole = "owner" | "admin" | "steward" | "member" | "viewer" | "auditor" | "delegate" | "guest";
   type ActExecution = { request: string; receipt?: string | null };
   type PendingAuthorityAct = { id: string; vault_id: string; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null };
   type SharedTransferRequest = { vault_id: string; to: string; from_keeps?: FederationGrantRole | null };

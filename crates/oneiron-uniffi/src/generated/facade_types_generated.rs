@@ -3451,6 +3451,8 @@ pub enum ShapeMemberRole {
     Owner,
     #[serde(rename = "admin")]
     Admin,
+    #[serde(rename = "steward")]
+    Steward,
     #[serde(rename = "member")]
     Member,
     #[serde(rename = "viewer")]
@@ -22144,6 +22146,8 @@ pub enum FederationGrantRole {
     Owner,
     #[serde(rename = "admin")]
     Admin,
+    #[serde(rename = "steward")]
+    Steward,
     #[serde(rename = "member")]
     Member,
     #[serde(rename = "viewer")]

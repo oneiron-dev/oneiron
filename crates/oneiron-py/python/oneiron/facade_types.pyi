@@ -1049,7 +1049,7 @@ class IdentityMentionView(TypedDict):
     provenance: DerivationEnvelopeView
     resolution: NotRequired[IdentityResolutionView | None]
 ShapePreset = Literal["personal", "family", "team", "org", "community"]
-ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
+ShapeMemberRole = Literal["owner", "admin", "steward", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
 ShapeSkillSourceLibrary = TypedDict("ShapeSkillSourceLibrary", {"from": Literal["library"], "subtree": str})
 ShapeSkillSourceHub = TypedDict("ShapeSkillSourceHub", {"from": Literal["hub"], "hub": str, "folder": str, "pin_type": str, "pin_value": str, "publisher": str})
@@ -7239,7 +7239,7 @@ class InspectionResolved(TypedDict):
     narrowing: ScopedReadReceipt
 class SharedVaultRequest(TypedDict):
     vault_id: str
-FederationGrantRole = Literal["owner", "admin", "member", "viewer", "auditor", "delegate", "guest"]
+FederationGrantRole = Literal["owner", "admin", "steward", "member", "viewer", "auditor", "delegate", "guest"]
 class ActExecution(TypedDict):
     request: str
     receipt: NotRequired[str | None]
