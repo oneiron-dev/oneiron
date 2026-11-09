@@ -1,19 +1,24 @@
 import { afterAll, expect, test } from "bun:test";
 import { verify } from "node:crypto";
-import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { loadFixtures, ownerBaseClaimScope as models09OwnerBaseClaimScope } from "./support/fixtures.ts";
-import type { Profile } from "./support/fixtures.ts";
-import type { PublicHttpClient, WireReply, WsClient, McpClient } from "./support/clients.ts";
-import { defineFile } from "./support/run.ts";
-import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import type { LlmRequest, LlmStreamEvent, LlmUsage } from "@oneiron/client/facade-types";
-import { PublicHttpError, McpRpcError } from "./support/clients.ts";
-import { ScriptedProviders, openaiText } from "./support/providers.ts";
-import type { Json, ProviderStep, StreamPart, ProviderResponse } from "./support/providers.ts";
 import { createServer } from "node:net";
-import type { PairedActor } from "./support/engine.ts";
-import { blake3 as models09Blake3 } from "@noble/hashes/blake3";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { blake3 } from "@noble/hashes/blake3";
+import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import type { LlmRequest, LlmStreamEvent, LlmUsage, ModelBinding, ModelManifest, ModelRole, ModelRoleReceipt,
+  ModelSlot, TeacherProbeApproval } from "@oneiron/client/facade-types";
 import type * as Models09Facade from "@oneiron/client/facade-types";
+import { CliClient, CliError, McpRpcError, PublicHttpClient as Models01HttpClient, PublicHttpError,
+  SdkProcessDriver, credentialParts } from "./support/clients.ts";
+import type { McpClient, PublicHttpClient, WireReply, WsClient } from "./support/clients.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import type { PairedActor } from "./support/engine.ts";
+import { loadBuildManifest, loadFixtures, ownerBaseClaimScope as models09OwnerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
+import type { Profile } from "./support/fixtures.ts";
+import { ScriptedProviders, embeddingReply, openaiText } from "./support/providers.ts";
+import type { Json, ProviderResponse, ProviderStep, StreamPart } from "./support/providers.ts";
+import { Artifacts, LIMITS, ManagedProcess, assertFlowActive, defineFile, isolatedEnv, ownResource,
+  redactor, secretHex, tempRoot } from "./support/run.ts";
 
 const profile: Profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -142,18 +147,469 @@ function expectUnrecorded(reply: WireReply<UsageRecordResult | UsageApiError>, s
   expect(reply.body).toEqual({ recorded: false, replayed: false, source, cost: null, vaultRollup: null });
 }
 
+const models01Roles = ["retrieval_embedder", "reranker", "extraction_encoder",
+  "extraction_teacher", "generative_reasoner", "local_reasoner", "checker",
+  "dreamer_current", "dreamer_target", "asr", "captioner", "doc_parsing",
+  "audio_vad", "tts_deferred", "local_vision"] as const satisfies readonly ModelRole[];
+const models01Slots = ["llm", "embedder", "oneironer"] as const satisfies readonly ModelSlot[];
+const models01Checkpoint = "0123456789abcdef";
+const models01Stack = "fedcba9876543210";
+const models01Query = "slot independence query";
+const models01TagText = "Alice visited Paris.";
+const models01AgentRef = "018f0000000070008000000000000a01";
+
+async function models01Manifest(): Promise<ModelManifest> {
+  const facts = await (await loadFixtures()).readJson<{
+    scenarios: { id: string; contract: { version: number; roleBindings: Record<string, ModelBinding> } }[];
+  }>("models-scenarios");
+  const scenario = facts.scenarios.find(row => row.id === "MODELS-01");
+  if (!scenario) throw new Error("Missing MODELS-01 fixture");
+  const roles: Record<string, ModelBinding> = Object.fromEntries(models01Roles.map(role =>
+    [role, { model: "alternate/alternate@rev-a", slot: "llm", tier: "fixture-pinned" }]));
+  // The four fixture rows are incomplete; host provider names supply the real IDs.
+  roles.generative_reasoner = { ...scenario.contract.roleBindings.generative_reasoner!,
+    model: "reasoner-a/reasoner@rev-a" };
+  roles.local_reasoner = { ...scenario.contract.roleBindings.local_reasoner!,
+    model: "alternate/alternate@rev-a" };
+  roles.retrieval_embedder = { ...scenario.contract.roleBindings.retrieval_embedder! };
+  roles.extraction_encoder = { ...scenario.contract.roleBindings.extraction_encoder!,
+    model: `oneironer/endpoint@${models01Checkpoint}` };
+  return { version: scenario.contract.version, roles,
+    routes: { llm: "own_server", embedder: "on_device", oneironer: "on_device" }, verdict: null };
+}
+
+function models01Approval(manifest: ModelManifest): TeacherProbeApproval {
+  // Synthetic, owner-authored operator evidence; not a measured quality score.
+  // ModelBinding skips empty route_models, absent disposition and false reads_audio.
+  const bindingBytes = '{"model":"alternate/alternate@rev-a","slot":"llm","tier":"fixture-pinned"}';
+  const policyBytes = '{"probe_id":"oneiron-conll-bio-v1","vault_min_f1_millionths":800000,"min_f1_millionths":800000}';
+  expect(manifest.roles.extraction_teacher).toEqual(JSON.parse(bindingBytes));
+  const models01Digest = (bytes: string) => Buffer.from(blake3(new TextEncoder().encode(bytes))).toString("hex");
+  return { probe_id: "oneiron-conll-bio-v1", model: "alternate/alternate@rev-a",
+    binding_hash: models01Digest(bindingBytes), f1_millionths: 1_000_000, policy_hash: models01Digest(policyBytes) };
+}
+
+function models01Request(): LlmRequest {
+  return { model: "alternate/alternate@rev-a",
+    envelope: { purpose: "answer_gen", class: { kind: "best_effort" },
+      tier: { global_default: "fixture-pinned" }, response_format: { format: "text" }, locality: "own_server" },
+    messages: [{ role: "user", content: [{ kind: "text", text: "slot independence" }] }] };
+}
+
+function models01Metadata(): ProviderStep[] {
+  return [
+    { id: "models01-embedding-list", origin: "embedding", role: "retrieval_embedder",
+      purpose: "startup and admission metadata", standing: true,
+      request: { method: "GET", path: "/v1/models" },
+      response: { kind: "json", body: { data: [{ id: "embedder" }] } } },
+    { id: "models01-embedding-probe", origin: "embedding", role: "retrieval_embedder",
+      purpose: "startup width probe only", standing: true,
+      request: { method: "POST", path: "/v1/embeddings", model: "embedder",
+        fields: { input: ["oneiron embedder probe"] } },
+      response: embeddingReply("embedder", [[1, 0, 0, 0]], 1) },
+    { id: "models01-tagger-card", origin: "tagger", role: "extraction_encoder",
+      purpose: "startup and post-extract checkpoint evidence", standing: true,
+      request: { method: "GET", path: "/v1/model" }, response: { kind: "json", body: {
+        checkpoint_sha16: models01Checkpoint, contract_version: 2, label_count: 1,
+        returns: { spans: true, links: true, mood: false }, stack_sha16: models01Stack } } },
+  ];
+}
+function models01EmbedStep(id: string, failed = false): ProviderStep {
+  return { id, origin: "embedding", role: "retrieval_embedder", purpose: failed ? "one fast upstream refusal" : "pinned query",
+    request: { method: "POST", path: "/v1/embeddings", model: "embedder", fields: { input: [models01Query] } },
+    response: failed ? { kind: "json", status: 503, body: { error: { message: "fixture embedder unavailable" } } }
+      : embeddingReply("embedder", [[1, 0, 0, 0]], 1) };
+}
+function models01TagStep(id: string): ProviderStep {
+  return { id, origin: "tagger", role: "extraction_encoder", purpose: "pinned live tag call",
+    request: { method: "POST", path: "/v1/extract", fields: { messages: [{ text: models01TagText }] } },
+    response: { kind: "json", body: { spans: [], links: [], stack_sha16: models01Stack } } };
+}
+function models01RoundSteps(round: string): ProviderStep[] {
+  return [
+    { id: `${round}-reasoner`, origin: "reasoner", role: "generative_reasoner", purpose: "pinned reasoner call",
+      request: { method: "POST", path: "/v1/chat/completions", model: "reasoner", fields: { stream: false } },
+      response: openaiText(`${round}-reasoner`, "reasoner", "Reasoner answer.", { inputTokens: 12, outputTokens: 3 }) },
+    { id: `${round}-alternate`, origin: "alternate", role: "local_reasoner", purpose: "independent alternate call",
+      request: { method: "POST", path: "/v1/chat/completions", model: "alternate", fields: { stream: false } },
+      response: openaiText(`${round}-alternate`, "alternate", "Alternate answer.", { inputTokens: 12, outputTokens: 3 }) },
+    models01EmbedStep(`${round}-embed`), models01TagStep(`${round}-tag`),
+  ];
+}
+
+function models01Config(providers: ScriptedProviders): string {
+  return `
+[models.providers.reasoner-a]
+kind = "local-openai-compat"
+base_url = "${providers.urls.reasoner}"
+revision = "rev-a"
+timeout_secs = 1
+request_compression = false
+[models.providers.reasoner-b]
+kind = "local-openai-compat"
+base_url = "${providers.urls.reasoner}"
+revision = "rev-b"
+timeout_secs = 1
+request_compression = false
+[models.providers.alternate]
+kind = "local-openai-compat"
+base_url = "${providers.urls.alternate}"
+revision = "rev-a"
+timeout_secs = 1
+request_compression = false
+[models.roles.generative_reasoner]
+rungs = [{ model = "reasoner-a:reasoner" }, { model = "reasoner-b:reasoner" }]
+[models.roles.local_reasoner]
+model = "alternate:alternate"
+[models.dreamer]
+enabled = false
+`;
+}
+
+// EngineFixture adds init egress flags even for loopback; public init rejects them.
+// Only the public host TOML is read/written. Never open anything inside the vault.
+async function models01Start(providers: ScriptedProviders) {
+  const build = await loadBuildManifest(profile);
+  const root = await tempRoot("MODELS-01");
+  const env = isolatedEnv(root, build.environment);
+  for (const key of Object.keys(env)) if (key.startsWith("ONEIRON_")) delete env[key];
+  env.ONEIRON_AUTH_SECRET = secretHex();
+  redactor.add(env.ONEIRON_AUTH_SECRET);
+  await mkdir(env.TMPDIR!, { recursive: true, mode: 0o700 });
+  const artifacts = new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR ?? resolve(root, "artifacts"), "MODELS-01"));
+  assertFlowActive();
+  const reservation = createServer();
+  await new Promise<void>((done, reject) => {
+    reservation.once("error", reject); reservation.listen(0, "127.0.0.1", done);
+  });
+  const address = reservation.address();
+  if (!address || typeof address === "string") throw new Error("No MODELS-01 port");
+  const url = `http://127.0.0.1:${address.port}`;
+  let reserved = true;
+  const models01Release = async () => {
+    if (!reserved) return;
+    reserved = false;
+    await new Promise<void>((done, reject) => reservation.close(error => error ? reject(error) : done()));
+  };
+  let server: ManagedProcess | undefined;
+  let closed = false;
+  let disown: () => void = () => {};
+  const models01Close = async () => {
+    if (closed) return;
+    closed = true; disown();
+    try { await server?.stop() }
+    finally { await models01Release(); await rm(root, { recursive: true, force: true }) }
+  };
+  disown = ownResource(models01Close);
+  const config = resolve(root, "oneiron.toml");
+  const bootstrapCli = new CliClient(requireAsset(build, "cli"), root, env, artifacts);
+  const models01Launch = async () => {
+    server = await ManagedProcess.start([requireAsset(build, "server"), "serve", "--config", config],
+      { cwd: root, env, label: `server-models01-${secretHex(4)}`, artifacts });
+    const health = new Models01HttpClient(url, { timeoutMs: 1000, artifacts });
+    await awaitPublic(async () => {
+      if (!server?.running) throw new Error("MODELS-01 server exited before health");
+      return health.raw("GET", "/api/health");
+    }, reply => reply.status === 200, { label: "MODELS-01 health", timeoutMs: LIMITS.readyMs, readiness: true });
+  };
+  try {
+    await writeFile(config, `host = "127.0.0.1"
+port = ${address.port}
+[keystore]
+backend = "off"
+${models01Config(providers)}`, { mode: 0o600 });
+    const initialized = await bootstrapCli.run(["init", resolve(root, "vault"), "--config", config,
+      "--embedder", "endpoint", "--embedder-endpoint", `${providers.urls.embedding}/v1`,
+      "--embedder-model-key", "embedder", "--embedder-model-id", "models-fixture/embedder@rev-a", "--dimensions", "4",
+      "--oneironer", "endpoint", "--oneironer-url", providers.urls.tagger!,
+      "--oneironer-checkpoint-sha16", models01Checkpoint, "--oneironer-label-count", "1"],
+    undefined, LIMITS.readyMs, true, true);
+    if (initialized.exitCode !== 0) throw new CliError(initialized, "models01-init");
+    // Init has no timeout/stack flags and rewrites these tables. Set public host policy after it.
+    const written = await readFile(config, "utf8");
+    expect(written.match(/^\[embedder\]$/gm)).toHaveLength(1);
+    expect(written.match(/^\[oneironer\]$/gm)).toHaveLength(1);
+    const configured = written.replace(/^\[embedder\]$/m, "[embedder]\ntimeout_ms = 1000")
+      .replace(/^\[oneironer\]$/m, `[oneironer]\ntimeout_ms = 1000\nlocality = "on-device"\nstack_sha16 = "${models01Stack}"`);
+    const parsed = Bun.TOML.parse(configured) as {
+      embedder: { timeout_ms: number }; oneironer: { timeout_ms: number; stack_sha16: string; locality: string };
+    };
+    expect(parsed.embedder.timeout_ms).toBe(1000);
+    expect(parsed.oneironer).toMatchObject({ timeout_ms: 1000, stack_sha16: models01Stack, locality: "on-device" });
+    await writeFile(config, configured, { mode: 0o600 });
+    const bootstrap = await bootstrapCli.run(["token", "bootstrap", "--url", url, "--config", config],
+      undefined, LIMITS.readyMs, true);
+    if (bootstrap.exitCode !== 0) throw new CliError(bootstrap, "models01-bootstrap");
+    const link = bootstrap.stdout.trim(); redactor.add(link);
+    await models01Release(); await models01Launch();
+    const sdk = new SdkProcessDriver(build, root, env);
+    const paired = await sdk.pair(link);
+    const client = new Models01HttpClient(url, { credential: paired.credential, artifacts });
+    const { bearer, seed } = credentialParts(paired.credential);
+    const cli = new CliClient(requireAsset(build, "cli"), root,
+      { ...env, ONEIRON_URL: url, ONEIRON_TOKEN: bearer, ONEIRON_SECRET: bearer, ONEIRON_BINDING_KEY: seed }, artifacts);
+    const models01Ready = async () => awaitPublic(() => client.request<{ embedder: { dense: string } }>("GET", "/v1/owner/status"),
+      reply => reply.body.embedder.dense === "ready", { label: "MODELS-01 embedder admission" });
+    await models01Ready();
+    return { client, artifacts, close: models01Close,
+      kill: async () => { await server?.stop("SIGKILL") },
+      restart: async () => { await server?.stop(); await models01Launch(); await models01Ready() },
+      pairActor: async (principalRef: string) => {
+        const result = await cli.run(["token", "pair", "--url", url, "--principal-ref", principalRef, "--actor-class", "agent"],
+          undefined, LIMITS.requestMs, true);
+        if (result.exitCode !== 0) throw new CliError(result, "models01-agent-pair");
+        const actorLink = result.stdout.trim(); redactor.add(actorLink);
+        const actor = await sdk.pair(actorLink);
+        return new Models01HttpClient(url, { credential: actor.credential, artifacts, label: "models01-non-owner" });
+      } };
+  } catch (error) { await models01Close(); throw error }
+}
+
+async function models01State(client: Models01HttpClient) {
+  const [manifest, routes, roles] = await Promise.all([
+    client.call("vault.models.manifest.read", {}),
+    Promise.all(models01Slots.map(slot => client.call("vault.models.routes.read", { slot }))),
+    Promise.all(models01Roles.map(role => client.call("vault.models.roles.read", { role }))),
+  ]);
+  return { manifest, routes, roles };
+}
+async function models01Unchanged(client: Models01HttpClient, state: Awaited<ReturnType<typeof models01State>>) {
+  const [manifest, routes] = await Promise.all([
+    client.call("vault.models.manifest.read", {}),
+    Promise.all(models01Slots.map(slot => client.call("vault.models.routes.read", { slot }))),
+  ]);
+  expect(manifest).toEqual(state.manifest);
+  expect(routes).toEqual(state.routes);
+}
+async function models01Refused(action: () => Promise<unknown>, status: number, code: string): Promise<PublicHttpError> {
+  try { await action() } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBe(status);
+    expect(error.error?.code).toBe(code);
+    return error;
+  }
+  throw new Error(`Expected ${status} ${code}, but the public call succeeded`);
+}
+async function models01RefusalReceipt(client: Models01HttpClient, error: PublicHttpError,
+  verb: string, actorRef?: string) {
+  const ref = error.error?.receiptRef;
+  expect(typeof ref).toBe("string");
+  if (typeof ref !== "string") throw new Error("Refusal has no receiptRef");
+  expect(ref).toMatch(/^call:[a-f0-9]{32}$/);
+  expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(ref);
+  const receipt = await client.call("vault.receipts.get", { receipt_ref: ref });
+  expect(receipt).toMatchObject({ receipt_ref: ref, verb: `v1/core/facade/${verb}`,
+    outcome: { refused: { code: error.error!.code } }, ...(actorRef ? { actor_ref: actorRef, actor_class: "agent" } : {}) });
+  return ref;
+}
+
+async function models01Round(client: Models01HttpClient, providers: ScriptedProviders, round: string,
+  reasoner: "a" | "b") {
+  const expected = [
+    { role: "generative_reasoner", model: `reasoner-${reasoner}/reasoner@rev-${reasoner}`, revision: `rev-${reasoner}`,
+      provider: `reasoner-${reasoner}`, slot: "llm", route: "own_server", text: "Reasoner answer." },
+    { role: "local_reasoner", model: "alternate/alternate@rev-a", revision: "rev-a", provider: "alternate",
+      slot: "llm", route: "own_server", text: "Alternate answer." },
+    { role: "retrieval_embedder", model: "models-fixture/embedder@rev-a", revision: "rev-a", provider: "endpoint",
+      slot: "embedder", route: "on_device" },
+    { role: "extraction_encoder", model: `oneironer/endpoint@${models01Checkpoint}`, revision: models01Checkpoint,
+      provider: "endpoint", slot: "oneironer", route: "on_device" },
+  ] as const;
+  const receipts: ModelRoleReceipt[] = [];
+  for (const row of expected) {
+    const input: FacadeInput<"vault.models.roles.invoke"> = { role: row.role,
+      input: row.role === "retrieval_embedder" ? { kind: "embed", text: models01Query }
+        : row.role === "extraction_encoder" ? { kind: "tag", text: models01TagText }
+        : { kind: "generate", request: models01Request() } };
+    const { receipt, output } = await client.call("vault.models.roles.invoke", input);
+    const { text, ...identity } = { ...row, text: "text" in row ? row.text : undefined };
+    expect(receipt).toMatchObject({ ...identity, tier: "fixture-pinned" });
+    const read = await client.call("vault.models.roles.read", { role: row.role });
+    // Binding reads name the model's provider; invoke names the actual endpoint adapter.
+    expect({ ...receipt, provider: read.provider }).toEqual(read);
+    if (output.kind === "generated") {
+      expect(output.response.message.role).toBe("assistant");
+      expect(output.response.message.content).toContainEqual({ kind: "text", text });
+    } else if (output.kind === "embedded") expect(output.vector).toEqual([1, 0, 0, 0]);
+    else {
+      expect(output.output).toMatchObject({ spans: [], links: [], stack_sha16: models01Stack });
+      if (output.execution) expect(output.execution).toMatchObject({ runtime: "endpoint", compute: "opaque" });
+    }
+    expect(output.kind).toBe(row.role === "retrieval_embedder" ? "embedded"
+      : row.role === "extraction_encoder" ? "tagged" : "generated");
+    receipts.push(receipt);
+  }
+  const calls = providers.seenFixtureCalls.filter(call => call.fixtureId?.startsWith(`${round}-`));
+  expect(calls.map(call => call.fixtureId)).toEqual([`${round}-reasoner`, `${round}-alternate`, `${round}-embed`, `${round}-tag`]);
+  expect(new Set(calls.map(call => call.origin)).size).toBe(4);
+  return receipts;
+}
+
 /* MODELS-01 Independent model slots and role bindings should work.
  * Canon: ARCH-0036 #inference-slots, #model-line, #roles; OF-126/129/131/132/133/134/138.
- * Preserve ModelManifest {version:2, routes:{llm,embedder,oneironer},
- * roles:{[role]:{model,slot,tier,route_models?}}, verdict?}. Invoke the LLM,
- * retrieval_embedder, extraction_encoder and alternate generative role on
- * separate provider origins; replace only generative_reasoner and inspect
- * each call's pinned identity/revision and route. Fixture: scenarios.json.
- * [models.roles.*] configures seats, but there is no typed public manifest
- * read/replace or slot-route mutation in the HTTP/SDK catalog. Raw /v1/llm
- * names a model, not a role, so it cannot stand in for this contract.
+ * Partial: separate generate/embed/tag origins, real embedder route narrowing,
+ * a reasoner-only rebind preserving all other rows and resident routes, and
+ * restart durability. Invalid manifests, owner-only calls and one embedder
+ * outage are refused without changing bindings. Fixture: scenarios.json.
+ * Operator teacher approval is synthetic owner evidence, not model quality.
+ * No off-device tagger, generative outage exhaustion or fallback receipt is
+ * claimed. The two known identity/slot defects run only in the red variant.
  */
-suite.todo(test, "MODELS-01", "waits on typed model-manifest and independent slot-route read/replace calls with role receipts");
+suite.test(test, "MODELS-01", "Independent slot routes and revision-pinned role calls survive a reasoner-only rebind and restart; invalid manifests and non-owner callers are refused", async () => {
+  const providers = await ScriptedProviders.start({ id: "MODELS-01", steps: [
+    ...models01Metadata(), ...models01RoundSteps("models01-initial"),
+    models01EmbedStep("models01-narrow-embed"), ...models01RoundSteps("models01-rebound"),
+    models01EmbedStep("models01-upstream-failure", true), ...models01RoundSteps("models01-restarted"),
+  ] });
+  try {
+    const engine = await models01Start(providers);
+    try {
+      const client = engine.client;
+      const manifest = await models01Manifest();
+      const approval = models01Approval(manifest);
+      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
+      for (const slot of models01Slots) expect(await client.call("vault.models.routes.read", { slot }))
+        .toEqual({ slot, pin: null, route: null });
+      await models01Refused(() => client.call("vault.models.manifest.replace", { manifest }), 400, "BAD_REQUEST");
+      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
+      await models01Refused(() => client.call("vault.models.manifest.replace", {
+        manifest, teacher_approval: { ...approval, binding_hash: "0".repeat(64) },
+      }), 400, "BAD_REQUEST");
+      expect(await client.call("vault.models.manifest.read", {})).toBeNull();
+      expect(await client.call("vault.models.manifest.replace", { manifest, teacher_approval: approval })).toEqual(manifest);
+      const initial = await models01State(client);
+      expect(initial.manifest).toEqual(manifest);
+      expect(initial.routes).toEqual(models01Slots.map(slot => ({ slot, pin: manifest.routes[slot], route: manifest.routes[slot] })));
+      for (const row of initial.roles) {
+        const binding = manifest.roles[row.role]!;
+        expect(row).toMatchObject({ role: row.role, model: binding.model,
+          revision: binding.model.split("@")[1], provider: binding.model.split("/")[0],
+          slot: binding.slot, tier: binding.tier, route: manifest.routes[binding.slot] });
+      }
+      const firstCalls = await models01Round(client, providers, "models01-initial", "a");
+
+      // A wider embedder pin declares a distinct local alternative; it is not failover.
+      const widenedManifest = structuredClone(initial.manifest!);
+      widenedManifest.routes.embedder = "own_server";
+      widenedManifest.roles.retrieval_embedder = { ...widenedManifest.roles.retrieval_embedder!,
+        model: "models-fixture/embedder-remote@rev-a", route_models: { on_device: "models-fixture/embedder@rev-a" } };
+      expect(await client.call("vault.models.manifest.replace", { manifest: widenedManifest })).toEqual(widenedManifest);
+      const widened = await models01State(client);
+      expect(widened.manifest).toEqual(widenedManifest);
+      expect(widened.routes).toEqual(initial.routes.map(view => view.slot === "embedder"
+        ? { slot: "embedder", pin: "own_server", route: "own_server" } : view));
+      expect(widened.roles.filter(row => row.role !== "retrieval_embedder"))
+        .toEqual(initial.roles.filter(row => row.role !== "retrieval_embedder"));
+      const beforeMismatch = providers.seenFixtureCalls.filter(call => !call.standing).length;
+      const mismatch = await models01Refused(() => client.call("vault.models.roles.invoke", {
+        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
+      }), 503, "MODEL_UNAVAILABLE");
+      expect(mismatch.error?.message).toBe("the retrieval embedder does not serve the pinned model and route");
+      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeMismatch);
+      await models01Unchanged(client, widened);
+      expect(await client.call("vault.models.routes.replace", { slot: "embedder", route: "on_device" }))
+        .toEqual({ slot: "embedder", pin: "own_server", route: "on_device" });
+      const narrowed = await models01State(client);
+      expect(narrowed.manifest).toEqual(widenedManifest);
+      expect(narrowed.routes).toEqual(widened.routes.map(view => view.slot === "embedder" ? { ...view, route: "on_device" } : view));
+      expect(narrowed.roles).toEqual(initial.roles);
+      const narrowCall = await client.call("vault.models.roles.invoke", {
+        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
+      });
+      expect(narrowCall).toMatchObject({ receipt: { model: "models-fixture/embedder@rev-a", route: "on_device" },
+        output: { kind: "embedded", vector: [1, 0, 0, 0] } });
+
+      // Copy the public read, and alter exactly one row's model.
+      const reboundManifest = structuredClone(narrowed.manifest!);
+      reboundManifest.roles.generative_reasoner!.model = "reasoner-b/reasoner@rev-b";
+      expect(await client.call("vault.models.manifest.replace", { manifest: reboundManifest })).toEqual(reboundManifest);
+      const rebound = await models01State(client);
+      expect(rebound.manifest).toEqual(reboundManifest);
+      expect(rebound.routes).toEqual(narrowed.routes);
+      expect(rebound.manifest!.routes).toEqual(narrowed.manifest!.routes);
+      for (const role of models01Roles) if (role !== "generative_reasoner") {
+        expect(rebound.manifest!.roles[role]).toEqual(narrowed.manifest!.roles[role]);
+        expect(rebound.roles.find(row => row.role === role)).toEqual(narrowed.roles.find(row => row.role === role));
+      }
+      const reboundCalls = await models01Round(client, providers, "models01-rebound", "b");
+      expect(reboundCalls.slice(1)).toEqual(firstCalls.slice(1));
+
+      const invalidManifests: ModelManifest[] = [];
+      const unknownRole = structuredClone(reboundManifest);
+      unknownRole.roles.unknown_role = { ...unknownRole.roles.local_reasoner! };
+      invalidManifests.push(unknownRole);
+      const encoderWrongSlot = structuredClone(reboundManifest);
+      encoderWrongSlot.roles.extraction_encoder!.slot = "llm";
+      invalidManifests.push(encoderWrongSlot);
+      const missingRole = structuredClone(reboundManifest);
+      delete missingRole.roles.local_reasoner;
+      invalidManifests.push(missingRole);
+      const missingRoute = structuredClone(reboundManifest);
+      delete missingRoute.routes.oneironer;
+      invalidManifests.push(missingRoute);
+      const wrongVersion = structuredClone(reboundManifest);
+      wrongVersion.version = 1;
+      invalidManifests.push(wrongVersion);
+      for (const invalid of invalidManifests) {
+        await models01Refused(() => client.call("vault.models.manifest.replace", { manifest: invalid }), 400, "BAD_REQUEST");
+        await models01Unchanged(client, rebound);
+      }
+      await models01Refused(() => client.call("vault.models.manifest.replace", {
+        manifest: reboundManifest, teacher_approval: { ...approval, policy_hash: "0".repeat(64) },
+      }), 400, "BAD_REQUEST");
+      await models01Unchanged(client, rebound);
+      await models01Refused(() => client.call("vault.models.routes.replace", { slot: "llm", route: "third_party" }), 400, "BAD_REQUEST");
+      await models01Unchanged(client, rebound);
+      await models01Refused(() => client.call("vault.models.roles.invoke", {
+        role: "retrieval_embedder", input: { kind: "generate", request: models01Request() },
+      }), 400, "BAD_REQUEST");
+      await models01Unchanged(client, rebound);
+
+      await client.call("vault.agents.create", { agent_def_ref: models01AgentRef,
+        definition: { agent_id: "models01-observer", display_name: "MODELS-01 observer",
+          desc: "Inert non-owner model observer", version: "1" } });
+      expect(await client.call("vault.agents.get", { agent_def_ref: models01AgentRef }))
+        .toMatchObject({ agent_def_ref: models01AgentRef, definition: { agent_id: "models01-observer", version: "1" } });
+      const agent = await engine.pairActor(models01AgentRef);
+      expect(await agent.call("self.actor", {})).toMatchObject({ actor_ref: models01AgentRef, actor_class: "agent" });
+      const models01AgentRefusal = async <V extends FacadeVerb>(verb: V, input: FacadeInput<V>) => {
+        const error = await models01Refused(() => agent.call(verb, input), 403, "FORBIDDEN");
+        expect(error.error?.message).toBe(`${verb} is the vault owner's`);
+        expect(error.error?.suggestions).toEqual(["Present the owner's own verified, unattenuated credential."]);
+        await models01RefusalReceipt(client, error, verb, models01AgentRef);
+      };
+      const beforeAgent = providers.seenFixtureCalls.filter(call => !call.standing).length;
+      await models01AgentRefusal("vault.models.manifest.read", {});
+      await models01AgentRefusal("vault.models.manifest.replace", { manifest: reboundManifest });
+      await models01AgentRefusal("vault.models.routes.read", { slot: "embedder" });
+      await models01AgentRefusal("vault.models.routes.replace", { slot: "embedder", route: "on_device" });
+      await models01AgentRefusal("vault.models.roles.read", { role: "generative_reasoner" });
+      await models01AgentRefusal("vault.models.roles.invoke", { role: "generative_reasoner",
+        input: { kind: "generate", request: models01Request() } });
+      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeAgent);
+      await models01Unchanged(client, rebound);
+
+      const beforeFailure = providers.seenFixtureCalls.filter(call => !call.standing).length;
+      const failure = await models01Refused(() => client.call("vault.models.roles.invoke", {
+        role: "retrieval_embedder", input: { kind: "embed", text: models01Query },
+      }), 503, "MODEL_UNAVAILABLE");
+      expect(failure.error?.message).toBe("the retrieval embedder could not answer");
+      expect(failure.reply.body).not.toHaveProperty("output");
+      expect(providers.seenFixtureCalls.filter(call => !call.standing)).toHaveLength(beforeFailure + 1);
+      const failureReceipt = await models01RefusalReceipt(client, failure, "vault.models.roles.invoke");
+      await models01Unchanged(client, rebound);
+
+      await engine.kill(); await engine.restart();
+      expect(await models01State(client)).toEqual(rebound);
+      expect(await client.call("vault.receipts.get", { receipt_ref: failureReceipt }))
+        .toMatchObject({ receipt_ref: failureReceipt, outcome: { refused: { code: "MODEL_UNAVAILABLE" } } });
+      const restartedCalls = await models01Round(client, providers, "models01-restarted", "b");
+      expect(restartedCalls).toEqual(reboundCalls);
+      await engine.artifacts.json("models01-observations.json", { initial, narrowed, rebound,
+        firstCalls, reboundCalls, restartedCalls, failureReceipt, providerCalls: providers.seenFixtureCalls });
+    } finally { await engine.close() }
+  } finally { await providers.close() }
+});
 
 interface Models02Scenario {
   id: string;
@@ -1162,7 +1618,7 @@ interface Models09Facts {
 }
 
 function models09HashJson(value: unknown): string {
-  return Buffer.from(models09Blake3(new TextEncoder().encode(JSON.stringify(value)))).toString("hex");
+  return Buffer.from(blake3(new TextEncoder().encode(JSON.stringify(value)))).toString("hex");
 }
 
 function models09TeacherApproval(
