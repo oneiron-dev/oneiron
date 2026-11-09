@@ -1082,9 +1082,10 @@ fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
     let marked = live_run_put_envelope(&vault, &body, true)?;
 
     let result = gate_claim_write(&vault, &test_id(0x3d), &body, &marked, None, false);
-    let (outcome, reason_codes) = gate_rejection_parts(
-        result.expect_err("FAILBEFORE 6881 P1: the live-run put landed Auto with no checker consulted"),
-    );
+    let (outcome, reason_codes) =
+        gate_rejection_parts(result.expect_err(
+            "FAILBEFORE 6881 P1: the live-run put landed Auto with no checker consulted",
+        ));
     assert_eq!(outcome, "pending");
     assert_eq!(reason_codes, vec!["gate.pending.checker.unavailable"]);
 
@@ -1114,6 +1115,10 @@ fn a_live_run_claim_put_asking_auto_reaches_the_checker() -> Result<()> {
         Some(&bounded_untouched),
         false,
     )?;
-    assert_eq!(untouched.calls(), 0, "an unmarked agent write is not consulted");
+    assert_eq!(
+        untouched.calls(),
+        0,
+        "an unmarked agent write is not consulted"
+    );
     Ok(())
 }
