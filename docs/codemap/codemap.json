@@ -17966,18 +17966,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CodeConsentParkedRun",
-      "CodeConsentRunEndpoint",
-      "CodeConsentRunOrigin",
-      "CodeConsentRunPeer"
+      "CodeConsentParkedRun"
      ],
      "path": "src/code_run/consent_wait/resume.rs",
      "purpose": "The MCP caller a code run parked on a code consent wait was admitted for, kept with the wait, and the parked…",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 3,
-      "struct": 3
+      "fn": 2,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -18008,7 +18005,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CodeConsentAnswerInput",
       "CodeConsentBrowserAction",
       "CodeConsentSavedCredential",
       "CodeConsentWaitView"
@@ -18016,9 +18012,9 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 19,
-      "re-export": 1,
-      "struct": 4
+      "crate-vis": 11,
+      "re-export": 2,
+      "struct": 3
      }
     },
     {
@@ -24353,17 +24349,15 @@
      "kind": "src",
      "notable": [
       "BypassActive",
-      "BypassExtent",
-      "BypassGrantWarning",
-      "BypassScope"
+      "BypassGrantWarning"
      ],
      "path": "src/consent/bypass.rs",
      "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
      "surface": {
-      "crate-vis": 10,
-      "enum": 1,
+      "crate-vis": 8,
       "fn": 7,
-      "struct": 3
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -24400,29 +24394,23 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CodeConsentChoice",
-      "CodeConsentSettleOutcome",
-      "CodeConsentWaitState"
-     ],
+     "notable": [],
      "path": "src/consent/code_wait_state.rs",
      "purpose": "Consent-wait choices, settlement outcomes and bound call identities",
      "surface": {
-      "crate-vis": 6,
-      "enum": 3,
-      "fn": 3
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/consent/codec.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "crate-vis": 15,
-      "fn": 2
+      "crate-vis": 6,
+      "re-export": 1
      }
     },
     {
@@ -24591,50 +24579,33 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CatastropheClass",
       "CatastropheFloor",
       "ComposedEffect",
-      "EffectFacts",
       "EffectPlace",
-      "ReversibilityClass",
-      "UndoFidelity"
+      "ReversibilityClass"
      ],
      "path": "src/consent/effect.rs",
      "purpose": "—",
      "surface": {
       "const": 4,
       "crate-vis": 7,
-      "enum": 3,
-      "fn": 29,
-      "re-export": 2,
-      "struct": 4
+      "enum": 1,
+      "fn": 19,
+      "re-export": 3,
+      "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ActionGrant",
-      "CodeWaitReceiptLinks",
-      "ConsentGrant",
-      "ConsentGrantRow",
-      "ConsentGrantStatus",
-      "ConsentGuard",
-      "ConsentOwnerStamp",
-      "ConsentProposal",
-      "ConsentReceipt",
-      "DisclosureGrant",
-      "StandingConsentGrant"
-     ],
+     "notable": [],
      "path": "src/consent/grant.rs",
      "purpose": "—",
      "surface": {
-      "const": 10,
+      "const": 1,
       "crate-vis": 1,
-      "enum": 4,
-      "fn": 16,
-      "struct": 6,
-      "trait": 1
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -24669,7 +24640,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 8,
       "re-export": 15
      }
@@ -24747,7 +24718,7 @@
      "path": "src/consent/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 8
      }
     },
     {
@@ -24810,7 +24781,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DataClass",
       "ScopedMcpBatchVerdict",
       "ScopedMcpCall",
       "ScopedMcpCallContext",
@@ -24823,8 +24793,9 @@
      "purpose": "Payload-aware scope axes, consent decisions, and batch evaluation",
      "surface": {
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 7,
+      "enum": 3,
+      "fn": 4,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -42046,14 +42017,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CodeConsentSettlementEligibility",
       "CodeConsentSettlementRow"
      ],
      "path": "src/gate/code_consent_settlement.rs",
      "purpose": "The POLICY_MANIFEST row that names who may settle a held code effect",
      "surface": {
-      "crate-vis": 12,
-      "enum": 1,
+      "crate-vis": 8,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -49644,16 +49614,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/llm/entity_refs.rs",
-     "purpose": "Validated entity-reference wire encoding for model policy DTOs",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "AuthorizedInference",
       "BoundInference",
@@ -56205,15 +56165,15 @@
      "kind": "src",
      "notable": [
       "VoiceBankActor",
-      "VoiceCreator",
-      "VoiceRefSubjectKind"
+      "VoiceCreator"
      ],
      "path": "src/memory/voice_actor.rs",
      "purpose": "Credential-bound voice actors and their transaction-local proof values",
      "surface": {
       "crate-vis": 5,
-      "enum": 2,
-      "fn": 3,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -70347,14 +70307,9 @@
      "notable": [
       "VerbAskCredential",
       "VerbAskCredentialCheck",
-      "VerbAskCredentialRef",
-      "VerbAskCredentialSource",
       "VerbAskCredentialWitness",
-      "VerbAskDoor",
       "VerbAskDrainPermit",
       "VerbAskDrainScope",
-      "VerbAskInstrument",
-      "VerbAskMcpCeiling",
       "VerbAskRefusal",
       "VerbAskResumed",
       "VerbAskSavedCall"
@@ -70362,10 +70317,11 @@
      "path": "src/runtime_hooks/verb/credential.rs",
      "purpose": "A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3…",
      "surface": {
-      "crate-vis": 20,
-      "enum": 5,
+      "crate-vis": 17,
+      "enum": 3,
       "fn": 10,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -94758,16 +94714,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "VoiceConsentBasis",
-      "VoiceConsentState"
-     ],
+     "notable": [],
      "path": "src/verbs/voice_records/consent.rs",
      "purpose": "Voice consent values and pure basis validation",
      "surface": {
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 4
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -94777,31 +94730,19 @@
      "path": "src/verbs/voice_records/mod.rs",
      "purpose": "Voice-bank record vocabulary consumed by core verbs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "VoiceIdentity",
-      "VoiceRefFence",
-      "VoiceRefOrigin",
-      "VoiceRefPack",
-      "VoiceRegisterClip",
-      "VoiceRenderConsent",
-      "VoiceRenderDecision",
-      "VoiceRenderGrant",
-      "VoiceTargetClone",
-      "VoiceTargetRecord"
-     ],
+     "notable": [],
      "path": "src/verbs/voice_records/model.rs",
      "purpose": "Voice reference packs, render decisions and target record values",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "struct": 9
+      "re-export": 1
      }
     },
     {
@@ -100058,7 +99999,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 189,
+     "files": 188,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100809,7 +100750,7 @@
    },
    "over_bar": 238,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7245,
+   "source_files": 7244,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106829,6 +106770,451 @@
    "over_bar": 0,
    "purpose": "Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process…",
    "source_files": 2,
+   "test_files": 0
+  },
+  "oneiron-consent-state": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentRunEndpoint",
+      "CodeConsentRunOrigin",
+      "CodeConsentRunPeer"
+     ],
+     "path": "src/code_run/consent_wait/resume.rs",
+     "purpose": "Moved from `crates/oneiron/src/code_run/consent_wait/resume.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentAdmission",
+      "CodeConsentAnswerInput",
+      "CodeConsentAnswerStamp",
+      "CodeConsentCheckpoint",
+      "CodeConsentConnectorCall",
+      "CodeConsentConsumption",
+      "CodeConsentHolderAnswerBasis",
+      "CodeConsentQuestion",
+      "CodeConsentRememberOffer",
+      "CodeConsentSettlement"
+     ],
+     "path": "src/code_run/consent_wait/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/code_run/consent_wait/types.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorToolRememberContext"
+     ],
+     "path": "src/connector_key/tool_remember.rs",
+     "purpose": "Moved from `crates/oneiron/src/connector_key/tool_remember.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BypassExtent",
+      "BypassScope"
+     ],
+     "path": "src/consent/bypass.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/bypass.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentCallSite",
+      "CodeConsentChoice",
+      "CodeConsentSettleOutcome",
+      "CodeConsentWaitState"
+     ],
+     "path": "src/consent/code_wait_state.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/code_wait_state.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/codec.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/codec.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "const": 15,
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CatastropheClass",
+      "EffectFacts",
+      "UndoFidelity"
+     ],
+     "path": "src/consent/effect.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/effect.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 2,
+      "fn": 10,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActionGrant",
+      "CodeWaitReceiptLinks",
+      "ConsentGrant",
+      "ConsentGrantRow",
+      "ConsentGrantStatus",
+      "ConsentGuard",
+      "ConsentOwnerStamp",
+      "ConsentProposal",
+      "ConsentReceipt",
+      "DisclosureGrant",
+      "StandingConsentGrant"
+     ],
+     "path": "src/consent/grant.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/grant.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "const": 11,
+      "enum": 4,
+      "fn": 14,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ApproveOnceMarker"
+     ],
+     "path": "src/consent/support.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/support.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "const": 2,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DataClass"
+     ],
+     "path": "src/consent/tool_scope.rs",
+     "purpose": "Moved from `crates/oneiron/src/consent/tool_scope.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentSettlementEligibility",
+      "CodeConsentSettlementOrigin",
+      "CodeConsentSettlementSource",
+      "ResolvedCodeConsentSettlement"
+     ],
+     "path": "src/gate/code_consent_settlement.rs",
+     "purpose": "Moved from `crates/oneiron/src/gate/code_consent_settlement.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope…",
+     "surface": {
+      "mod": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/entity_refs.rs",
+     "purpose": "Validated entity-reference wire encoding for model policy DTOs",
+     "surface": {
+      "fn": 4,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceRefSubjectKind"
+     ],
+     "path": "src/memory/voice_actor.rs",
+     "purpose": "Moved from `crates/oneiron/src/memory/voice_actor.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbAskCredentialRef",
+      "VerbAskCredentialSource",
+      "VerbAskDoor",
+      "VerbAskInstrument",
+      "VerbAskMcpCeiling"
+     ],
+     "path": "src/runtime_hooks/verb/credential.rs",
+     "purpose": "Moved from `crates/oneiron/src/runtime_hooks/verb/credential.rs` (core split slice 2: consent state below…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceConsentBasis",
+      "VoiceConsentState"
+     ],
+     "path": "src/verbs/voice_records/consent.rs",
+     "purpose": "Moved from `crates/oneiron/src/verbs/voice_records/consent.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/voice_records/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceIdentity",
+      "VoiceRefFence",
+      "VoiceRefOrigin",
+      "VoiceRefPack",
+      "VoiceRegisterClip",
+      "VoiceRenderConsent",
+      "VoiceRenderDecision",
+      "VoiceRenderGrant",
+      "VoiceTargetClone",
+      "VoiceTargetRecord"
+     ],
+     "path": "src/verbs/voice_records/model.rs",
+     "purpose": "Moved from `crates/oneiron/src/verbs/voice_records/model.rs` (core split slice 2: consent state below core)",
+     "surface": {
+      "enum": 1,
+      "struct": 9
+     }
+    }
+   ],
+   "modules": {
+    "code_run": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "connector_key": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "consent": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "gate": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "llm": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "memory": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "runtime_hooks": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "verbs": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope…",
+   "source_files": 28,
    "test_files": 0
   },
   "oneiron-container": {
@@ -152388,7 +152774,6 @@
       "ActionModePolicy",
       "ActionModeRule",
       "ActionTarget",
-      "ActorCeiling",
       "AdminPadReadsRequest",
       "AdminPadReadsView",
       "AdmissionBasis",
@@ -152591,21 +152976,14 @@
       "ArtifactVersionView",
       "ArtifactView",
       "AskAct",
-      "AskAnswer",
       "AskAuthorityScope",
-      "AskConsent",
-      "AskEffect",
       "AskForwardAct",
       "AskForwardHolderProof",
       "AskForwardReceipt",
-      "AskGrantDraft",
       "AskImageAnswer",
       "AskImageReceipt",
       "AskImageRequest",
-      "AskPrior",
       "AskRole",
-      "AskTo",
-      "AskUndoFidelity",
       "AskUpReason",
       "AsofScrubberAtom",
       "AsrCloseRequest",
@@ -152781,13 +153159,6 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
-      "BypassActionEnvelopeRequest",
-      "BypassActiveState",
-      "BypassExtent",
-      "BypassGrantBoundRequest",
-      "BypassGrantWarningRequest",
-      "BypassGrantWarningView",
-      "BypassScope",
       "BypassedEffectReceipt",
       "BypassedEffectReceiptsRequest",
       "CadencePrecedence",
@@ -152927,7 +153298,6 @@
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
-      "CatastropheClass",
       "CategoryField",
       "ChangeKind",
       "ChannelCeiling",
@@ -153105,8 +153475,6 @@
       "CodeConflictResolutionView",
       "CodeConflictView",
       "CodeConflictViewRequest",
-      "CodeConsentSettlementEligibility",
-      "CodeConsentSettlementRow",
       "CodeConsentStandingOffer",
       "CodeDiffRequest",
       "CodeDiffView",
@@ -153366,8 +153734,6 @@
       "ConnectorCallRequest",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
-      "ConnectorConsentRowView",
-      "ConnectorConsentView",
       "ConnectorCredentialBindingView",
       "ConnectorEnd",
       "ConnectorEntry",
@@ -153381,10 +153747,7 @@
       "ConnectorPackBasis",
       "ConnectorPackDelta",
       "ConnectorPackGetRequest",
-      "ConnectorPackGrantRow",
-      "ConnectorPackGrants",
       "ConnectorPackGrantsGetRequest",
-      "ConnectorPackGrantsPutRequest",
       "ConnectorPackPrepareRequest",
       "ConnectorPackQualifyRequest",
       "ConnectorPackUpdateRequest",
@@ -153398,27 +153761,19 @@
       "ConnectorReplyRetryRequest",
       "ConnectorReplyRetryView",
       "ConnectorRevisionDeferral",
-      "ConnectorRevisionGrantView",
       "ConnectorRevisionSnoozeView",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
-      "ConnectorScopeExceed",
       "ConnectorScopeOutcome",
       "ConnectorScopeOutcomeRequest",
-      "ConnectorScopeOutcomeView",
-      "ConnectorScopeSignalView",
       "ConnectorSendTaskOutcome",
       "ConnectorSlateNarrowRequest",
       "ConnectorSlateNarrowView",
       "ConnectorSlateRedraftReply",
       "ConnectorSlateRedraftRequest",
       "ConnectorSlateRevisionAcceptRequest",
-      "ConnectorSlateRevisionAcceptedView",
-      "ConnectorSlateRevisionCauseView",
       "ConnectorSlateRevisionDeferRequest",
-      "ConnectorSlateRevisionOfferView",
       "ConnectorSlateRevisionOffersRequest",
-      "ConnectorSlateRevisionOffersView",
       "ConnectorSlateView",
       "ConnectorSource",
       "ConnectorSpendEstimate",
@@ -153432,19 +153787,11 @@
       "ConsentAnswer",
       "ConsentBranch",
       "ConsentDenial",
-      "ConsentDomain",
       "ConsentFact",
-      "ConsentGrantStatus",
       "ConsentNeed",
       "ConsentPart",
-      "ConsentRegistry",
-      "ConsentRegistryAgentGrant",
-      "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
-      "ConsentRegistryRow",
-      "ConsentRegrantAction",
       "ConsentRequirement",
-      "ConsentRevokeAction",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
       "ConsentStateMembershipConsent",
@@ -153565,7 +153912,6 @@
       "CrawlPageFailure",
       "CrawlResult",
       "CrawlScope",
-      "CreateBypassGrantRequest",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
@@ -153615,11 +153961,9 @@
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DagReplyTarget",
-      "DataClass",
       "DecideRules",
       "DecideStep",
       "DecisionAnswer",
-      "DecisionAsk",
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest",
       "DecisionAskConfirmGrantRequest",
@@ -155463,29 +155807,17 @@
       "PluginSuggestionsView",
       "PointInput",
       "PolicyActionOutcome",
-      "PolicyAxes",
       "PolicyBargeInKill",
-      "PolicyCeiling",
       "PolicyClassifyDecision",
       "PolicyClassifySubject",
       "PolicyClassifyVerdict",
       "PolicyConfidence",
       "PolicyContentBinding",
-      "PolicyCriticality",
       "PolicyEnforcementAction",
       "PolicyEnforcementVoice",
-      "PolicyGrantExtension",
-      "PolicyGrantMapEntry",
-      "PolicyGrantValue",
       "PolicyHedgeBucket",
       "PolicyHelpRouting",
-      "PolicyManifest",
-      "PolicyManifestPropose",
-      "PolicyManifestPut",
       "PolicyManifestRead",
-      "PolicyManifestReceipt",
-      "PolicyManifestView",
-      "PolicyManifestsView",
       "PolicyModelEnforcement",
       "PolicyOutboundRequest",
       "PolicyOutputContract",
@@ -155500,10 +155832,6 @@
       "PolicyRowChangeRequest",
       "PolicyRowReceipt",
       "PolicyRowScope",
-      "PolicyRule",
-      "PolicyScopedGrantRow",
-      "PolicySensitivity",
-      "PolicySignature",
       "PolicySkipReason",
       "PolicyVerdictCategory",
       "PositiveProposalView",
@@ -156349,9 +156677,7 @@
       "SelfUiStateValue",
       "SelfUiValue",
       "Sensitivity",
-      "SensitivityBand",
       "SensitivityCeiling",
-      "SensitivityName",
       "SeriesField",
       "ServedAssetForm",
       "SessionFenceProof",
@@ -156460,7 +156786,6 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
-      "SheetAnswerLimit",
       "ShownCustomerHold",
       "SieveEvidenceCursor",
       "SieveEvidenceRequest",
@@ -156584,8 +156909,6 @@
       "SlideReviewLabels",
       "SlideReviewLimitsInput",
       "SlideReviewOutcome",
-      "SlideReviewPolicyRow",
-      "SlideReviewPrecedence",
       "SlideReviewSubmit",
       "SlideReviewUnitInput",
       "SlideUnitRefusalReason",
@@ -156613,8 +156936,6 @@
       "SourceFamily",
       "SourcePin",
       "SourceSpan",
-      "SourceTrust",
-      "SourceTrustRow",
       "SpaceMove",
       "SpaceMoveCheck",
       "SpaceMoveState",
@@ -156859,8 +157180,6 @@
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
-      "TeacherProbeHolderFloor",
-      "TeacherProbePolicy",
       "TeamAxis",
       "TeamBindingView",
       "TeamPlan",
@@ -157031,35 +157350,15 @@
       "VisibleFilePolicy",
       "VmOutboxKind",
       "VmOutboxSide",
-      "VoiceBankClipInput",
       "VoiceBankInspectRequest",
-      "VoiceBankInspection",
-      "VoiceBankPackPutRequest",
       "VoiceBankPackReceipt",
-      "VoiceClipSummary",
-      "VoiceConsentBasis",
-      "VoiceConsentState",
-      "VoiceDroppedTargetView",
-      "VoiceIdentityView",
       "VoiceLineAtom",
-      "VoicePackSummary",
-      "VoiceRefOrigin",
-      "VoiceRefSubjectKind",
-      "VoiceReferenceFenceView",
-      "VoiceRenderConsentReceipt",
-      "VoiceRenderConsentRequest",
-      "VoiceRenderConsentView",
-      "VoiceRenderEventView",
       "VoiceRenderLineageRequest",
-      "VoiceTargetCloneView",
       "VoiceTargetEvictReceipt",
       "VoiceTargetEvictRequest",
-      "VoiceTargetInspection",
       "VoiceTargetProvisionRequest",
       "VoiceTargetReceipt",
-      "VoiceTargetRender",
       "VoiceVendorDeleteStatus",
-      "VoiceVendorEviction",
       "WaitForInput",
       "WaitForOutput",
       "WakeCadenceReceipt",
@@ -157234,8 +157533,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1187,
-      "struct": 3678
+      "enum": 1163,
+      "struct": 3615
      }
     },
     {

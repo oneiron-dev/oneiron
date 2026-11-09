@@ -1514,10 +1514,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/consent_wait/rebind.rs` | src | m | 3 crate-vis | — | Two-party rebind of an already admitted, unsettled code consent wait |
 | `src/code_run/consent_wait/rebind_types.rs` | src | s | 7 crate-vis | — | Explicit authority succession for an already admitted code consent wait |
 | `src/code_run/consent_wait/replay.rs` | src | m | 8 crate-vis | — | The parked run's side of a code consent wait (DOOR-079 1b) |
-| `src/code_run/consent_wait/resume.rs` | src | m | 3 struct · 1 enum · 3 fn · 2 crate-vis | CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer | The MCP caller a code run parked on a code consent wait was admitted for, kept with the wait, and the parked… |
+| `src/code_run/consent_wait/resume.rs` | src | m | 1 struct · 2 fn · 1 re-export · 2 crate-vis | CodeConsentParkedRun | The MCP caller a code run parked on a code consent wait was admitted for, kept with the wait, and the parked… |
 | `src/code_run/consent_wait/settle.rs` | src | L | 3 fn · 14 crate-vis | — | The answer and the settlement (DOOR-079 1a) |
 | `src/code_run/consent_wait/standing_offer.rs` | src | s | 1 struct · 3 crate-vis | CodeConsentStandingOffer | The exact native action bound an owner may choose to remember |
-| `src/code_run/consent_wait/types.rs` | src | m | 4 struct · 1 re-export · 19 crate-vis | CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentSavedCredential, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
+| `src/code_run/consent_wait/types.rs` | src | m | 3 struct · 2 re-export · 11 crate-vis | CodeConsentBrowserAction, CodeConsentSavedCredential, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
 | `src/code_run/contribution.rs` | src | m | 5 struct · 2 enum · 2 trait · 4 fn · 4 re-export · 3 crate-vis | ContributionForkModel, ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ForkScoring, ForkScoringIdentity, ForkTreatment, ReplayAnchor +1 | The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037 #lineage-credit, ARCH-0053): one sampled… |
 | `src/code_run/contribution/admission.rs` | src | s | 1 enum · 2 crate-vis | ForkMismatch | What a submitted pair's stored forks prove (FIX 3610, FIX 2870): the A side records a contribution check as… |
 | `src/code_run/contribution/ancestor.rs` | src | s | 5 crate-vis | — | Which captured step a contribution check regenerates (FIX 2870, OF-542): a loaded skill's check, the run's… |
@@ -2028,11 +2028,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/bound.rs` | src | s | 1 re-export · 3 crate-vis | — | — |
 | `src/consent/browser.rs` | src | m | 2 struct · 4 fn · 2 crate-vis | BrowserConsentFacts, BrowserSendScope | A run's browser sends under the owner's consent (FIX 10422) |
 | `src/consent/bundle_projection.rs` | src | s | 3 struct · 1 enum · 1 fn · 3 const · 5 crate-vis | GateConsentBundle, GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt | Gate consent-bundle projection: naming, receipt view, and hex serde helpers |
-| `src/consent/bypass.rs` | src | m | 3 struct · 1 enum · 7 fn · 10 crate-vis | BypassActive, BypassExtent, BypassGrantWarning, BypassScope | The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`) |
+| `src/consent/bypass.rs` | src | m | 2 struct · 7 fn · 1 re-export · 8 crate-vis | BypassActive, BypassGrantWarning | The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`) |
 | `src/consent/bypass_lifecycle.rs` | src | s | 9 struct · 4 fn | ActiveBypassGrantsRequest, BypassActionEnvelopeRequest, BypassActiveState, BypassGrantBoundRequest, BypassGrantWarningRequest, BypassGrantWarningView, BypassedEffectReceipt, BypassedEffectReceiptsRequest +1 | Typed owner doors for the scoped catastrophe bypass (DEC-0006 #bypass-grant) |
 | `src/consent/code_settlement.rs` | src | s | 12 crate-vis | — | Hold-time code-consent policy and action evidence; neither is a grant |
-| `src/consent/code_wait_state.rs` | src | s | 3 enum · 3 fn · 6 crate-vis | CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState | Consent-wait choices, settlement outcomes and bound call identities |
-| `src/consent/codec.rs` | src | m | 2 fn · 2 const · 15 crate-vis | — | — |
+| `src/consent/code_wait_state.rs` | src | s | 1 re-export · 2 crate-vis | — | Consent-wait choices, settlement outcomes and bound call identities |
+| `src/consent/codec.rs` | src | s | 1 re-export · 6 crate-vis | — | — |
 | `src/consent/contact_clearance.rs` | src | m | 3 struct · 3 enum · 12 fn · 8 const · 4 crate-vis | ContactClearanceAct, ContactDisclosureOffer, ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt, DisclosureOfferMode | Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the… |
 | `src/consent/contact_clearance/engine_offer.rs` | src | s | 1 fn · 2 crate-vis | — | The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an… |
 | `src/consent/contact_clearance/standing.rs` | src | s | 4 fn · 2 crate-vis | — | The owner's disclosure-mode knob, trusted-set pre-clearance and the bound-use receipts |
@@ -2047,15 +2047,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/doors/queue_check.rs` | src | s | 5 crate-vis | — | The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved… |
 | `src/consent/doors/read.rs` | src | s | 5 fn · 1 crate-vis | — | The consent reads: grant rows, active standing grants, the evaluator door and the registry |
 | `src/consent/doors/request_credential.rs` | src | s | 1 fn · 2 crate-vis | — | The slip a person's request arrived with, bound to their proof as a liveness guard alone (FIX 4328… |
-| `src/consent/effect.rs` | src | m | 4 struct · 3 enum · 29 fn · 4 const · 2 re-export · 7 crate-vis | CatastropheClass, CatastropheFloor, ComposedEffect, EffectFacts, EffectPlace, ReversibilityClass, UndoFidelity | — |
-| `src/consent/grant.rs` | src | m | 6 struct · 4 enum · 1 trait · 16 fn · 10 const · 1 crate-vis | ActionGrant, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal +3 | — |
+| `src/consent/effect.rs` | src | m | 3 struct · 1 enum · 19 fn · 4 const · 3 re-export · 7 crate-vis | CatastropheFloor, ComposedEffect, EffectPlace, ReversibilityClass | — |
+| `src/consent/grant.rs` | src | s | 3 fn · 1 const · 1 re-export · 1 crate-vis | — | — |
 | `src/consent/lifecycle.rs` | src | s | 9 struct · 1 enum · 5 fn · 1 re-export · 1 crate-vis | ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest, DisclosureBoundRequest, DisclosureEnvelopeRequest +2 | Typed public consent lifecycle calls |
-| `src/consent/mod.rs` | src | s | 8 mod · 15 re-export · 7 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
+| `src/consent/mod.rs` | src | s | 8 mod · 15 re-export · 8 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
 | `src/consent/owner_reason.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 2 crate-vis | OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo, OwnerReasonVerdict, ReasonMatchConfidence | Owner-authenticated confirm reasons, bounded rule rows, and their derived grants |
 | `src/consent/owner_reason/selection.rs` | src | s | 4 crate-vis | — | Pure nearest-reason selection: remove dominated covering bounds first |
 | `src/consent/registry.rs` | src | m | 7 struct · 1 fn · 3 const · 5 crate-vis | ConsentRegistry, ConsentRegistryAgentGrant, ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction, ConsentRevokeAction | — |
 | `src/consent/settlement_fact.rs` | src | s | 1 struct · 2 enum | SettledFact, SettledOutcome, SettlementKind | Proposal settlement kinds, outcomes and producer-stamped facts |
-| `src/consent/support.rs` | src | s | 13 crate-vis | — | — |
+| `src/consent/support.rs` | src | s | 8 crate-vis | — | — |
 | `src/consent/tables.rs` | src | s | — | — | The side tables `consent` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/consent/tests.rs` | test | XL | — | — | DEC-0006 unified consent-mode conformance |
 | `src/consent/tests/bypass.rs` | test | s | — | — | DEC-0006 invariant 7 and `#bypass-grant` (REV-9 item 4): the catastrophe floor is a versioned default policy… |
@@ -2063,7 +2063,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tests/owner_tier.rs` | test | m | — | — | A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier… |
 | `src/consent/tests/shared_brief.rs` | test | s | — | — | — |
 | `src/consent/tests/stale_proofs.rs` | test | s | — | — | An owner proof acts only while it still holds, checked in the transaction that writes the act… |
-| `src/consent/tool_scope.rs` | src | s | 4 struct · 4 enum · 7 fn · 2 crate-vis | DataClass, ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef, ToolGrantDataClass | Payload-aware scope axes, consent decisions, and batch evaluation |
+| `src/consent/tool_scope.rs` | src | s | 4 struct · 3 enum · 4 fn · 1 re-export · 2 crate-vis | ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef, ToolGrantDataClass | Payload-aware scope axes, consent decisions, and batch evaluation |
 | `src/consent/widen/contact_verdict_index.rs` | src | s | 3 crate-vis | — | The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan… |
 | `src/consent/widen/mod.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 7 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
 | `src/consent/widen/offers.rs` | src | s | 1 fn · 1 crate-vis | — | Owner-scoped pages of the existing open contact-disclosure offers |
@@ -3448,7 +3448,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/ceiling.rs` | src | m | 41 crate-vis | — | — |
 | `src/gate/class_policy.rs` | src | m | 22 crate-vis | — | Vault-resident CLASS policy: waits and act postures, with holder narrowing |
 | `src/gate/coach_offer_reach.rs` | src | m | 2 fn · 5 crate-vis | — | The Coach's born-with reach to ask the vault owner about its own training offers (OF-577, FIX 856; Engine… |
-| `src/gate/code_consent_settlement.rs` | src | s | 1 struct · 1 enum · 12 crate-vis | CodeConsentSettlementEligibility, CodeConsentSettlementRow | The POLICY_MANIFEST row that names who may settle a held code effect |
+| `src/gate/code_consent_settlement.rs` | src | s | 1 struct · 1 re-export · 8 crate-vis | CodeConsentSettlementRow | The POLICY_MANIFEST row that names who may settle a held code effect |
 | `src/gate/confirm.rs` | src | m | 1 enum · 2 fn · 2 const · 1 re-export · 15 crate-vis | CriticalWriteConfirmResolution | — |
 | `src/gate/confirm/demotion_retry.rs` | src | s | 2 crate-vis | — | The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079) |
 | `src/gate/confirm/lifetime.rs` | src | s | 1 crate-vis | — | A locally attached critical confirmation's lifetime as a policy value (FIX 8760): the vault-scope… |
@@ -4073,7 +4073,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/defaults.rs` | src | s | 4 fn · 1 re-export · 3 crate-vis | — | Vault-local inference defaults: the stored, owner-editable purpose-default table and the vault doors that… |
 | `src/llm/defaults/submit.rs` | src | s | 1 struct · 3 enum · 4 fn | PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission, PurposeDefaultSubmitter | The raw replacement of the inference defaults under the vault's policy power (FIX 8211) |
 | `src/llm/defaults/tests.rs` | test | m | — | — | Purpose policy and binding regressions |
-| `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
 | `src/llm/inference_admission.rs` | src | s | 3 struct · 12 fn · 1 re-export | AuthorizedInference, BoundInference, InferencePolicySnapshot | One snapshot and one admission for policy-managed inference calls |
 | `src/llm/manifest.rs` | src | m | 1 struct · 14 fn · 1 mod · 4 re-export · 6 crate-vis | ModelManifest | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
 | `src/llm/manifest/doors.rs` | src | m | 10 struct · 2 enum · 7 fn · 1 crate-vis | ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput, ModelRoleRead, ModelRoleReceipt, ModelRouteRead +4 | Owner-proof model manifest, independent route dials and resolved role receipts |
@@ -4563,7 +4562,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/transcript/tests.rs` | test | m | — | — | A conversation's transcript is what its reader may read of it, in order: never an erased message, never one… |
 | `src/memory/usage_repair.rs` | src | m | 8 struct · 5 enum · 7 fn | UndecodableUsageList, UndecodableUsageReason, UndecodableUsageRow, UsageRepairAuthority, UsageRepairCaller, UsageRepairListRequest, UsageRepairReason, UsageRepairReceipt +5 | The authority seam of a host's usage repair (FIX 6476) |
 | `src/memory/vault_standing.rs` | src | s | 1 crate-vis | — | The owner or administrator standing a room reader presents |
-| `src/memory/voice_actor.rs` | src | s | 1 struct · 2 enum · 3 fn · 5 crate-vis | VoiceBankActor, VoiceCreator, VoiceRefSubjectKind | Credential-bound voice actors and their transaction-local proof values |
+| `src/memory/voice_actor.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 5 crate-vis | VoiceBankActor, VoiceCreator | Credential-bound voice actors and their transaction-local proof values |
 | `src/memory/wake_observation.rs` | src | s | 13 struct · 4 enum · 3 fn · 2 const | ClaimAuthoringFallback, WakeCallState, WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector +9 | Durable and live wake-observation read vocabulary |
 | `src/memory/web_fetch.rs` | src | m | 2 fn | — | Actor-bound web acquisition and import |
 | `src/memory/wellness_doors.rs` | src | s | 3 struct · 4 fn | WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
@@ -5773,7 +5772,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/verb/chain/session.rs` | src | s | 9 crate-vis | — | A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view… |
 | `src/runtime_hooks/verb/chain/storage.rs` | src | m | 8 crate-vis | — | A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and… |
 | `src/runtime_hooks/verb/chain/tail.rs` | src | s | 1 crate-vis | — | A chain's receipt tail (FIX 1429, FIX 5429): the newest receipts of the caller's whole family, and in a room… |
-| `src/runtime_hooks/verb/credential.rs` | src | m | 7 struct · 5 enum · 1 trait · 10 fn · 20 crate-vis | VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource, VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope +5 | A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3… |
+| `src/runtime_hooks/verb/credential.rs` | src | m | 4 struct · 3 enum · 1 trait · 10 fn · 1 re-export · 17 crate-vis | VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialWitness, VerbAskDrainPermit, VerbAskDrainScope, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall | A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3… |
 | `src/runtime_hooks/verb/golden.rs` | src | s | 2 crate-vis | — | A verb hook's golden inputs, run (ARCH-0080 §9): a hub pack's test runs the body on each call its pack… |
 | `src/runtime_hooks/verb/held_member.rs` | src | s | 1 fn · 5 crate-vis | — | One string member of a call's args its host holds as a file, outside the JSON args, until a verb hook would… |
 | `src/runtime_hooks/verb/mod.rs` | src | m | 2 struct · 14 fn · 1 type · 11 re-export · 20 crate-vis | VerbCall, VerbHookPre | Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb |
@@ -7762,9 +7761,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/trusted_contact.rs` | src | m | 14 struct · 2 enum · 10 fn | TrustedContactAsksRequest, TrustedContactAuthorization, TrustedContactAuthorizationOutcome, TrustedContactAuthorizeRequest, TrustedContactConcernFact, TrustedContactConcernProposal, TrustedContactConcernRequest, TrustedContactConsentRequest +8 | The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact… |
 | `src/verbs/uncertain_send.rs` | src | s | 2 struct · 1 fn | UncertainSendAnswer, UncertainSendAnswered | The input and answer of `vault.outbound.uncertain_send.answer` (FIX 4747), a host door: the vault owner's… |
 | `src/verbs/voice_bank.rs` | src | m | 12 struct · 1 enum · 8 fn · 1 re-export | VoiceBankClipInput, VoiceBankInspectRequest, VoiceBankPackPutRequest, VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceRenderConsentRequest, VoiceRenderLineageRequest, VoiceTargetEvictReceipt +5 | The voice-bank rows (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put` banks a reference… |
-| `src/verbs/voice_records/consent.rs` | src | s | 2 enum · 4 fn · 2 crate-vis | VoiceConsentBasis, VoiceConsentState | Voice consent values and pure basis validation |
-| `src/verbs/voice_records/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Voice-bank record vocabulary consumed by core verbs |
-| `src/verbs/voice_records/model.rs` | src | s | 9 struct · 1 enum · 1 crate-vis | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant +2 | Voice reference packs, render decisions and target record values |
+| `src/verbs/voice_records/consent.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | Voice consent values and pure basis validation |
+| `src/verbs/voice_records/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | Voice-bank record vocabulary consumed by core verbs |
+| `src/verbs/voice_records/model.rs` | src | s | 1 re-export · 1 crate-vis | — | Voice reference packs, render decisions and target record values |
 | `src/verbs/voice_records/render_history.rs` | src | s | 4 struct | VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView | Render-decision receipts and metadata-only history views |
 | `src/verbs/voice_records/views.rs` | src | s | 9 struct · 1 enum | VoiceBankInspection, VoiceBankView, VoiceClipSummary, VoiceIdentityView, VoicePackSummary, VoiceReferenceFenceView, VoiceRenderConsentView, VoiceTargetCloneView +2 | Audio-free voice-bank metadata views and record conversions |
 | `src/verbs/weave.rs` | src | s | 2 struct · 9 fn | WeaveEnqueueRequest, WeaveScheduleCleared | Typed owner setup for weave work and the inbox's real producers |
