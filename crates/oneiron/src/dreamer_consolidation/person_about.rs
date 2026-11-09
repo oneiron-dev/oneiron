@@ -849,6 +849,9 @@ impl<E> PersonAboutExecutor<'_, E> {
                         .collect(),
                 },
             )],
+            // The lines cite no stored source: the publish reads the facts
+            // again in its own write.
+            sources: Vec::new(),
         };
         let receipt = match ctx.vault.derive_commit(&stamp, &batch) {
             Ok(receipt) => receipt,

@@ -20,3 +20,7 @@ pub use evidence_spans::{
     EvidenceSpan, EvidenceSpans, EvidenceSpansRequest, evidence_spans, validate_evidence_spans,
 };
 pub use source_version::{SourceVersion, SourceVersionCheck};
+// The integration tests' doors name a cited source's version as a caller's
+// read serves it (untangle 6.7a).
+#[cfg(oneiron_test_support)]
+pub(crate) use source_version::source_version_in_txn;
