@@ -4,9 +4,9 @@ scripts/sdk/verbs/ names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1353 facade rows, 4860 declarations.
-Inputs: 1273 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
-Results: 1167 of 1353 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
+Census: 1359 facade rows, 4872 declarations.
+Inputs: 1279 of 1359 fully typed, 73 typed down to an opaque serde_json::Value leaf, 7 with a shape the generator could not read
+Results: 1173 of 1359 fully typed, 169 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 20.
 """
 
@@ -4805,6 +4805,23 @@ class AgentGrantView(TypedDict):
 class AgentGrantMinted(TypedDict):
     grant: AgentGrantView
     act_ref: str
+class SystemAgentGrantNarrowRequest(TypedDict):
+    agent: EntityId
+    keep: list[str]
+    confirm: NotRequired[str | None]
+SystemFunction = Literal["consolidation", "recall_upkeep", "coach_checks", "engine_controls_jobs"]
+class SystemAgentGrantNarrowedUnchanged(TypedDict):
+    outcome: Literal["unchanged"]
+class SystemAgentGrantNarrowedConfirmRequired(TypedDict):
+    outcome: Literal["confirm_required"]
+    warning: str
+    breaks: list[SystemFunction]
+    confirm: str
+class SystemAgentGrantNarrowedNarrowed(TypedDict):
+    outcome: Literal["narrowed"]
+    grant: NotRequired[EntityId | None]
+    breaks: list[SystemFunction]
+SystemAgentGrantNarrowed = SystemAgentGrantNarrowedUnchanged | SystemAgentGrantNarrowedConfirmRequired | SystemAgentGrantNarrowedNarrowed
 class AgentGrantRevokeRequest(TypedDict):
     grant_ref: EntityId
     seen: NotRequired[str | None]
@@ -12952,6 +12969,11 @@ class EmbeddingSpaceProbePutRequest(TypedDict):
     targets: NotRequired[list[EntityId]]
     source_refs: NotRequired[list[EntityId]]
     author: str
+EngineControlClass = Literal["maintenance_cadence", "work_budget", "wake_cadence", "knowledge_recipe"]
+EngineControlChange = TypedDict("EngineControlChange", {"by": str, "owner": bool, "class": EngineControlClass, "knob": str, "value": str, "changed_at": int})
+class EngineControlChangeEntry(TypedDict):
+    id: EntityId
+    change: EngineControlChange
 IdentityKind = Literal["PERSON", "ORG", "PLACE"]
 class IdentityHints(TypedDict):
     name: NotRequired[str | None]
@@ -16277,6 +16299,47 @@ class SharedMemberAddRequest(TypedDict):
     vault_id: str
     member: str
     role: NotRequired[FederationGrantRole | None]
+SharedMemberAskKind = Literal["add", "remove", "assign_role"]
+class SharedMemberAskRequest(TypedDict):
+    vault_id: str
+    kind: SharedMemberAskKind
+    member: str
+    role: NotRequired[FederationGrantRole | None]
+class MemberAskChangeAdd(TypedDict):
+    kind: Literal["add"]
+    member: str
+    role: NotRequired[FederationGrantRole | None]
+class MemberAskChangeRemove(TypedDict):
+    kind: Literal["remove"]
+    member: str
+class MemberAskChangeAssignRole(TypedDict):
+    kind: Literal["assign_role"]
+    member: str
+    role: FederationGrantRole
+MemberAskChange = MemberAskChangeAdd | MemberAskChangeRemove | MemberAskChangeAssignRole
+class MemberAskStatusOpen(TypedDict):
+    state: Literal["open"]
+class MemberAskStatusApplied(TypedDict):
+    state: Literal["applied"]
+    by: str
+    receipt: str
+class MemberAskStatusDeclined(TypedDict):
+    state: Literal["declined"]
+    by: str
+MemberAskStatus = MemberAskStatusOpen | MemberAskStatusApplied | MemberAskStatusDeclined
+class SharedMemberAsk(TypedDict):
+    id: str
+    vault_id: str
+    steward: str
+    change: MemberAskChange
+    asked_at: int
+    status: MemberAskStatus
+    closed_at: NotRequired[int | None]
+class SharedMemberAskIdRequest(TypedDict):
+    vault_id: str
+    ask: str
+class SharedVaultRequest(TypedDict):
+    vault_id: str
 class SharedMemberRoleRequest(TypedDict):
     vault_id: str
     member: str
@@ -16295,6 +16358,7 @@ class FederationMemberGrant(TypedDict):
     delegated_by: NotRequired[EntityId | None]
     expires_at: NotRequired[int | None]
     active: bool
+    role_note: NotRequired[str | None]
 class InvitationCodeRequest(TypedDict):
     vault_id: str
     member: str
@@ -16309,8 +16373,6 @@ class InvitationSlip(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
-class SharedVaultRequest(TypedDict):
-    vault_id: str
 class SharedInvitationStateAcceptedBody(TypedDict):
     at: int
 class SharedInvitationStateAccepted(TypedDict):

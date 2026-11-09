@@ -1020,6 +1020,8 @@ export class Oneiron {
       grants: {
         /** The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
+        /** The owner narrows or revokes the Dreamer's or the Coach's Steward grant; a narrowing that breaks a vault function answers what breaks and applies only with the confirm it gave. */
+        narrow: (input: Facade.SystemAgentGrantNarrowRequest): Facade.SystemAgentGrantNarrowed => this.#call(() => this.#client.vaultAgentsGrantsNarrow(input) as Facade.SystemAgentGrantNarrowed),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
       },
@@ -2060,6 +2062,12 @@ export class Oneiron {
       /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
       retire: (input: Facade.EmbeddingSpaceRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesRetire(input) as Facade.EmbeddingSpacesView),
     },
+    engine: {
+      controls: {
+        /** The owner reads every change made to the engine's stored knobs, by the owner or a holder of engine.controls, oldest first. */
+        changes: (input: Facade.EmptyRequest): Facade.EngineControlChangeEntry[] => this.#call(() => this.#client.vaultEngineControlsChanges(input) as Facade.EngineControlChangeEntry[]),
+      },
+    },
     entities: {
       /** The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted. */
       look_before_mint: (input: Facade.IdentityLookupRequest): Facade.IdentityLookup => this.#call(() => this.#client.vaultEntitiesLookBeforeMint(input) as Facade.IdentityLookup),
@@ -2524,6 +2532,15 @@ export class Oneiron {
       accept_with_credential: (input: Facade.SharedInvitationAcceptWithCredentialRequest): Facade.SharedInvitationAcceptedWithCredential => this.#call(() => this.#client.vaultMembersAcceptWithCredential(input) as Facade.SharedInvitationAcceptedWithCredential),
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
+      /** A Steward suggests adding, removing or moving one member of a shared vault; it writes one ask for the vault's Owners and Admins and changes no membership. */
+      ask: (input: Facade.SharedMemberAskRequest): Facade.SharedMemberAsk => this.#call(() => this.#client.vaultMembersAsk(input) as Facade.SharedMemberAsk),
+      /** The member asks the caller may see in a shared vault: every ask for an Owner or Admin, a Steward's own asks. */
+      asks: Object.assign((input: Facade.SharedVaultRequest): Facade.SharedMemberAsk[] => this.#call(() => this.#client.vaultMembersAsks(input) as Facade.SharedMemberAsk[]), {
+        /** An Owner or Admin applies a Steward's open member ask through the membership door it names; the receipt names the Steward as proposer. */
+        apply: (input: Facade.SharedMemberAskIdRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAsksApply(input) as Facade.SharedActExecutionReceipt),
+        /** An Owner or Admin declines a Steward's open member ask; no membership changes. */
+        decline: (input: Facade.SharedMemberAskIdRequest): Facade.SharedMemberAsk => this.#call(() => this.#client.vaultMembersAsksDecline(input) as Facade.SharedMemberAsk),
+      }),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** The invitee declines their own invitation; nothing is granted. */
