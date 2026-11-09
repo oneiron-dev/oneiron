@@ -82,6 +82,7 @@ fn response(text: &str) -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: text.to_owned(),
+                signature: None,
             }],
         },
         usage: LlmUsage {
@@ -96,8 +97,11 @@ fn response(text: &str) -> LlmResponse {
                 reasoning: 0,
             },
             raw_provider: serde_json::Value::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -115,11 +119,14 @@ fn request(scope: Scope, text: &str) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: text.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -178,6 +185,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
     {
         EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        other => panic!("unexpected enqueue outcome: {other:?}"),
     };
     let ctx = DurableStepContext {
         vault: &vault,
