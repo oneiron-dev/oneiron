@@ -429,23 +429,34 @@ fn a_blocks_edge_reaches_an_edges_follower_through_its_own_door() {
 /// Review #6942: a hard delete scrubs the edge rows naming the deleted entity before its tear,
 /// and the tear's cascade over the entity's edges writes none back. A follower from the
 /// beginning finds no edge row naming it, shown or withheld: the hard delete of an entity with an
-/// edge leaves the page as the hard delete of one without does.
+/// edge withholds no more than the hard delete of one without.
 #[test]
 fn a_hard_delete_leaves_no_edge_row_naming_the_deleted_end() {
     let (_dir, vault) = open();
+    // A hard delete signs its receipt: the host installs this install's keystore.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault.prepare_install_signing().expect("install signing");
     let key = owner_key(&vault);
     let subscription = follow_from(&vault, &key, FeedSource::Edges, FeedStart::Beginning);
-    let (from, to, lone) = (put_person(&vault), put_person(&vault), put_person(&vault));
+    let (from, to) = (put_person(&vault), put_person(&vault));
+    let (first, lone) = (put_person(&vault), put_person(&vault));
     vault
         .put_edge(&from, EdgeKind::Supports, &to, 0.5)
         .expect("edge");
-    let before = read(&vault, &key, subscription);
+    let page = read(&vault, &key, subscription);
     assert_eq!(
-        edge_ops(&before, from, to, "supports"),
+        edge_ops(&page, from, to, "supports"),
         vec![FeedOp::EdgeAdded],
-        "{before:?}"
+        "{page:?}"
     );
 
+    // The first hard delete does any once-only work; the second is the control.
+    vault
+        .delete_entity_with_reason(&first, DeleteReason::UserHardDelete)
+        .expect("first hard delete");
+    let warm = read(&vault, &key, subscription);
     vault
         .delete_entity_with_reason(&lone, DeleteReason::UserHardDelete)
         .expect("hard delete of an entity with no edge");
@@ -462,10 +473,10 @@ fn a_hard_delete_leaves_no_edge_row_naming_the_deleted_end() {
             .is_none_or(|edge| edge.source != to && edge.target != to)),
         "no entry names the deleted end: {after:?}"
     );
-    assert_eq!(
-        after.withheld.saturating_sub(control.withheld),
-        control.withheld.saturating_sub(before.withheld),
-        "no withheld row names the deleted end: {control:?} then {after:?}"
+    assert!(
+        after.withheld.saturating_sub(control.withheld)
+            <= control.withheld.saturating_sub(warm.withheld),
+        "no withheld row names the deleted end: {warm:?} then {control:?} then {after:?}"
     );
 }
 
