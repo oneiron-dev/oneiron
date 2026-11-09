@@ -297,6 +297,7 @@ fn mint_agent(
                 actor_class: Some("agent".to_owned()),
                 org_ref: None,
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();

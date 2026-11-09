@@ -128,21 +128,26 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
 
     tokio::task::spawn_blocking(move || {
         // A write naming whoami's principal is accepted.
-        let (url, owner_credential) = OneironClient::pair(&owner_link).unwrap();
+        let (url, owner_credential, _comm) = OneironClient::pair(&owner_link).unwrap();
         let writer = OneironClient::connect(&url, &owner_credential).unwrap();
         let witnessed = writer
-            .witness(&turn("The nightly backup runs at 03:46."))
+            .vault_witness(&turn("The nightly backup runs at 03:46."))
             .unwrap();
 
         // The read credential recalls it and cannot write.
         let reader = OneironClient::connect(&origin, &credential).unwrap();
         let effort = oneiron_remote::parse_effort("medium").unwrap();
         let pack = reader
-            .recall(
+            .vault_recall(
                 "nightly backup",
                 effort,
                 &RecallScope::default(),
                 5,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -160,7 +165,7 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
                             == witnessed.message_short_ids.first())),
             "{pack:?}"
         );
-        let refused = reader.witness(&turn("an agent may not write")).unwrap_err();
+        let refused = reader.vault_witness(&turn("an agent may not write")).unwrap_err();
         assert_eq!(refused.code, "FORBIDDEN", "{refused:?}");
     })
     .await

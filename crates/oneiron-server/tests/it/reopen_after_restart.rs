@@ -104,11 +104,16 @@ pub(super) fn sigterm(mut server: Server) {
 /// The reference recall returns for [`TEXT`]: the turn that says it.
 fn recalled_ref(client: &OneironClient) -> String {
     let pack = client
-        .recall(
+        .vault_recall(
             "Quillamere boathouse",
             RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -178,10 +183,10 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
     let link = stdout(oneiron(&["token", "bootstrap", "--url", &origin], &config));
 
     let first = serve(&config, port, &dir.path().join("serve-1.log"));
-    let (url, credential) = OneironClient::pair(link.trim()).unwrap();
+    let (url, credential, _comm) = OneironClient::pair(link.trim()).unwrap();
     let client = OneironClient::connect(&url, &credential).unwrap();
     client
-        .witness(&WitnessTurn {
+        .vault_witness(&WitnessTurn {
             conversation_ref: "44444444444444444444444444444444".into(),
             turn_ref: None,
             messages: vec![WitnessMessage {
@@ -192,8 +197,12 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     let recalled = recalled_ref(&client);
