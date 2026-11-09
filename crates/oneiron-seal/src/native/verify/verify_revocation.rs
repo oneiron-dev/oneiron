@@ -2,7 +2,7 @@
 
 use super::super::cms;
 use super::verify_chain_gates::{issuer_permits_crl_sign, key_usage_permits};
-use super::verify_dss_core::EmbeddedCert;
+use super::verify_dss_core::{EmbeddedCert, crl_signer_shadows};
 use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 
 /// Seconds-since-epoch for an X.509 time choice.
@@ -104,21 +104,29 @@ pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool 
         })
 }
 
-/// One DSS CRL entry: parses, signature verifies against an
-/// embedded/anchored issuer cert with a consistent algorithm, is fresh at
-/// the applicable time, and lists no in-scope serial on its revoked list
-/// (§7.5 step 3). In-scope means a certificate of the report's covered
-/// chains that this CRL's key-bound signer issued; a listed in-scope
-/// serial is a revocation. The issuer is
-/// the first name-matched candidate whose KEY verifies the CRL signature —
-/// a same-subject/different-key shadow can only authenticate a CRL it
-/// truly signed, and the coverage rule below counts that CRL only for
-/// certificates that shadow actually issued (`issued_by`). On success
-/// returns that key-bound issuer certificate; otherwise why it is rejected
-/// (lead ruling F): unparseable, verified by no claimed issuer's key, or
-/// signed by an issuer without cRLSign is Unverifiable; a delta or
-/// IDP-scoped CRL or one stale at `at_unix` is Unusable; one listing an
-/// in-scope serial is Revoked.
+/// One DSS CRL entry: parses, its signature verifies against an
+/// embedded/anchored issuer cert with a consistent algorithm and cRLSign,
+/// and, when it is about the report's covered chains, it has complete
+/// scope, is fresh at the applicable time and lists no covered serial
+/// (§7.5 step 3). The issuer is the first name-matched candidate whose KEY
+/// verifies the CRL signature — a same-subject/different-key shadow can
+/// only authenticate a CRL it truly signed, and the coverage rule counts
+/// that CRL only for certificates that shadow actually issued
+/// (`issued_by`). On success returns that key-bound issuer certificate;
+/// otherwise why it is rejected (lead ruling F): unparseable, verified by
+/// no claimed issuer's key, signed by an issuer without cRLSign, or listing
+/// a covered certificate for an issuer it shadows is Unverifiable; a delta
+/// or IDP-scoped CRL or one stale at `at_unix` is Unusable; one listing a
+/// covered serial is Revoked.
+///
+/// A CRL is about the covered chains when its signer is the issuer of a
+/// covered non-anchor certificate: by key, or by a key a trust anchor
+/// vouches for under that issuer's name (a separate CRL-signing key, a
+/// rollover's link certificate, an anchored same-subject CA; ruling Q2).
+/// What a CRL about nothing in the chains says (stale, scoped, a listing)
+/// claims nothing about them (Engine call Q-C = A, 10 Nov 07:23; Q4): it is
+/// returned unjudged, supplies no coverage, and still reaches the shadow
+/// scan, so a shadow's stale CRL reads as possible tampering.
 pub(super) fn crl_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
@@ -161,6 +169,47 @@ pub(super) fn crl_entry_valid<'a>(
     if !issuer_permits_crl_sign(&issuer.cert) {
         return Ok(Err(EvidenceRejection::Unverifiable));
     }
+    // Relevance and listings: for each covered non-anchor certificate under
+    // this CRL's issuer name, the signer is its issuer or a vouched key
+    // (not a shadow), or a shadow. A vouched signer makes the CRL about
+    // the chains, and its listing of that certificate is a revocation; a
+    // shadow's listing is forged material about it, Unverifiable, never a
+    // failure a third party could append (lead ruling F). A listing of a
+    // certificate outside the covered chains claims nothing about them.
+    let revoked = crl
+        .tbs_cert_list
+        .revoked_certificates
+        .as_deref()
+        .unwrap_or_default();
+    let mut about_chain = false;
+    let mut revoked_listing = false;
+    let mut forged_listing = false;
+    for cert in covered {
+        if cert.cert.tbs_certificate.issuer != crl.tbs_cert_list.issuer
+            || anchors.iter().any(|anchor| anchor.der == cert.der)
+        {
+            continue;
+        }
+        let vouched = !crl_signer_shadows(cert, issuer, embedded, anchors, covered, memory)?;
+        about_chain |= vouched;
+        if revoked
+            .iter()
+            .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
+        {
+            if vouched {
+                revoked_listing = true;
+            } else {
+                forged_listing = true;
+            }
+        }
+    }
+    if !about_chain {
+        return Ok(if forged_listing {
+            Err(EvidenceRejection::Unverifiable)
+        } else {
+            Ok(issuer)
+        });
+    }
     // Authenticity first, then what the genuine CRL says: a forged delta,
     // scoped, stale or revoking CRL is Unverifiable, never a failure.
     if !crl_complete_scope(&crl) {
@@ -173,33 +222,11 @@ pub(super) fn crl_entry_valid<'a>(
     ) {
         return Ok(Err(EvidenceRejection::Unusable));
     }
-    // Revocation evaluation: a covered chain certificate whose serial is on
-    // the revoked list, and whose key-bound issuer is this CRL's signer, is
-    // revoked: genuine evidence that can never support validity. A listed
-    // serial of a covered certificate with this CRL's issuer name that the
-    // signer did not issue (a same-subject shadow fabricating a revocation)
-    // is forged material about it: Unverifiable, never a failure a third
-    // party could append (lead ruling F). A listing about a certificate
-    // outside the covered chains claims nothing about them.
-    if let Some(revoked) = &crl.tbs_cert_list.revoked_certificates {
-        let mut forged_listing = false;
-        let in_scope = covered
-            .iter()
-            .filter(|c| c.cert.tbs_certificate.issuer == crl.tbs_cert_list.issuer);
-        for cert in in_scope {
-            if revoked
-                .iter()
-                .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
-            {
-                if issued_by(cert, issuer, memory)? {
-                    return Ok(Err(EvidenceRejection::Revoked));
-                }
-                forged_listing = true;
-            }
-        }
-        if forged_listing {
-            return Ok(Err(EvidenceRejection::Unverifiable));
-        }
+    if revoked_listing {
+        return Ok(Err(EvidenceRejection::Revoked));
+    }
+    if forged_listing {
+        return Ok(Err(EvidenceRejection::Unverifiable));
     }
     Ok(Ok(issuer))
 }
@@ -408,23 +435,38 @@ pub(crate) enum EvidenceRejection {
 
 /// An authenticated OCSP response: only `good` targets supply revocation
 /// coverage; an authenticated `unknown` remains unresolved, not invalid.
+/// What it says no to is in `negative`, one claim per SingleResponse.
 pub(crate) struct OcspEvidence<'a> {
     pub(crate) good_targets: Vec<&'a [u8]>,
     pub(crate) unknown: bool,
+    pub(crate) negative: Vec<NegativeClaim<'a>>,
+}
+
+/// What an authenticated SingleResponse says no to about the certificate
+/// it binds: `revoked` (Revoked), or stale, signed by a delegate outside
+/// its validity, or in a response produced after the applicable time
+/// (Unusable). It counts only when its issuer and serial name a covered
+/// non-anchor certificate (Engine call Q-C = A, 10 Nov 07:23); about any
+/// other certificate it claims nothing (Q4).
+pub(crate) struct NegativeClaim<'a> {
+    pub(crate) target: &'a EmbeddedCert,
+    pub(crate) issuer: &'a EmbeddedCert,
+    pub(crate) rejection: EvidenceRejection,
 }
 
 /// One DSS OCSP entry: successful basic response whose signature verifies
 /// under an authorized responder, with every SingleResponse bound to an
-/// embedded/anchored cert serial and fresh at the applicable time. A
-/// `revoked` status invalidates the evidence. An `unknown` is returned only
-/// after all bindings, authorization, freshness and the signature validate.
-/// The response's own certificates are held on `memory` as responder
-/// candidates (FIX 12260); memory refused is `Err`. A rejected response says
-/// why (lead ruling F): unparseable, unsuccessful, empty, without a
-/// responder, bound to no validation-set certificate, signed by an
-/// unauthorized responder or not verifying is Unverifiable; produced after
-/// the applicable time, stale, or signed by a delegate outside its validity
-/// is Unusable; a `revoked` status is Revoked.
+/// embedded/anchored cert serial. A `good` SingleResponse fresh at the
+/// applicable time supplies coverage; an `unknown` is returned only after
+/// all bindings, authorization, freshness and the signature validate. The
+/// response's own certificates are held on `memory` as responder
+/// candidates (FIX 12260); memory refused is `Err`. A response that is not
+/// authentic is rejected as Unverifiable (lead ruling F): unparseable,
+/// unsuccessful, empty, without a responder, bound to no validation-set
+/// certificate, signed by an unauthorized responder or not verifying. What
+/// an authentic response says no to (produced after the applicable time,
+/// stale, a delegate outside its validity, `revoked`) is returned as its
+/// negative claims, for the caller to weigh against the covered chains.
 pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
@@ -520,7 +562,9 @@ fn ocsp_basic_valid<'a>(
     drop(tbs);
     drop(tbs_held);
     let responses = &basic.tbs_response_data.responses;
-    memory.admit_len::<(&EmbeddedCert, Result<(), EvidenceRejection>)>(responses.len())?;
+    memory.admit_len::<(&EmbeddedCert, &EmbeddedCert, Result<(), EvidenceRejection>)>(
+        responses.len(),
+    )?;
     let mut bound = Vec::with_capacity(responses.len());
     for single in responses {
         let Some((target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors, memory)?
@@ -531,46 +575,56 @@ fn ocsp_basic_valid<'a>(
         if authority == Err(EvidenceRejection::Unverifiable) {
             return Ok(Err(EvidenceRejection::Unverifiable));
         }
-        bound.push((target, authority));
+        bound.push((target, issuer, authority));
     }
     // producedAt sanity bound: RFC 6960 assigns producedAt no freshness
     // semantics, but a response claiming to be produced BEYOND the
     // applicable time (plus a documented clock-skew tolerance) is not
-    // plausible evidence and is rejected.
+    // plausible evidence: every SingleResponse in it is Unusable.
     let produced_at = basic
         .tbs_response_data
         .produced_at
         .0
         .to_unix_duration()
         .as_secs();
-    if produced_at > at_unix.saturating_add(OCSP_PRODUCED_AT_MAX_SKEW_SECS) {
-        return Ok(Err(EvidenceRejection::Unusable));
-    }
+    let produced_late = produced_at > at_unix.saturating_add(OCSP_PRODUCED_AT_MAX_SKEW_SECS);
     let mut targets: Vec<&[u8]> = Vec::with_capacity(responses.len());
     let mut unknown = false;
-    for (single, (target, authority)) in responses.iter().zip(bound) {
-        if let Err(rejection) = authority {
-            return Ok(Err(rejection));
-        }
-        if !evidence_fresh(
+    memory.admit_len::<NegativeClaim<'_>>(responses.len())?;
+    let mut negative = Vec::with_capacity(responses.len());
+    for (single, (target, issuer, authority)) in responses.iter().zip(bound) {
+        let rejection = if produced_late {
+            Some(EvidenceRejection::Unusable)
+        } else if let Err(rejection) = authority {
+            Some(rejection)
+        } else if !evidence_fresh(
             x509_cert::time::Time::GeneralTime(single.this_update.0),
             single
                 .next_update
                 .map(|n| x509_cert::time::Time::GeneralTime(n.0)),
             at_unix,
         ) {
-            return Ok(Err(EvidenceRejection::Unusable));
-        }
-        if matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
-            targets.push(target.der.as_slice());
-        } else if matches!(single.cert_status, x509_ocsp::CertStatus::Unknown(_)) {
-            unknown = true;
+            Some(EvidenceRejection::Unusable)
+        } else if matches!(single.cert_status, x509_ocsp::CertStatus::Revoked(_)) {
+            Some(EvidenceRejection::Revoked)
         } else {
-            return Ok(Err(EvidenceRejection::Revoked));
+            None
+        };
+        if let Some(rejection) = rejection {
+            negative.push(NegativeClaim {
+                target,
+                issuer,
+                rejection,
+            });
+        } else if matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
+            targets.push(target.der.as_slice());
+        } else {
+            unknown = true;
         }
     }
     Ok(Ok(OcspEvidence {
         good_targets: targets,
         unknown,
+        negative,
     }))
 }
