@@ -168,18 +168,25 @@ pub fn seed_turn(
     id
 }
 
-/// A PERSON row at `id`.
+/// A PERSON row at `id` whose body names it `name`, so `name` is its
+/// identity hint: a passage that says `name` lists it to an extraction call.
 ///
 /// # Errors
 /// The store's.
 #[doc(hidden)]
-pub fn seed_person(vault: &Vault, id: &EntityId, at: u64) -> Result<()> {
+pub fn seed_named_person(vault: &Vault, id: &EntityId, name: &str, at: u64) -> Result<()> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Value::Map(vec![(Value::from("name"), Value::from(name))]),
+    )
+    .expect("person body encode");
     vault.put_entity(
         id,
         crate::registry::ENTITY_TYPE_PERSON,
         occurred(at),
         at,
-        b"person",
+        &body,
     )
 }
 
@@ -381,15 +388,19 @@ impl crate::LlmBackend for ScriptedBackend {
     }
 }
 
-/// One extraction reply naming `subject`'s `profile.name` as `Oleksii`,
-/// cited to `turn` (the Dreamer tests' `extraction_response`).
-fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmResponse {
-    let json = format!(
-        "{{\"candidates\": [{{\"subject\": \"{}\", \"predicate\": \"profile.name\", \
-         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
-        crate::entity_id::bytes_to_hex_lower(subject.as_bytes()),
-        crate::entity_id::bytes_to_hex_lower(turn.as_bytes()),
-    );
+/// One extraction reply: the listed entity `P1` has `profile.name`
+/// `Oleksii`, quoted from the turn `T1`. The Dreamer tests'
+/// `extraction_response` named the subject by its 32-hex id and cited a
+/// byte range of the turn's id; since FIX 7506 (call-local labels) a model
+/// reply names only what its call listed, and that shape is refused at
+/// `executor/extraction/wire.rs` `contract_fault` ("breaks its contract at
+/// subject"), so the partition parks. This is the same reply in the labelled
+/// wire.
+fn extraction_response() -> crate::LlmResponse {
+    let json = "{\"candidates\": [{\"subject\": \"P1\", \"predicate\": \"profile.name\", \
+                \"value\": \"Oleksii\", \"confidence\": 0.8, \
+                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Oleksii\"}]}]}"
+        .to_owned();
     crate::LlmResponse {
         message: crate::LlmMessage {
             role: crate::LlmMessageRole::Assistant,
@@ -435,21 +446,20 @@ fn ready<F: Future>(future: F) -> F::Output {
 }
 
 /// One Micro wake pass through the owned attempt sink, its one extraction
-/// call answered with `subject`'s `profile.name` cited to `turn` (the weave
-/// tests' `pass` with their `extraction_response` script).
+/// call answered with the listed person `P1`'s `profile.name`, quoted from
+/// the turn `T1` (the weave tests' `pass` with their `extraction_response`
+/// script, in the labelled wire).
 ///
 /// # Errors
 /// The pass's.
 #[doc(hidden)]
 pub fn micro_wake_pass_with_extraction(
     vault: &Arc<Vault>,
-    subject: &EntityId,
-    turn: &EntityId,
     node_id: u64,
     now: u64,
 ) -> Result<crate::WakePassReport> {
     let backend = ScriptedBackend {
-        script: Mutex::new(VecDeque::from([Ok(extraction_response(subject, turn))])),
+        script: Mutex::new(VecDeque::from([Ok(extraction_response())])),
     };
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
