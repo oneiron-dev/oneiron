@@ -85,3 +85,64 @@ not (
 [profile.featureless]
 default-filter = "all()"
 retries = 0
+
+# ---------------------------------------------------------------------------
+# The test tiers (Fable's verdict 2026-11-09, sections 3 and 5; owner ruling
+# TEST-SUITE = A, 9 Nov 22:52):
+#   * pr:         the per-PR tier. The change map picks tests with -E; this
+#                 profile drops the budget set and the quarantine.
+#   * nightly:    every test but the quarantine, with JUnit output for the
+#                 nightly flake row; the budget set gets its own bound.
+#   * quarantine: only the quarantined tests (.config/test-quarantine.toml).
+#                 They run and report; the job ignores this profile's exit
+#                 code, so a quarantined test never fails a run.
+# Retries are zero in all three: a retry hides a flake. A test is killed
+# after two minutes (4 x 30 s), except where an override above or below
+# sets a longer bound for a named budget test.
+# The quarantine filters below are checked against .config/test-quarantine.toml
+# by crates/oneiron-testkit/tests/test_lint.rs: the pr and nightly filters end
+# in `not (<quarantine union>)`, and the quarantine profile's filter is that
+# union (`none()` while the quarantine is empty).
+# ---------------------------------------------------------------------------
+
+[profile.pr]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = """
+not (
+  test(~vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(~hnsw_recall_at_10_vs_bruteforce)
+  | (binary(=it_sync) & test(/^sync_convergence_props::/))
+  | (package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic))
+)
+& not (none())
+"""
+
+[profile.nightly]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = "not (none())"
+
+[profile.nightly.junit]
+path = "junit.xml"
+
+# The budget set runs nightly only, with a bound of its own. The 10,001-record
+# test keeps the 60-minute bound the default profile's override gives it.
+[[profile.nightly.overrides]]
+filter = """
+test(~vault_open_drop_cycles_survive_pthread_key_limit)
+| test(~hnsw_recall_at_10_vs_bruteforce)
+| (binary(=it_sync) & test(/^sync_convergence_props::/))
+"""
+slow-timeout = { period = "60s", terminate-after = 30 }
+
+[profile.quarantine]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = "none()"
+
+[profile.quarantine.junit]
+path = "junit.xml"
