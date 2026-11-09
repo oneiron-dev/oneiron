@@ -2,17 +2,22 @@
 //!
 //! - The five patterns that use look-around (which `regex` lacks), each a hand-written function beside its pattern.
 //! - Python's `\w` and `\s` (`str.isalnum()` plus `_`; `str.isspace()`), which are not Rust's Unicode classes:
-//!   `translate` rewrites them in a pattern. Python's `\b` stays Rust's: on text whose characters Rust's `\w` and
-//!   Python's `\w` class alike (all of ASCII) the two agree; `text::is_word` lists the characters they do not.
+//!   `translate` rewrites them in a pattern.
+//! - Python's `\b` and `\B`, which `regex` spells with Rust's word class (`text::is_word` lists where it differs):
+//!   `translate` and `compile` refuse them, and `PyRegex` matches a pattern holding them with Python's boundaries.
 //! - Python's replacement templates (`re.sub(pattern, template, text)`): backslash escapes and `\g<0>`.
 //!
 //! Python's `$` (without `re.M`) also matches before a final newline; `translate` leaves it alone, so a caller whose
 //! text can end in `\n` writes `\n?\z` or checks by hand. `re.match` anchors at the start only, `re.fullmatch` at both
 //! ends (`compile_fullmatch`).
 
+use std::borrow::Cow;
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 use crate::error::GenerateError;
+use crate::py::json::INT_MAX_STR_DIGITS;
 use crate::py::text::{is_decimal, is_word, isidentifier, repr_str};
 
 /// The body of Python's `\w` for a character class: `str.isalnum()` (categories L and N) and `_`.
@@ -22,9 +27,23 @@ pub(crate) const WORD_CLASS: &str = r"\p{L}\p{N}_";
 pub(crate) const SPACE_CLASS: &str = r"\t\n\x0B\x0C\r\x1C-\x20\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}";
 
 /// A Python pattern in `regex` syntax: `\w`, `\W`, `\s` and `\S` become Python's classes (inside a character class
-/// too); inside a class, `[` (a nested class to `regex`), a first `]`, `&` and `~` (set operators to `regex`) are
-/// escaped. Everything else is copied.
+/// too); inside a class, `\b` (a backspace to Python) becomes `\x08`, and `[` (a nested class to `regex`), a first
+/// `]`, `&` and `~` (set operators to `regex`) are escaped. Everything else is copied.
+///
+/// Panics on a `\b` or `\B` outside a class: `regex` would read it with Rust's word class, so the pattern goes through
+/// `PyRegex`, which keeps Python's. The generator's patterns are constants, so this fails a test, never an input.
 pub(crate) fn translate(pattern: &str) -> String {
+    let (translated, boundaries) = translate_keeping_boundaries(pattern);
+    assert!(
+        !boundaries,
+        "{pattern:?} holds \\b or \\B, whose word class regex does not share with Python: use py::re::PyRegex"
+    );
+    translated
+}
+
+/// `translate`, with a `\b` or `\B` outside a class kept as `regex`'s, and whether the pattern holds one.
+fn translate_keeping_boundaries(pattern: &str) -> (String, bool) {
+    let mut boundaries = false;
     let chars: Vec<char> = pattern.chars().collect();
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut in_class = false;
@@ -47,7 +66,9 @@ pub(crate) fn translate(pattern: &str) -> String {
                         out.push_str(&format!("[{}{body}]", if negated { "^" } else { "" }));
                     }
                 }
+                Some(&'b') if in_class => out.push_str(r"\x08"),
                 Some(&other) => {
+                    boundaries |= !in_class && matches!(other, 'b' | 'B');
                     out.push('\\');
                     out.push(other);
                 }
@@ -82,7 +103,7 @@ pub(crate) fn translate(pattern: &str) -> String {
         }
         out.push(c);
     }
-    out
+    (out, boundaries)
 }
 
 /// `re.compile(pattern)` of a constant Python pattern, translated.
@@ -93,6 +114,116 @@ pub(crate) fn compile(pattern: &str) -> Regex {
 /// A constant Python pattern for `re.fullmatch`: translated and anchored at both ends.
 pub(crate) fn compile_fullmatch(pattern: &str) -> Regex {
     Regex::new(&format!(r"\A(?:{})\z", translate(pattern))).expect("a constant pattern")
+}
+
+/// Rust's `\w` (Alphabetic, marks, Nd, connector punctuation, join controls), the class `regex`'s `\b` reads.
+static RUST_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w").expect("a constant class"));
+
+/// The character `PyRegex` matches in place of `c`, when Rust's and Python's word classes disagree on it: one of the
+/// same UTF-8 length that both classes see as Python sees `c`, and that every class a translated ASCII pattern can
+/// name (`\w`, `\s`, `\d`, ASCII sets, `.`) takes or refuses as it does `c`. ASCII never differs.
+fn boundary_stand_in(c: char) -> Option<char> {
+    if c.is_ascii() {
+        return None;
+    }
+    let python = is_word(c);
+    if python == RUST_WORD.is_match(c.encode_utf8(&mut [0; 4])) {
+        return None;
+    }
+    // A Python word character (a number of category No: `²`) stands in as a letter (Lo); a Python non-word one (a
+    // mark, a connector, a join control) as punctuation or a symbol (Po, So). None is Nd, a space or a newline.
+    Some(match (python, c.len_utf8()) {
+        (true, 2) => '\u{AA}',
+        (true, 3) => '\u{4E00}',
+        (true, _) => '\u{20000}',
+        (false, 2) => '\u{A7}',
+        (false, 3) => '\u{2030}',
+        (false, _) => '\u{1F600}',
+    })
+}
+
+/// A Python pattern with Python's `\b` and `\B` (and its `\w`, `\s`): `regex`'s word boundary reads Rust's word
+/// class, so a text holding a character the two classes disagree on is matched as a copy in which that character
+/// stands in for one both classes see as Python sees it (`boundary_stand_in`). The stand-ins keep each character's
+/// UTF-8 length, so every offset into the copy is the same offset into the text; the methods return offsets, and a
+/// caller slices its own text. Only ASCII patterns (the generator's) are taken.
+pub(crate) struct PyRegex {
+    re: Regex,
+    boundaries: bool,
+}
+
+impl PyRegex {
+    fn build(pattern: &str, anchored: bool) -> Self {
+        assert!(
+            pattern.is_ascii(),
+            "{pattern:?}: PyRegex takes ASCII patterns"
+        );
+        let (translated, boundaries) = translate_keeping_boundaries(pattern);
+        let translated = if anchored {
+            format!(r"\A(?:{translated})\z")
+        } else {
+            translated
+        };
+        Self {
+            re: Regex::new(&translated).expect("a constant pattern"),
+            boundaries,
+        }
+    }
+
+    /// `re.compile(pattern)`.
+    pub(crate) fn new(pattern: &str) -> Self {
+        Self::build(pattern, false)
+    }
+
+    /// A pattern for `re.fullmatch`.
+    pub(crate) fn fullmatch(pattern: &str) -> Self {
+        Self::build(pattern, true)
+    }
+
+    /// The text `regex` reads: `text` itself, or its copy with the stand-ins.
+    fn haystack<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        if !self.boundaries || !text.chars().any(|c| boundary_stand_in(c).is_some()) {
+            return Cow::Borrowed(text);
+        }
+        Cow::Owned(
+            text.chars()
+                .map(|c| boundary_stand_in(c).unwrap_or(c))
+                .collect(),
+        )
+    }
+
+    /// `pattern.search(text) is not None` (or `fullmatch` for a `PyRegex::fullmatch`).
+    pub(crate) fn is_match(&self, text: &str) -> bool {
+        self.re.is_match(&self.haystack(text))
+    }
+
+    /// `pattern.search(text, pos)`: the first match at or after byte offset `start`, as a byte range of `text`.
+    pub(crate) fn search_at(&self, text: &str, start: usize) -> Option<(usize, usize)> {
+        self.re
+            .find_at(&self.haystack(text), start)
+            .map(|found| (found.start(), found.end()))
+    }
+
+    /// `pattern.finditer(text)`: each match's byte range in `text`.
+    pub(crate) fn find_iter(&self, text: &str) -> Vec<(usize, usize)> {
+        self.re
+            .find_iter(&self.haystack(text))
+            .map(|found| (found.start(), found.end()))
+            .collect()
+    }
+
+    /// `pattern.finditer(text)` with its groups: per match, each group's byte range in `text` (group 0 first).
+    pub(crate) fn captures_iter(&self, text: &str) -> Vec<Vec<Option<(usize, usize)>>> {
+        self.re
+            .captures_iter(&self.haystack(text))
+            .map(|captures| {
+                captures
+                    .iter()
+                    .map(|group| group.map(|found| (found.start(), found.end())))
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 fn char_before(text: &str, at: usize) -> Option<char> {
@@ -412,7 +543,14 @@ fn parse_template(source: &str) -> Result<Vec<Piece>, GenerateError> {
                         repr_str(&name)
                     )));
                 }
-                // Past MAXGROUPS Python raises the same `invalid group reference` at the same place.
+                // `int(name)` first: past the digit limit Python's ValueError, before any group check (Sol's G1a
+                // review, P1-5). Past MAXGROUPS Python raises the same `invalid group reference` at the same place.
+                if len > INT_MAX_STR_DIGITS {
+                    return Err(GenerateError::value(format!(
+                        "Exceeds the limit ({INT_MAX_STR_DIGITS} digits) for integer string conversion: value has \
+                         {len} digits; use sys.set_int_max_str_digits() to increase the limit"
+                    )));
+                }
                 add_group(&s, &name, len + 1, &mut literal, &mut pieces)?;
             }
             '0' => {
@@ -758,5 +896,99 @@ mod tests {
         assert_eq!(translate(r"[^\w:]"), format!("[^{WORD_CLASS}:]"));
         assert_eq!(translate(r"a\.b\d$"), r"a\.b\d$");
         assert_eq!(translate(r"[[&]"), r"[\[\&]");
+    }
+
+    // Each row: [m.span() for m in re.finditer(PATTERN, TEXT)] on nelly (Python 3.14.7), as UTF-8 byte offsets
+    // (Sol's G1a review, P1-6): Python's `\b` beside a combining mark, `²`, `‿`, ZWJ and U+0903.
+    type Spans = &'static [(usize, usize)];
+
+    #[test]
+    fn python_boundaries_match_python() {
+        let cases: &[(&str, &str, Spans)] = &[
+            ("a\\b", "a\u{301}", &[(0, 1)]),
+            ("a\\b", "a\u{b2}", &[]),
+            ("a\\B", "a\u{301}", &[]),
+            ("a\\B", "a\u{b2}", &[(0, 1)]),
+            ("\\b([A-Z]\\w*)\\b", "A\u{301}", &[(0, 1)]),
+            ("\\b([A-Z]\\w*)\\b", "A\u{b2} B", &[(0, 3), (4, 5)]),
+            (
+                "\\b([A-Z]\\w*)\\b",
+                "x Foo\u{203f}Bar Baz\u{b2} Qux\u{200d} \u{903}Zed",
+                &[(2, 5), (8, 11), (12, 17), (18, 21), (28, 31)],
+            ),
+            (
+                "\\b(?:struct|enum)\\s+([A-Za-z_]\\w*)",
+                "pub struct Foo\u{301}; enum\u{b2} Bar; struct\u{2028}Baz",
+                &[(4, 14), (30, 42)],
+            ),
+            (
+                "\\bfn\\s+deserialize\\b",
+                "fn  deserialize\u{301}(",
+                &[(0, 15)],
+            ),
+            ("\\bfn\\s+deserialize\\b", "fn deserialize\u{b2}", &[]),
+            (
+                "\\binput\\b",
+                "\u{e9}input input\u{b2} input\u{203f} (input)",
+                &[(16, 21), (26, 31)],
+            ),
+            (
+                "(?m)^[ \\t]*impl\\b[^{;]*?\\b(?:serde::)?Serialize\\s+for\\s+([A-Za-z_]\\w*)",
+                "impl Serialize for Foo\u{301} {}\u{a}impl\u{b2} Serialize for Bar {}\u{a}impl<T> serde::Serialize for Baz<T> {",
+                &[(0, 22), (56, 88)],
+            ),
+            ("\\b", "\u{1d165}x\u{1f100}y", &[(4, 4), (10, 10)]),
+            ("[\\b]x", "\u{8}x", &[(0, 2)]),
+        ];
+        for (pattern, text, expected) in cases {
+            assert_eq!(
+                PyRegex::new(pattern).find_iter(text),
+                *expected,
+                "{pattern:?} {text:?}"
+            );
+        }
+        let words = PyRegex::new(r"\b([A-Z]\w*)\b");
+        let text = "A\u{b2} B";
+        let found: Vec<&str> = words
+            .captures_iter(text)
+            .iter()
+            .filter_map(|groups| groups[1].map(|(start, end)| &text[start..end]))
+            .collect();
+        assert_eq!(found, ["A\u{b2}", "B"]);
+        assert!(PyRegex::fullmatch(r"\w+\b").is_match("a\u{b2}"));
+        assert_eq!(
+            PyRegex::new(r"\bx").search_at("x \u{301}x x", 1),
+            Some((4, 5))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "use py::re::PyRegex")]
+    fn translate_refuses_boundaries() {
+        let _ = translate(r"\bfn\b");
+    }
+
+    // python3 -c "import re; re.sub(r'\binput\b', r'\g<' + '0' * 4301 + '>', 'input')": the traceback's last line;
+    // with 4,300 zeros it prints `input`.
+    #[test]
+    fn template_group_numbers_keep_python_s_digit_limit() {
+        let error = sub_input_word("input", &format!(r"\g<{}>", "0".repeat(4301)))
+            .expect_err("digit limit");
+        assert_eq!(
+            error.to_string(),
+            "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use \
+             sys.set_int_max_str_digits() to increase the limit"
+        );
+        let error = sub_input_word("input", &format!(r"\g<{}>", "9".repeat(4301)))
+            .expect_err("digit limit");
+        assert!(
+            error
+                .to_string()
+                .starts_with("ValueError: Exceeds the limit")
+        );
+        assert_eq!(
+            sub_input_word("input", &format!(r"\g<{}>", "0".repeat(4300))).expect("group 0"),
+            "input"
+        );
     }
 }
