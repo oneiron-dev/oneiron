@@ -178,6 +178,7 @@ pub use self::pending_restore::{
     PendingCredentialResult,
 };
 pub(crate) use self::pending_restore::{PendingRestoreStage, erase_pending_restore_actor_in_txn};
+pub use self::reveal::parse_secret_handle;
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
     REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,
@@ -189,7 +190,7 @@ pub use self::reveal::{
 pub(crate) use self::reveal::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
-    erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
+    erase_reveal_actor_in_txn, reveal_value_in_txn,
 };
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
