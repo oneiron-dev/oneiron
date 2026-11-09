@@ -513,6 +513,30 @@ async function expectReferenceGone(client: PublicHttpClient, reference: string, 
   }
 }
 
+// ARCH-0038: erase purges the active store at once, so no read door serves
+// the erased content. Canon fixes no answer shape for a hydrate of erased
+// refs. An empty list and the read's NOT_FOUND refusal both carry nothing.
+async function expectHydrateGone(
+  client: PublicHttpClient, refs: FacadeInput<"vault.hydrate">["refs"], forbidden: readonly string[],
+): Promise<void> {
+  try {
+    expect((await client.call("vault.hydrate", { refs })).value).toEqual([]);
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    excludes(error.reply.body, forbidden);
+    expect(error.reply.status).toBe(404);
+    expect(error.error?.code).toBe("NOT_FOUND");
+  }
+}
+
+async function expectMcpHydrateGone(
+  mcp: McpClient, tools: McpTools, refs: FacadeInput<"vault.hydrate">["refs"], forbidden: readonly string[],
+): Promise<void> {
+  const reply = await mcp.callTool("vault.hydrate", mcpArguments(tools, "vault.hydrate", { refs })) as McpToolResult;
+  excludes(reply, forbidden);
+  if (reply.isError) expect(JSON.stringify(reply)).toContain("NOT_FOUND");
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -856,7 +880,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     for (const entity_ref of allIds) {
       expect((await engine.client.call("vault.get", { entity_ref })).value).toBeNull();
     }
-    expect((await engine.client.call("vault.hydrate", { refs: allIds })).value).toEqual([]);
+    await expectHydrateGone(engine.client, allIds, forbidden);
     for (const query of lexicalQueries) {
       expect((await engine.client.call("vault.search.bm25", { query, limit: 100 })).value).toEqual([]);
     }
@@ -876,9 +900,10 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       await expectReferenceGone(engine.client, row.short_ref!, forbidden);
     }
     for (const [name, spec] of [
-      ["vault.get", { entity_ref: source.id }], ["vault.hydrate", { refs: allIds }],
+      ["vault.get", { entity_ref: source.id }],
       ["vault.recall", { query: "cobalt notebook", effort: "light", limit: 100 }],
     ] as const) excludes(await mcpRead(engine.mcp, tools, name, spec), forbidden);
+    await expectMcpHydrateGone(engine.mcp, tools, allIds, forbidden);
     expect((await engine.client.call("vault.get", { entity_ref: controlId })).value).toEqual(controlBefore);
     expect((await engine.client.call("vault.recall", { query: "privacyeraseunrelated", effort: "light", limit: 100 }))
       .items.some(item => item.value_text.includes(spec.unrelatedText))).toBe(true);
