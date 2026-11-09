@@ -106,12 +106,24 @@ impl<'writer, 'env> SharedMemberDeparture<'writer, 'env> {
 /// Higher ranks hold more; a change to a lower rank revokes held slips.
 const fn rank(role: Role) -> u8 {
     match role {
-        Role::Owner => 4,
-        Role::Admin => 3,
+        Role::Owner => 5,
+        Role::Admin => 4,
+        Role::Steward => 3,
         Role::Member => 2,
         Role::Viewer | Role::Auditor => 1,
         Role::Delegate | Role::Guest => 0,
     }
+}
+
+/// Whether moving a member from `from` to `to` (`None` leaves the vault)
+/// revokes the slips they hold: a lower rank, or a move into or out of
+/// Steward. A Steward's verbs (read, derive, archive, delete) are neither a
+/// subset nor a superset of a Member's (read, write) or an Admin's, so a
+/// slip minted under one never stands under the other.
+fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
+    to.is_none_or(|to| {
+        rank(to) < rank(from) || (to != from && (to == Role::Steward || from == Role::Steward))
+    })
 }
 
 impl Vault {
@@ -335,7 +347,7 @@ impl Vault {
             grants.extend(retired_own_device.iter().copied());
         }
         let mut revoked_slips = match slips {
-            Some(issuer) if to.is_none_or(|role| rank(role) < rank(from)) => {
+            Some(issuer) if move_revokes_slips(from, to) => {
                 self.revoke_held_capability_slips_in_txn(txn, issuer, &member.to_hex(), None)?
             }
             _ => Vec::new(),
