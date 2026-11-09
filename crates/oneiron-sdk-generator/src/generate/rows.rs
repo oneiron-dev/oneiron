@@ -779,6 +779,7 @@ impl Generator {
             code_mode_rows: Vec::new(),
             schema_rows: Vec::new(),
             facade_rows: Vec::new(),
+            type_names,
             inventory: None,
         };
         generator.host_sets()?;
@@ -802,7 +803,8 @@ impl Generator {
         // (`super`); it checks no row.
         if build_inventory {
             let facade_rows = generator.rows.select(&generator.facade_rows);
-            let inventory = Inventory::with_type_names(&generator.root, &facade_rows, &type_names)?;
+            let inventory =
+                Inventory::with_type_names(&generator.root, &facade_rows, &generator.type_names)?;
             generator.inventory = Some(inventory);
         }
         Ok(generator)
