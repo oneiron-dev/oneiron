@@ -7441,8 +7441,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/task_exposure.rs` | src | s | 1 struct · 1 fn | TaskExposure | — |
 | `src/team/team_shape.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const | CoordinationPattern, TeamShape | — |
 | `src/temporal.rs` | src | s | 1 enum · 1 re-export | TemporalAnchorMode | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
+| `src/test_doors/consolidation.rs` | src | m | 1 struct · 2 fn | UnboundPass | One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a… |
 | `src/test_doors/live_run_claim_put.rs` | src | s | 4 fn | — | Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures… |
-| `src/test_doors/mod.rs` | src | s | 2 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 3 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/run_hold.rs` | src | s | 5 fn | — | Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override… |
 | `src/test_support.rs` | src | s | 8 fn · 1 crate-vis | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
 | `src/test_util/channel_identity.rs` | src | s | 2 crate-vis | — | Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine |
@@ -8041,6 +8042,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs` | test | s | — | — | (a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: every… |
 | `tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs` | test | s | — | — | (b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the… |
 | `tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs` | test | s | — | — | (c) There is no `From<ConsentProposal> for ConsentGrant` either: the guard cannot skip the owner entirely… |
+| `tests/extraction_relationship_label.rs` | test | s | — | — | An extraction candidate never holds wider than its words' relationship label (S63E-RULED, live leak 1) |
 | `tests/feeds.rs` | test | m | — | — | Change feed subscriptions (untangle slice 6.8a, primitive B), on the public crate surface only: `Vault`… |
 | `tests/git_smart_http.rs` | test | L | — | — | Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908) |
 | `tests/inference_default_bind.rs` | test | s | — | — | Public no-manifest local binding must use one registry snapshot, not a nested reader |
