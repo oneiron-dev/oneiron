@@ -103,8 +103,8 @@ struct Keys {
 
 fn keys() -> Keys {
     Keys {
-        kek: Kek::from_bytes([1; 32]),
-        other_kek: Kek::from_bytes([2; 32]),
+        kek: Kek::from_bytes_ref(&[1; 32]),
+        other_kek: Kek::from_bytes_ref(&[2; 32]),
         passphrase: Passphrase::new(b"correct horse battery staple").expect("passphrase"),
         recovery: RecoverySecret::from_bytes([3; 32]),
         hybrid: HybridSecretKey::from_seeds(&[4; 64], &[5; 32]),

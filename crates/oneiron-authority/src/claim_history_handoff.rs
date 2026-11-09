@@ -587,6 +587,9 @@ mod tests {
             expected_signer: &p.signer,
             scope: &p.scope,
             previous_handoff_hash: p.previous_handoff_hash,
+            // The previous packet's heads: the root this packet's one
+            // transition consumes.
+            previous_heads: &[[4; 32]],
             challenge: &p.challenge,
         }
     }

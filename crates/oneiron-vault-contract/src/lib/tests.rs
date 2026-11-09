@@ -2,143 +2,6 @@
 
 use super::*;
 
-// Frozen v1 schemas model peers that have not learned Shed/Slim. Keep the
-// original variant order and permissive unknown-field behavior here.
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-enum V1CtlRequest {
-    PrepareReap,
-    ReapAbort,
-    AlarmDue { id: String, reason_tag: String },
-    Ping,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-enum V1CtlResponse {
-    PrepareReap {
-        quiescent: bool,
-        ledger_rev: u64,
-        next_wake: Vec<WakeEntry>,
-    },
-    Ping {
-        ok: bool,
-        vault: String,
-        pid: u32,
-        contract_version: u32,
-    },
-    Ok {
-        ok: bool,
-    },
-}
-
-fn ctl_response_fixtures() -> Vec<(CtlResponse, &'static str)> {
-    vec![
-        (
-            CtlResponse::PrepareReap {
-                quiescent: false,
-                ledger_rev: 7,
-                next_wake: vec![],
-            },
-            r#"{"quiescent":false,"ledger_rev":7,"next_wake":[]}"#,
-        ),
-        (
-            CtlResponse::Ping {
-                ok: true,
-                vault: "v".into(),
-                pid: 42,
-                contract_version: CONTRACT_VERSION,
-            },
-            r#"{"ok":true,"vault":"v","pid":42,"contract_version":2}"#,
-        ),
-        (CtlResponse::Ok { ok: true }, r#"{"ok":true}"#),
-        (CtlResponse::Ok { ok: false }, r#"{"ok":false}"#),
-        (
-            CtlResponse::Slim {
-                slim: true,
-                status: ShedStatus::Entered,
-                reclaimed_bytes: Some(4096),
-                dropped_windows: Some(2),
-                blocker: None,
-            },
-            r#"{"slim":true,"status":"entered","reclaimed_bytes":4096,"dropped_windows":2}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: true,
-                status: ShedStatus::AlreadySlim,
-                reclaimed_bytes: Some(0),
-                dropped_windows: Some(0),
-                blocker: None,
-            },
-            r#"{"slim":true,"status":"already_slim","reclaimed_bytes":0,"dropped_windows":0}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: true,
-                status: ShedStatus::AlreadySlim,
-                reclaimed_bytes: None,
-                dropped_windows: None,
-                blocker: None,
-            },
-            r#"{"slim":true,"status":"already_slim"}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: false,
-                status: ShedStatus::Refused,
-                reclaimed_bytes: None,
-                dropped_windows: None,
-                blocker: Some(ShedBlockerWire {
-                    kind: "no_pending_outbound_step".into(),
-                    detail: "no pending step".into(),
-                }),
-            },
-            r#"{"slim":false,"status":"refused","blocker":{"kind":"no_pending_outbound_step","detail":"no pending step"}}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: false,
-                status: ShedStatus::Refused,
-                reclaimed_bytes: None,
-                dropped_windows: None,
-                blocker: Some(ShedBlockerWire {
-                    kind: "multiple_pending_outbound_steps".into(),
-                    detail: "2 pending steps".into(),
-                }),
-            },
-            r#"{"slim":false,"status":"refused","blocker":{"kind":"multiple_pending_outbound_steps","detail":"2 pending steps"}}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: false,
-                status: ShedStatus::Refused,
-                reclaimed_bytes: None,
-                dropped_windows: None,
-                blocker: Some(ShedBlockerWire {
-                    kind: "sync_window_busy".into(),
-                    detail: "1 outstanding handle".into(),
-                }),
-            },
-            r#"{"slim":false,"status":"refused","blocker":{"kind":"sync_window_busy","detail":"1 outstanding handle"}}"#,
-        ),
-        (
-            CtlResponse::Slim {
-                slim: true,
-                status: ShedStatus::Refused,
-                reclaimed_bytes: None,
-                dropped_windows: None,
-                blocker: Some(ShedBlockerWire {
-                    kind: "already_slim_for_different_step".into(),
-                    detail: "different step".into(),
-                }),
-            },
-            r#"{"slim":true,"status":"refused","blocker":{"kind":"already_slim_for_different_step","detail":"different step"}}"#,
-        ),
-    ]
-}
-
 #[test]
 fn credentials_pin_dek_then_token_bytes_and_accept_independent_frames_only() {
     const DEK: [u8; 32] = [
@@ -185,13 +48,21 @@ fn max_valid_wake_list_fits_ctl_line() {
         reason_tag: "\"".repeat(MAX_REASON_TAG),
     };
     entry.validate().unwrap();
-    let entries = vec![entry; MAX_LEDGER_ENTRIES];
+    // The wake list travels in ledger pages since 28c9b753f6d (#3940, FIX
+    // 9549): a page holds at most MAX_LEDGER_PAGE_ENTRIES rows, and
+    // prepare_reap answers the report's head alone.
+    let entries = vec![entry; MAX_LEDGER_PAGE_ENTRIES];
     validate_wake_entries(&entries).unwrap();
+    let digest = "f".repeat(64);
 
     let resp = serde_json::to_string(&CtlResponse::PrepareReap {
         quiescent: false,
-        ledger_rev: u64::MAX,
-        next_wake: entries.clone(),
+        ledger: LedgerReportHead {
+            rev: u64::MAX,
+            report_digest: digest.clone(),
+            total: u64::MAX,
+            artifact_origins_total: u64::MAX,
+        },
     })
     .unwrap();
     assert!(
@@ -204,8 +75,21 @@ fn max_valid_wake_list_fits_ctl_line() {
         op: "ledger_update".into(),
         vault: "x".repeat(63),
         token: TokenHex::from_token(&[0xffu8; TOKEN_LEN]),
-        rev: u64::MAX,
-        entries,
+        page: LedgerPage {
+            rev: u64::MAX,
+            report_digest: digest,
+            total: u64::MAX,
+            artifact_origins_total: u64::MAX,
+            offset: u64::MAX - u64::MAX % MAX_LEDGER_PAGE_ENTRIES as u64,
+            entries,
+            artifact_origins: Vec::new(),
+            training: ManagedTrainingSetting {
+                on: true,
+                allow_opt_out: true,
+                revision: "f".repeat(64),
+                set_by: Some("f".repeat(32)),
+            },
+        },
     })
     .unwrap();
     assert!(

@@ -7,7 +7,7 @@ use oneiron_authority::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmKind, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier,
     CONFIRM_KIND_ACCEPT, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
-    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FederationLifecycleAction,
+    DeviceAuthority, FederationLifecycleAction,
     FederationLifecycleKind, FoldedDevice, GenesisRecoveryStep, MAX_ATTESTATION_EVIDENCE_BYTES,
     MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims,
     SlipMintAction, authority_transcript, canonical_p256_key_bytes, decode_entry_value,
@@ -15,7 +15,7 @@ use oneiron_authority::authority::{
     decode_signature_array, decode_slip_mint, decode_tier, entry_value,
     folded_device_can_authority_consent, folded_host_device_can_consent,
     folded_peer_device_is_consent_root, is_terminal_federation_lifecycle, key_value, required,
-    roster_has_live_owner, slip_mint_value, tier_meets_floor, validate_op, verify_entry_signatures,
+    roster_has_live_owner, slip_mint_value, validate_op, verify_entry_signatures,
 };
 use oneiron_authority::credential_door::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, names_a_floor};
 use oneiron_authority::federation::codec::{
@@ -48,16 +48,15 @@ fn ed25519_signature(seed: u8, transcript: &[u8]) -> AuthoritySignature {
     }
 }
 
-/// A non-genesis entry signed by the `[7; 32]` key, with `cosigners` co-signing it.
+/// A non-genesis entry signed by the `[7; 32]` key, with `cosigners` co-signing it. Its op
+/// carries no entry-specific rule, so only the generic shape and signature checks apply.
 fn signed_entry(cosigners: &[u8]) -> AuthorityLogEntry {
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some([4; 32]),
         seq: 2,
         parent_hashes: vec![[8; 32]],
-        op: AuthorityOp::SetTierFloor {
-            tier_floor: AuthorityTier::Hardware,
-        },
+        op: AuthorityOp::SlipRevoke { slip_id: [1; 32] },
         signer: ed25519_signature(7, b"placeholder"),
         cosigns: cosigners
             .iter()
@@ -97,6 +96,13 @@ fn claims() -> SlipClaims {
                 .expect("a valid entity id")
                 .to_hex(),
         ),
+        grant_ref: None,
+        invitation_ref: None,
+        share_ref: None,
+        delegation: None,
+        comm: None,
+        trusted_contact: None,
+        seat_claim: None,
     }
 }
 
@@ -258,8 +264,6 @@ fn genesis(
         device,
         genesis_nonce,
         recovery,
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     }
 }
 

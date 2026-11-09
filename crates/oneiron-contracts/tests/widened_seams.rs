@@ -191,10 +191,10 @@ fn the_entity_type_wrapper_and_prefix_check_refuse_reserved_and_taken_names() {
 #[test]
 fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
     for weights in [
-        RetrievalBlendWeights::new(f32::NAN, 0.3, 0.2, 0.1),
-        RetrievalBlendWeights::new(0.4, f32::INFINITY, 0.2, 0.1),
-        RetrievalBlendWeights::new(0.4, 0.3, -0.2, 0.1),
-        RetrievalBlendWeights::new(0.0, 0.0, 0.0, 0.0),
+        RetrievalBlendWeights::new(f32::NAN, 0.3, 0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.4, f32::INFINITY, 0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.4, 0.3, -0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.0, 0.0, 0.0, 0.0, 0.0),
     ] {
         assert!(
             validate_retrieval_blend_weights(weights).is_err(),
@@ -206,10 +206,10 @@ fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
             "{refused:?}"
         );
     }
-    let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0)
+    let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0, 0.0)
         .normalized()
         .unwrap();
-    assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0));
+    assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0, 0.0));
 }
 
 #[test]

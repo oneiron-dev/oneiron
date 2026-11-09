@@ -420,7 +420,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
 mod tests {
     use super::{
         EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId, derive_with,
-        derived_domains, parse_presentation_id, parse_short_ref_syntax,
+        parse_presentation_id, parse_short_ref_syntax,
     };
     use crate::error::Error;
 
