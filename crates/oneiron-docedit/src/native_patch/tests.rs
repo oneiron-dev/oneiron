@@ -290,16 +290,11 @@ fn tables_write_merge_anchors_and_refuse_continuation_writes() {
     };
     native_patch(package, &write(1, 1, "4", "4.5\nrevised")).unwrap();
     native_patch(package, &write(1, 1, "4.5\nrevised", "5")).unwrap();
-    refuses(
-        package,
-        &write(2, 1, "", "x"),
-        &NativeRefusal::MergedContinuationCell,
-    );
-    refuses(
-        package,
-        &write(2, 2, "", "x"),
-        &NativeRefusal::MergedContinuationCell,
-    );
+    // A cell a merge covers keeps its own text under the merge, as
+    // PowerPoint keeps it (#3460, FIX 6525; Engine call
+    // T0H-STALE-RULED-REFUSALS): a write that names that text lands.
+    native_patch(package, &write(2, 1, "not reported", "x")).unwrap();
+    native_patch(package, &write(2, 2, "not reported", "x")).unwrap();
     refuses(
         package,
         &write(1, 1, "4", "6"),
