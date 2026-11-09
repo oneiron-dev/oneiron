@@ -522,15 +522,21 @@ async fn production_factory_system_dreamer_plans_live_commitment() -> Result<()>
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 901_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
-    assert_eq!(
+    assert!(matches!(
         executor.execute(&admitted, &mut ctx).await?,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
-    );
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            ..
+        }
+    ));
     assert_eq!(plans.load(std::sync::atomic::Ordering::SeqCst), 1);
     let proposal = oneiron::commitment_wake_proposal_claim_id(admitted.status.attempt.id);
     let body = vault
