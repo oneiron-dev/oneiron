@@ -25,18 +25,19 @@ use crate::{AttemptId, Error, Result};
 
 // ─── vaults ─────────────────────────────────────────────────────────────
 
-/// A temporary vault opened with `cfg` as the crate's legacy test opener
-/// (`test_util::open_test_vault_with`) opens it: the seeded default policy
-/// manifest cleared and a process-memory device keystore installed.
+/// A temporary vault opened with `cfg`, with a process-memory device keystore
+/// installed, as the crate's legacy test opener
+/// (`test_util::open_test_vault_with`) opens it, except that it keeps the
+/// seeded default policy manifest. The legacy opener deletes that row
+/// through the stale `#[cfg(test)]` helper `batch::deindex_entity_for_test`,
+/// so its tests read the shipped default by fallback. The seeded row holds
+/// those same bytes (`gate::default_policy_manifest`), so the policy every
+/// door reads is unchanged.
 #[doc(hidden)]
 #[must_use]
 pub fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
-    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
-    vault
-        .with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id))
-        .expect("clear default policy manifest for legacy test fixture");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     (dir, vault)
 }
