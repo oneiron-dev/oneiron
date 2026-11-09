@@ -670,7 +670,8 @@ pub(super) fn scrub_hook_feeds_in_txn(
 ) -> Result<()> {
     settlement::scrub_settlements_in_txn(vault, txn, ids)?;
     schedule::scrub_task_ticks_in_txn(vault, txn, ids)?;
-    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)?;
+    crate::feeds::scrub_withdrawn_types_in_txn(&vault.store, txn, ids)
 }
 
 /// The changelog position of a binding claim's latest write, in the
