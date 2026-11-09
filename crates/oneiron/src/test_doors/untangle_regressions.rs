@@ -163,18 +163,25 @@ pub fn seed_turn(
     id
 }
 
-/// A PERSON row at `id`.
+/// A PERSON row at `id` whose body names it `name`, so `name` is its
+/// identity hint: a passage that says `name` lists it to an extraction call.
 ///
 /// # Errors
 /// The store's.
 #[doc(hidden)]
-pub fn seed_person(vault: &Vault, id: &EntityId, at: u64) -> Result<()> {
+pub fn seed_named_person(vault: &Vault, id: &EntityId, name: &str, at: u64) -> Result<()> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Value::Map(vec![(Value::from("name"), Value::from(name))]),
+    )
+    .expect("person body encode");
     vault.put_entity(
         id,
         crate::registry::ENTITY_TYPE_PERSON,
         occurred(at),
         at,
-        b"person",
+        &body,
     )
 }
 
