@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1407 code-mode rows (1364 host rows, 43 run rows), 4929 declarations.
-// Replies: 1214 fully typed, 192 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1407 code-mode rows (1364 host rows, 43 run rows), 4919 declarations.
+// Replies: 1200 fully typed, 189 typed down to an opaque serde_json::Value leaf, 17 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 118; unread shapes: none.
+// Opaque serde_json::Value leaves: 118; unread shapes: AskEffect.catastrophe, BypassGrantBoundRequest.classes, BypassGrantBoundRequest.scope, CodeConsentSettlementRow.eligible, ConnectorConsentRowView.grant_ceiling, ConnectorPackGrantRow.ceiling, ConnectorScopeExceed.PayloadClass.ceiling, ConnectorScopeExceed.PayloadClass.requested, ConsentRegistryRow.bypass, ConsentRegistryRow.status, VoiceBankPackPutRequest.origin, VoiceIdentityView.subject_kind, VoicePackSummary.origin, VoiceRenderConsentReceipt.state, VoiceRenderConsentRequest.basis, VoiceRenderConsentRequest.state, VoiceRenderConsentRequest.subject_kind, VoiceRenderConsentView.basis, VoiceRenderConsentView.state, VoiceRenderConsentView.subject_kind.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1267,11 +1267,10 @@ declare namespace Sdk {
   type ConnectorPackDelta = { prior: ConnectorPackBasis; current: ConnectorPackView; changed: boolean; reask: string[]; carried: string[]; dropped: string[] };
   type ConnectorPackGrantsGetRequest = { basis: ConnectorPackBasis; actor?: string | null };
   type ConnectorIssuerHaltView = { old_issuer: string; new_issuer: string; detected_at: number; dependent_rows: string[] };
-  type DataClass = "public" | "personal" | "secret" | "unclassified";
-  type ConnectorConsentRowView = { tool: string; data_class: SlateDataClass; setting: SlateDisposition; header_parameters: string[]; destroys: boolean; grant_id?: string | null; grant_ceiling?: DataClass | null };
+  type ConnectorConsentRowView = { tool: string; data_class: SlateDataClass; setting: SlateDisposition; header_parameters: string[]; destroys: boolean; grant_id?: string | null; grant_ceiling?: unknown | null };
   type ConnectorConsentView = { connector: string; actor: string; status: string; issuer_halt?: ConnectorIssuerHaltView | null; protocol_revision?: string | null; ready: boolean; rows: ConnectorConsentRowView[]; elicitation?: SlateDisposition | null };
   type ConnectorPackGrants = { basis: ConnectorPackBasis; endpoint?: string | null; authority: ConnectorConsentView };
-  type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
+  type ConnectorPackGrantRow = { tool: string; ceiling: unknown; headers?: boolean };
   type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
   type SectionId = string;
@@ -1323,7 +1322,7 @@ declare namespace Sdk {
   type ConnectorSlateNarrowView = { key_ref: string; slate_ref: string; slate_revision: number; settings: Record<string, SlateDisposition>; facets?: string[] | null; narrows: Record<string, SlateHolderNarrow> };
   type ConnectorScopeOutcome = "approved_untouched" | "approved_amended" | "rejected";
   type ConnectorScopeOutcomeRequest = { signal_ref: string; linked_ruling: string; outcome: ConnectorScopeOutcome };
-  type ConnectorScopeExceed = { endpoint: { requested: string } } | { payload_class: { requested: DataClass; ceiling: DataClass } } | { tool_data_class: { requested: string } };
+  type ConnectorScopeExceed = { endpoint: { requested: string } } | { payload_class: { requested: unknown; ceiling: unknown } } | { tool_data_class: { requested: string } };
   type ConnectorScopeSignalView = { signal_ref: string; call_ref: string; connector: string; tool: string; key_ref: string; grant_id: string; actor: string; exceed: ConnectorScopeExceed; observed_at: number; ruling?: ConnectorScopeOutcome | null; proposal_ref?: string | null };
   type ConnectorScopeOutcomeView = { signal: ConnectorScopeSignalView; untouched_streak: number; amended: number; rejected: number; proposal_ref?: string | null };
   type ConnectorSlateRevisionOffersRequest = { connector?: string | null };
@@ -2236,21 +2235,17 @@ declare namespace Sdk {
   type NightlyLinkGrantRequest = Record<string, never>;
   type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
   type ConsentDomain = "disclosure" | "action";
-  type ConsentGrantStatus = "active" | "revoked";
   type ConsentRevokeAction = { command: string; grant_ref: string };
   type ConsentRegrantAction = { command: string; agent: string; conversation: string };
-  type BypassScope = { project: EntityId } | { thread: EntityId };
-  type BypassExtent = { scope: BypassScope; floor_version: number };
   type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach };
   type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] };
   type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; verb_classes?: string[]; wallet_ref?: WalletRef | null; confers: boolean };
-  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; regrant_action?: ConsentRegrantAction | null; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: unknown; created_at: number; revoke_action: ConsentRevokeAction; regrant_action?: ConsentRegrantAction | null; bypass?: unknown | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type HeldFailureSignalBatchView = { batch_id: string; endpoint: string; send_ref: string; content_ref: string; content: string; content_digest: string; approval_digest: string; count_rows: number; signal_count: number; code_fix_records: number; training_permitted: boolean; created_at: number; custody_stage: string };
   type RevokeGrantRequest = { grant: string };
-  type CatastropheClass = "WidenOwnAuthority" | "KeyRecovery" | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport" | "WorldPrivacyWiden";
   type BypassActionEnvelopeRequest = { selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean };
-  type BypassGrantBoundRequest = { actor: string; actor_class?: string | null; classes: CatastropheClass[]; scope: BypassScope; envelope: BypassActionEnvelopeRequest };
+  type BypassGrantBoundRequest = { actor: string; actor_class?: string | null; classes: unknown[]; scope: unknown; envelope: BypassActionEnvelopeRequest };
   type BypassGrantWarningRequest = { bound: BypassGrantBoundRequest };
   type BypassGrantWarningView = { owner: string; bound: BypassGrantBoundRequest; floor_version: number; bound_digests: string[] };
   type CreateBypassGrantRequest = { warning: BypassGrantWarningView };
@@ -2293,8 +2288,7 @@ declare namespace Sdk {
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
   type SlideReviewPolicyRow = { scope: "precedence"; value: SlideReviewPrecedence } | { scope: "vault"; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "route"; first: DecisionRung; ceiling: DecisionRung } | { scope: "holder"; holder: string; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "holder_route"; holder: string; first: DecisionRung; ceiling: DecisionRung };
-  type CodeConsentSettlementEligibility = { mode: "all_power_holders" } | { mode: "named"; holders: string[] };
-  type CodeConsentSettlementRow = { version: number; eligible: CodeConsentSettlementEligibility };
+  type CodeConsentSettlementRow = { version: number; eligible: unknown };
   type PolicyGrantMapEntry = { key: PolicyGrantValue; value: PolicyGrantValue };
   type PolicyGrantExtension = { tag: number; data: number[] };
   type PolicyGrantValue = { kind: "nil" } | { kind: "boolean"; value: boolean } | { kind: "integer"; value: string } | { kind: "float32"; value: number[] } | { kind: "float64"; value: number[] } | { kind: "string"; value: string } | { kind: "raw_string"; value: number[] } | { kind: "binary"; value: number[] } | { kind: "array"; value: PolicyGrantValue[] } | { kind: "map"; value: PolicyGrantMapEntry[] } | { kind: "extension"; value: PolicyGrantExtension };
@@ -3712,26 +3706,22 @@ declare namespace Sdk {
   type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; mask?: AiImageMask | null; params?: Record<string, unknown>; voice?: AiVoice | null; idempotency_key?: string | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
-  type VoiceRefOrigin = { kind: "captured"; consent_event_ref: string } | { kind: "designed"; vendor: string } | { kind: "generated" };
   type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
-  type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
+  type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: unknown; clips: VoiceBankClipInput[] };
   type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
-  type VoiceRefSubjectKind = "person" | "designed";
-  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
-  type VoiceConsentState = "granted" | "withdrawn";
-  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; subject_kind?: VoiceRefSubjectKind; basis?: VoiceConsentBasis | null; state: VoiceConsentState };
+  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; subject_kind?: unknown; basis?: unknown | null; state: unknown };
   type VoiceVendorDeleteStatus = "deleted" | "no_clone_wire" | "delete_failed" | "absent";
   type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
-  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; event_id: string; sequence: number; replayed: boolean; evicted: VoiceVendorEviction[] };
+  type VoiceRenderConsentReceipt = { voice_id: string; state: unknown; reach: ModelLocality; revision: string; event_id: string; sequence: number; replayed: boolean; evicted: VoiceVendorEviction[] };
   type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
   type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string; awaiting_verification: boolean };
   type VoiceTargetEvictRequest = { voice_id: string; target: string };
   type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
   type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
-  type VoiceIdentityView = { version: number; id: string; owner: string; subject_kind: VoiceRefSubjectKind; pack_ids: string[] };
+  type VoiceIdentityView = { version: number; id: string; owner: string; subject_kind: unknown; pack_ids: string[] };
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
-  type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[]; crossed: string[] };
-  type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number };
+  type VoicePackSummary = { version: number; id: string; origin: unknown; clips: VoiceClipSummary[]; crossed: string[] };
+  type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: unknown; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: unknown | null; state: unknown; revision: string; sequence: number };
   type VoiceTargetRender = { kind: "hosted_clone"; locality: ModelLocality } | { kind: "reference"; locality: ModelLocality } | { kind: "unconfigured" };
   type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string; awaiting_verification: boolean };
   type VoiceReferenceFenceView = { source_packs: string[]; ref_digest: string; incarnation?: string | null; consent_revision: string; revision: string };
@@ -3815,7 +3805,7 @@ declare namespace Sdk {
   type AskGrantDraft = { state: "proposed"; grant_ref: string } | { state: "confirmed"; grant_ref: string; receipt: string; rule: string };
   type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null; grant?: AskGrantDraft | null };
   type AskUndoFidelity = "full" | "partial" | "none" | "unknown";
-  type AskEffect = { operation_kind: string; fires_hooks: boolean; triggers_publish: boolean; external_observers: boolean; undo_fidelity: AskUndoFidelity; blast_radius: number; catastrophe?: CatastropheClass | null; project?: string | null; thread?: string | null; erase: boolean; action?: ShapeGrantBound | null; disclosure?: ShapeGrantBound | null };
+  type AskEffect = { operation_kind: string; fires_hooks: boolean; triggers_publish: boolean; external_observers: boolean; undo_fidelity: AskUndoFidelity; blast_radius: number; catastrophe?: unknown | null; project?: string | null; thread?: string | null; erase: boolean; action?: ShapeGrantBound | null; disclosure?: ShapeGrantBound | null };
   type AskConsent = { effect: AskEffect; bound: ShapeGrantBound };
   type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null; pack_state?: unknown | null; consent?: AskConsent | null; prefilled_reason?: string | null };
   type DecisionAskClimbRequest = { seq: number };
