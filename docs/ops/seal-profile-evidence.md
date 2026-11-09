@@ -118,7 +118,25 @@ These typed findings appear in `checks`; the existing `reasons` list still holds
 failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
 never a passed B-LT/B-LTA validation-material check.
 
-The rule: forged or unverifiable presented material is invalid (`fail`, `validation_material_invalid`), and so is a CRL signed by a same-subject, different-key shadow of a covered certificate's issuer; missing or authenticated-unknown material is unavailable (`not_run`).
+The rule: forged or unverifiable presented material is invalid (`fail`,
+`validation_material_invalid`); missing or authenticated-unknown material is
+unavailable (`not_run`). Unverifiable means it fails verification against the
+issuer it claims. Material that claims nothing about the signer's certificates,
+such as a CRL from an unrelated issuer, is missing coverage.
+
+A CRL signed by a shadow of a covered certificate's issuer is forged. The shadow
+carries the issuer's subject, did not sign the certificate, and holds a key no
+trust anchor vouches for: no anchor carries that subject and key, and no anchor
+or covered chain certificate issued a certificate for them. A CA's separate
+CRL-signing key, a key rollover's link certificate and a same-subject anchored
+CA are vouched for, so they are never shadows. A shadow makes the result invalid
+wherever it would otherwise be unavailable or unknown; beside complete genuine
+coverage it is disregarded, and the material passes.
+
+Oneiron's evidence policy is stricter than ETSI EN 319 102-1 here: the standard
+reports unverifiable revocation evidence as INDETERMINATE
+(CERTIFICATE_CHAIN_GENERAL_FAILURE), while Oneiron reports forged material as a
+failed verdict so that the tampering signal stays visible.
 
 Malformed material, bad signatures, bad binding, unauthorized or stale responses,
 and proven revocation remain failures. Unknown status is reported only after the

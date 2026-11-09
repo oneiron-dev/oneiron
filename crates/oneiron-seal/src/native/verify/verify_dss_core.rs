@@ -243,11 +243,6 @@ fn material_valid(
     // Anchor certificates ride anchor trust and need no coverage. A
     // cert-only DSS or otherwise insufficient valid coverage is unresolved,
     // never a profile pass. Invalid evidence has already failed above.
-    // Evidence authenticated by a same-subject/different-key shadow of a
-    // covered certificate's issuer fails here: a CRL that names the
-    // issuer's subject but does not verify under the key that signed the
-    // certificate is forged material about it, so it is invalid, never
-    // merely unavailable (#5937 kept missing evidence unresolved).
     let mut covered_ok = true;
     for cert in covered {
         if anchors.iter().any(|anchor| anchor.der == cert.der) {
@@ -260,16 +255,29 @@ fn material_valid(
                 break;
             }
         }
-        if crl_covered || ocsp_targets.contains(&cert.der.as_slice()) {
-            continue;
+        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
+            covered_ok = false;
         }
-        let shadowed = crl_issuers
-            .iter()
-            .any(|issuer| issuer.cert.tbs_certificate.subject == cert.cert.tbs_certificate.issuer);
-        if shadowed {
-            return Ok(MaterialValidity::Invalid);
+    }
+    // Evidence authenticated by a same-subject/different-key shadow of a
+    // covered certificate's issuer fails here: a CRL whose signer names the
+    // issuer's subject, did not sign the certificate, and holds a key no
+    // trust anchor vouches for is forged material about it, so it is
+    // invalid, never merely unavailable (#5937 kept missing evidence
+    // unresolved). The shadow takes precedence over every unresolved result;
+    // beside complete genuine coverage it is disregarded, as EN 319 102-1
+    // disregards unauthorized revocation data.
+    if ocsp_unknown || !covered_ok {
+        for cert in covered {
+            if anchors.iter().any(|anchor| anchor.der == cert.der) {
+                continue;
+            }
+            for signer in &crl_issuers {
+                if crl_signer_shadows(cert, signer, &embedded, anchors, covered, memory)? {
+                    return Ok(MaterialValidity::Invalid);
+                }
+            }
         }
-        covered_ok = false;
     }
     if ocsp_unknown {
         return Ok(MaterialValidity::Unresolved(
@@ -282,6 +290,44 @@ fn material_valid(
         ));
     }
     Ok(MaterialValidity::Valid)
+}
+
+/// Whether a valid CRL's `signer` shadows `cert`'s issuer: it carries the
+/// issuer's subject, it did not sign `cert`, and no trust anchor vouches for
+/// its key. An anchor vouches for the key when it carries the same subject
+/// and key itself, or when an anchor or a covered chain certificate issued a
+/// certificate that does (the signer's own, or one in `/Certs`). So a CA's
+/// separate CRL-signing key, a key rollover's link certificate and a
+/// same-subject anchored CA are never shadows; an attacker's self-signed
+/// certificate that only copies the subject is.
+fn crl_signer_shadows(
+    cert: &EmbeddedCert,
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    let subject = &signer.cert.tbs_certificate.subject;
+    if *subject != cert.cert.tbs_certificate.issuer || issued_by(cert, signer, memory)? {
+        return Ok(false);
+    }
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    let holds_signer_key = |c: &&EmbeddedCert| {
+        c.cert.tbs_certificate.subject == *subject
+            && c.cert.tbs_certificate.subject_public_key_info == *key
+    };
+    if anchors.iter().any(|anchor| holds_signer_key(&anchor)) {
+        return Ok(false);
+    }
+    for holder in std::iter::once(signer).chain(embedded.iter().filter(holds_signer_key)) {
+        for voucher in anchors.iter().chain(covered.iter()) {
+            if voucher.der != holder.der && issued_by(holder, voucher, memory)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
