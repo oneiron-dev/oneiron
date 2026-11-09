@@ -12,7 +12,7 @@ use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
     DecisionReceipt, DecisionRung, DecisionTime, DecisionWireLabels, HumanAskReason, Reasoning,
-    ReceiptAsk, StopCause, TypedDecision,
+    StopCause, TypedDecision,
 };
 use crate::llm::run_admission::RunAdmission;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -743,7 +743,7 @@ impl DecisionLadder<'_> {
                 },
                 state,
             )?;
-            asked = Some(ReceiptAsk::queued(&to, seq));
+            asked = Some(crate::llm::decision::receipt_ask_queued(&to, seq));
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
             abstained()

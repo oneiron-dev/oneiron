@@ -96,7 +96,7 @@ impl Child {
                         .caller(jobs, job.binding.parent_run, job.binding.actor)
                 })
                 .unwrap_or_else(|| CallerLocality::OffDevice.into());
-            let locality = caller.locality();
+            let locality = oneiron::settings::read_destination_locality(&caller);
             let door: Arc<dyn AgentVerbDoor> = match &job.kind {
                 ReaderJobKind::ScopedAgent { .. } => {
                     Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))

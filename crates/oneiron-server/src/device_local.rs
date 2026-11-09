@@ -142,7 +142,12 @@ pub(crate) fn withholds_retained_for(
     rows: &[EntityId],
     payload: &[u8],
 ) -> oneiron::Result<bool> {
-    withholds_retained(vault, ReadDestination::at(locality, peer), rows, payload)
+    withholds_retained(
+        vault,
+        oneiron::settings::read_destination_at(locality, peer),
+        rows,
+        payload,
+    )
 }
 
 /// Whether a cached response replayed to a caller toward `destination`

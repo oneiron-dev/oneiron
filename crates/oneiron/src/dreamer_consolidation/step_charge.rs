@@ -79,7 +79,7 @@ impl StepChargeTally {
         reason: &str,
         response: &LlmResponse,
     ) -> Result<DreamerAttemptExecution> {
-        let cause = DreamerParkCause::of_response(response);
+        let cause = crate::dreamer_runner::dreamer_park_cause_of_response(response);
         if !matches!(
             cause,
             DreamerParkCause::ProviderUnavailable | DreamerParkCause::Retry
@@ -236,7 +236,7 @@ pub(super) fn reply_text(response: &LlmResponse) -> String {
 /// memo dropped (OF-305); an owner-act wait keeps its private park.
 pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
     matches!(
-        DreamerParkCause::of_response(response),
+        crate::dreamer_runner::dreamer_park_cause_of_response(response),
         DreamerParkCause::Retry
     )
 }

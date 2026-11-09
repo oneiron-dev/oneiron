@@ -51,15 +51,8 @@ pub struct ResolvedAsset {
     pub handle: Option<String>,
 }
 
-/// A region of an image, in its own pixels from its top-left corner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PixelRegion {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
+#[doc(hidden)]
+pub use oneiron_wake_contract::memory::asset_resolve::types::PixelRegion;
 
 /// `vault.images.view`'s request: the handle an image was served with, and
 /// what of its full pixels to fetch. No region and no edge is the whole

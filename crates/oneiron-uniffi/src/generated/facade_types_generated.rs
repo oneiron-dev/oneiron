@@ -7758,7 +7758,7 @@ pub struct AttemptLandingReserve {
     pub dial_generation: Option<u32>,
 }
 
-/// `oneiron::store::attempt_cancel::LandingTrigger`.
+/// `oneiron_wake_contract::store::attempt_cancel::LandingTrigger`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum LandingTrigger {
     #[serde(rename = "cancel_request")]
@@ -7829,7 +7829,7 @@ pub enum ForceCancelGrounds {
     ErasedPayload,
 }
 
-/// `oneiron::store::attempt_cancel::AttemptResumePoint`.
+/// `oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptResumePoint {
     #[serde(rename = "marker")]
@@ -13045,7 +13045,7 @@ pub struct ScopedReadResultVectorSearchResult {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::memory::asset_resolve::types::PixelRegion`.
+/// `oneiron_wake_contract::memory::asset_resolve::types::PixelRegion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PixelRegion {
@@ -31448,7 +31448,7 @@ pub struct DecisionTime {
     pub reasoning: Reasoning,
 }
 
-/// `oneiron::llm::decision::types::ImagePin`.
+/// `oneiron_wake_contract::llm::decision::types::ImagePin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePin {
@@ -31513,7 +31513,7 @@ pub enum HolderKind {
     Agent,
 }
 
-/// `oneiron::llm::decision::types::ReceiptAnswerer`.
+/// `oneiron_wake_contract::llm::decision::types::ReceiptAnswerer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptAnswerer {
@@ -31525,7 +31525,7 @@ pub struct ReceiptAnswerer {
     pub kind: HolderKind,
 }
 
-/// `oneiron::llm::decision::types::ReceiptAsk`.
+/// `oneiron_wake_contract::llm::decision::types::ReceiptAsk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptAsk {
@@ -31559,7 +31559,7 @@ pub struct StateCut {
     pub text_cut_at_bytes: Option<u64>,
 }
 
-/// `oneiron::llm::decision::types::DecisionReceipt`.
+/// `oneiron_wake_contract::llm::decision::types::DecisionReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionReceipt {
@@ -34296,7 +34296,7 @@ pub enum HumanAskReason {
     ExplorationBudget,
 }
 
-/// `oneiron::llm::decision::types::TypedDecision`.
+/// `oneiron_wake_contract::llm::decision::types::TypedDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TypedDecision {
@@ -68610,7 +68610,7 @@ pub struct DreamerCandidateDecisionsRequest {
     pub job_ref: String,
 }
 
-/// `oneiron::dreamer_consolidation::kept_ask::KeptRole`.
+/// `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct KeptRole {
@@ -68620,7 +68620,7 @@ pub struct KeptRole {
     pub project: Option<String>,
 }
 
-/// `oneiron::dreamer_consolidation::kept_ask::KeptRoute`.
+/// `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptRoute`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct KeptRoute {
@@ -68632,7 +68632,7 @@ pub struct KeptRoute {
     pub act: AskAct,
 }
 
-/// `oneiron::dreamer_consolidation::kept_ask::KeptAnswer`.
+/// `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct KeptAnswer {
@@ -68652,7 +68652,7 @@ pub struct KeptAnswer {
     pub rule: Option<HostRuleRef>,
 }
 
-/// `oneiron::dreamer_consolidation::kept_ask::KeptAsk`.
+/// `oneiron_wake_contract::dreamer_consolidation::kept_ask::KeptAsk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct KeptAsk {
@@ -68664,7 +68664,7 @@ pub struct KeptAsk {
     pub answer: Option<KeptAnswer>,
 }
 
-/// `oneiron::dreamer_consolidation::provenance::KeptDecision`.
+/// `oneiron_wake_contract::dreamer_consolidation::provenance::KeptDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct KeptDecision {
@@ -69718,7 +69718,7 @@ pub struct SievePolicySetRequest {
     pub policy: SievePolicy,
 }
 
-/// `oneiron::dreamer_wake::recipes::WakeRecipePolicy`.
+/// `oneiron_wake_contract::dreamer_wake::recipes::WakeRecipePolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WakeRecipePolicy {

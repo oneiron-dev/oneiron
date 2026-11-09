@@ -427,9 +427,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 {
                     charges.record_usage(usage);
                 }
-                return Ok(Called::Exit(
-                    charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)),
-                ));
+                return Ok(Called::Exit(charges.park_for(
+                    &other.to_string(),
+                    crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+                )));
             }
         };
         let reply = match child_output(&response, &context, &opened, &run.covers) {

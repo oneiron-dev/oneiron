@@ -649,9 +649,10 @@ impl<E> PersonAboutExecutor<'_, E> {
                     return spent_or_deferred(error, ctx, &charges);
                 }
                 Err(other) => {
-                    return Ok(
-                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
-                    );
+                    return Ok(charges.park_for(
+                        &other.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+                    ));
                 }
             };
             let text = match about_line(&response) {

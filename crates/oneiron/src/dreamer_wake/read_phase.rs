@@ -11,8 +11,6 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::Vault;
 use crate::error::{Error, Result};
 
-use super::deadline::WakeCancellation;
-
 /// How many guarded tries a pass makes before it defers.
 const READ_PHASE_TRIES: u32 = 3;
 
@@ -86,27 +84,8 @@ impl Vault {
     }
 }
 
-/// What stops a read phase before its write: the host's pause or a stop
-/// raised on the pass's cancellation. A read phase holds no writer, so the
-/// pass deadline does not stop it.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct WakeStop<'a> {
-    cancel: Option<&'a WakeCancellation>,
-}
-
-impl<'a> WakeStop<'a> {
-    /// A read phase nothing stops.
-    pub(crate) const NEVER: Self = Self { cancel: None };
-
-    pub(crate) const fn new(cancel: Option<&'a WakeCancellation>) -> Self {
-        Self { cancel }
-    }
-
-    /// Whether the pass was cancelled or paused.
-    pub(crate) fn stopped(&self) -> bool {
-        self.cancel.is_some_and(WakeCancellation::is_cancelled)
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_wake_contract::dreamer_wake::read_phase::WakeStop;
 
 /// What a pass does when a commit landed between its read and its write on
 /// every guarded try.
