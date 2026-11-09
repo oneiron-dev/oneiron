@@ -20,6 +20,11 @@ fn open() -> (tempfile::TempDir, Vault) {
 /// The owner's read lane, as a client holds it: a slip the host root mints for the owner, with
 /// the root's whole scope, verified and read through `from_verified_slip`.
 fn owner_key(vault: &Vault) -> ScopedReadActorKey {
+    owner_slip(vault, [0x46; 32]).1
+}
+
+/// [`owner_key`] with the issuer that minted its slip `slip_id`, so a test can revoke it.
+fn owner_slip(vault: &Vault, slip_id: [u8; 32]) -> (HostSlipIssuer, ScopedReadActorKey) {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let issuer = HostSlipIssuer::from_secret(b"feeds-test-host-secret").expect("host issuer");
     let root = vault
@@ -27,7 +32,7 @@ fn owner_key(vault: &Vault) -> ScopedReadActorKey {
         .expect("host root slip");
     let issued_at = vault.capability_slip_now().expect("authority clock");
     let mut claims = root.claims.clone();
-    claims.slip_id = [0x46; 32];
+    claims.slip_id = slip_id;
     claims.holder_ref = owner.to_hex();
     claims.actor_class = Some("human".into());
     claims.issued_at = issued_at;
@@ -43,7 +48,8 @@ fn owner_key(vault: &Vault) -> ScopedReadActorKey {
     let verified = vault
         .verify_capability_slip(&issuer.public_key(), &slip, challenge, &proof)
         .expect("verified slip");
-    ScopedReadActorKey::from_verified_slip(&verified).expect("owner key")
+    let key = ScopedReadActorKey::from_verified_slip(&verified).expect("owner key");
+    (issuer, key)
 }
 
 fn changes_from(start: FeedStart) -> FeedSubscribeRequest {
@@ -214,6 +220,56 @@ fn another_actors_subscription_is_not_found() {
             .expect("unsubscribe")
     );
     assert!(vault.feed_subscriptions(&lane).expect("list").is_empty());
+}
+
+/// A key revoked since it subscribed reaches no subscription: listing, reading, acking and
+/// ending one each check the credential in their own transaction (review #6897).
+#[test]
+fn a_revoked_credential_reaches_no_subscription() {
+    let (_dir, vault) = open();
+    let slip_id = [0x52; 32];
+    let (issuer, key) = owner_slip(&vault, slip_id);
+    let subscription = vault
+        .feed_subscribe(
+            &vault.scoped_read(key.clone()),
+            &changes_from(FeedStart::Head),
+        )
+        .expect("subscribe")
+        .subscription;
+    vault
+        .revoke_capability_slip(&issuer, slip_id)
+        .expect("revoke the slip");
+
+    let lane = vault.scoped_read(key);
+    assert!(vault.feed_subscriptions(&lane).is_err(), "list");
+    assert!(
+        vault
+            .feed_read(
+                &lane,
+                &FeedReadRequest {
+                    subscription,
+                    limit: None,
+                },
+            )
+            .is_err(),
+        "read"
+    );
+    assert!(
+        vault
+            .feed_ack(
+                &lane,
+                &FeedAckRequest {
+                    subscription,
+                    through: Vec::new(),
+                },
+            )
+            .is_err(),
+        "ack"
+    );
+    assert!(
+        vault.feed_unsubscribe(&lane, subscription).is_err(),
+        "unsubscribe"
+    );
 }
 
 /// A selector follows at least one source, each once.
