@@ -27,6 +27,7 @@ mod consolidation_readers;
 mod constants;
 mod entity_resolution_bands;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
+pub(crate) use constants::{CHECKED_PRODUCER_PROVENANCE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER};
 mod decision;
 mod decode;
 mod default_manifest;
@@ -39,6 +40,18 @@ mod value_encoding;
 /// (ARCH-0070) reads as landed against these.
 pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
     default_manifest::with_default_owner_policy_notifications(data)
+}
+/// Whether `error` is a Gate write rejection whose outcome is Pending: the
+/// one rejection after which an Auto request is resubmitted as Proposed, so
+/// the write lands parked for review. A Deny, and any error that is not a
+/// Gate rejection, is not.
+pub(crate) fn gate_rejection_pends(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
 }
 mod definition_ceiling;
 mod delegation_chain;
@@ -84,9 +97,13 @@ mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
+// The landing rows' reference names the X02 grant a verdict stood on before
+// the Dreamer held a Steward grant (6.3b); only the lib tests read it here.
+#[cfg(test)]
+pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
 pub(crate) use self::dreamer_grant::{
-    DREAMER_LANDING_ROWS_REF, DreamerLandingVerdict, body_with_steward_rows,
-    dreamer_landing_verdict_in_txn, dreamer_rows_held,
+    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
+    dreamer_rows_held,
 };
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
@@ -109,6 +126,10 @@ pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
+/// The live-run claim put test's gate fixtures, for its integration test doors
+/// (`test_doors::live_run_claim_put`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod live_run_claim_put_fixture;
 #[cfg(test)]
 mod tests;
 
