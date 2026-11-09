@@ -66,3 +66,24 @@ pub fn wake_owed_here(vault: &Vault, turn: EntityId, registration: EntityId) -> 
 pub fn wake_decisions_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<usize> {
     crate::dreamer_runner::turn_program_test_hooks::wake_decisions_here(vault, turn, registration)
 }
+
+/// Holds the wake TURN `turn` owes `registration` on its lapsed slip, as the
+/// home's admission holds one whose slip lapsed: owed until its rebind or
+/// its expiry. Answers whether there was a wake to hold.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn hold_wake_on_lapsed_slip(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+    held_at: u64,
+) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::hold_wake_on_lapsed_slip(
+        vault,
+        turn,
+        registration,
+        held_at,
+    )
+}

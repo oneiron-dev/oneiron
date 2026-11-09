@@ -7,7 +7,7 @@
 //! a machine holds and decided.
 
 use super::authority::TurnProgramAuthority;
-use super::types::{LandedTurnRef, ProgramRecipePin, TurnProgramArming};
+use super::types::{LandedTurnRef, OwedWakeHold, ProgramRecipePin, TurnProgramArming};
 use super::{ADMISSION, ARM, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::error::{Error, Result};
@@ -66,6 +66,33 @@ pub(crate) fn plant_slip_wake(
         }
     })?;
     Ok(registration)
+}
+
+/// Holds the wake TURN `turn` owes `registration` on its lapsed slip, as
+/// the home's admission holds one whose slip lapsed (FIX 12058): owed until
+/// its rebind or its expiry, a week after its turn landed. Answers whether
+/// there was a wake to hold.
+pub(crate) fn hold_wake_on_lapsed_slip(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+    held_at: u64,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut wake) = WAKE.get(vault, &*txn, &(turn, registration))? else {
+            return Ok(false);
+        };
+        wake.held = Some(OwedWakeHold {
+            reason: super::admit::AUTHORITY_LAPSED.to_owned(),
+            held_at,
+            expires_at: wake
+                .turn
+                .landed_at
+                .saturating_add(super::admit::LAPSED_WAKE_HOLD_SECS),
+        });
+        WAKE.put(vault, txn, &(turn, registration), &wake)?;
+        Ok(true)
+    })
 }
 
 /// Whether this machine owes the wake TURN `turn` owes `registration`.
