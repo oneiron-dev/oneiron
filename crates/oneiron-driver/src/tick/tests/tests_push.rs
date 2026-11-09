@@ -52,6 +52,73 @@ fn session_hints_preserve_arrival_order_and_coalesce_only_adjacent_same_kind() {
     );
 }
 
+#[test]
+fn wake_lane_round_robin_does_not_starve_buffered_macro_under_micro_refill() {
+    // P2 (codex r4): fixed micro→meso→macro scan always drained a
+    // refilled micro slot first, so a buffered macro/meso wake never
+    // returned under continuous micro push. Rotating scan start after
+    // each returned wake drains every occupied lane within N=3 takes.
+    let (mut receiver, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
+    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+        .expect("open channel");
+    wake.push_wake(WakeTrigger::Timer, DreamerConsolidationScope::Macro)
+        .expect("open channel");
+
+    let mut scopes = Vec::new();
+    for _ in 0..3 {
+        let Some(Tick::Wake(signal)) = receiver.take_pending() else {
+            panic!("expected a wake within the 3-take fairness window");
+        };
+        scopes.push(signal.scope);
+        // Refill micro after every take — the starvation pattern under
+        // a fixed scan that always preferred lane 0.
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+    }
+
+    assert!(scopes.contains(&DreamerConsolidationScope::Macro));
+}
+
+#[tokio::test]
+async fn push_recv_delivers_final_wake_when_producer_drops_immediately() {
+    // P2 (codex r6 / 3585850157): between empty take_pending and the
+    // pushers==0 check a producer can push then Drop. Without a final
+    // take_pending re-check, recv returns None while a wake is buffered.
+    // Producer order: store under mutex, notify_one, Drop decrements
+    // pushers (store-before-decrement). The re-check closes the window
+    // either way. Concurrent push+drop while recv is waiting (and the
+    // sequential push-then-drop case) both deliver exactly one signal.
+    let (mut receiver, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
+    // Drop the unused hint first so the last producer can race alone.
+    drop(hint);
+
+    let producer = tokio::spawn(async move {
+        // Let recv park on notified() after an empty take_pending.
+        tokio::task::yield_now().await;
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        drop(wake);
+    });
+
+    let first = receiver.recv().await;
+    producer.await.expect("producer task");
+    assert!(
+        matches!(
+            first,
+            Some(Tick::Wake(WakeSignal {
+                trigger: WakeTrigger::Compaction,
+                scope: DreamerConsolidationScope::Micro,
+            }))
+        ),
+        "exactly one buffered wake must be delivered, got {first:?}"
+    );
+    assert_eq!(
+        receiver.recv().await,
+        None,
+        "second recv must exhaust (count: exactly 1 signal)"
+    );
+}
+
 fn seed_digest_proposal_in_txn(vault: &Vault, seed: u8, rollback: bool) {
     use oneiron::ClaimCandidate;
     use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
