@@ -47,6 +47,7 @@ pub(super) fn pair_mcp_credential(
                 actor_class: Some(class.gate_actor_class().to_owned()),
                 org_ref: None,
                 write_facet: scope.facet_ref.map(|facet| facet.to_hex()),
+                comm: None,
             },
         )
         .unwrap();

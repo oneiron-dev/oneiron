@@ -123,6 +123,7 @@ fn server(reader: &Arc<Reader>, reads: usize) -> (tempfile::TempDir, Arc<SyncSer
     let probe = ProbeQuestions {
         paired: "Think?".to_owned(),
         person: Some("Person?".to_owned()),
+        presence: None,
     };
     let server = SyncServer::new(
         vault,

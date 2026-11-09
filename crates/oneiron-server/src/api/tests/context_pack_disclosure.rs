@@ -1132,6 +1132,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                         created_at: 1,
                         revoked_at: None,
                         expires_at: None,
+                        companion_bounds: None,
                     },
                 )
                 .expect("grant the message's space");

@@ -69,6 +69,8 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
             window_secs: 86_400,
             visitor_tz: "UTC".to_owned(),
         },
+        constraint_front: None,
+        sponsor: None,
     })
     .expect("publication")
 }
