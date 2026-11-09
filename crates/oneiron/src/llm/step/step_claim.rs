@@ -46,6 +46,31 @@ pub(crate) use super::step_index::{
 // ---------------------------------------------------------------------------
 // Terminal step claim (checkpoint-in-append)
 // ---------------------------------------------------------------------------
+/// The step claim holds the call's raw response, which may echo any input
+/// the call read, so it carries the call's exposure (S63E-RULED, lead 9 Nov
+/// 19:0x): the relationships its scope binds (the empty set included) and
+/// the project it names. An unbound call's claim stays as before.
+fn call_audience(
+    mut candidate: ClaimCandidate,
+    scope: &oneiron_model::llm::Scope,
+) -> ClaimCandidate {
+    if let Some(relationships) = &scope.relationship {
+        candidate = candidate.with_relationships(Some(relationships.iter().copied().collect()));
+    }
+    if let Some(project) = scope.project
+        && project != crate::claim::default_project_id()
+    {
+        candidate = candidate.with_scope(Value::Map(vec![(
+            Value::from(STEP_SCOPE_PROJECT_KEY),
+            Value::Binary(project.as_bytes().to_vec()),
+        )]));
+    }
+    candidate
+}
+
+/// The claim scope key the record-scope codec reads as the audience.
+const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
+
 /// Persists the terminal `dreamer.step` claim (checkpoint-in-append).
 /// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
 /// passes the one serialization it already wrote to the ResponseReceived row;
@@ -178,11 +203,14 @@ pub(super) fn log_terminal_step(
                 response_ref,
                 at: source.at,
             });
-            let candidate = ClaimCandidate::new(
-                DREAMER_STEP_PREDICATE,
-                ClaimSubject::Entity(source.subject),
-                value,
-                1.0,
+            let candidate = call_audience(
+                ClaimCandidate::new(
+                    DREAMER_STEP_PREDICATE,
+                    ClaimSubject::Entity(source.subject),
+                    value,
+                    1.0,
+                ),
+                &request.envelope.scope,
             );
             let mut envelope = envelope.clone();
             ctx.vault.sign_retained_machine_claim_in_txn(
