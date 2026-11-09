@@ -274,7 +274,7 @@ pub(super) async fn fetch_valid_ocsp(
         )
         .map_err(resource_error)?;
         if evidence
-            .is_some_and(|evidence| !evidence.unknown && evidence.good_targets.contains(&cert_der))
+            .is_ok_and(|evidence| !evidence.unknown && evidence.good_targets.contains(&cert_der))
         {
             return Ok(Some(response.body));
         }
