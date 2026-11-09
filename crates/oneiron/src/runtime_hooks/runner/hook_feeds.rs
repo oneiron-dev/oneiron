@@ -17,9 +17,11 @@ use crate::{EntityId, Result, Vault};
 /// its cursor (FIX 22121, FIX 22154, FIX 22178), and in each housekeeping
 /// pass after its tick release (FIX 22180). It takes the rows at or below
 /// the lowest stored cursor of every fact binding enabled in the prune's own
-/// snapshot, held back or not, or every row while none is enabled, at most
+/// snapshot, held back or not, and of every change feed subscription that
+/// follows the feed (untangle slice 6.8), or every row while neither is, at most
 /// `max_rows` a feed, planned in that snapshot and deleted in one write only
-/// when there are any. The pass's own binding list is not the floor: a
+/// when there are any; that write keeps each planned row a subscription made
+/// since the snapshot has not passed (review #6897). The pass's own binding list is not the floor: a
 /// binding enabled since the pass began holds its rows too (review #6767).
 /// Each such binding moves its cursor past each row it takes or skips, so a
 /// row below the floor is one no binding reads again. A binding enabled
@@ -67,27 +69,69 @@ pub(crate) fn prune_hook_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
     }
     vault.with_write_txn_grouped(|txn| {
         for (source, rows) in &planned {
-            source::delete_feed_rows_in_txn(vault, txn, *source, rows)?;
+            let rows = still_passed_in_txn(vault, txn, *source, rows)?;
+            source::delete_feed_rows_in_txn(vault, txn, *source, &rows)?;
         }
         Ok(())
     })
 }
 
-/// The lowest stored cursor of `readers` in `source`, read in `txn`; with no
-/// reader, the feed's head, as a binding enabled later starts there or, new
+/// The planned `rows` of `source` that every change feed subscription has
+/// still passed, read in the prune's own write (review #6897): a
+/// subscription made after the plan's snapshot, one that starts at the
+/// feed's beginning above all, holds the rows its cursor has not passed,
+/// though no binding reads them again. A binding enabled after the snapshot
+/// starts past every planned row, so only the subscriptions are read again.
+fn still_passed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    rows: &[u64],
+) -> Result<Vec<u64>> {
+    Ok(match crate::feeds::floor_in_txn(vault, txn, source)? {
+        crate::feeds::FeedFloor::Unfollowed => rows.to_vec(),
+        crate::feeds::FeedFloor::AtStart => Vec::new(),
+        crate::feeds::FeedFloor::At(floor) => rows
+            .iter()
+            .copied()
+            .filter(|row| row_position(source, *row).is_some_and(|position| position <= floor))
+            .collect(),
+    })
+}
+
+/// The position of row `row` of `source`'s hook feed; `None` for the claim
+/// changelog, which this prune never takes.
+const fn row_position(source: FactSource, row: u64) -> Option<FactPosition> {
+    match source {
+        FactSource::Settlement => Some(FactPosition::Settlement(source::SettlementPosition(row))),
+        FactSource::Schedule => Some(FactPosition::Schedule(source::SchedulePosition(row))),
+        FactSource::SurfaceInbound => Some(FactPosition::SurfaceInbound(
+            source::SurfaceInboundPosition(row),
+        )),
+        FactSource::ClaimChangelog => None,
+    }
+}
+
+/// The lowest stored cursor of `readers` and of every change feed
+/// subscription following `source` (untangle slice 6.8), read in `txn`; with
+/// neither, the feed's head, as a binding enabled later starts there or, new
 /// to the tick feed, before an open TASK's kept tick (FIX 22154). `None`
-/// while the feed is empty, or while a reader stands at the source's start
-/// or holds no cursor there.
+/// while the feed is empty, or while a reader or a subscription stands at
+/// the source's start or a reader holds no cursor there.
 fn floor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     readers: &[EntityId],
     source: FactSource,
 ) -> Result<Option<FactPosition>> {
-    if readers.is_empty() {
-        return source::head_in_txn(vault, txn, source);
-    }
-    let mut floor: Option<FactPosition> = None;
+    let mut floor: Option<FactPosition> = match crate::feeds::floor_in_txn(vault, txn, source)? {
+        crate::feeds::FeedFloor::Unfollowed if readers.is_empty() => {
+            return source::head_in_txn(vault, txn, source);
+        }
+        crate::feeds::FeedFloor::Unfollowed => None,
+        crate::feeds::FeedFloor::AtStart => return Ok(None),
+        crate::feeds::FeedFloor::At(position) => Some(position),
+    };
     for id in readers {
         let Some(position) =
             store::cursor_in_txn(vault, txn, *id, source)?.and_then(CursorRow::position)
