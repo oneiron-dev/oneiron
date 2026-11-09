@@ -600,9 +600,10 @@ pub use memory_requests::*;
 mod blob_input;
 pub use blob_input::{invoke_blob_input, takes_blob_input};
 
-include!("generated/verb_catalog.rs");
-include!("generated/run_verb_catalog.rs");
-include!("generated/sdk_generated.rs");
+// Generated at build time from the verb table (crates/oneiron-sdk-build).
+include!(concat!(env!("OUT_DIR"), "/verb_catalog.rs"));
+include!(concat!(env!("OUT_DIR"), "/run_verb_catalog.rs"));
+include!(concat!(env!("OUT_DIR"), "/sdk_generated.rs"));
 
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then
