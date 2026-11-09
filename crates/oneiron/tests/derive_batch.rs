@@ -86,7 +86,10 @@ fn assert_kept_refused_dependent(vault: &Vault, actor: EntityId, class: EdgeActo
     let [claim] = kept.rows.as_slice() else {
         panic!("one row: {kept:?}");
     };
-    assert!(vault.get(claim).expect("read").is_some(), "the claim is stored");
+    assert!(
+        vault.get(claim).expect("read").is_some(),
+        "the claim is stored"
+    );
 
     assert!(!unfounded.landed, "the unfounded claim is refused");
     assert!(unfounded.rows.is_empty());
@@ -97,9 +100,15 @@ fn assert_kept_refused_dependent(vault: &Vault, actor: EntityId, class: EdgeActo
     let receipt = refusal_receipt(vault, committed.batch, "unfounded")
         .expect("read")
         .expect("its refusal is receipted");
-    assert!(receipt.iter().any(|code| code == NO_EVIDENCE), "{receipt:?}");
+    assert!(
+        receipt.iter().any(|code| code == NO_EVIDENCE),
+        "{receipt:?}"
+    );
 
-    assert!(!dependent.landed, "a claim citing a refused item is refused");
+    assert!(
+        !dependent.landed,
+        "a claim citing a refused item is refused"
+    );
     assert_eq!(dependent.reasons, vec![DEPENDENCY_REFUSED.to_owned()]);
     assert_eq!(
         refusal_receipt(vault, committed.batch, "built_on_unfounded").expect("read"),
@@ -111,7 +120,10 @@ fn assert_kept_refused_dependent(vault: &Vault, actor: EntityId, class: EdgeActo
         Some(committed.items.clone()),
         "the batch record keeps every outcome"
     );
-    assert_eq!(batches_of(vault, actor).expect("read"), vec![committed.batch]);
+    assert_eq!(
+        batches_of(vault, actor).expect("read"),
+        vec![committed.batch]
+    );
 }
 
 #[test]
@@ -142,7 +154,10 @@ fn a_malformed_batch_lands_nothing() {
     claims[0].evidence.push(Named::Local("built_on_unfounded"));
     commit_claims(&vault, dreamer, EdgeActorClass::System, "run-2", &claims)
         .expect_err("a forward reference is a malformed batch");
-    assert!(batches_of(&vault, dreamer).expect("read").is_empty(), "no batch is recorded");
+    assert!(
+        batches_of(&vault, dreamer).expect("read").is_empty(),
+        "no batch is recorded"
+    );
 }
 
 #[test]
@@ -150,8 +165,9 @@ fn the_derive_verdict_reads_the_live_steward_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let dreamer = dreamer(&vault).expect("the Dreamer");
-    let verdict =
-        |archive| derive_verdict(&vault, dreamer, EdgeActorClass::System, archive, None).expect("verdict");
+    let verdict = |archive| {
+        derive_verdict(&vault, dreamer, EdgeActorClass::System, archive, None).expect("verdict")
+    };
 
     // Before a host mints the grant the policy rows decide.
     assert!(verdict(false).is_ok(), "the Dreamer's rows let it derive");

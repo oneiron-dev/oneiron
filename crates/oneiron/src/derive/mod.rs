@@ -20,6 +20,7 @@
 //! Every item kind is one arm of [`DerivationItem`] with a stager of its
 //! own: a new kind adds an arm and touches no other (S69-C-ITEMS).
 
+mod archive;
 mod batch;
 mod claim;
 mod commit;
@@ -28,8 +29,9 @@ mod settle;
 mod supersede;
 pub(crate) mod tables;
 
+pub use archive::{ARCHIVE_NEEDS_ATTEMPT, ARCHIVE_NOT_A_CLAIM, ARCHIVE_SCORE_NOT_BELOW_POLICY};
 pub use batch::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedClaim, DerivedSettle,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedArchive, DerivedClaim, DerivedSettle,
     DerivedSettlement, DerivedSupersede, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};

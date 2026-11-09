@@ -20,7 +20,9 @@ use oneiron::test_doors::derive::{
     Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit, open_conflict,
     refusal_receipt,
 };
-use oneiron::test_doors::steward::{STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant};
+use oneiron::test_doors::steward::{
+    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::json;
 
@@ -163,7 +165,10 @@ fn a_derived_claim_never_supersedes_user_stated_truth() {
     let [derived, over_stated] = committed.items.as_slice() else {
         panic!("two items: {:?}", committed.items);
     };
-    assert!(derived.landed, "the derived claim itself lands: {derived:?}");
+    assert!(
+        derived.landed,
+        "the derived claim itself lands: {derived:?}"
+    );
     assert!(!over_stated.landed, "it never closes the stated claim");
     assert_eq!(over_stated.reasons, vec![PROTECTED.to_owned()]);
     assert_eq!(

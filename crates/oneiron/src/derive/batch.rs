@@ -2,9 +2,11 @@
 
 use std::collections::BTreeSet;
 
+use crate::EntityId;
+use crate::attempt_queue::AttemptId;
+use crate::dreamer_consolidation::selection::StrengthSignals;
 use crate::error::{Error, Result};
 use crate::write_envelope::{SourceLineage, WriteActor};
-use crate::EntityId;
 
 /// Who commits a derivation batch, as the engine stamps it: the actor of the
 /// caller's credential, the run the batch belongs to, and that run's
@@ -17,6 +19,9 @@ pub struct DerivationStamp {
     /// The run the batch belongs to, as recorded; `None` for an engine job
     /// with no run.
     pub run: Option<String>,
+    /// The attempt the batch runs in, when it runs in one: an archive's
+    /// snapshot and tombstone name it.
+    pub attempt: Option<AttemptId>,
     /// The source classes the run's inputs carried. Every derived claim is
     /// `Generated`; this adds what it was derived from.
     pub lineage: SourceLineage,
@@ -85,6 +90,20 @@ pub struct DerivedSettle {
     pub settlement: DerivedSettlement,
 }
 
+/// An archive an agent derived: its own weak claim `claim`, with the
+/// strength it scored.
+#[derive(Debug, Clone)]
+pub struct DerivedArchive {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The claim to archive.
+    pub claim: ItemRef,
+    /// The strength signals the agent scored it by.
+    pub signals: StrengthSignals,
+    /// Its score: below the owner's strength policy row, or refused.
+    pub score: f64,
+}
+
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
 pub enum DerivationItem {
@@ -94,6 +113,8 @@ pub enum DerivationItem {
     Supersede(DerivedSupersede),
     /// A conflict settlement (kind 3).
     Settle(DerivedSettle),
+    /// A reversible archive (kind 6).
+    Archive(DerivedArchive),
 }
 
 impl DerivationItem {
@@ -103,6 +124,7 @@ impl DerivationItem {
             Self::Claim(claim) => &claim.local,
             Self::Supersede(supersede) => &supersede.local,
             Self::Settle(settle) => &settle.local,
+            Self::Archive(archive) => &archive.local,
         }
     }
 
@@ -112,6 +134,7 @@ impl DerivationItem {
             Self::Claim(_) => "claim",
             Self::Supersede(_) => "supersede",
             Self::Settle(_) => "settle",
+            Self::Archive(_) => "archive",
         }
     }
 
@@ -126,6 +149,7 @@ impl DerivationItem {
                 DerivedSettlement::Keep(kept) => vec![&settle.marker, kept],
                 DerivedSettlement::HoldBoth | DerivedSettlement::Dismiss => vec![&settle.marker],
             },
+            Self::Archive(archive) => vec![&archive.claim],
         }
     }
 }
@@ -172,7 +196,9 @@ impl DerivationBatch {
                 }
             }
             if !earlier.insert(local) {
-                return Err(malformed("each derivation item's local name is unique in its batch"));
+                return Err(malformed(
+                    "each derivation item's local name is unique in its batch",
+                ));
             }
         }
         Ok(())
