@@ -108,7 +108,7 @@ pub fn install_actor_ceiling(vault: &Vault, actor: &EntityId, ceiling: &str) -> 
     rmpv::encode::write_value(&mut data, &rmpv::Value::Map(entries)).map_err(|_| {
         Error::InvalidConfig("the actor ceiling manifest failed to encode".to_owned())
     })?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &data,
