@@ -17,7 +17,7 @@ use crate::runtime_hooks::verb::{
 };
 use crate::runtime_hooks::{InvocationId, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{AgentVerb, validate_input};
+use crate::task_verb::sdk::validate_input;
 
 /// Runs the pre chain of row `verb` over its JSON `args`: the args to run it
 /// with. A rewrite must pass the row's own input check, then the admission
@@ -267,7 +267,7 @@ fn row_with_saved(
             let credential = memory.verb_ask_credential();
             let resume = memory
                 .plain_resume()
-                .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+                .filter(|_| credential.is_none() && verb != crate::verb_names::REVEAL_WAIT)
                 .map(VerbResume::Row);
             (credential, resume)
         };
@@ -344,7 +344,7 @@ pub fn row_tapped(
     let credential = memory.verb_ask_credential();
     let resume = memory
         .plain_resume()
-        .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+        .filter(|_| credential.is_none() && verb != crate::verb_names::REVEAL_WAIT)
         .map(VerbResume::Row);
     let pre_restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;

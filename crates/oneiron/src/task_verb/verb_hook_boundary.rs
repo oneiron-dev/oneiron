@@ -37,8 +37,8 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop,
 };
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::CUSTODY_VALUE_ROWS;
 use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS};
+use crate::verb_names::{self, CUSTODY_VALUE_ROWS};
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 
@@ -467,7 +467,7 @@ impl CustodySecret {
         if !CUSTODY_VALUE_ROWS.contains(&verb) {
             return None;
         }
-        let member = crate::task_verb::sdk::AgentVerb::from_name(verb)?.custody_member()?;
+        let member = verb_names::custody_member(verb)?;
         let Some(Value::String(held)) = args.get_mut(member) else {
             return None;
         };
@@ -504,7 +504,7 @@ fn stopped(stop: VerbHookStop) -> MemoryError {
 /// offline.
 #[must_use]
 pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
-    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
+    if verb.rsplit('/').next() != Some(verb_names::REVEAL_WAIT) {
         return None;
     }
     let mut masked = reply.clone();
