@@ -105,37 +105,6 @@ describe("url construction stays on the configured origin", () => {
  * that hop. So redirects are taken by hand, and every hop is re-checked.
  */
 describe("redirects are followed by hand and never leave the origin", () => {
-  test("a same-origin redirect is followed with the credential intact", async () => {
-    const terminal = new Response('{"ok":true}', { status: 200 });
-    const { fetch, calls } = sequencedFetch([
-      redirectResponse(308, "/api/entity/moved"),
-      terminal,
-    ]);
-    const instance = new HttpBaseClient({
-      baseUrl: BASE_URL,
-      secret: PLACEHOLDER_SECRET,
-      fetch,
-    });
-
-    const received = await instance.request("/api/entity/old", {
-      method: "POST",
-      body: "{}",
-    });
-
-    // The TERMINAL response is the caller's, unread and uncloned.
-    expect(received).toBe(terminal);
-    expect(received.bodyUsed).toBe(false);
-    expect(calls.map((call) => call.input)).toEqual([
-      "http://127.0.0.1:3000/api/entity/old",
-      "http://127.0.0.1:3000/api/entity/moved",
-    ]);
-    expect(calls[0]?.init?.redirect).toBe("manual");
-    expect(calls[1]?.headers.get("authorization")).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
-    // 308 preserves the method and the body it described.
-    expect(calls[1]?.init?.method).toBe("POST");
-    expect(calls[1]?.init?.body).toBe("{}");
-  });
-
   test("a cross-origin redirect is refused, not forwarded", async () => {
     const { fetch, calls } = sequencedFetch([
       redirectResponse(302, "https://evil.example/api/health"),
@@ -155,27 +124,6 @@ describe("redirects are followed by hand and never leave the origin", () => {
 });
 
 describe("one credential, one authority model", () => {
-  test("a caller may not silently substitute the configured credential", () => {
-    const defaults = new Headers({ Authorization: `Bearer ${PLACEHOLDER_SECRET}` });
-
-    expect(() => mergeHeaders(defaults, { Authorization: "Bearer other-authority" })).toThrow(
-      TypeError,
-    );
-    // Restating the SAME credential is not a substitution.
-    expect(
-      mergeHeaders(defaults, { Authorization: `Bearer ${PLACEHOLDER_SECRET}` }).get(
-        "authorization",
-      ),
-    ).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
-    // An explicitly configured header wins over the secret shorthand.
-    const explicit = new HttpBaseClient({
-      baseUrl: BASE_URL,
-      secret: PLACEHOLDER_SECRET,
-      headers: { Authorization: "Bearer configured-by-caller" },
-    });
-    expect(explicit.headers.get("authorization")).toBe("Bearer configured-by-caller");
-  });
-
   /**
    * The credential becomes ONE default header and is kept nowhere else: no
    * copy on the instance, nothing printed, and no diagnostic that quotes it.

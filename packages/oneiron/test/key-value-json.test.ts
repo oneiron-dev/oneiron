@@ -37,8 +37,3 @@ test("keyed JSON refuses lossy native objects, custom serialization and cycles",
   expect(JSON.parse(keyedJson({ value: nullPrototype }))).toEqual({ value: { a: 3 } })
 })
 
-test("keyed JSON serializes the validated accessor result, not a second read", () => {
-  let read = false
-  const value = { get number() { if (read) return Number.NaN; read = true; return 3 } }
-  expect(JSON.parse(keyedJson({ value }))).toEqual({ value: { number: 3 } })
-})

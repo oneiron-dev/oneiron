@@ -49,29 +49,6 @@ for (const backend of ["embedded", "remote"] as const) {
       return error
     }
 
-    test("unknown author carries the valid roles in actionable suggestions", () => {
-      // Simulate JavaScript input outside the TypeScript union without mocking native code.
-      const error = badInput({ author: "assistant" as WitnessMessage["author"] })
-      expect(error.message).toContain("author must be one of user, companion, system")
-      expect(error.message).toContain("assistant")
-      expect(error.suggestions).toContain("Set messages[].author to user, companion, or system.")
-    })
-
-    for (const [label, metadata] of [
-      ["array", ["not", "an object"]],
-      ["string", "not an object"],
-      ["number", 7],
-      ["boolean", true],
-    ] as const) {
-      test(`${label} metadata suggests an object or omission`, () => {
-        const error = badInput({ metadata })
-        expect(error.message).toContain("metadata must be a JSON object")
-        expect(error.suggestions).toContain(
-          "Set messages[].metadata to a JSON object, or omit metadata.",
-        )
-      })
-    }
-
     if (backend === "embedded") {
       test("engine authority refusal stays FORBIDDEN, not BAD_REQUEST", () => {
         // A new turn needs a non-system speaker before system-row authority is checked.

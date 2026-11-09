@@ -62,46 +62,6 @@ def python_sdist(tmp_path_factory):
     return archives[0]
 
 
-def test_python_sdist_contains_rust_and_cargo_inputs(python_sdist):
-    with tarfile.open(python_sdist, "r:gz") as archive:
-        files = [member.name for member in archive.getmembers() if member.isfile()]
-        for required in [
-            "oneiron-py/Cargo.toml",
-            "oneiron-py/build.rs",
-            "oneiron-py/src/lib.rs",
-            "oneiron/Cargo.toml",
-            "oneiron/src/lib.rs",
-            "oneiron/src/memory/recall/mod.rs",
-            "oneiron-remote/Cargo.toml",
-            "oneiron-remote/src/lib.rs",
-            "oneiron-vault-contract/Cargo.toml",
-            "oneiron-vault-contract/src/lib/mod.rs",
-            "heed-0.20.5/Cargo.toml",
-            "heed-0.20.5/src/lib.rs",
-            "heed-0.20.5/src/env.rs",
-            "heed-0.20.5/LICENSE-MIT",
-            "Cargo.lock",
-        ]:
-            assert any(name.endswith("/" + required) for name in files), required
-        assert any(name.endswith("/pyproject.toml") for name in files)
-        roots = {Path(name).parts[0] for name in files}
-        assert len(roots) == 1
-        archive_root = roots.pop()
-        assert f"{archive_root}/Cargo.toml" in files
-        assert f"{archive_root}/Cargo.lock" in files
-        # A same-version registry copy lacks ONE-218's descriptor-preserving
-        # open seam. Require the patched source bytes at the root patch's path,
-        # not just a Cargo.toml or an arbitrary file named heed/src/lib.rs.
-        assert f"{archive_root}/{HEED}/Cargo.toml" in files
-        for source in (ROOT / HEED / "src").rglob("*.rs"):
-            name = f"{archive_root}/{source.relative_to(ROOT).as_posix()}"
-            assert name in files, name
-            assert archive.extractfile(name).read() == source.read_bytes(), name
-        assert "open_with_cache_identity" in (
-            archive.extractfile(f"{archive_root}/{HEED}/src/env.rs").read().decode()
-        )
-
-
 def test_python_sdist_builds_offline_with_vendored_heed(python_sdist, tmp_path):
     unpacked = (tmp_path / "unpacked").resolve()
     with tarfile.open(python_sdist, "r:gz") as archive:

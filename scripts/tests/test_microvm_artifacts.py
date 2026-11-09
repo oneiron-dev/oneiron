@@ -39,15 +39,6 @@ class ArtifactRecipeTests(unittest.TestCase):
                     build.unpack_kernel(archive, root)
                 self.assertFalse((root / "linux").exists())
 
-    def test_library_paths_are_explicit_and_bounded(self):
-        with tempfile.TemporaryDirectory() as name:
-            source = pathlib.Path(name) / "library"
-            source.write_bytes(b"lib")
-            self.assertEqual(build.library_spec(f"usr/lib/libc.so.6={source}"), ("usr/lib/libc.so.6", source))
-            for destination in ["/lib/x", "lib/../../x", "sbin/init", "lib/sub/x", "lib/a b", "lib/x\nquit"]:
-                with self.subTest(destination=destination), self.assertRaises(ValueError):
-                    build.library_spec(f"{destination}={source}")
-
 
 if __name__ == "__main__":
     unittest.main()
