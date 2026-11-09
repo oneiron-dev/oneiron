@@ -488,13 +488,15 @@ suite.test(test, "COORDINATION-02", "A thread reply never moves the trunk HEAD a
   };
   const content = new Map<string, string>();
 
-  // The room names its owner as member (the ownerRoom shape, privacy.test.ts:348-353). Every DAG append
-  // passes OF-529's participation gate (conversation_dag/writes.rs:462-467): a person with no seat files a
-  // room join on the write, and in a body-{} conversation nobody hosts it, so the join holds and the append
-  // answers 403 (rooms/participation/admission.rs:220-226; error/record.rs:475-480; dag policy.rs:166-176).
+  // DEFECT (fleet: HTTP 403 at the first trunk append): every DAG append runs check_append_policy
+  // (conversation_dag/writes.rs:417), which labels the caller's record ClaimSource::Generated whoever writes it
+  // (conversation_dag/policy.rs:247-300). Generated needs an explicit actor-bound source-trust permit
+  // (oneiron-contracts claim/status.rs:137-141, gate/ceiling.rs:579-609), and the shipped manifest grants one only
+  // to the commitment projector and the seal actor (gate/default_manifest.rs:676-737). So on a default vault no
+  // person, the owner included, appends a trunk record or a thread reply: 403 "gate.pending.source_trust".
+  // The owner already holds the room's Owner role without a seat (conversation/roles.rs:33-44).
   const conversation = (await client.call("vault.conversations.create", {
-    body: { v: 1, kind: "group", member_ids: [owner], title: "COORDINATION-02 visitor route" },
-    occurred_start: COORDINATION02_AT, occurred_end: COORDINATION02_AT, learned_at: COORDINATION02_AT })).id;
+    body: {}, occurred_start: COORDINATION02_AT, occurred_end: COORDINATION02_AT, learned_at: COORDINATION02_AT })).id;
   // Trunk: each record advances HEAD (records.append bylines the caller; no witness, so no project question).
   let previous: string | null = null;
   for (const row of scenario.inputs.trunk) {
