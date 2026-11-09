@@ -356,6 +356,9 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         now_ms: 11_000,
         prepared_wake: None,
         prepared_attempt: None,
+        cancel: None,
+        device_cancel: None,
+        spend_meter: None,
     };
     let mut executor = factory.executor(&guard).unwrap();
     let execution = executor.execute(&admitted, &mut ctx);

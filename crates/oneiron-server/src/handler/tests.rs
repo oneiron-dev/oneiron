@@ -3105,6 +3105,9 @@ async fn document_batch_exchange(version: u8) {
             selector: Vec::new(),
             have: Vec::new(),
             want: None,
+            request: 1,
+            cursor: None,
+            read: None,
         })
         .unwrap();
     let frame = transport::encode_lfs_chunk_sync(&request)

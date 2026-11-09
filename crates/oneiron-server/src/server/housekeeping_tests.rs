@@ -228,10 +228,13 @@ fn voice_match(session: &str, space: &VoiceEmbeddingSpaceV1) -> VoiceMatchReques
             end_ms: 1_000,
             space_id: space.space_id.clone(),
             vector: vec![1.0, 0.0, 0.0, 0.0],
+            speaker_key: "cluster-seg-1".to_owned(),
         }],
         invite_attendee_refs: Vec::new(),
         policy: VoiceMatchPolicy::with_known_default(0.7),
         created_at: T0,
+        purpose: VoicePrintPurpose::MeetingAttribution,
+        coverage: oneiron::voice_identity::VoiceRunCoverage::Partial,
     }
 }
 
@@ -285,6 +288,7 @@ async fn a_voice_print_past_its_retention_deadline_matches_no_one_and_a_running_
                     vector: vec![1.0, 0.0, 0.0, 0.0],
                 }],
                 requested_at: 200,
+                legal: oneiron::voice_identity::VoiceEnrollmentLegalContext::unresolved(),
             })
             .expect("enroll");
     });

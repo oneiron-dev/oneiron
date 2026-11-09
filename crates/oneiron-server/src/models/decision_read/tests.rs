@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use axum::{Json, Router, extract::State, routing::post};
 use oneiron::llm::{
     BudgetLease, FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadResponse,
-    LabelReadout, LabelSet, LlmError, LlmResult,
+    LabelReadout, LabelSet, LlmError, LlmResult, joint_marginals,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard};
 use serde_json::{Value as JsonValue, json};
@@ -156,15 +156,25 @@ async fn read(
             Some(options) => LabelSet::Choice(options),
             None => LabelSet::Noul,
         };
+        // A pack since e624d9a55c3 (#1573, recipe format 2): the primary
+        // question read jointly with its paired one, the person question
+        // read apart.
+        let mut questions = vec![LabelReadout {
+            text: "When?",
+            labels,
+            paired: Some("Think?"),
+        }];
+        if person {
+            questions.push(LabelReadout {
+                text: "Person?",
+                labels: LabelSet::Noul,
+                paired: None,
+            });
+        }
         reader.read(
             &LabelReadRequest {
                 state: &state,
-                primary: LabelReadout {
-                    text: "When?",
-                    labels,
-                },
-                paired: "Think?",
-                person: person.then_some("Person?"),
+                questions: &questions,
                 work_until: None,
             },
             &lease(),
@@ -281,9 +291,11 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
     }
     let read = read(&door, None, false).await.unwrap();
     // Yes = A + B, P(more thinking) = B + D.
-    assert!((read.primary[0] - 0.6).abs() < 1e-12 && (read.primary[1] - 0.4).abs() < 1e-12);
-    assert!((read.paired_yes - 0.3).abs() < 1e-12);
-    assert_eq!(read.person_yes, None);
+    let (primary, paired_yes) = joint_marginals(&read.readouts[0]);
+    assert!((primary[0] - 0.6).abs() < 1e-12 && (primary[1] - 0.4).abs() < 1e-12);
+    assert!((paired_yes - 0.3).abs() < 1e-12);
+    // No person question was asked, so no person readout.
+    assert_eq!(read.readouts.len(), 1);
     // The forced end costs its position even when the answer reports none.
     assert_eq!(read.usage.output.total, 1);
 }

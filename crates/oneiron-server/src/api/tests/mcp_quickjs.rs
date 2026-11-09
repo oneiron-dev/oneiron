@@ -261,10 +261,9 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
             seat_effort: None,
             global_tier: ModelTierRef("fixture".into()),
             determinism: CodeRunDeterminism::new(1700000000000, [7; 32]),
-            limits: EngineExecutorLimits {
-                soft_steps: 1,
-                hard_steps: 4,
-            },
+            // The hard cap is the `[limits] executor_run_steps` row since
+            // 5ce94a6121b (#2867, FIX 4197); no test here reaches it.
+            limits: EngineExecutorLimits { soft_steps: 1 },
             wake: None,
         },
     )

@@ -175,6 +175,7 @@ impl Room {
                     created_at: 1,
                     revoked_at: None,
                     expires_at: None,
+                    companion_bounds: None,
                 },
             )
             .expect("grant the message's space");
@@ -612,6 +613,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
                 created_at: 1,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("grant the claim's relationship");

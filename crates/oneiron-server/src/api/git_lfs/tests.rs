@@ -730,6 +730,9 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
                     .map(|chunk| chunk.hash)
                     .collect(),
             ),
+            request: 1,
+            cursor: None,
+            read: None,
         })
         .unwrap();
     let token = format!(
