@@ -308,7 +308,7 @@ pub fn snapshot_page(
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let mut rows = Vec::new();
     let mut bytes = 0u64;
-    let mut receipt = None;
+    let mut receipt: Option<crate::claim::ScopedReadReceipt> = None;
     let mut next = None;
     'kinds: while kind_at < handle.kinds.len() {
         let want = limit.saturating_sub(rows.len()).max(1);
