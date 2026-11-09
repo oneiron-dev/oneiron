@@ -5,5 +5,6 @@
 //! --all-features --test <stem>`). Never a cargo feature, so no
 //! `--all-features` release build reaches them; never API.
 
+pub mod coach;
 pub mod consolidation;
 pub mod steward;

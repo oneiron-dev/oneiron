@@ -204,7 +204,7 @@ impl Vault {
     /// Commit an interview answered by an authenticated human. A loop proposal
     /// has no `AuthenticatedOwner` and cannot call this door on its own.
     /// Replaces the project pointer and supersedes the prior goal atomically.
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn write_project_goal_from_intake(
         &self,
         owner: &AuthenticatedOwner,
