@@ -848,6 +848,17 @@ function coordination04Step(providers: ScriptedProviders, id: string, purpose: s
   });
 }
 
+/** Diagnostic for the parked live run: a branch that is not Leased fails with its last_error first, since the
+ * fleet log keeps only the first 400 characters of a failure reason. */
+function expectParkedBranchLeased(
+  label: string,
+  branch: { state: string; last_error?: string | null; attempt_count: number; asks: readonly unknown[] } | undefined,
+): void {
+  if (branch?.state === "Leased") return;
+  throw new Error(`${label}: last_error=${(branch?.last_error ?? "none").slice(0, 280)} | state=${branch?.state ?? "missing"}`
+    + ` attempts=${branch?.attempt_count ?? 0} asks=${branch?.asks.length ?? 0}`);
+}
+
 /* COORDINATION-04 (partial, Engine E2E-PARTIAL option A).
  * Promise: a leader's live run cannot widen its own slice. A spawn asking for more than the run
  *   holds is only a proposal (no child runs), the leader cannot approve it, the board's decline is
@@ -936,7 +947,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
       view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-04 leader run commits its asking step" });
     // The whole branch first, so a failure prints its last_error.
     const parkedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-    expect(parkedBranch).toMatchObject({ state: "Leased" });
+    expectParkedBranchLeased("COORDINATION-04 after its asking step", parkedBranch);
     expect(parkedBranch?.state).toBe("Leased");
     expect((await coordination04Status(owner, task)).phase.phase).not.toBe("terminal");
 
@@ -1008,7 +1019,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(secondAfter?.landed_attempt ?? null).toBeNull();
     // The parked leader run kept its lease across the restart (the whole branch first: its last_error).
     const restartedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-    expect(restartedBranch).toMatchObject({ state: "Leased" });
+    expectParkedBranchLeased("COORDINATION-04 after the restart", restartedBranch);
     expect(restartedBranch?.state).toBe("Leased");
 
     // ---- The board approves: exactly the asked slice lands, with one child. ----
@@ -1625,7 +1636,7 @@ async function coordination08ParkedRun(
   // Parked, not settled: the try keeps its lease (store.rs:1173-1174) and the TASK stays open.
   // The whole branch first, so a failure prints its last_error.
   const parkedBranch = (await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-  expect(parkedBranch).toMatchObject({ state: "Leased" });
+  expectParkedBranchLeased(`COORDINATION-08 ${label}`, parkedBranch);
   expect(parkedBranch?.state).toBe("Leased");
   expect((await coordination08Status(engine.client, task)).phase.phase).not.toBe("terminal");
   return { task, run };
@@ -1782,7 +1793,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     // A voice objection proceeds: her TASK stays open, and her run stays parked on its ask.
     expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
     const heldBranch = (await owner.call("vault.runs.branches.get", { task_ref: held.task })).branches[0];
-    expect(heldBranch).toMatchObject({ state: "Leased" });
+    expectParkedBranchLeased("COORDINATION-08 after her own refusal", heldBranch);
     expect(heldBranch?.state).toBe("Leased");
 
     // ---- Failure step: restart. Dials and refusal records are durable. ----
