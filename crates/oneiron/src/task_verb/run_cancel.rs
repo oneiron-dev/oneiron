@@ -32,12 +32,10 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
     facade_provenance, verify_actor_binding,
 };
-use crate::task_verb::sdk::AgentVerb;
 
 use super::cancel_settlement::BRANCH_REF_KEY;
 use super::consts::TASK_CANCEL_PROPOSAL_PREDICATE;
 use super::presence_scan::attempt_hex;
-use super::rate_limit::task_verb_contract;
 use super::route_receipts::DEFAULT_TASK_CANCEL_MODE;
 
 /// What a caller with no standing over a branch should do instead.
@@ -101,7 +99,7 @@ impl Memory<'_> {
         };
         // The soft cancel's own proposal for a target its caller does not
         // own: the claim names the branch, and nothing else is written.
-        let verb = task_verb_contract(AgentVerb::Cancel);
+        let verb = crate::verb_names::CANCEL;
         let (proposal_ref, _gate_decision_ref) = self.persist_task_proposal(
             TASK_CANCEL_PROPOSAL_PREDICATE,
             Value::Map(vec![
