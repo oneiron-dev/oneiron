@@ -367,9 +367,28 @@ pub(crate) type Census = IndexMap<Vec<&'static str>, Vec<Value>>;
 /// last value.
 type PyDict = Vec<(Value, Value)>;
 
+/// Python's `==` between two values decoded from the verb files, as a dict key lookup, a list comparison or a dict
+/// comparison makes it: identity first, then equality. Python's `json.loads` returns its one `NaN` object for every
+/// `NaN` token, so any two NaNs from the rows are the same object and compare equal there, while `Value::py_eq` (the
+/// scalar `==`) keeps `NaN != NaN`. Every other value compares by `py_eq`, element by element.
+fn json_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan() => true,
+        (Value::List(a), Value::List(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| json_eq(x, y))
+        }
+        (Value::Dict(a), Value::Dict(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, x)| b.get(key).is_some_and(|y| json_eq(x, y)))
+        }
+        _ => a.py_eq(b),
+    }
+}
+
 fn dict_insert(dict: &mut PyDict, key: Value, value: Value) -> Result<(), GenerateError> {
     key.check_hashable("a dict key")?;
-    match dict.iter_mut().find(|(seen, _)| seen.py_eq(&key)) {
+    match dict.iter_mut().find(|(seen, _)| json_eq(seen, &key)) {
         Some(entry) => entry.1 = value,
         None => dict.push((key, value)),
     }
@@ -496,7 +515,7 @@ pub(crate) fn uniffi_export(
                 || !params
                     .iter()
                     .zip(&names)
-                    .all(|((key, _), name)| key.py_eq(name))
+                    .all(|((key, _), name)| json_eq(key, name))
             {
                 return Err(GenerateError::value(format!(
                     "{}: its uniffi arguments are its binding arguments, in order",
@@ -730,7 +749,7 @@ fn holds_row(generator: &Generator, rows: &[RowId], id: RowId) -> bool {
         other.len() == row.len()
             && row
                 .iter()
-                .all(|(key, value)| other.get(key).is_some_and(|seen| seen.py_eq(value)))
+                .all(|(key, value)| other.get(key).is_some_and(|seen| json_eq(seen, value)))
     })
 }
 
@@ -907,6 +926,36 @@ mod tests {
                 dict_of(&parse(input)).map_or_else(|error| error.to_string(), |dict| shown(&dict));
             assert_eq!(got, expected, "{input}");
         }
+    }
+
+    // On nelly (Python 3.14.7): sig = json.loads('{"args": [[NaN, "bool"], [NaN, "bool"]], ...}'); dict(sig['args'])
+    // has one key; json.loads('[NaN]') == json.loads('[NaN]') is True (one decoder object); the declaration of that
+    // one key is `TypeError: unsupported operand type(s) for +: 'float' and 'str'`; the pairs [[1, "a"], [NaN, "b"],
+    // [1.0, "c"], [NaN, "d"], [true, "e"]] give {1: 'e', nan: 'd'}.
+    #[test]
+    fn decoded_nans_are_one_object() {
+        let parse = |text: &str| crate::py::json::loads(text).expect("json");
+        let one = dict_of(&parse("[[NaN, \"bool\"], [NaN, \"bool\"]]")).expect("a dict");
+        assert_eq!(one.len(), 1);
+        assert_eq!(
+            declaration(&one).map_err(|error| error.to_string()),
+            Err("TypeError: unsupported operand type(s) for +: 'float' and 'str'".to_owned())
+        );
+        let mixed = dict_of(&parse(
+            "[[1, \"a\"], [NaN, \"b\"], [1.0, \"c\"], [NaN, \"d\"], [true, \"e\"]]",
+        ))
+        .expect("a dict");
+        let shown: Vec<String> = mixed
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k.repr(), v.repr()))
+            .collect();
+        assert_eq!(shown, ["1: 'e'", "nan: 'd'"]);
+        assert!(json_eq(&parse("[NaN]"), &parse("[NaN]")));
+        assert!(json_eq(
+            &parse("{\"a\": NaN, \"b\": [NaN, 1]}"),
+            &parse("{\"b\": [NaN, 1], \"a\": NaN}")
+        ));
+        assert!(!json_eq(&parse("[NaN]"), &parse("[1.0]")));
     }
 
     // print(repr(a), repr(b), err(lambda a, b: a + b, a, b)) and the join cases of probe_uniffi.py.
