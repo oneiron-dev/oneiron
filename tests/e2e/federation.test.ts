@@ -847,7 +847,12 @@ async function fed04NamedWorld(engine: EngineFixture, name: string): Promise<str
     text_fields: [{ field: "name", value: name }],
   });
   expect(world.id_hex).toMatch(FED04_HEX32);
-  expect((await engine.client.call("vault.get", { entity_ref: world.entity_ref })).value?.kind).toBe("WORLD");
+  expect(world.entity_ref.length).toBeGreaterThan(0);
+  const read = await engine.client.call("vault.get", { entity_ref: world.entity_ref });
+  if (!read.value) throw new Error("Created WORLD is not publicly readable");
+  expect(read.value.kind).toBe("WORLD");
+  expect(read.value.id_hex).toBe(world.id_hex);
+  expect(read.value.body).toMatchObject({ name, kind: "fictional" });
   return world.id_hex;
 }
 /** Both owners carry each signed half; each host sends nothing (FIX 323/3016). */
@@ -1037,7 +1042,13 @@ suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed sco
     expect(shared.claim_short_id.length).toBeGreaterThan(0);
     const sharedRead = await engine.client.call("vault.claims.list", { predicate: FED04_PREDICATE, limit: 10 });
     expect(sharedRead.value).toHaveLength(1);
-    expect(sharedRead.value[0]?.value).toBe(sharedSentence);
+    const sharedRow = sharedRead.value[0];
+    if (!sharedRow) throw new Error("Shared setup claim is not publicly readable");
+    expect(sharedRow.value).toBe(sharedSentence);
+    expect(sharedRow.subject_ref).toBe(engine.pairedActor.principalRef);
+    expect(sharedRow.world_ref).toBe(pact.world);
+    expect(sharedRow.source).toBe("user_stated");
+    expect(sharedRow.lifecycle).toBe("active");
     const windowKey = fed04WindowKey(FED04_LEARNED_AT, pact.world);
     const request: FacadeInput<"vault.guests.share"> = {
       grant_ref: pact.grant.grant,
@@ -1082,7 +1093,12 @@ suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed sco
     expect(guestShare.reply.status).toBe(403);
     expect(guestShare.error?.code).toBe("FORBIDDEN");
     const unsharedWorld = await fed04NamedWorld(engine, "FEDERATION-04 unshared observatory");
-    const outsideGrant = await fed04Refusal(engine.client.call("vault.guests.share", { ...request, world_ref: unsharedWorld }), engine);
+    const outsideWindowKey = fed04WindowKey(FED04_LEARNED_AT, unsharedWorld);
+    const outsideGrant = await fed04Refusal(engine.client.call("vault.guests.share", {
+      ...request,
+      world_ref: unsharedWorld,
+      window_key: outsideWindowKey,
+    }), engine);
     expect(outsideGrant.reply.status).toBe(403);
     expect(outsideGrant.error?.code).toBe("FORBIDDEN");
 
@@ -1139,8 +1155,14 @@ suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed sco
     expect(proposeStopped.reply.status).toBe(401);
     expect(proposeStopped.error?.code).toBe("UNAUTHORIZED");
     // The held socket serves no more RPC: it closes instead of answering.
-    await expect(guestSocket.call("vault.guests.export_envelope", request)).rejects.toThrow(/WS closed /);
-    guestSocket.close();
+    const revokedSocket = guestSocket;
+    await expect(revokedSocket.call("vault.guests.export_envelope", request)).rejects.toThrow(/WS closed /);
+    await awaitPublic(
+      async () => revokedSocket.socket.readyState,
+      (state) => state === WebSocket.CLOSED,
+      { label: "revoked guest socket closed by server" },
+    );
+    revokedSocket.close();
     guestSocket = undefined;
 
     // Restart keeps the revocation: no revived fetch, no revived grant.
@@ -1275,7 +1297,12 @@ async function fed07NamedWorld(engine: EngineFixture, name: string, occurred: nu
     text_fields: [{ field: "name", value: name }],
   });
   expect(world.id_hex).toMatch(/^[a-f0-9]{32}$/);
-  expect((await engine.client.call("vault.get", { entity_ref: world.entity_ref })).value?.kind).toBe("WORLD");
+  expect(world.entity_ref.length).toBeGreaterThan(0);
+  const read = await engine.client.call("vault.get", { entity_ref: world.entity_ref });
+  if (!read.value) throw new Error("Created WORLD is not publicly readable");
+  expect(read.value.kind).toBe("WORLD");
+  expect(read.value.id_hex).toBe(world.id_hex);
+  expect(read.value.body).toMatchObject({ name, kind: "fictional" });
   return world.id_hex;
 }
 async function fed07ConnectPact(sharer: EngineFixture, receiver: EngineFixture): Promise<Fed07Pact> {
@@ -1323,6 +1350,15 @@ async function fed07ConnectPact(sharer: EngineFixture, receiver: EngineFixture):
   });
   expect(sharerAccepted.pact).toBe(offer.pact);
   expect(sharerAccepted.status).toBe("Active");
+  const [sharerStatus, receiverStatus] = await Promise.all([
+    sharer.client.call("vault.federation.status", {}),
+    receiver.client.call("vault.federation.status", {}),
+  ]);
+  for (const status of [sharerStatus, receiverStatus]) {
+    const active = status.pacts.find((row) => row.pact === offer.pact);
+    expect(active?.status).toBe("Active");
+    expect(active?.epoch).toBe(1);
+  }
   return {
     pact: offer.pact,
     sharerVault: sharerId.vault,
@@ -1340,7 +1376,7 @@ async function fed07Evidence(engine: EngineFixture, claimRef: string): Promise<F
   return row;
 }
 
-/* Promise: a peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays once across restart with foreign provenance.
+/* Promise: a peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays idempotently across restart with foreign provenance.
  * Doors: vault.get, vault.receipts.get, vault.federation.status, vault.structural.put, vault.federation.connect.identity/grants.mint/offer/accept/export, vault.gate.policy.get/put, vault.federation.burst.policy/policy.set/disposition/review/review.release/replay/ingress, vault.claims.upsert/list, vault.consolidation.evidence, self.credential.attenuate, vault.guests.revoke, restart.
  * Unproved: bundle reject path not driven; vault.federation.burst.review.reject is available behind owner proof.
  * Unproved: unaffected second peer on same receiver not driven; needs real C grant/pact/content behind Connect grants, three-server cost unmeasured.
@@ -1350,7 +1386,7 @@ async function fed07Evidence(engine: EngineFixture, claimRef: string): Promise<F
  * Unproved: expired/stale_authority/erased transitions not driven; no universal clock door asserted, runtime scheduling unproved.
  * Unproved: same burst under distinct baselines/vault sizes not compared; needs independent receiving authority contexts behind Connect grants, not defeating idempotency.
  */
-suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays once across restart with foreign provenance.", async () => {
+suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays idempotently across restart with foreign provenance.", async () => {
   const catalog = await loadFixtures();
   const data = await catalog.readJson<Fed07Fixture>("federation-canon-scenarios");
   const scenario = data.cases.find((row) => row.id === "FEDERATION-07");
@@ -1382,7 +1418,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     });
     expect(put.receipt_ref.length).toBeGreaterThan(0);
     const permitted = await receiver.client.call("vault.gate.policy.get", {});
-    expect(permitted.manifests.find((row) => row.manifest_ref === manifest.manifest_ref)?.manifest.source_trust?.["imported"]).toEqual(permit);
+    const installedManifest = permitted.manifests.find((row) => row.manifest_ref === manifest.manifest_ref);
+    if (!installedManifest) throw new Error("Installed Gate policy is not publicly readable");
+    expect(installedManifest.manifest_ref).toBe(put.manifest.manifest_ref);
+    expect(installedManifest.body_hash).toBe(put.manifest.body_hash);
+    expect(installedManifest.manifest.source_trust?.["imported"]).toEqual(permit);
     const peer: Fed07Peer = {
       principal: pact.receiverGrant.guest_actor,
       grant: pact.receiverGrant.grant,
@@ -1395,6 +1435,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     await receiver.client.call("vault.federation.burst.policy.set", {
       peer,
       policy: { baseline: allowBaseline, unusual_rate: "allow", unusual_streak: "allow" },
+    });
+    expect(await receiver.client.call("vault.federation.burst.policy", peer)).toEqual({
+      baseline: allowBaseline, unusual_rate: "allow", unusual_streak: "allow",
     });
     const allowWindow = fed07WindowKey(FED07_ALLOW_TS, pact.sharerWorld);
     const allowUpsert = await engine.client.call("vault.claims.upsert", {
@@ -1450,6 +1493,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       peer,
       policy: { baseline: isolateBaseline, unusual_rate: "isolate-and-propose", unusual_streak: "defer" },
     });
+    expect(await receiver.client.call("vault.federation.burst.policy", peer)).toEqual({
+      baseline: isolateBaseline, unusual_rate: "isolate-and-propose", unusual_streak: "defer",
+    });
     const isolateWindow = fed07WindowKey(FED07_ISOLATE_TS, pact.sharerWorld);
     await engine.client.call("vault.claims.upsert", {
       predicate: FED07_PREDICATE,
@@ -1467,6 +1513,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       window_key: isolateWindow,
       world_ref: pact.sharerWorld,
     });
+    expect(isolateDelivery.body.pact).toBe(pact.pact);
+    expect(isolateDelivery.body.epoch).toBe(1);
+    expect(isolateDelivery.body.source_vault).toBe(pact.sharerVault);
+    expect(isolateDelivery.body.recipient_vault).toBe(pact.receiverVault);
+    expect(isolateDelivery.body.update.length).toBeGreaterThan(0);
     const isolateReceipt = await receiver.client.call("vault.federation.burst.ingress", isolateDelivery);
     expect(isolateReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
     expect(isolateReceipt.window_key).toBe(isolateWindow);
@@ -1536,6 +1587,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       peer,
       policy: { baseline: deferBaseline, unusual_rate: "defer", unusual_streak: "isolate-and-propose" },
     });
+    expect(await receiver.client.call("vault.federation.burst.policy", peer)).toEqual({
+      baseline: deferBaseline, unusual_rate: "defer", unusual_streak: "isolate-and-propose",
+    });
     const deferWindow = fed07WindowKey(FED07_DEFER_TS, pact.sharerWorld);
     await engine.client.call("vault.claims.upsert", {
       predicate: FED07_PREDICATE,
@@ -1553,6 +1607,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       window_key: deferWindow,
       world_ref: pact.sharerWorld,
     });
+    expect(deferDelivery.body.pact).toBe(pact.pact);
+    expect(deferDelivery.body.epoch).toBe(1);
+    expect(deferDelivery.body.source_vault).toBe(pact.sharerVault);
+    expect(deferDelivery.body.recipient_vault).toBe(pact.receiverVault);
+    expect(deferDelivery.body.update.length).toBeGreaterThan(0);
     const deferReceipt = await receiver.client.call("vault.federation.burst.ingress", deferDelivery);
     expect(deferReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
     expect(deferReceipt.window_key).toBe(deferWindow);
@@ -1599,6 +1658,18 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       { label: "deferred claim readable after replay" },
     );
     expect(deferredList.value).toHaveLength(3);
+    const releasedRowAfterRestart = deferredList.value.find((row) => row.value === anomalous);
+    if (!releasedRowAfterRestart) throw new Error("Released claim missing after restart replay");
+    expect(releasedRowAfterRestart.claim_ref).toBe(releasedRow.claim_ref);
+    expect(releasedRowAfterRestart.source).toBe("imported");
+    expect(releasedRowAfterRestart.world_ref).toBe(foreignWorld);
+    const releasedEvidenceAfterRestart = await fed07Evidence(receiver, releasedRowAfterRestart.claim_ref);
+    expect(releasedEvidenceAfterRestart.source).toBe("imported");
+    expect(releasedEvidenceAfterRestart.foreign_world_ref).toBe(foreignWorld);
+    expect(releasedEvidenceAfterRestart.first_party_corroboration).toBe(false);
+    expect(releasedEvidenceAfterRestart.writer_ref).toBe(releasedEvidence.writer_ref);
+    expect(releasedEvidenceAfterRestart.delivery_history).toHaveLength(1);
+    expect(releasedEvidenceAfterRestart.delivery_history).toEqual(releasedEvidence.delivery_history);
     const deferredRow = deferredList.value.find((row) => row.value === deferredValue);
     if (!deferredRow) throw new Error("Deferred claim missing after replay");
     expect(deferredRow.source).toBe("imported");
