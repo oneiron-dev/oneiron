@@ -121,6 +121,27 @@ pub(crate) async fn vault_claims_supersede(
     (answer, Vec::new())
 }
 
+/// `vault.claims.put` (`host_door_lists`): the reply is the claim's id; the
+/// policy and any claim it touches are read by the write gates, not served,
+/// so the list is complete and empty.
+pub(crate) async fn vault_claims_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::code_run::MemoryClaimInput>,
+) -> Listed<oneiron::code_run::MemoryWriteOutput> {
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "vault.claims.put",
+        move |dispatcher| dispatcher.put_claim_from_host(input.spec),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
 /// Batched child admission through the same attachment guard as single spawn.
 pub(crate) async fn vault_fanout_spawn(
     server: &Arc<SyncServer>,
