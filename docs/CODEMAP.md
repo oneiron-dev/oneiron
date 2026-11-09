@@ -64,6 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 643 | 4 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 41 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 58 | 1 | 1 |
+| [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 38 | 0 | 0 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
 
@@ -1181,6 +1182,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `lib` | dir | 59 | L | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+
+## oneiron-wake-contract
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `attempt_queue` | dir | 3 | s | — |
+| `dreamer_consolidation` | dir | 3 | s | — |
+| `dreamer_runner` | dir | 6 | s | — |
+| `dreamer_wake` | dir | 13 | m | — |
+| `llm` | dir | 3 | s | — |
+| `memory` | dir | 4 | s | — |
+| `model_step_effect` | file | 1 | s | Moved from `crates/oneiron/src/model_step_effect.rs` (core split slice 3: wake contract below core) |
+| `settings` | dir | 2 | s | — |
+| `store` | dir | 2 | s | — |
 
 ## oneiron-web-fetch
 

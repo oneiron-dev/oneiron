@@ -2790,7 +2790,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 5,
-      "fn": 20,
+      "fn": 17,
       "re-export": 2,
       "struct": 1
      }
@@ -30216,17 +30216,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "KeptAnswer",
-      "KeptAsk",
-      "KeptRole",
-      "KeptRoute"
-     ],
+     "notable": [],
      "path": "src/dreamer_consolidation/kept_ask.rs",
      "purpose": "The ask a kept decision went up as, kept actor-free (FIX 4591)",
      "surface": {
-      "fn": 2,
-      "struct": 4
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -30504,7 +30499,6 @@
      "kind": "src",
      "notable": [
       "ConsolidationSink",
-      "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
       "PeerTrustDigestSink",
@@ -30514,9 +30508,9 @@
      "purpose": "Consolidation lineage: provenance hops, kept decisions and evidence envelopes",
      "surface": {
       "crate-vis": 9,
-      "fn": 8,
-      "re-export": 4,
-      "struct": 4,
+      "fn": 5,
+      "re-export": 5,
+      "struct": 3,
       "trait": 2
      }
     },
@@ -31968,7 +31962,7 @@
      "path": "src/dreamer_runner/admission/budget_line.rs",
      "purpose": "The original line established by a successful native admission",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -34596,7 +34590,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DreamerAttemptProgressProducer",
       "DreamerAttemptProgressSnapshot",
       "DreamerAttemptProgressSource",
       "DreamerAttemptProgressUpdate",
@@ -34605,11 +34598,12 @@
      "path": "src/dreamer_runner/progress.rs",
      "purpose": "The live Dreamer progress lane on the ephemeral sync keyspace",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 12,
-      "struct": 4
+      "fn": 8,
+      "re-export": 1,
+      "struct": 3
      }
     },
     {
@@ -34746,7 +34740,6 @@
       "DreamerHomeNodeDesignation",
       "DreamerMilestoneClaim",
       "DreamerMilestoneKind",
-      "DreamerParkCause",
       "DreamerParkedAttemptRecord",
       "DreamerReservedBudget",
       "DreamerRunTreeRecord",
@@ -34765,10 +34758,10 @@
      "path": "src/dreamer_runner/types.rs",
      "purpose": "Dreamer runner request/outcome vocabulary and its pure impls",
      "surface": {
-      "crate-vis": 4,
-      "enum": 12,
-      "fn": 17,
-      "re-export": 3,
+      "crate-vis": 3,
+      "enum": 11,
+      "fn": 16,
+      "re-export": 4,
       "struct": 24
      }
     },
@@ -34792,7 +34785,7 @@
      "purpose": "How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own…",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 3
      }
     },
     {
@@ -34915,17 +34908,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WakeCancellation",
-      "WakePassDeadline"
-     ],
+     "notable": [],
      "path": "src/dreamer_wake/deadline.rs",
      "purpose": "Monotonic wake-pass clock and cooperative cancellation flag",
      "surface": {
-      "const": 3,
-      "crate-vis": 5,
-      "fn": 18,
-      "struct": 2
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -35236,13 +35226,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/observation/live.rs",
      "purpose": "The live half of the wake observation: the passes and admitted calls running on one open vault",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 13
      }
     },
     {
@@ -35370,7 +35360,7 @@
      "path": "src/dreamer_wake/read_phase.rs",
      "purpose": "A Dreamer pass's read phase and its short write (FIX 11568)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -35420,15 +35410,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WakeRecipePolicy"
-     ],
+     "notable": [],
      "path": "src/dreamer_wake/recipes.rs",
      "purpose": "Row-backed spending for the three wake recipes",
      "surface": {
       "crate-vis": 3,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -35468,22 +35456,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SieveAuditDiscovery",
-      "SieveAuditExpectation",
-      "SieveAuditFinding",
-      "SieveAuditWindow",
-      "SieveUnlocatedCause",
-      "SieveUnlocatedDiscovery",
-      "SieveWindowAudit"
-     ],
+     "notable": [],
      "path": "src/dreamer_wake/sieve/audit_windows.rs",
      "purpose": "The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so…",
      "surface": {
       "crate-vis": 9,
-      "enum": 2,
-      "fn": 2,
-      "struct": 5
+      "re-export": 1
      }
     },
     {
@@ -35493,8 +35471,7 @@
      "path": "src/dreamer_wake/sieve/audit_windows/finding_identity.rs",
      "purpose": "A window audit's discovery identity (FIX 7903)",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 1
      }
     },
     {
@@ -35538,22 +35515,16 @@
      "notable": [
       "SievePass",
       "SieveQueue",
-      "SieveRung",
-      "SieveSkipped",
-      "SieveSpan",
-      "SpanBand",
-      "SpanKind",
-      "SpanOrigin"
+      "SieveSkipped"
      ],
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
       "crate-vis": 8,
-      "enum": 4,
       "fn": 2,
       "mod": 1,
-      "re-export": 4,
-      "struct": 4
+      "re-export": 5,
+      "struct": 3
      }
     },
     {
@@ -35583,18 +35554,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SieveAudit",
-      "SieveAuditRecord",
-      "SieveConsumeReceipt"
-     ],
+     "notable": [],
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 27,
-      "enum": 1,
-      "fn": 7,
-      "struct": 2
+      "crate-vis": 26,
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -35604,7 +35570,7 @@
      "path": "src/dreamer_wake/sieve/recipes/audit_erase.rs",
      "purpose": "Candidate refs in retained audit decisions, scrubbed with their saved copies",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -35630,14 +35596,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "RuleClass"
-     ],
+     "notable": [],
      "path": "src/dreamer_wake/sieve/rules.rs",
      "purpose": "The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class…",
      "surface": {
-      "crate-vis": 13,
-      "enum": 1
+      "crate-vis": 12,
+      "re-export": 1
      }
     },
     {
@@ -35748,29 +35712,19 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "DreamerAttemptExecution",
       "DreamerAttemptExecutor",
-      "LandingRequestNotice",
-      "RunWakePass",
-      "WakeAttemptContext",
-      "WakeAttemptMeter",
-      "WakeMilestoneAuthor",
-      "WakePassReport",
-      "WakePassStop",
-      "WakeProgressLane",
-      "WakeTrigger"
+      "WakeAttemptContext"
      ],
      "path": "src/dreamer_wake/types.rs",
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
-      "crate-vis": 6,
-      "enum": 3,
-      "fn": 6,
-      "re-export": 1,
-      "struct": 7,
+      "crate-vis": 4,
+      "fn": 4,
+      "re-export": 3,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -49559,20 +49513,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DecisionReceipt",
-      "ImagePin",
-      "ReceiptAnswerer",
-      "ReceiptAsk",
-      "TypedDecision"
-     ],
+     "notable": [],
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
       "crate-vis": 3,
       "fn": 2,
-      "re-export": 1,
-      "struct": 5
+      "re-export": 2
      }
     },
     {
@@ -51724,7 +51671,6 @@
       "HydratedAsset",
       "ImageViewRequest",
       "LandedImage",
-      "PixelRegion",
       "PulledImage",
       "ResolvedAsset",
       "ServedAssetForm"
@@ -51734,7 +51680,8 @@
      "surface": {
       "enum": 2,
       "fn": 1,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -56182,7 +56129,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ClaimAuthoringFallback",
       "WakeCallState",
       "WakeLiveCall",
       "WakeLiveState",
@@ -56197,16 +56143,16 @@
       "WakeObservedEnd",
       "WakeObservedGeneration",
       "WakeObservedHeader",
-      "WakeObservedResume",
-      "WakeRef"
+      "WakeObservedResume"
      ],
      "path": "src/memory/wake_observation.rs",
      "purpose": "Durable and live wake-observation read vocabulary",
      "surface": {
       "const": 2,
-      "enum": 4,
-      "fn": 3,
-      "struct": 13
+      "enum": 3,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 12
      }
     },
     {
@@ -57335,14 +57281,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "StepEffectBinding"
-     ],
+     "notable": [],
      "path": "src/model_step_effect.rs",
      "purpose": "Durable model-step identity frozen into outbound effects",
      "surface": {
-      "crate-vis": 3,
-      "struct": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -73590,7 +73534,6 @@
      "kind": "src",
      "notable": [
       "CallerLocality",
-      "ReadDestination",
       "RecipientChoice",
       "RecipientLimit",
       "RecipientWhy",
@@ -73599,10 +73542,11 @@
      "path": "src/settings/destination.rs",
      "purpose": "Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 4,
-      "fn": 15,
-      "struct": 2
+      "fn": 9,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -78141,18 +78085,17 @@
       "AttemptCancellation",
       "AttemptLanding",
       "AttemptLandingReserve",
-      "AttemptResumePoint",
       "CancelMode",
       "CancelStanding",
-      "ForceCancelGrounds",
-      "LandingTrigger"
+      "ForceCancelGrounds"
      ],
      "path": "src/store/attempt_cancel.rs",
      "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
      "surface": {
       "const": 1,
-      "enum": 5,
-      "struct": 7
+      "enum": 4,
+      "re-export": 1,
+      "struct": 6
      }
     },
     {
@@ -158772,6 +158715,566 @@
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 58,
    "test_files": 1
+  },
+  "oneiron-wake-contract": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/cancel/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/cancel/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/attempt_queue/cancel/types.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeptAnswer",
+      "KeptAsk",
+      "KeptRole",
+      "KeptRoute"
+     ],
+     "path": "src/dreamer_consolidation/kept_ask.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_consolidation/kept_ask.rs` (core split slice 3: wake contract below…",
+     "surface": {
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeptDecision"
+     ],
+     "path": "src/dreamer_consolidation/provenance.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_consolidation/provenance.rs` (core split slice 3: wake contract below…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmittedBudgetLine"
+     ],
+     "path": "src/dreamer_runner/admission/budget_line.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_runner/admission/budget_line.rs` (core split slice 3: wake contract…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/admission/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptProgressProducer"
+     ],
+     "path": "src/dreamer_runner/progress.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_runner/progress.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "const": 2,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerParkCause"
+     ],
+     "path": "src/dreamer_runner/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_runner/types.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/types/retry_policy.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_runner/types/retry_policy.rs` (core split slice 3: wake contract…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakeCancellation",
+      "WakePassDeadline"
+     ],
+     "path": "src/dreamer_wake/deadline.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/deadline.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "const": 4,
+      "fn": 21,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActiveCall",
+      "ActiveWake",
+      "WakeBinding"
+     ],
+     "path": "src/dreamer_wake/observation/live.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/observation/live.rs` (core split slice 3: wake contract below…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/observation/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakeStop"
+     ],
+     "path": "src/dreamer_wake/read_phase.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/read_phase.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakeRecipePolicy"
+     ],
+     "path": "src/dreamer_wake/recipes.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/recipes.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SieveAuditDiscovery",
+      "SieveAuditExpectation",
+      "SieveAuditFinding",
+      "SieveAuditWindow",
+      "SieveUnlocatedCause",
+      "SieveUnlocatedDiscovery",
+      "SieveWindowAudit"
+     ],
+     "path": "src/dreamer_wake/sieve/audit_windows.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/audit_windows.rs` (core split slice 3: wake contract below…",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "mod": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/audit_windows/finding_identity.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/audit_windows/finding_identity.rs` (core split slice 3…",
+     "surface": {
+      "const": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SieveRung",
+      "SieveSpan",
+      "SpanBand",
+      "SpanKind",
+      "SpanOrigin"
+     ],
+     "path": "src/dreamer_wake/sieve/mod.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/mod.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 4,
+      "mod": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RungEvidence",
+      "RungInput",
+      "SieveAudit",
+      "SieveAuditRecord",
+      "SieveConsumeReceipt"
+     ],
+     "path": "src/dreamer_wake/sieve/recipes.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/recipes.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "mod": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/recipes/audit_erase.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/recipes/audit_erase.rs` (core split slice 3: wake contract…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RuleClass"
+     ],
+     "path": "src/dreamer_wake/sieve/rules.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/sieve/rules.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptExecution",
+      "LandingRequest",
+      "LandingRequestNotice",
+      "ProgressKind",
+      "RunWakePass",
+      "WakeAttemptMeter",
+      "WakeMilestoneAuthor",
+      "WakePassReport",
+      "WakePassStop",
+      "WakeProgressLane",
+      "WakeTrigger"
+     ],
+     "path": "src/dreamer_wake/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/dreamer_wake/types.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 4,
+      "fn": 4,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports…",
+     "surface": {
+      "mod": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionReceipt",
+      "ImagePin",
+      "ReceiptAnswerer",
+      "ReceiptAsk",
+      "TypedDecision"
+     ],
+     "path": "src/llm/decision/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/llm/decision/types.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PixelRegion"
+     ],
+     "path": "src/memory/asset_resolve/types.rs",
+     "purpose": "Moved from `crates/oneiron/src/memory/asset_resolve/types.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimAuthoringFallback",
+      "WakeRef"
+     ],
+     "path": "src/memory/wake_observation.rs",
+     "purpose": "Moved from `crates/oneiron/src/memory/wake_observation.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StepEffectBinding"
+     ],
+     "path": "src/model_step_effect.rs",
+     "purpose": "Moved from `crates/oneiron/src/model_step_effect.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReadDestination"
+     ],
+     "path": "src/settings/destination.rs",
+     "purpose": "Moved from `crates/oneiron/src/settings/destination.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/settings/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptResumePoint",
+      "LandingTrigger"
+     ],
+     "path": "src/store/attempt_cancel.rs",
+     "purpose": "Moved from `crates/oneiron/src/store/attempt_cancel.rs` (core split slice 3: wake contract below core)",
+     "surface": {
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "attempt_queue": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "dreamer_consolidation": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "dreamer_runner": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "dreamer_wake": {
+     "files": 13,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "llm": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "memory": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "model_step_effect": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Moved from `crates/oneiron/src/model_step_effect.rs` (core split slice 3: wake contract below core)"
+    },
+    "settings": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    },
+    "store": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports…",
+   "source_files": 38,
+   "test_files": 0
   },
   "oneiron-web-fetch": {
    "files": [
