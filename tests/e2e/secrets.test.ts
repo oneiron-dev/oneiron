@@ -357,6 +357,7 @@ interface secrets03McpResult {
   structuredContent: { output: FacadeResult<"self.use">; meta: { end: string } };
 }
 type secrets03Scan = (value: unknown) => void;
+type secrets03Ceiling = FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number];
 
 function secrets03Object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -375,8 +376,39 @@ async function secrets03Call<V extends FacadeVerb>(
   const reply = await client.raw<FacadeResult<V>>("POST", `/v1/core/facade/${verb}`, input,
     { "x-oneiron-invocation": crypto.randomUUID().replaceAll("-", "") });
   secrets03ObserveWire(reply, secrets03ScanBytes);
-  expect(reply.status === 200).toBe(true);
+  const secrets03Code = secrets03ErrorCode(reply.body);
+  expect({ check: `SECRETS-03 facade ${verb} returns HTTP 200`, status: reply.status, code: secrets03Code,
+    ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 facade ${verb} returns HTTP 200`,
+    status: 200, code: secrets03Code, ok: true });
   return reply.body;
+}
+function secrets03ErrorCode(body: unknown): string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "unparsed-body";
+  const error = (body as Record<string, unknown>).error;
+  if (!error || typeof error !== "object" || Array.isArray(error)) return "no-envelope";
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" ? redactor.text(code) : "no-code";
+}
+function secrets03SafeText(value: unknown): string {
+  return typeof value === "string" ? redactor.text(value) : String(value);
+}
+async function secrets03McpCall<T>(method: string, call: () => Promise<T>, secrets03ScanBytes: secrets03Scan): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof McpRpcError) {
+      secrets03ScanBytes(error.response);
+      if ("error" in error.response) {
+        throw new Error(`SECRETS-03 MCP ${method} refused ${secrets03SafeText(error.response.error.code)}: ${secrets03SafeText(error.response.error.message)}`);
+      }
+      throw new Error(`SECRETS-03 MCP ${method} malformed reply`);
+    }
+    if (error instanceof PublicHttpError) {
+      secrets03ObserveWire(error.reply, secrets03ScanBytes);
+      throw new Error(`SECRETS-03 MCP ${method} HTTP ${error.reply.status} ${secrets03ErrorCode(error.reply.body)}`);
+    }
+    throw error;
+  }
 }
 function secrets03Exchange(id: string, admission: boolean, marker: string, result: Json): ProviderStep[] {
   const initializeId = admission ? "initialize" : 1;
@@ -413,8 +445,9 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
   const fixture = (await (await loadFixtures()).readJson<secrets03Scenario>("secrets-blocked-scenarios"))["SECRETS-03"];
   const rung = fixture.rungs.find(row => row.tier_ceiling === 0);
   if (!rung) throw new Error("SECRETS-03 fixture lacks its door-only rung");
-  expect(rung.valuePlacement === "door only" && fixture.expected.providerReceivesCredential
-    && !fixture.expected.modelReceivesCredential && !fixture.expected.deniedRevealContainsValue).toBe(true);
+  expect({ check: "SECRETS-03 fixture keeps its door-only T0 rung", ok: rung.valuePlacement === "door only"
+    && fixture.expected.providerReceivesCredential && !fixture.expected.modelReceivesCredential
+    && !fixture.expected.deniedRevealContainsValue }).toEqual({ check: "SECRETS-03 fixture keeps its door-only T0 rung", ok: true });
   const value0 = `e2e_custody_${crypto.randomUUID().replaceAll("-", "")}`;
   const value1 = `e2e_custody_${crypto.randomUUID().replaceAll("-", "")}`;
   const sentinel = `custody_result_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -438,6 +471,7 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     ...secrets03Exchange("attest", true, "", listing),
   ] });
   let engine: EngineFixture | undefined;
+  let secrets03BodyError: string | null = null; // Stash the masked body error for the finally scan report.
   try {
     const origin = providers.urls.connector;
     if (!origin) throw new Error("SECRETS-03 connector origin was not assigned");
@@ -452,32 +486,56 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const secrets03OwnerRequest = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
       const reply = await owner.raw<T>(method, path, body);
       secrets03ObserveWire(reply, secrets03ScanBytes);
-      expect(reply.status === 200).toBe(true);
+      const secrets03OwnerCode = secrets03ErrorCode(reply.body);
+      expect({ check: `SECRETS-03 owner ${method} ${path} returns HTTP 200`, status: reply.status,
+        code: secrets03OwnerCode, ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 owner ${method} ${path} returns HTTP 200`,
+        status: 200, code: secrets03OwnerCode, ok: true });
       return reply.body;
     };
     const secrets03Gate = async (ref: string): Promise<void> => {
-      expect(/^gate:[a-f0-9]+$/.test(ref)).toBe(true);
+      expect({ check: "SECRETS-03 gate ref is well formed", ok: /^gate:[a-f0-9]+$/.test(ref) }).toEqual({
+        check: "SECRETS-03 gate ref is well formed", ok: true });
       const page = await awaitPublic(() => secrets03Facade(owner, "vault.receipts", { limit: 1000 }),
         result => result.receipts.some(row => row.receipt_ref === ref), { label: "SECRETS-03 Gate receipt" });
-      expect(page.receipts.some(row => row.receipt_ref === ref)).toBe(true);
+      expect({ check: "SECRETS-03 gate receipt is readable back", ref: secrets03SafeText(ref),
+        ok: page.receipts.some(row => row.receipt_ref === ref) }).toEqual({
+        check: "SECRETS-03 gate receipt is readable back", ref: secrets03SafeText(ref), ok: true });
     };
     const secrets03Refuse = async <V extends FacadeVerb>(client: PublicHttpClient, verb: V, input: FacadeInput<V>, status: number, code: string, noRecord = false) => {
       const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input);
       secrets03ObserveWire(reply, secrets03ScanBytes);
       const error = secrets03Object(secrets03Object(reply.body).error);
-      expect(reply.status === status && error.code === code && typeof error.message === "string"
-        && typeof error.requestId === "string" && Array.isArray(error.suggestions)).toBe(true);
+      const secrets03ActualCode = typeof error.code === "string" ? redactor.text(error.code) : "no-code";
+      expect({ check: `SECRETS-03 ${verb} refusal envelope`, status: reply.status, code: secrets03ActualCode,
+        ok: reply.status === status && error.code === code && typeof error.message === "string"
+          && typeof error.requestId === "string" && Array.isArray(error.suggestions) }).toEqual({
+        check: `SECRETS-03 ${verb} refusal envelope`, status, code, ok: true });
       const ref = reply.headers.get("x-oneiron-receipt-ref");
       if (noRecord) {
-        expect(ref === "none; no-record" && error.receiptRef == null).toBe(true);
+        expect({ check: `SECRETS-03 ${verb} refusal is no-record`, header: secrets03SafeText(ref),
+          ok: ref === "none; no-record" && error.receiptRef == null }).toEqual({
+          check: `SECRETS-03 ${verb} refusal is no-record`, header: secrets03SafeText(ref), ok: true });
         return;
       }
       if (!ref || !ref.startsWith("call:")) throw new Error("SECRETS-03 refusal lacks its public call receipt");
-      expect(error.receiptRef === ref).toBe(true);
+      expect({ check: `SECRETS-03 ${verb} refusal receiptRef matches header`, receiptRef: secrets03SafeText(error.receiptRef),
+        header: secrets03SafeText(ref), ok: error.receiptRef === ref }).toEqual({
+        check: `SECRETS-03 ${verb} refusal receiptRef matches header`, receiptRef: secrets03SafeText(ref),
+        header: secrets03SafeText(ref), ok: true });
       const receipt = await secrets03Facade(client, "vault.receipts.get", { receipt_ref: ref });
       if (!receipt) throw new Error("SECRETS-03 refusal receipt was not readable by its caller");
-      expect(receipt.receipt_ref === ref && receipt.verb === verb && receipt.actor_class === "agent").toBe(true);
-      expect(typeof receipt.outcome === "object" && receipt.outcome.refused.code === code).toBe(true);
+      expect({ check: `SECRETS-03 ${verb} refusal receipt reads back`, receipt_ref: secrets03SafeText(receipt.receipt_ref),
+        receiptVerb: secrets03SafeText(receipt.verb), actorClass: secrets03SafeText(receipt.actor_class),
+        ok: receipt.receipt_ref === ref && receipt.verb === verb && receipt.actor_class === "agent" }).toEqual({
+        check: `SECRETS-03 ${verb} refusal receipt reads back`, receipt_ref: secrets03SafeText(ref),
+        receiptVerb: verb, actorClass: "agent", ok: true });
+      const secrets03RefusedActual: unknown = typeof receipt.outcome === "object" && receipt.outcome !== null
+        && "refused" in receipt.outcome ? receipt.outcome.refused : "no-refusal";
+      const secrets03RefusedCode: unknown = typeof secrets03RefusedActual === "object" && secrets03RefusedActual !== null
+        && "code" in secrets03RefusedActual ? secrets03RefusedActual.code : secrets03RefusedActual;
+      expect({ check: `SECRETS-03 ${verb} refusal receipt outcome is refused`, code: secrets03SafeText(secrets03RefusedCode),
+        ok: typeof receipt.outcome === "object" && receipt.outcome.refused.code === code }).toEqual({
+        check: `SECRETS-03 ${verb} refusal receipt outcome is refused`, code, ok: true });
       return ref;
     };
     const secrets03Pair = async (name: string) => {
@@ -485,7 +543,10 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
         kind: "PERSON", body: { name }, occurred_at: 1735689600,
       });
       const read = await secrets03Facade(owner, "vault.get", { entity_ref: created.id_hex });
-      expect(read.value?.id_hex === created.id_hex).toBe(true);
+      expect({ check: "SECRETS-03 paired person reads back", id: secrets03SafeText(read.value?.id_hex),
+        created: secrets03SafeText(created.id_hex), ok: read.value?.id_hex === created.id_hex }).toEqual({
+        check: "SECRETS-03 paired person reads back", id: secrets03SafeText(created.id_hex),
+        created: secrets03SafeText(created.id_hex), ok: true });
       return current.pairActor({ principalRef: created.id_hex, actorClass: "agent", scope: ["core:read", "core:write"] });
     };
     const agent = await secrets03Pair("SECRETS-03 custody agent");
@@ -503,7 +564,9 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     await secrets03OwnerRequest<unknown>("POST", "/v1/owner/connectors/attest", { connector: "secrets_probe" });
     const readiness = await secrets03OwnerRequest<{ ready: boolean; endpoint: string | null }>("GET",
       `/v1/owner/connectors/consent?connector=secrets_probe&actor=${agent.principalRef}`);
-    expect(readiness.ready && readiness.endpoint === endpoint).toBe(true);
+    expect({ check: "SECRETS-03 connector ready at configured endpoint", ready: readiness.ready,
+      endpoint: secrets03SafeText(readiness.endpoint), ok: readiness.ready && readiness.endpoint === endpoint }).toEqual({
+      check: "SECRETS-03 connector ready at configured endpoint", ready: true, endpoint, ok: true });
     const consent = await secrets03OwnerRequest<secrets03Consented>("POST", "/v1/owner/connectors/consent", {
       connector: "secrets_probe", actor: agent.principalRef, endpoint,
       rows: [{ tool: "check", ceiling: "public", headers: false }],
@@ -519,13 +582,16 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       value_base64: Buffer.from(value0).toString("base64"),
       bindings: [{ effector: "connector:secrets_probe", tier_ceiling: 0, scopes: ["read"] }],
     });
-    expect(registered.rotation_generation === 0).toBe(true);
+    expect({ check: "SECRETS-03 custody starts at generation 0", generation: registered.rotation_generation,
+      ok: registered.rotation_generation === 0 }).toEqual({ check: "SECRETS-03 custody starts at generation 0", generation: 0, ok: true });
     const secrets03Bind = () => secrets03OwnerRequest<secrets03Bound>("POST", "/v1/owner/secrets/bind", {
       name: "secrets03-custody", effector: "connector:secrets_probe", tier_ceiling: 0, scopes: ["read"],
     });
     const bound = await secrets03Bind();
     const handle = bound.handle;
-    expect(/^sc[0-9]+$/.test(handle) && bound.secret_id === registered.secret_id).toBe(true);
+    expect({ check: "SECRETS-03 bind handle correlates with register",
+      ok: /^sc[0-9]+$/.test(handle) && bound.secret_id === registered.secret_id }).toEqual({
+      check: "SECRETS-03 bind handle correlates with register", ok: true });
     await secrets03Gate(bound.receipt_ref);
     const secrets03Input = (marker: string): FacadeInput<"self.use"> => ({ handle, operation: "connector.call",
       arguments: { name: "secrets_probe", tool: "check", arguments: { marker } } });
@@ -534,22 +600,32 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
         handle, effector: "connector:secrets_probe",
       });
       await secrets03Gate(answer.receipt_ref);
-      expect(!answer.bindings.some(row => row.effector === "connector:secrets_probe")).toBe(true);
+      expect({ check: "SECRETS-03 unbind removes the connector effector",
+        ok: !answer.bindings.some(row => row.effector === "connector:secrets_probe") }).toEqual({
+        check: "SECRETS-03 unbind removes the connector effector", ok: true });
     };
     await secrets03Withdraw();
     const beforeNoBinding = providers.seenFixtureCalls.length;
     await secrets03Refuse(agent.client, "self.use", secrets03Input("no-custody-binding"), 403, "FORBIDDEN");
-    expect(providers.seenFixtureCalls.length === beforeNoBinding).toBe(true);
+    expect({ check: "SECRETS-03 refused use sends nothing", sent: providers.seenFixtureCalls.length, before: beforeNoBinding,
+      ok: providers.seenFixtureCalls.length === beforeNoBinding }).toEqual({ check: "SECRETS-03 refused use sends nothing",
+      sent: beforeNoBinding, before: beforeNoBinding, ok: true });
     await secrets03Gate((await secrets03Bind()).receipt_ref);
 
     const secrets03Held = async (client: PublicHttpClient, marker: string) => {
       const before = providers.seenFixtureCalls.length;
       const answer = await secrets03Facade(client, "self.use", secrets03Input(marker));
       const result = secrets03Object(answer.result);
-      expect(answer.status === "failed" && result.outcome === "held" && Array.isArray(result.reasons)
-        && result.reasons.includes("standing_grant_required")).toBe(true);
+      expect({ check: "SECRETS-03 unconsented use is held", status: secrets03SafeText(answer.status), outcome: secrets03SafeText(result.outcome),
+        ok: answer.status === "failed" && result.outcome === "held" && Array.isArray(result.reasons)
+          && result.reasons.includes("standing_grant_required") }).toEqual({ check: "SECRETS-03 unconsented use is held",
+        status: "failed", outcome: "held", ok: true });
       await secrets03Gate(answer.receipt.decision);
-      expect(providers.seenFixtureCalls.length === before && answer.receipt.presented_generation == null).toBe(true);
+      expect({ check: "SECRETS-03 held use sends nothing and presents nothing", sent: providers.seenFixtureCalls.length,
+        presented: answer.receipt.presented_generation,
+        ok: providers.seenFixtureCalls.length === before && answer.receipt.presented_generation == null }).toEqual({
+        check: "SECRETS-03 held use sends nothing and presents nothing", sent: before,
+        presented: answer.receipt.presented_generation, ok: true });
     };
     await secrets03Held(noConnectorGrant.client, "no-connector-grant"); // Never consent this held actor later.
     await secrets03Refuse(agent.client, "vault.secrets.rotate", {
@@ -563,11 +639,15 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const secrets03UseResult = async (answer: FacadeResult<"self.use">, generation: number) => {
       const result = secrets03Object(answer.result);
       const toolResult = secrets03Object(result.result);
-      expect(answer.status === "answered" && result.outcome === "delivered" && toolResult.foreign === true
-        && toolResult.is_error === false && (JSON.stringify(toolResult) ?? "").includes(sentinel)).toBe(true);
-      expect(answer.receipt.handle === handle && answer.receipt.generation === generation
-        && answer.receipt.presented_generation === generation && answer.receipt.effector === "connector:secrets_probe"
-        && answer.receipt.operation === "connector.call").toBe(true);
+      expect({ check: "SECRETS-03 use delivers foreign tool result with sentinel", status: secrets03SafeText(answer.status), outcome: secrets03SafeText(result.outcome),
+        ok: answer.status === "answered" && result.outcome === "delivered" && toolResult.foreign === true
+          && toolResult.is_error === false && (JSON.stringify(toolResult) ?? "").includes(sentinel) }).toEqual({
+        check: "SECRETS-03 use delivers foreign tool result with sentinel", status: "answered", outcome: "delivered", ok: true });
+      expect({ check: "SECRETS-03 use receipt names handle generation effector", generation: answer.receipt.generation,
+        presented: answer.receipt.presented_generation, ok: answer.receipt.handle === handle && answer.receipt.generation === generation
+          && answer.receipt.presented_generation === generation && answer.receipt.effector === "connector:secrets_probe"
+          && answer.receipt.operation === "connector.call" }).toEqual({
+        check: "SECRETS-03 use receipt names handle generation effector", generation, presented: generation, ok: true });
       await secrets03Gate(answer.receipt.decision);
     };
     for (const step of secrets03Exchange("generation-0", false, "generation-0", {
@@ -576,27 +656,61 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     })) providers.enqueue(step);
     const generation0 = await secrets03Facade(agent.client, "self.use", secrets03Input("generation-0"));
     await secrets03UseResult(generation0, 0);
-    expect((JSON.stringify(generation0.result) ?? "").includes(`[secret ${handle}]`)).toBe(true);
+    expect({ check: "SECRETS-03 delivered result carries the handle placeholder",
+      ok: (JSON.stringify(generation0.result) ?? "").includes(`[secret ${handle}]`) }).toEqual({
+      check: "SECRETS-03 delivered result carries the handle placeholder", ok: true });
     await secrets03Refuse(agent.client, "reveal", { handle, why: "Check T0 custody disclosure permission" }, 400, "BAD_REQUEST");
     const card = await secrets03Facade(agent.client, "reveal.describe", { handle });
-    expect(card.handle === handle && card.reveal === "refused" && typeof card.refusal === "string").toBe(true);
+    expect({ check: "SECRETS-03 T0 handle describes as reveal-refused", reveal: secrets03SafeText(card.reveal),
+      ok: card.handle === handle && card.reveal === "refused" && typeof card.refusal === "string" }).toEqual({
+      check: "SECRETS-03 T0 handle describes as reveal-refused", reveal: "refused", ok: true });
 
     const rotation = await secrets03Facade(owner, "vault.secrets.rotate", {
       name: "secrets03-custody", value_base64: Buffer.from(value1).toString("base64"),
     });
-    expect(rotation.from_generation === 0 && rotation.to_generation === fixture.expected.nextLeaseGeneration
-      && rotation.kind === "rotated").toBe(true);
+    expect({ check: "SECRETS-03 owner rotation advances one generation", from: rotation.from_generation, to: rotation.to_generation,
+      kind: secrets03SafeText(rotation.kind), ok: rotation.from_generation === 0 && rotation.to_generation === fixture.expected.nextLeaseGeneration
+        && rotation.kind === "rotated" }).toEqual({ check: "SECRETS-03 owner rotation advances one generation", from: 0,
+      to: fixture.expected.nextLeaseGeneration, kind: "rotated", ok: true });
     await current.restart();
     await secrets03Gate(generation0.receipt.decision);
     const persistedRefusal = await secrets03Facade(agent.client, "vault.receipts.get", { receipt_ref: wrongActorReceipt });
     if (!persistedRefusal) throw new Error("SECRETS-03 wrong-actor refusal did not survive restart");
-    expect(persistedRefusal.receipt_ref === wrongActorReceipt && persistedRefusal.actor_ref === agent.principalRef
-      && persistedRefusal.verb === "vault.secrets.revoke" && typeof persistedRefusal.outcome === "object"
-      && persistedRefusal.outcome.refused.code === "FORBIDDEN").toBe(true);
+    const secrets03PersistedRefused: unknown = typeof persistedRefusal.outcome === "object" && persistedRefusal.outcome !== null
+      && "refused" in persistedRefusal.outcome ? persistedRefusal.outcome.refused : "no-refusal";
+    const secrets03PersistedCode: unknown = typeof secrets03PersistedRefused === "object" && secrets03PersistedRefused !== null
+      && "code" in secrets03PersistedRefused ? secrets03PersistedRefused.code : secrets03PersistedRefused;
+    expect({ check: "SECRETS-03 wrong-actor refusal survives restart", verb: secrets03SafeText(persistedRefusal.verb), code: secrets03SafeText(secrets03PersistedCode),
+      ok: persistedRefusal.receipt_ref === wrongActorReceipt && persistedRefusal.actor_ref === agent.principalRef
+        && persistedRefusal.verb === "vault.secrets.revoke" && typeof persistedRefusal.outcome === "object"
+        && persistedRefusal.outcome.refused.code === "FORBIDDEN" }).toEqual({
+      check: "SECRETS-03 wrong-actor refusal survives restart", verb: "vault.secrets.revoke", code: "FORBIDDEN", ok: true });
     const restartedCard = await secrets03Facade(agent.client, "reveal.describe", { handle });
-    expect(restartedCard.handle === handle && restartedCard.status === "active" && restartedCard.reveal === "refused").toBe(true);
-    secrets03ScanBytes(await agent.mcp.initialize());
-    const tools = await agent.mcp.listTools() as secrets03Tools;
+    expect({ check: "SECRETS-03 restarted handle stays active and reveal-refused", status: secrets03SafeText(restartedCard.status),
+      reveal: secrets03SafeText(restartedCard.reveal), ok: restartedCard.handle === handle && restartedCard.status === "active"
+        && restartedCard.reveal === "refused" }).toEqual({ check: "SECRETS-03 restarted handle stays active and reveal-refused",
+      status: "active", reveal: "refused", ok: true });
+    // ARCH-0040 mcp-actor-ceilings: a paired agent's MCP credential resolves only
+    // with a manifest ceiling row for (agent, principal); without one, initialize
+    // answers JSON-RPC -32001 mcp_actor_ceiling_missing (actor_dispatch/auth.rs:300).
+    // The owner writes the row through the public policy door; "proposed" keeps the
+    // agent's Gate posture exactly as the no-row default its REST uses above had.
+    const secrets03CeilingRow: secrets03Ceiling = { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "proposed" };
+    const secrets03CeilingBefore = await secrets03Facade(owner, "vault.gate.policy.get", {});
+    const secrets03CeilingCurrent = secrets03CeilingBefore.manifests.find(row => row.manifest_ref === secrets03CeilingBefore.default_manifest_ref);
+    if (!secrets03CeilingCurrent) throw new Error("SECRETS-03 default policy is absent");
+    await secrets03Facade(owner, "vault.gate.policy.put", {
+      manifest_ref: secrets03CeilingCurrent.manifest_ref, expected_body_hash: secrets03CeilingCurrent.body_hash,
+      manifest: { ...secrets03CeilingCurrent.manifest,
+        actor_ceilings: [...secrets03CeilingCurrent.manifest.actor_ceilings, secrets03CeilingRow] },
+    });
+    const secrets03CeilingAfter = await secrets03Facade(owner, "vault.gate.policy.get", { manifest_ref: secrets03CeilingCurrent.manifest_ref });
+    const secrets03CeilingSaved = secrets03CeilingAfter.manifests.find(row => row.manifest_ref === secrets03CeilingCurrent.manifest_ref);
+    expect({ check: "SECRETS-03 agent MCP ceiling reads back trusted", ok: secrets03CeilingSaved?.trusted }).toEqual({
+      check: "SECRETS-03 agent MCP ceiling reads back trusted", ok: true });
+    expect(secrets03CeilingSaved?.manifest.actor_ceilings).toContainEqual(secrets03CeilingRow);
+    secrets03ScanBytes(await secrets03McpCall("initialize", () => agent.mcp.initialize(), secrets03ScanBytes));
+    const tools = await secrets03McpCall("tools/list", () => agent.mcp.listTools(), secrets03ScanBytes) as secrets03Tools;
     secrets03ScanBytes(tools);
     const useTool = tools.tools.find(row => row.name === "self.use");
     if (!useTool) throw new Error("SECRETS-03 tool-first self.use is absent");
@@ -606,37 +720,46 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       content: [{ type: "text", text: `${sentinel}:${value1}:${Buffer.from(value1).toString("base64")}` }],
       structuredContent: { reflected: value1, encoded: Buffer.from(value1).toString("base64") }, isError: false,
     })) providers.enqueue(step);
-    const mcpReply = await agent.mcp.callTool("self.use", {
+    const mcpReply = await secrets03McpCall("self.use", () => agent.mcp.callTool("self.use", {
       schema_version: useTool.inputSchema.properties.schema_version.const,
       consent: { policy_ref: "policy:secrets03-custody", purpose: "Use a T0 custody credential without disclosure" },
       arguments: { spec: secrets03Input("generation-1") },
-    }) as secrets03McpResult;
+    }), secrets03ScanBytes) as secrets03McpResult;
     secrets03ScanBytes(mcpReply);
-    expect(mcpReply.isError === false && mcpReply.structuredContent.meta.end === "Complete").toBe(true);
+    expect({ check: "SECRETS-03 MCP use completes without error", end: secrets03SafeText(mcpReply.structuredContent.meta.end),
+      ok: mcpReply.isError === false && mcpReply.structuredContent.meta.end === "Complete" }).toEqual({
+      check: "SECRETS-03 MCP use completes without error", end: "Complete", ok: true });
     await secrets03UseResult(mcpReply.structuredContent.output, fixture.expected.nextLeaseGeneration);
 
     const calls = providers.seenFixtureCalls;
-    expect(calls.length === 12).toBe(true); // Two discoveries and two uses, three POSTs each.
+    expect({ check: "SECRETS-03 sink sees twelve scripted POSTs", calls: calls.length, ok: calls.length === 12 }).toEqual({
+      check: "SECRETS-03 sink sees twelve scripted POSTs", calls: 12, ok: true }); // Two discoveries and two uses, three POSTs each.
     for (const call of calls) {
       secrets03ScanBytes(call.body);
       secrets03ScanBytes({ method: call.method, path: call.path });
       const expected = call.fixtureId?.startsWith("generation-0-") ? value0
         : call.fixtureId?.startsWith("generation-1-") ? value1 : null;
       // Authorization is the one authorized disclosure to the trusted sink.
-      expect(expected === null ? call.headers?.authorization == null
-        : call.headers?.authorization === `Bearer ${expected}`).toBe(true);
+      expect({ check: "SECRETS-03 sink authorization matches its generation", fixture: call.fixtureId,
+        ok: expected === null ? call.headers?.authorization == null
+          : call.headers?.authorization === `Bearer ${expected}` }).toEqual({
+        check: "SECRETS-03 sink authorization matches its generation", fixture: call.fixtureId, ok: true });
       for (const [name, value] of Object.entries(call.headers ?? {})) if (name !== "authorization") secrets03ScanBytes(value);
     }
     const beforeWithdrawal = providers.seenFixtureCalls.length;
     await secrets03Withdraw();
     await secrets03Refuse(agent.client, "self.use", secrets03Input("after-custody-withdrawal"), 403, "FORBIDDEN");
-    expect(providers.seenFixtureCalls.length === beforeWithdrawal).toBe(true);
+    expect({ check: "SECRETS-03 custody withdrawal sends nothing", sent: providers.seenFixtureCalls.length,
+      ok: providers.seenFixtureCalls.length === beforeWithdrawal }).toEqual({
+      check: "SECRETS-03 custody withdrawal sends nothing", sent: beforeWithdrawal, ok: true });
     await secrets03Gate((await secrets03Bind()).receipt_ref);
     const revoked = await secrets03Facade(owner, "vault.consent.revoke", { grant: boundGrant.grant_ref });
     if (revoked.decision_ref) await secrets03Gate(`gate:${revoked.decision_ref}`);
     await secrets03Facade(owner, "vault.consent.registry", { limit: 1000, include_revoked: true });
     await secrets03Held(agent.client, "after-connector-withdrawal");
-    expect(providers.seenFixtureCalls.length === beforeWithdrawal).toBe(true);
+    expect({ check: "SECRETS-03 connector withdrawal sends nothing", sent: providers.seenFixtureCalls.length,
+      ok: providers.seenFixtureCalls.length === beforeWithdrawal }).toEqual({
+      check: "SECRETS-03 connector withdrawal sends nothing", sent: beforeWithdrawal, ok: true });
     await secrets03Facade(agent.client, "vault.recall", { query: "secrets03-custody", effort: "light", limit: 5 });
     await secrets03Facade(owner, "vault.receipts", { limit: 1000 });
     const exported = await secrets03Facade(owner, "vault.export", { format: "archive", include_secrets: false, delivery: "inline" });
@@ -644,21 +767,33 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     secrets03ScanBytes(Buffer.from(exported.archive, "base64"));
     const members = publicZip(exported.archive);
     for (const [name, bytes] of members) { secrets03ScanBytes(name); secrets03ScanBytes(bytes); }
-    expect(valueFree).toBe(true); // Promise oracle; source predicts encoded-reflection red.
+    expect({ check: "SECRETS-03 observed bytes exclude both custody values", ok: valueFree }).toEqual({
+      check: "SECRETS-03 observed bytes exclude both custody values", ok: true }); // Promise oracle; source predicts encoded-reflection red.
   } catch (error) {
     if (error instanceof PublicHttpError) secrets03ObserveWire(error.reply, secrets03ScanBytes);
     else if (error instanceof McpRpcError) secrets03ScanBytes(error.response);
     else if (error instanceof CliError) { secrets03ScanBytes(error.result.stdout); secrets03ScanBytes(error.result.stderr); }
+    secrets03BodyError = redactor.text(error instanceof Error ? `${error.name}: ${error.message}` : "unknown failure");
     throw error;
   } finally {
     try { await providers.close(); }
     finally {
       if (engine) {
         await engine.close();
-        for (const value of values) {
+        for (const [index, value] of values.entries()) {
           const base64 = Buffer.from(value).toString("base64");
-          expect(engine.serverOutputHas([value, base64]).found === false
-            && engine.serverOutputHas([value, base64]).truncated === false).toBe(true);
+          const secrets03LogScan = engine.serverOutputHas([value, base64]);
+          try {
+            expect({ check: `SECRETS-03 server output excludes custody value ${index}`, found: secrets03LogScan.found,
+              ok: secrets03LogScan.found === false }).toEqual({
+              check: `SECRETS-03 server output excludes custody value ${index}`, found: false, ok: true });
+            expect({ check: `SECRETS-03 server output window complete for custody value ${index}`,
+              truncated: secrets03LogScan.truncated, ok: secrets03LogScan.truncated === false }).toEqual({
+              check: `SECRETS-03 server output window complete for custody value ${index}`, truncated: false, ok: true });
+          } catch {
+            throw new Error(`SECRETS-03 server log scan failed for custody value ${index} `
+              + `(found=${secrets03LogScan.found} truncated=${secrets03LogScan.truncated}); body error was: ${secrets03BodyError ?? "none"}`);
+          }
         }
       }
     }
@@ -715,7 +850,11 @@ function secrets06Contains(bytes: Uint8Array, needles: readonly string[]): boole
 /*
  * A private names claim serializes as its real person handle on a public agent
  * connection. Only the owner and the first consented reveal may read the name;
- * those two positive controls are scanned for presence, not asserted name-free.
+ * those positive controls (owner roster, owner person, owner review, owner
+ * settle, consented reveal) assert the exact value and scan the bytes for
+ * presence, not absence; every other reply is asserted name-free.
+ * The agent opens the sensitivity-marked claim (held Proposed); the owner
+ * reviews and settles it live before any disclosure step runs.
  * Doors: typed REST facade, paired CLI, tool-first MCP, owner slip-revoke HTTP.
  * Read-back: people get/list, ceiling get, reveal wait/history, public receipts;
  * restart preserves the dial, masking, consent refusal and refusal receipt.
@@ -740,19 +879,45 @@ suite.test(test, "SECRETS-06",
       secrets06Scan(label, Buffer.from(JSON.stringify(value) ?? "", "utf8"));
     };
     const engine = await EngineFixture.start({ id: "SECRETS-06", profile, serverLog: "debug" });
+    let secrets06BodyFailure: unknown = null;
     try {
       // Preserve exact wire bytes and generated input/result types, even on reads.
+      const secrets06ErrorCode = (body: unknown): string => {
+        const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+        return typeof code === "string" ? code : "no-error-code";
+      };
       const secrets06Call = async <V extends FacadeVerb>(
         client: PublicHttpClient, verb: V, input: FacadeInput<V>,
       ): Promise<FacadeResult<V>> => {
         const reply = await client.raw<FacadeResult<V>>("POST", `/v1/core/facade/${verb}`, input);
         secrets06Scan(verb, reply.bytes);
         secrets06ScanJson(`${verb}:headers`, Object.fromEntries(reply.headers));
-        expect(reply.status).toBe(200);
+        if (reply.status !== 200) {
+          throw new Error(`SECRETS-06 facade ${verb} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))}`);
+        }
         return reply.body;
       };
+      const secrets06HttpOk = (label: string, reply: { status: number; body: unknown; bytes: Uint8Array; headers: Headers }): void => {
+        if (reply.status === 200) return;
+        secrets06Scan(`${label}:error`, reply.bytes);
+        secrets06ScanJson(`${label}:error:headers`, Object.fromEntries(reply.headers));
+        throw new Error(`SECRETS-06 ${label} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))}`);
+      };
+      const secrets06Mcp = async (method: "tools/list" | "tools/call", params: unknown = {}, tool = "") => {
+        const label = tool === "" ? `MCP ${method}` : `MCP ${method} ${tool}`;
+        try {
+          return await agent.mcp.rpc(method, params);
+        } catch (error) {
+          const reply = (error as { reply?: { status?: unknown; body?: unknown; bytes?: Uint8Array; headers?: Headers } } | null)?.reply;
+          if (reply == null) throw error;
+          if (reply.bytes !== undefined) secrets06Scan(`${label}:error`, reply.bytes);
+          if (reply.body !== undefined) secrets06ScanJson(`${label}:error:body`, reply.body);
+          if (reply.headers !== undefined) secrets06ScanJson(`${label}:error:headers`, Object.fromEntries(reply.headers));
+          throw new Error(`SECRETS-06 ${label} HTTP ${String(reply.status ?? "unknown")}: ${reply.body === undefined ? "no-reply-body" : redactor.text(secrets06ErrorCode(reply.body))}`);
+        }
+      };
       const secrets06Receipt = async (ref: string): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> => {
-        expect(/^call:[a-f0-9]{32}$/.test(ref)).toBe(true);
+        expect({ check: "refusal receipt is a call ref", ok: /^call:[a-f0-9]{32}$/.test(ref) }).toEqual({ check: "refusal receipt is a call ref", ok: true });
         const row = await awaitPublic(
           () => secrets06Call(engine.client, "vault.receipts.get", { receipt_ref: ref }),
           value => value !== null, { label: "SECRETS-06 public call receipt" },
@@ -763,7 +928,7 @@ suite.test(test, "SECRETS-06",
       };
       const secrets06GateReceipt = async (ref: string): Promise<void> => {
         // Claim/consent decisions supply real Gate refs; reveal and put ids do not.
-        expect(/^gate:[a-f0-9]{32}$/.test(ref)).toBe(true);
+        expect({ check: "governance receipt is a gate ref", ok: /^gate:[a-f0-9]{32}$/.test(ref) }).toEqual({ check: "governance receipt is a gate ref", ok: true });
         await awaitPublic(
           () => secrets06Call(engine.client, "vault.receipts", { limit: 1000 }),
           page => page.receipts.some(row => row.receipt_ref === ref),
@@ -784,11 +949,11 @@ suite.test(test, "SECRETS-06",
           secrets06Scan("unauthorized-export:zip", Buffer.from(body.archive, "base64"));
           for (const [path, bytes] of publicZip(body.archive)) secrets06Scan(`unauthorized-export:${path}`, bytes);
         }
-        expect(reply.status).toBe(status);
-        expect(reply.body.error.code).toBe(status === 403 ? "FORBIDDEN" : "UNAUTHORIZED");
-        expect(typeof reply.body.error.message === "string" && reply.body.error.message.length > 0).toBe(true);
-        expect(typeof reply.body.error.requestId === "string" && reply.body.error.requestId.length > 0).toBe(true);
-        expect(Array.isArray(reply.body.error.suggestions)).toBe(true);
+        expect({ check: `refusal ${verb} uses HTTP ${status}`, status: reply.status }).toEqual({ check: `refusal ${verb} uses HTTP ${status}`, status });
+        expect({ check: `refusal ${verb} carries ${status === 403 ? "FORBIDDEN" : "UNAUTHORIZED"}`, code: redactor.text(secrets06ErrorCode(reply.body)) }).toEqual({ check: `refusal ${verb} carries ${status === 403 ? "FORBIDDEN" : "UNAUTHORIZED"}`, code: status === 403 ? "FORBIDDEN" : "UNAUTHORIZED" });
+        expect({ check: `refusal ${verb} carries a message`, ok: typeof reply.body.error.message === "string" && reply.body.error.message.length > 0 }).toEqual({ check: `refusal ${verb} carries a message`, ok: true });
+        expect({ check: `refusal ${verb} carries a request id`, ok: typeof reply.body.error.requestId === "string" && reply.body.error.requestId.length > 0 }).toEqual({ check: `refusal ${verb} carries a request id`, ok: true });
+        expect({ check: `refusal ${verb} carries suggestions`, ok: Array.isArray(reply.body.error.suggestions) }).toEqual({ check: `refusal ${verb} carries suggestions`, ok: true });
         const ref = reply.headers.get("x-oneiron-receipt-ref");
         if (ref === null) throw new Error("SECRETS-06 refusal has no receipt header");
         const row = await secrets06Receipt(ref); // Owner can also read an unauthenticated connection's receipt.
@@ -798,7 +963,7 @@ suite.test(test, "SECRETS-06",
         } else {
           expect(reply.body.error.receiptRef).toBe(ref);
           expect(row).toMatchObject({ transport: "http_facade", actor_ref: actorRef,
-            actor_class: "agent", verb: `v1/core/facade/${verb}`, outcome: { refused: { code: "FORBIDDEN" } } });
+            actor_class: "agent", verb, outcome: { refused: { code: "FORBIDDEN" } } });
         }
         return ref;
       };
@@ -815,29 +980,60 @@ suite.test(test, "SECRETS-06",
       });
       // Structural receipt_ref is a put marker, not a receipt to await. Both
       // PERSON writes are independently read back in the owner roster below.
-      const claim = await secrets06Call(engine.client, "vault.claims.upsert", {
+      const agent = await engine.pairActor({ principalRef: principal.id_hex, actorClass: "agent",
+        scope: ["core:read", "core:write", "export"] });
+      // A sensitivity-marked write lands held, never auto: the agent opens the
+      // names claim and the owner reviews and settles it live. An owner-opened
+      // proposal is unsettleable, so the owner cannot open this claim itself.
+      const claim = await secrets06Call(agent.client, "vault.claims.upsert", {
         predicate: "fixture.person.name", subject_ref: person.id_hex, value: privateName,
         confidence: 1, source: "user_stated", sensitivity: 1, scope, occurred_at: occurredAt,
       });
-      expect(claim.approval).toBe("auto");
+      expect(claim.approval).toBe("proposed");
       const claimId = claim.claim?.id;
       if (!claimId) throw new Error("SECRETS-06 claim write returned no typed record id");
       if (claim.receipt_ref.startsWith("gate:")) await secrets06GateReceipt(claim.receipt_ref);
       else expect(claim.receipt_ref).toBe(`claim:${claimId}`); // Public documented marker, not a second receipt.
-
-
-      const agent = await engine.pairActor({ principalRef: principal.id_hex, actorClass: "agent",
-        scope: ["core:read", "core:write", "export"] });
+      const reviewReply = await engine.client.raw<FacadeResult<"vault.claims.review">>(
+        "POST", "/v1/core/facade/vault.claims.review", { claim_ref: claimId } satisfies FacadeInput<"vault.claims.review">,
+      );
+      secrets06HttpOk("owner-review vault.claims.review", reviewReply);
+      const review = reviewReply.body;
+      expect({ check: "owner review reads the authorized claim value", ok: review.claim.value === privateName }).toEqual({ check: "owner review reads the authorized claim value", ok: true });
+      expect({ check: "owner review bytes carry the claim value", ok: secrets06Contains(reviewReply.bytes, [privateName]) }).toEqual({ check: "owner review bytes carry the claim value", ok: true });
+      expect({ check: "owner review labels the authorized claim value", ok: review.claim.claim?.label === privateName }).toEqual({ check: "owner review labels the authorized claim value", ok: true });
+      secrets06ScanJson("owner-review:headers", Object.fromEntries(reviewReply.headers));
+      secrets06ScanJson("owner-review:metadata", { ...review, claim: { ...review.claim,
+        value: "AUTHORIZED-VALUE",
+        claim: review.claim.claim == null ? review.claim.claim : { ...review.claim.claim, label: "AUTHORIZED-VALUE" } } });
+      expect(review.claim.approval).toBe("proposed");
+      const settleReply = await engine.client.raw<FacadeResult<"vault.claims.settle">>(
+        "POST", "/v1/core/facade/vault.claims.settle", { claim_ref: claimId, review_id: review.review_id, decision: "approve" } satisfies FacadeInput<"vault.claims.settle">,
+      );
+      secrets06HttpOk("owner-settle vault.claims.settle", settleReply);
+      const settled = settleReply.body;
+      expect({ check: "owner settle lands the authorized claim value", ok: settled.claim.value === privateName }).toEqual({ check: "owner settle lands the authorized claim value", ok: true });
+      expect({ check: "owner settle bytes carry the claim value", ok: secrets06Contains(settleReply.bytes, [privateName]) }).toEqual({ check: "owner settle bytes carry the claim value", ok: true });
+      expect({ check: "owner settle labels the authorized claim value", ok: settled.claim.claim?.label === privateName }).toEqual({ check: "owner settle labels the authorized claim value", ok: true });
+      secrets06ScanJson("owner-settle:headers", Object.fromEntries(settleReply.headers));
+      secrets06ScanJson("owner-settle:metadata", { ...settled, claim: { ...settled.claim,
+        value: "AUTHORIZED-VALUE",
+        claim: settled.claim.claim == null ? settled.claim.claim : { ...settled.claim.claim, label: "AUTHORIZED-VALUE" } } });
+      expect(settled.review_id).toBe(review.review_id);
+      expect(settled.proposal_ref).toBe(review.proposal_ref);
+      expect(settled.verdict).toBe("landed");
+      expect(settled.claim.approval).toBe("approved");
+      await secrets06GateReceipt(settled.receipt_ref);
       // Before the second pairing, exactly one slip belongs to this new principal.
       const audit = await secrets06Call(engine.client, "vault.authority.audit", { limit: 500 });
-      expect(audit.next_after == null).toBe(true);
+      expect({ check: "authority audit fits one page", ok: audit.next_after == null }).toEqual({ check: "authority audit fits one page", ok: true });
       const minted = audit.rows.filter(row => row.source_op === "slip_mint" && row.holder_ref === agent.principalRef);
       expect(minted.length).toBe(1);
       const mintedRow = minted[0];
       if (!mintedRow?.subject_ref) throw new Error("SECRETS-06 public authority audit has no paired slip id");
-      expect(mintedRow.fold_valid).toBe(true);
+      expect({ check: "paired slip row is fold-valid", ok: mintedRow.fold_valid }).toEqual({ check: "paired slip row is fold-valid", ok: true });
       const slipId = mintedRow.subject_ref;
-      expect(/^[a-f0-9]{64}$/.test(slipId)).toBe(true);
+      expect({ check: "paired slip id is 32 bytes hex", ok: /^[a-f0-9]{64}$/.test(slipId) }).toEqual({ check: "paired slip id is 32 bytes hex", ok: true });
       const noRead = await engine.pairActor({ principalRef: principal.id_hex, actorClass: "agent",
         scope: ["core:write", "export"] });
       const connection = `agent:${agent.principalRef}`;
@@ -847,34 +1043,34 @@ suite.test(test, "SECRETS-06",
       const ownerPage = await engine.client.raw<FacadeResult<"vault.people.list">>(
         "POST", "/v1/core/facade/vault.people.list", { page: 0 } satisfies FacadeInput<"vault.people.list">,
       );
-      expect(ownerPage.status).toBe(200);
+      secrets06HttpOk("owner-roster vault.people.list", ownerPage);
       secrets06ScanJson("owner-roster:headers", Object.fromEntries(ownerPage.headers));
       const ownerRow = ownerPage.body.people.find(row => row.person === person.id_hex);
       if (!ownerRow) throw new Error("SECRETS-06 owner roster has no created person");
-      expect(ownerRow.name === privateName).toBe(true);
-      expect(secrets06Contains(ownerPage.bytes, [privateName])).toBe(true);
+      expect({ check: "owner roster returns the created name", ok: ownerRow.name === privateName }).toEqual({ check: "owner roster returns the created name", ok: true });
+      expect({ check: "owner roster bytes carry the name", ok: secrets06Contains(ownerPage.bytes, [privateName]) }).toEqual({ check: "owner roster bytes carry the name", ok: true });
       const handle = ownerRow.handle;
-      expect(/^pr[0-9]+$/.test(handle)).toBe(true);
-      expect(ownerPage.body.people.some(row => row.person === principal.id_hex)).toBe(true);
+      expect({ check: "person handle is a bare pr handle", ok: /^pr[0-9]+$/.test(handle) }).toEqual({ check: "person handle is a bare pr handle", ok: true });
+      expect({ check: "owner roster returns the reader principal", ok: ownerPage.body.people.some(row => row.person === principal.id_hex) }).toEqual({ check: "owner roster returns the reader principal", ok: true });
       secrets06ScanJson("owner-roster:metadata", { ...ownerPage.body, people: ownerPage.body.people.map(row =>
         row.person === person.id_hex ? { ...row, name: handle } : row) });
       const secrets06MaskedPerson = async (): Promise<void> => {
         const row = await secrets06Call(agent.client, "vault.people.get", { pr: handle });
         expect(row.person).toBe(person.id_hex);
-        expect(row.handle === handle && row.name === handle && row.about == null).toBe(true);
+        expect({ check: "agent people.get masks the name to its handle", ok: row.handle === handle && row.name === handle && row.about == null }).toEqual({ check: "agent people.get masks the name to its handle", ok: true });
       };
       const secrets06MaskedPage = async (): Promise<void> => {
         const page = await secrets06Call(agent.client, "vault.people.list", { page: 0 });
         const row = page.people.find(item => item.person === person.id_hex);
-        expect(row?.handle === handle && row.name === handle && row.about == null).toBe(true);
+        expect({ check: "agent people.list masks the name to its handle", ok: row?.handle === handle && row.name === handle && row.about == null }).toEqual({ check: "agent people.list masks the name to its handle", ok: true });
       };
       const secrets06OwnerPerson = async (): Promise<void> => {
         const reply = await engine.client.raw<FacadeResult<"vault.people.get">>(
           "POST", "/v1/core/facade/vault.people.get", { pr: handle } satisfies FacadeInput<"vault.people.get">,
         );
-        expect(reply.status).toBe(200);
-        expect(reply.body.person === person.id_hex && reply.body.handle === handle && reply.body.name === privateName).toBe(true);
-        expect(secrets06Contains(reply.bytes, [privateName])).toBe(true);
+        secrets06HttpOk("owner-person vault.people.get", reply);
+        expect({ check: "owner people.get returns the real name", ok: reply.body.person === person.id_hex && reply.body.handle === handle && reply.body.name === privateName }).toEqual({ check: "owner people.get returns the real name", ok: true });
+        expect({ check: "owner person bytes carry the name", ok: secrets06Contains(reply.bytes, [privateName]) }).toEqual({ check: "owner person bytes carry the name", ok: true });
         secrets06ScanJson("owner-person:headers", Object.fromEntries(reply.headers));
         secrets06ScanJson("owner-person:metadata", { ...reply.body, name: handle });
       };
@@ -898,11 +1094,12 @@ suite.test(test, "SECRETS-06",
       expect(card).toMatchObject({ handle, label: handle, class: data.person.class,
         status: "active", band: data.person.band, reveal: "asks",
         provenance: { record: claimId, place: "claim", kind: "names" } });
-      expect(card.grant_ref == null && card.refusal == null && card.provenance?.learned_at != null).toBe(true);
+      expect({ check: "describe carries no grant or refusal before consent", ok: card.grant_ref == null && card.refusal == null && card.provenance?.learned_at != null }).toEqual({ check: "describe carries no grant or refusal before consent", ok: true });
 
       // Clearing applies on the next read, without a cache delay or a new grant.
       await secrets06Call(engine.client, "vault.disclosure.ceiling.clear", { connection });
-      expect((await secrets06Call(engine.client, "vault.disclosure.ceiling.get", { connection })).ceiling == null).toBe(true);
+      const clearedDial = await secrets06Call(engine.client, "vault.disclosure.ceiling.get", { connection });
+      expect({ check: "cleared connection dial reads no stored ceiling", ok: clearedDial.ceiling == null }).toEqual({ check: "cleared connection dial reads no stored ceiling", ok: true });
       await secrets06ReadDial("public");
       await secrets06MaskedPerson();
       await secrets06Call(engine.client, "vault.disclosure.ceiling.clear", dial);
@@ -913,10 +1110,10 @@ suite.test(test, "SECRETS-06",
 
       const why = "fixture identity lookup";
       const pending = await secrets06Call(agent.client, "reveal", { handle, why });
-      expect(/^[a-f0-9]{32}$/.test(pending.reveal)).toBe(true);
+      expect({ check: "reveal act returns a bare reveal id", ok: /^[a-f0-9]{32}$/.test(pending.reveal) }).toEqual({ check: "reveal act returns a bare reveal id", ok: true });
       const secrets06NoValue = (answer: FacadeResult<"reveal.wait">, decision: "pending" | "denied" | "granted"): void => {
         expect(answer.decision).toBe(decision);
-        expect(answer.value == null && answer.value_base64 == null).toBe(true);
+        expect({ check: `reveal wait ${decision} releases no value`, ok: answer.value == null && answer.value_base64 == null }).toEqual({ check: `reveal wait ${decision} releases no value`, ok: true });
         expect(answer.receipt).toMatchObject({ handle, class: "names", why, connection });
       };
       secrets06NoValue(await secrets06Call(agent.client, "reveal.wait", pending), "pending");
@@ -952,16 +1149,16 @@ suite.test(test, "SECRETS-06",
       const delivered = await agent.client.raw<FacadeResult<"reveal.wait">>(
         "POST", "/v1/core/facade/reveal.wait", approved,
       );
-      expect(delivered.status).toBe(200);
+      secrets06HttpOk("consented-reveal reveal.wait", delivered);
       expect(delivered.body.decision).toBe("granted");
-      expect(delivered.body.value === privateName && delivered.body.value_base64 == null).toBe(true);
-      expect(secrets06Contains(delivered.bytes, [privateName])).toBe(true);
+      expect({ check: "consented wait delivers exactly the private name", ok: delivered.body.value === privateName && delivered.body.value_base64 == null }).toEqual({ check: "consented wait delivers exactly the private name", ok: true });
+      expect({ check: "consented wait bytes carry the name", ok: secrets06Contains(delivered.bytes, [privateName]) }).toEqual({ check: "consented wait bytes carry the name", ok: true });
       secrets06ScanJson("consented-reveal:headers", Object.fromEntries(delivered.headers));
       secrets06ScanJson("consented-reveal:metadata", { ...delivered.body, value: handle });
       expect(delivered.body.receipt).toMatchObject({ handle, class: "names", why, connection,
         answered_by: `owner:${engine.pairedActor.principalRef}` });
       const deliveryDecision = delivered.body.receipt?.decision;
-      expect(delivered.body.receipt?.lease != null && delivered.body.receipt.delivered_at != null).toBe(true);
+      expect({ check: "delivery receipt carries a lease and stamp", ok: delivered.body.receipt?.lease != null && delivered.body.receipt.delivered_at != null }).toEqual({ check: "delivery receipt carries a lease and stamp", ok: true });
       if (!deliveryDecision) throw new Error("SECRETS-06 delivery returned no consent-use receipt");
       await secrets06GateReceipt(deliveryDecision);
       secrets06NoValue(await secrets06Call(agent.client, "reveal.wait", approved), "granted");
@@ -1003,7 +1200,7 @@ suite.test(test, "SECRETS-06",
       const genericClaim = await secrets06Call(agent.client, "vault.get", { entity_ref: claim.claim_short_id });
       expect(genericClaim.value?.id_hex).toBe(claimId);
       const exported = await secrets06Call(agent.client, "vault.export.scoped", scopedInput);
-      expect(exported.records.some(row => row.record.id === claimId)).toBe(true);
+      expect({ check: "scoped export includes the fixture claim", ok: exported.records.some(row => row.record.id === claimId) }).toEqual({ check: "scoped export includes the fixture claim", ok: true });
       for (const row of exported.records) secrets06Scan(`scoped-export:${row.record.id}`, Buffer.from(row.bytes));
       await secrets06Refuse(agent.client, "vault.export", { format: "archive", include_secrets: false, delivery: "inline" }, 403, agent.principalRef);
       const recalled = await awaitPublic(
@@ -1012,17 +1209,17 @@ suite.test(test, "SECRETS-06",
         { label: "SECRETS-06 private claim recalled as a handle" },
       );
       const recalledClaim = recalled.items.find(item => item.record?.id === claimId);
-      expect(recalledClaim?.value_text === handle).toBe(true);
+      expect({ check: "recalled claim renders as its handle", ok: recalledClaim?.value_text === handle }).toEqual({ check: "recalled claim renders as its handle", ok: true });
       const cli = await agent.cli.run(["api", "call", "vault.people.get", "--data", "-"],
         JSON.stringify({ pr: handle } satisfies FacadeInput<"vault.people.get">));
       secrets06Scan("cli:stdout", Buffer.from(cli.stdout, "utf8"));
       secrets06Scan("cli:stderr", Buffer.from(cli.stderr, "utf8"));
       expect(cli.exitCode).toBe(0);
       const cliRow = secrets06Object(JSON.parse(cli.stdout));
-      expect(cliRow.person === person.id_hex && cliRow.name === handle && cliRow.handle === handle).toBe(true);
-      const listing = await agent.mcp.rpc("tools/list");
+      expect({ check: "CLI people.get masks the name to its handle", ok: cliRow.person === person.id_hex && cliRow.name === handle && cliRow.handle === handle }).toEqual({ check: "CLI people.get masks the name to its handle", ok: true });
+      const listing = await secrets06Mcp("tools/list");
       secrets06ScanJson("mcp:tools-list", listing);
-      if ("error" in listing) throw new Error("SECRETS-06 MCP listing returned a JSON-RPC refusal (body withheld)");
+      if ("error" in listing) throw new Error(`SECRETS-06 MCP tools/list refused ${listing.error.code}: ${redactor.text(listing.error.message)}`);
       const tools = secrets06Object(listing.result).tools;
       if (!Array.isArray(tools)) throw new Error("SECRETS-06 MCP listing has no tools");
       const peopleTool: unknown = tools.find((item: unknown) => secrets06Object(item).name === "vault.people.get");
@@ -1030,17 +1227,17 @@ suite.test(test, "SECRETS-06",
       const properties = secrets06Object(secrets06Object(secrets06Object(peopleTool).inputSchema).properties);
       const schemaVersion = secrets06Object(properties.schema_version).const;
       if (typeof schemaVersion !== "string") throw new Error("SECRETS-06 MCP people tool has no schema version");
-      const mcp = await agent.mcp.rpc("tools/call", { name: "vault.people.get", arguments: {
+      const mcp = await secrets06Mcp("tools/call", { name: "vault.people.get", arguments: {
         schema_version: schemaVersion,
         consent: { policy_ref: "policy:secrets-06", purpose: "Read a private person through its channel ceiling" },
         arguments: { spec: { pr: handle } },
-      } });
+      } }, "vault.people.get");
       secrets06ScanJson("mcp:outer", mcp);
-      if ("error" in mcp) throw new Error("SECRETS-06 MCP read returned a JSON-RPC refusal (body withheld)");
+      if ("error" in mcp) throw new Error(`SECRETS-06 MCP tools/call vault.people.get refused ${mcp.error.code}: ${redactor.text(mcp.error.message)}`);
       const mcpResult = secrets06Object(mcp.result);
-      expect(mcpResult.isError).toBe(false);
+      expect({ check: "MCP people read reports no tool error", ok: mcpResult.isError }).toEqual({ check: "MCP people read reports no tool error", ok: false });
       const mcpRow = secrets06Object(secrets06Object(mcpResult.structuredContent).output);
-      expect(mcpRow.person === person.id_hex && mcpRow.name === handle && mcpRow.handle === handle).toBe(true);
+      expect({ check: "MCP people read masks the name to its handle", ok: mcpRow.person === person.id_hex && mcpRow.name === handle && mcpRow.handle === handle }).toEqual({ check: "MCP people read masks the name to its handle", ok: true });
       // Scan decoded MCP text too: the transport may JSON-escape a nested string.
       if (Array.isArray(mcpResult.content)) {
         for (const item of mcpResult.content) {
@@ -1064,20 +1261,54 @@ suite.test(test, "SECRETS-06",
       });
       secrets06Scan("slip-revoke", revoked.bytes);
       secrets06ScanJson("slip-revoke:headers", Object.fromEntries(revoked.headers));
-      expect(revoked.status === 200 && revoked.body.revoked === true).toBe(true);
+      secrets06HttpOk("slip-revoke", revoked);
+      expect({ check: "owner slip revoke reports revoked", ok: revoked.body.revoked === true }).toEqual({ check: "owner slip revoke reports revoked", ok: true });
       await secrets06RefusedReads(agent.client, 401); // The next uses retain the original credential.
       // Read the owner-authorized state again after loss of the agent's grant.
       await secrets06ReadDial("public");
       await secrets06OwnerPerson();
       const history = await secrets06Call(engine.client, "vault.disclosure.reveals", { pending: false, limit: 50 });
-      expect(history.some(row => row.receipt.reveal === pending.reveal && row.state === "denied")).toBe(true);
+      expect({ check: "reveal history keeps the denied ask", ok: history.some(row => row.receipt.reveal === pending.reveal && row.state === "denied") }).toEqual({ check: "reveal history keeps the denied ask", ok: true });
       await secrets06Call(engine.client, "vault.receipts", { limit: 1000 });
       // Defer expected-red leak checks so restart, revocations and all carriers run.
       expect([...leaks].sort()).toEqual([]);
-    } finally {
+    } catch (error) {
+      secrets06BodyFailure = error;
+    }
+    // Teardown always runs, and the body failure is reported first, so a close
+    // or log failure can no longer mask it. Both log checks stay strict even
+    // when one of them fails. All interpolated error text is redactor-scrubbed.
+    const secrets06Teardown: string[] = [];
+    try {
       await engine.close();
-      expect(engine.serverOutputHas([privateName, privateNameBase64]).found === false
-        && engine.serverOutputHas([privateName, privateNameBase64]).truncated === false).toBe(true);
+    } catch (error) {
+      secrets06Teardown.push(`close threw: ${redactor.text(error instanceof Error ? error.message : String(error))}`);
+    }
+    let secrets06ServerOutput: { found: boolean; truncated: boolean } | null = null;
+    try {
+      secrets06ServerOutput = engine.serverOutputHas([privateName, privateNameBase64]);
+    } catch (error) {
+      secrets06Teardown.push(`server-output scan threw: ${redactor.text(error instanceof Error ? error.message : String(error))}`);
+    }
+    if (secrets06ServerOutput !== null) {
+      try {
+        expect({ check: "server output carries no private-name bytes", found: secrets06ServerOutput.found }).toEqual({ check: "server output carries no private-name bytes", found: false });
+      } catch (error) {
+        secrets06Teardown.push(`log content check failed: ${redactor.text(error instanceof Error ? error.message : String(error))}`);
+      }
+      try {
+        expect({ check: "server output was fully retained", truncated: secrets06ServerOutput.truncated }).toEqual({ check: "server output was fully retained", truncated: false });
+      } catch (error) {
+        secrets06Teardown.push(`log retention check failed: ${redactor.text(error instanceof Error ? error.message : String(error))}`);
+      }
+    }
+    if (secrets06BodyFailure !== null || secrets06Teardown.length > 0) {
+      const secrets06BodyText = secrets06BodyFailure === null ? null
+        : redactor.text(secrets06BodyFailure instanceof Error ? secrets06BodyFailure.message : String(secrets06BodyFailure));
+      throw new Error(`SECRETS-06 failed: ${[
+        ...(secrets06BodyText === null ? [] : [`body: ${secrets06BodyText}`]),
+        ...secrets06Teardown.map(part => `teardown: ${part}`),
+      ].join(" | ")}`);
     }
   });
 
@@ -1101,8 +1332,25 @@ function secrets07Object(value: unknown): Record<string, unknown> {
 function secrets07Scan(value: unknown, values: readonly string[]): void {
   const bytes = value instanceof Uint8Array ? Buffer.from(value)
     : Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
-  expect(values.every(text => !bytes.includes(Buffer.from(text))
-    && !bytes.includes(Buffer.from(Buffer.from(text).toString("base64"))))).toBe(true);
+  expect({ check: "SECRETS-07 scanned bytes carry no candidate raw or base64", ok: values.every(text => !bytes.includes(Buffer.from(text))
+    && !bytes.includes(Buffer.from(Buffer.from(text).toString("base64")))) }).toEqual({ check: "SECRETS-07 scanned bytes carry no candidate raw or base64", ok: true });
+}
+
+// Safe failure context for an unexpected HTTP status: the static route plus the
+// envelope's string error code only. Bodies and headers were already scanned;
+// values never enter this text.
+function secrets07ErrorText(body: unknown): string {
+  if (!body || typeof body !== "object") return "code=none";
+  const error = (body as Record<string, unknown>).error;
+  if (!error || typeof error !== "object") return "code=none";
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" ? `code=${redactor.text(code)}` : "code=none";
+}
+
+// One-line summary for the failure aggregator. The harness redacts registered
+// values from the reported reason; this keeps the body failure first.
+function secrets07Summarize(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 // Encode the independent classifier's question-id protocol, not engine authority.
@@ -1155,6 +1403,11 @@ suite.test(test, "SECRETS-07", "Owner policy applies the same Allow, Warn, Block
     response: openaiText("secrets07-restart-help", "policy-checker", JSON.stringify({ [question]: { yes: 1, no: 0 } }),
       { inputTokens: 32, outputTokens: 8 }) });
   const providers = await ScriptedProviders.start({ id: "SECRETS-07", steps });
+  // Failure attribution: a body failure must never be masked by provider or
+  // engine cleanup. Completeness stays strict: the explicit close inside the
+  // body still throws on unconsumed steps or violations.
+  const secrets07BodyFailures: unknown[] = [];
+  const secrets07CleanupFailures: unknown[] = [];
   try {
     const policyOrigin = providers.urls.policy;
     if (!policyOrigin) throw new Error("SECRETS-07 policy fixture has no origin");
@@ -1177,7 +1430,7 @@ enabled = false
       const secrets07Invocation = (): string => crypto.randomUUID().replaceAll("-", "");
       const secrets07Ref = (headers: Headers): string => {
         const ref = headers.get("x-oneiron-receipt-ref");
-        expect(typeof ref === "string" && ref.startsWith("call:")).toBe(true);
+        expect({ check: "SECRETS-07 reply states a call receipt", ok: typeof ref === "string" && ref.startsWith("call:") }).toEqual({ check: "SECRETS-07 reply states a call receipt", ok: true });
         if (!ref || !ref.startsWith("call:")) throw new Error("SECRETS-07 authenticated call has no receipt");
         return ref;
       };
@@ -1186,7 +1439,9 @@ enabled = false
           { "x-oneiron-invocation": secrets07Invocation() });
         secrets07Scan(reply.bytes, values);
         secrets07Scan([...reply.headers], values);
-        expect(reply.status).toBe(200);
+        if (reply.status !== 200) {
+          throw new Error(`SECRETS-07 ${verb} expected HTTP 200 but answered HTTP ${reply.status} (${secrets07ErrorText(reply.body)})`);
+        }
         if (["vault.agents.create", "vault.policy.owner.configure", "vault.policy.owner.row.change"].includes(verb)) {
           writeCalls.push({ ref: secrets07Ref(reply.headers), verb });
         }
@@ -1209,7 +1464,7 @@ enabled = false
             const found = page.receipts.find(receipt => receipt.receipt_ref === ref);
             if (found) return found;
             if (!page.next_after) return null;
-            expect(cursors.has(page.next_after)).toBe(false);
+            expect({ check: "SECRETS-07 gate pagination advances", ok: cursors.has(page.next_after) }).toEqual({ check: "SECRETS-07 gate pagination advances", ok: false });
             cursors.add(page.next_after);
             after = page.next_after;
           }
@@ -1223,25 +1478,24 @@ enabled = false
           { "x-oneiron-invocation": secrets07Invocation() });
         secrets07Scan(reply.bytes, values);
         secrets07Scan([...reply.headers], values);
-        expect(reply.status).toBe(status);
         const error = secrets07Object(secrets07Object(reply.body).error);
-        expect(error.code).toBe(code);
-        expect(typeof error.message === "string" && error.message.length > 0).toBe(true);
-        expect(Array.isArray(error.suggestions)).toBe(true);
-        expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
+        expect({ check: `SECRETS-07 ${verb} refusal answers HTTP ${status} with ${code}`, status: reply.status, error: secrets07ErrorText(reply.body), ok: reply.status === status && error.code === code }).toEqual({ check: `SECRETS-07 ${verb} refusal answers HTTP ${status} with ${code}`, status, error: `code=${code}`, ok: true });
+        expect({ check: "SECRETS-07 refusal carries a message", ok: typeof error.message === "string" && error.message.length > 0 }).toEqual({ check: "SECRETS-07 refusal carries a message", ok: true });
+        expect({ check: "SECRETS-07 refusal carries suggestions", ok: Array.isArray(error.suggestions) }).toEqual({ check: "SECRETS-07 refusal carries suggestions", ok: true });
+        expect({ check: "SECRETS-07 refusal carries a request id", ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: "SECRETS-07 refusal carries a request id", ok: true });
         expect(providers.seenFixtureCalls.length).toBe(count);
         const ref = secrets07Ref(reply.headers);
         const row = await secrets07ReadCall(ref);
         expect(row.verb).toBe(verb);
         expect(row.transport).toBe("http_facade");
         if (authenticated) {
-          expect(error.receiptRef === ref).toBe(true);
+          expect({ check: "SECRETS-07 refusal receipt matches its header", ok: error.receiptRef === ref }).toEqual({ check: "SECRETS-07 refusal receipt matches its header", ok: true });
           expect(row.actor_ref).toBe(actor.principalRef);
           expect(row.actor_class).toBe("agent");
           expect(row.outcome).toEqual({ refused: { code } });
         } else {
           expect(row.actor_class).toBe("connection");
-          expect(row.credential_ref == null).toBe(true);
+          expect({ check: "SECRETS-07 connection receipt carries no credential", ok: row.credential_ref == null }).toEqual({ check: "SECRETS-07 connection receipt carries no credential", ok: true });
           expect(row.outcome).toEqual({ refused: { code: `HTTP_${status}` } });
         }
         calls.set(ref, row);
@@ -1255,24 +1509,26 @@ enabled = false
           { "x-oneiron-invocation": secrets07Invocation() });
         secrets07Scan([...reply.headers], values);
         if (reply.status !== 200) secrets07Scan(reply.bytes, values);
-        expect(reply.status).toBe(200);
+        if (reply.status !== 200) {
+          throw new Error(`SECRETS-07 vault.policy.outbound.decide expected HTTP 200 but answered HTTP ${reply.status} (${secrets07ErrorText(reply.body)})`);
+        }
         const result = reply.body;
         // Only the promised Allow/Warn final_content field may carry the candidate.
         if (action === "allow" || action === "warn") {
           const { final_content: finalContent, ...withoutFinalContent } = result;
           secrets07Scan(withoutFinalContent, values);
-          expect(typeof finalContent === "string"
-            && Buffer.from(finalContent).equals(Buffer.from(content))).toBe(true);
+          expect({ check: "SECRETS-07 allow/warn returns exact candidate bytes", ok: typeof finalContent === "string"
+            && Buffer.from(finalContent).equals(Buffer.from(content)) }).toEqual({ check: "SECRETS-07 allow/warn returns exact candidate bytes", ok: true });
         } else {
           secrets07Scan(reply.bytes, values);
-          expect(result.final_content == null).toBe(true);
+          expect({ check: "SECRETS-07 block/help returns no content", ok: result.final_content == null }).toEqual({ check: "SECRETS-07 block/help returns no content", ok: true });
         }
         expect(result.action).toBe(action);
         expect(result.verdict.decision).toBe(action === "route_to_help" ? "route-to-help" : action);
-        expect(result.custom_tier_skipped).toBe(false);
+        expect({ check: "SECRETS-07 owner model ran", ok: result.custom_tier_skipped }).toEqual({ check: "SECRETS-07 owner model ran", ok: false });
         const halts = action === "block" || action === "route_to_help";
-        expect(result.outbound_halted).toBe(halts);
-        expect(result.pre_display_block).toBe(halts);
+        expect({ check: "SECRETS-07 outbound halt matches the action", ok: result.outbound_halted }).toEqual({ check: "SECRETS-07 outbound halt matches the action", ok: halts });
+        expect({ check: "SECRETS-07 pre-display block matches the action", ok: result.pre_display_block }).toEqual({ check: "SECRETS-07 pre-display block matches the action", ok: halts });
         if (halts) expect(result.barge_in_kill).toEqual({ cancel_tts: true, flush_playout_buffer: true, cancel_llm: true });
         if (action !== "allow") {
           expect(result.notice_voice).toBe("system");
@@ -1282,20 +1538,20 @@ enabled = false
           expect(notice?.voice).toBe("system");
           expect(notice?.policy_plane).toBe("owner_policy");
           expect(notice?.row_ref).toBe(rowRef);
-          expect(typeof notice?.body === "string" && notice.body.length > 0).toBe(true);
+          expect({ check: "SECRETS-07 notice carries a body", ok: typeof notice?.body === "string" && notice.body.length > 0 }).toEqual({ check: "SECRETS-07 notice carries a body", ok: true });
         }
         if (action === "route_to_help") {
-          expect(result.help_routing?.diagnosis === null).toBe(true);
-          expect(result.help_routing?.persona_present).toBe(true);
+          expect({ check: "SECRETS-07 help routing carries no diagnosis", ok: result.help_routing?.diagnosis === null }).toEqual({ check: "SECRETS-07 help routing carries no diagnosis", ok: true });
+          expect({ check: "SECRETS-07 help routing keeps a persona", ok: result.help_routing?.persona_present }).toEqual({ check: "SECRETS-07 help routing keeps a persona", ok: true });
         }
         const ref = result.receipt_ref;
-        expect(typeof ref === "string" && ref.startsWith("gate:")).toBe(true);
+        expect({ check: "SECRETS-07 enforcement states a gate receipt", ok: typeof ref === "string" && ref.startsWith("gate:") }).toEqual({ check: "SECRETS-07 enforcement states a gate receipt", ok: true });
         if (!ref || !ref.startsWith("gate:")) throw new Error("SECRETS-07 enforcement has no gate receipt");
-        expect(gates.has(ref)).toBe(false);
+        expect({ check: "SECRETS-07 enforcement mints a fresh gate receipt", ok: gates.has(ref) }).toEqual({ check: "SECRETS-07 enforcement mints a fresh gate receipt", ok: false });
         const gate = await secrets07ReadGate(ref);
         expect(gate.kind).toBe("gate");
         expect(gate.outcome).toBe(action);
-        expect(gate.reason_codes.includes(`gate.policy_model.${action}`)).toBe(true);
+        expect({ check: "SECRETS-07 gate reason names the action", ok: gate.reason_codes.includes(`gate.policy_model.${action}`) }).toEqual({ check: "SECRETS-07 gate reason names the action", ok: true });
         expect(gate.actor_ref).toBe(actor.principalRef);
         expect(gate.content_kind).toBe("action");
         gates.set(ref, gate);
@@ -1312,17 +1568,17 @@ enabled = false
         expect(wire.fixtureId).toBe(stepId);
         const body = secrets07Object(wire.body);
         expect(body.model).toBe("policy-checker");
-        expect(wire.headers?.["content-type"]?.startsWith("application/json")).toBe(true);
+        expect({ check: "SECRETS-07 classifier call is JSON", ok: wire.headers?.["content-type"]?.startsWith("application/json") }).toEqual({ check: "SECRETS-07 classifier call is JSON", ok: true });
         if (!Array.isArray(body.messages)) throw new Error("SECRETS-07 classifier has no messages");
-        expect(body.messages.some((message: unknown) => {
+        expect({ check: "SECRETS-07 classifier sees the exact candidate", ok: body.messages.some((message: unknown) => {
           const item = secrets07Object(message);
           return item.role === "user" && typeof item.content === "string"
             && Buffer.from(item.content).equals(Buffer.from(content));
-        })).toBe(true);
-        expect(body.messages.some((message: unknown) => {
+        }) }).toEqual({ check: "SECRETS-07 classifier sees the exact candidate", ok: true });
+        expect({ check: "SECRETS-07 classifier sees the owner document", ok: body.messages.some((message: unknown) => {
           const item = secrets07Object(message);
           return item.role === "system" && item.content === document;
-        })).toBe(true);
+        }) }).toEqual({ check: "SECRETS-07 classifier sees the owner document", ok: true });
         secrets07Scan(body, ["Answer briefly.", "Explain each step in detail."]);
         secrets07Scan(wire.headers, values);
         return { result, call };
@@ -1367,7 +1623,7 @@ enabled = false
       });
       gates.set(configured.receipt_ref, await secrets07ReadGate(configured.receipt_ref));
       const enabled = await secrets07Call(engine.client, "vault.policy.owner.get", {});
-      expect(enabled.enabled).toBe(true);
+      expect({ check: "SECRETS-07 owner plane is enabled", ok: enabled.enabled }).toEqual({ check: "SECRETS-07 owner plane is enabled", ok: true });
       expect(enabled.configuration).toEqual(configuration);
       expect(enabled.body_hash).toBe(configured.configuration.body_hash);
       await secrets07Refuse(readOnly, "vault.policy.owner.get", {}, 403, "FORBIDDEN", true);
@@ -1413,16 +1669,20 @@ enabled = false
       const revoked = await engine.client.raw<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", { slip_id: [...slipBytes] });
       secrets07Scan(revoked.bytes, values);
       secrets07Scan([...revoked.headers], values);
-      expect(revoked.status).toBe(200);
-      expect(revoked.body.revoked).toBe(true);
+      if (revoked.status !== 200) {
+        throw new Error(`SECRETS-07 /v1/core/slips/revoke expected HTTP 200 but answered HTTP ${revoked.status} (${secrets07ErrorText(revoked.body)})`);
+      }
+      expect({ check: "SECRETS-07 owner revocation lands", ok: revoked.body.revoked }).toEqual({ check: "SECRETS-07 owner revocation lands", ok: true });
       await secrets07Refuse(concise, "vault.policy.outbound.decide", candidate, 401, "UNAUTHORIZED", false);
-      for (const write of writeCalls) {
+      // Independent read-only receipt reads after all writes completed: every
+      // original ref, read-back, scan and assertion is still required.
+      await Promise.all(writeCalls.map(async (write) => {
         const row = await secrets07ReadCall(write.ref);
         expect(row.verb).toBe(write.verb);
         expect(row.actor_ref).toBe(engine.pairedActor.principalRef);
         expect(row.outcome).toBe("ok");
         calls.set(write.ref, row);
-      }
+      }));
       const beforeRestart = await secrets07Call(engine.client, "vault.policy.owner.get", {});
       await engine.restart();
       const afterRestart = await secrets07Call(engine.client, "vault.policy.owner.get", {});
@@ -1431,8 +1691,24 @@ enabled = false
         const saved = await secrets07Call(engine.client, "vault.agents.get", { agent_def_ref: definition.id });
         expect(saved.definition.instructions).toBe(definition.instructions);
       }
-      for (const [ref, row] of gates) expect(await secrets07ReadGate(ref)).toEqual(row);
-      for (const [ref, row] of calls) expect(await secrets07ReadCall(ref)).toEqual(row);
+      // Post-restart durability without one polling sweep per gate: a single paged
+      // sweep re-reads every saved gate receipt, then each is compared in full.
+      const secrets07Reread = new Map<string, secrets07GateReceipt>();
+      let secrets07After: string | undefined;
+      const secrets07Seen = new Set<string>();
+      for (;;) {
+        const secrets07Page = await secrets07Call(engine.client, "vault.receipts", { limit: 1000, ...(secrets07After ? { after: secrets07After } : {}) });
+        expect(secrets07Page.undecodable).toBe(0);
+        for (const secrets07Row of secrets07Page.receipts) secrets07Reread.set(secrets07Row.receipt_ref, secrets07Row);
+        if (!secrets07Page.next_after) break;
+        expect({ check: "SECRETS-07 post-restart gate sweep advances", ok: secrets07Seen.has(secrets07Page.next_after) }).toEqual({ check: "SECRETS-07 post-restart gate sweep advances", ok: false });
+        secrets07Seen.add(secrets07Page.next_after);
+        secrets07After = secrets07Page.next_after;
+      }
+      for (const [secrets07GateRef, secrets07GateRow] of gates) expect(secrets07Reread.get(secrets07GateRef)).toEqual(secrets07GateRow);
+      await Promise.all([...calls].map(async ([ref, row]) => {
+        expect(await secrets07ReadCall(ref)).toEqual(row);
+      }));
       await secrets07Refuse(concise, "vault.policy.outbound.decide", candidate, 401, "UNAUTHORIZED", false);
       await secrets07Decide(verbose, original, "route_to_help", "SECRETS-07-restart-help");
       expect(providers.seenFixtureCalls.length).toBe(11);
@@ -1445,7 +1721,7 @@ enabled = false
       expect(Buffer.from(blake3(archive)).toString("hex")).toBe(exported.digest);
       secrets07Scan(archive, values);
       const members = publicZip(exported.archive);
-      expect(members.size > 0).toBe(true);
+      expect({ check: "SECRETS-07 export archive has members", ok: members.size > 0 }).toEqual({ check: "SECRETS-07 export archive has members", ok: true });
       for (const bytes of members.values()) secrets07Scan(bytes, values);
       let after: string | undefined;
       const cursors = new Set<string>();
@@ -1453,19 +1729,36 @@ enabled = false
         const page = await secrets07Call(engine.client, "vault.receipts", { limit: 1000, ...(after ? { after } : {}) });
         expect(page.undecodable).toBe(0);
         if (!page.next_after) break;
-        expect(cursors.has(page.next_after)).toBe(false);
+        expect({ check: "SECRETS-07 ledger sweep advances", ok: cursors.has(page.next_after) }).toEqual({ check: "SECRETS-07 ledger sweep advances", ok: false });
         cursors.add(page.next_after);
         after = page.next_after;
       }
       await providers.close();
       await engine.close();
-      expect(engine.serverOutputHas(values.flatMap(value => [value, Buffer.from(value).toString("base64")])).found === false
-        && engine.serverOutputHas(values.flatMap(value => [value, Buffer.from(value).toString("base64")])).truncated === false).toBe(true);
+      const secrets07Logged = values.flatMap(value => [value, Buffer.from(value).toString("base64")]);
+      const secrets07ServerOutput = engine.serverOutputHas(secrets07Logged);
+      expect({ check: "SECRETS-07 server logs carry no candidate and are complete", ok: secrets07ServerOutput.found === false && secrets07ServerOutput.truncated === false }).toEqual({ check: "SECRETS-07 server logs carry no candidate and are complete", ok: true });
+    } catch (error) {
+      secrets07BodyFailures.push(error);
     } finally {
-      await engine.close();
+      try {
+        await engine.close();
+      } catch (error) {
+        secrets07CleanupFailures.push(error);
+      }
     }
-  } finally {
+  } catch (error) {
+    secrets07BodyFailures.push(error);
+  }
+  try {
     await providers.close();
+  } catch (error) {
+    secrets07CleanupFailures.push(error);
+  }
+  if (secrets07BodyFailures.length > 0 || secrets07CleanupFailures.length > 0) {
+    const secrets07All = [...secrets07BodyFailures, ...secrets07CleanupFailures];
+    if (secrets07All.length === 1) throw secrets07All[0];
+    throw new AggregateError(secrets07All, `SECRETS-07 body failures=${secrets07BodyFailures.length} cleanup failures=${secrets07CleanupFailures.length}: ${secrets07All.map(secrets07Summarize).join(" | ")}`);
   }
 });
 
@@ -1506,11 +1799,35 @@ function secrets09Object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function secrets09Scan<T>(value: T, needles: readonly string[]): T {
+function secrets09Scan<T>(value: T, needles: readonly string[], what: string): T {
   const bytes = value instanceof Uint8Array ? Buffer.from(value)
     : Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
-  expect(needles.every(needle => !bytes.includes(Buffer.from(needle)))).toBe(true);
+  const ok = needles.every(needle => !bytes.includes(Buffer.from(needle)));
+  expect({ check: what, ok }).toEqual({ check: what, ok: true });
   return value;
+}
+
+function secrets09SafeErrorField(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? redactor.text(value) : null;
+}
+
+function secrets09SafeMessage(error: unknown): string {
+  return redactor.text(error instanceof Error ? error.message : String(error));
+}
+
+// A refusal summary naming the verb, the status and the envelope code. The
+// code and message are quoted only when both are strings, and both pass
+// through the redactor; a malformed envelope reports UNKNOWN instead.
+function secrets09RefusalSummary(verb: string, status: number, body: unknown): string {
+  const record = body !== null && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown> : null;
+  const raw = record?.error;
+  const fields = raw !== null && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown> : null;
+  const code = fields ? secrets09SafeErrorField(fields.code) : null;
+  const message = fields ? secrets09SafeErrorField(fields.message) : null;
+  const detail = code !== null && message !== null ? `${code}: ${message}` : "UNKNOWN";
+  return `SECRETS-09 HTTP ${verb} refused ${status}: ${detail}`;
 }
 
 function secrets09Invocation(): Record<string, string> {
@@ -1523,10 +1840,15 @@ async function secrets09Call<V extends FacadeVerb>(
   const reply = await client.raw<FacadeResult<V>>(
     "POST", `/v1/core/facade/${verb}`, input, secrets09Invocation(),
   );
-  secrets09Scan(reply.bytes, needles);
-  secrets09Scan(reply.body, needles);
-  secrets09Scan(Object.fromEntries(reply.headers), needles);
-  expect(reply.status).toBe(200);
+  secrets09Scan(reply.bytes, needles, `SECRETS-09 ${verb} raw bytes exclude raw and base64 values`);
+  secrets09Scan(reply.body, needles, `SECRETS-09 ${verb} body excludes raw and base64 values`);
+  secrets09Scan(Object.fromEntries(reply.headers), needles, `SECRETS-09 ${verb} headers exclude raw and base64 values`);
+  try {
+    expect(reply.status).toBe(200);
+  } catch (error) {
+    if (error instanceof Error) error.message = `${secrets09RefusalSummary(verb, reply.status, reply.body)} (${error.message})`;
+    throw error;
+  }
   return reply.body;
 }
 
@@ -1537,14 +1859,21 @@ async function secrets09Decide(
   const reply = await client.raw<FacadeResult<"vault.policy.outbound.decide">>(
     "POST", "/v1/core/facade/vault.policy.outbound.decide", input, secrets09Invocation(),
   );
-  secrets09Scan(Object.fromEntries(reply.headers), needles);
-  if (reply.status !== 200) secrets09Scan(reply.bytes, needles);
-  expect(reply.status).toBe(200);
+  secrets09Scan(Object.fromEntries(reply.headers), needles, "SECRETS-09 outbound.decide headers exclude raw and base64 values");
+  if (reply.status !== 200) secrets09Scan(reply.bytes, needles, "SECRETS-09 outbound.decide refusal bytes exclude raw and base64 values");
+  try {
+    expect(reply.status).toBe(200);
+  } catch (error) {
+    if (error instanceof Error) error.message = `${secrets09RefusalSummary("vault.policy.outbound.decide", reply.status, reply.body)} (${error.message})`;
+    throw error;
+  }
   // This field is the promised candidate, not a receipt or diagnostic leak.
   const { final_content: finalContent, ...otherFields } = reply.body;
-  secrets09Scan(otherFields, needles);
-  expect(typeof finalContent === "string"
-    && Buffer.from(finalContent).equals(Buffer.from(input.content))).toBe(true);
+  secrets09Scan(otherFields, needles, "SECRETS-09 outbound.decide non-candidate fields exclude raw and base64 values");
+  const preserved = typeof finalContent === "string"
+    && Buffer.from(finalContent).equals(Buffer.from(input.content));
+  expect({ check: "SECRETS-09 outbound.decide preserves the exact candidate bytes", ok: preserved })
+    .toEqual({ check: "SECRETS-09 outbound.decide preserves the exact candidate bytes", ok: true });
   return reply;
 }
 
@@ -1553,15 +1882,22 @@ async function secrets09Refuse<V extends FacadeVerb>(
   code: string, needles: readonly string[],
 ): Promise<WireReply<unknown>> {
   const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input, secrets09Invocation());
-  secrets09Scan(reply.bytes, needles);
-  secrets09Scan(reply.body, needles);
-  secrets09Scan(Object.fromEntries(reply.headers), needles);
-  expect(reply.status).toBe(status);
+  secrets09Scan(reply.bytes, needles, `SECRETS-09 ${verb} refusal bytes exclude raw and base64 values`);
+  secrets09Scan(reply.body, needles, `SECRETS-09 ${verb} refusal body excludes raw and base64 values`);
+  secrets09Scan(Object.fromEntries(reply.headers), needles, `SECRETS-09 ${verb} refusal headers exclude raw and base64 values`);
   const error = secrets09Object(secrets09Object(reply.body).error);
-  expect(error.code).toBe(code);
-  expect(typeof error.message === "string" && error.message.length > 0).toBe(true);
-  expect(Array.isArray(error.suggestions)).toBe(true);
-  expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
+  const actualCode = secrets09SafeErrorField(error.code);
+  const actualMessage = secrets09SafeErrorField(error.message);
+  expect({ check: `SECRETS-09 ${verb} refuses with status ${status}`, ok: reply.status })
+    .toEqual({ check: `SECRETS-09 ${verb} refuses with status ${status}`, ok: status });
+  expect({ check: `SECRETS-09 ${verb} refuses with code ${code}`, ok: actualCode })
+    .toEqual({ check: `SECRETS-09 ${verb} refuses with code ${code}`, ok: code });
+  expect({ check: `SECRETS-09 ${verb} refusal message is non-empty`, ok: actualMessage !== null })
+    .toEqual({ check: `SECRETS-09 ${verb} refusal message is non-empty`, ok: true });
+  expect({ check: `SECRETS-09 ${verb} refusal carries suggestions`, ok: Array.isArray(error.suggestions) })
+    .toEqual({ check: `SECRETS-09 ${verb} refusal carries suggestions`, ok: true });
+  expect({ check: `SECRETS-09 ${verb} refusal carries a request id`, ok: typeof error.requestId === "string" && error.requestId.length > 0 })
+    .toEqual({ check: `SECRETS-09 ${verb} refusal carries a request id`, ok: true });
   return reply;
 }
 
@@ -1575,21 +1911,27 @@ async function secrets09CallReceipt(
   }
   if (reply.status !== 200) {
     const error = secrets09Object(secrets09Object(reply.body).error);
-    if (actorRef === null) expect(error.receiptRef == null).toBe(true);
+    if (actorRef === null) expect({ check: `SECRETS-09 ${verb} connection refusal carries no body receipt ref`, ok: error.receiptRef == null })
+      .toEqual({ check: `SECRETS-09 ${verb} connection refusal carries no body receipt ref`, ok: true });
     else expect(error.receiptRef).toBe(ref);
   }
   const receipt = await awaitPublic(
     () => secrets09Call(client, "vault.receipts.get", { receipt_ref: ref }, needles),
-    row => row !== null, { label: "SECRETS-09 call receipt" },
+    row => row !== null, { label: `SECRETS-09 ${verb} call receipt` },
   );
   if (!receipt) throw new Error("SECRETS-09 call receipt is not publicly readable");
   expect(receipt.receipt_ref).toBe(ref);
-  expect(receipt.verb).toBe(actorRef === null ? verb : `v1/core/facade/${verb}`);
+  // Both receipt doors store the dotted verb: the facade router nests under
+  // "/v1/core/facade", so axum strips that prefix before the receipt
+  // middleware reads the path; the outer connection door strips it itself.
+  expect(receipt.verb).toBe(verb);
   expect(receipt.transport).toBe("http_facade");
   if (actorRef === null) {
     expect(receipt.actor_class).toBe("connection");
-    expect(/^[a-f0-9]{32}$/.test(receipt.actor_ref)).toBe(true);
-    expect(receipt.credential_ref == null && receipt.result_digest == null).toBe(true);
+    expect({ check: `SECRETS-09 ${verb} connection receipt names a connection id`, ok: /^[a-f0-9]{32}$/.test(receipt.actor_ref) })
+      .toEqual({ check: `SECRETS-09 ${verb} connection receipt names a connection id`, ok: true });
+    expect({ check: `SECRETS-09 ${verb} connection receipt carries no credential or result digest`, ok: receipt.credential_ref == null && receipt.result_digest == null })
+      .toEqual({ check: `SECRETS-09 ${verb} connection receipt carries no credential or result digest`, ok: true });
   } else expect(receipt.actor_ref).toBe(actorRef);
   expect(receipt.outcome).toEqual(outcome);
   return receipt;
@@ -1610,7 +1952,8 @@ async function secrets09GateRows(client: PublicHttpClient, needles: readonly str
 }
 
 async function secrets09Gate(client: PublicHttpClient, ref: string, needles: readonly string[]) {
-  expect(/^gate:[a-f0-9]{32}$/.test(ref)).toBe(true);
+  expect({ check: "SECRETS-09 policy receipt ref is a gate ref", ok: /^gate:[a-f0-9]{32}$/.test(ref) })
+    .toEqual({ check: "SECRETS-09 policy receipt ref is a gate ref", ok: true });
   const rows = await awaitPublic(
     () => secrets09GateRows(client, needles),
     page => page.some(row => row.receipt_ref === ref), { label: "SECRETS-09 policy receipt" },
@@ -1626,10 +1969,10 @@ function secrets09Manifest(
   const row = shape.live.rows.find(item => item.kind === "manifest" && item.manifest_ref === ref);
   if (!row || row.kind !== "manifest") throw new Error("SECRETS-09 default manifest is absent");
   if (row.body) {
-    const bytes = secrets09Scan(Buffer.from(row.body, "hex"), needles);
-    return secrets09Object(secrets09Scan(decode(bytes), needles));
+    const bytes = secrets09Scan(Buffer.from(row.body, "hex"), needles, "SECRETS-09 manifest body bytes exclude raw and base64 values");
+    return secrets09Object(secrets09Scan(decode(bytes), needles, "SECRETS-09 decoded manifest excludes raw and base64 values"));
   }
-  return secrets09Object(secrets09Scan(row.json, needles));
+  return secrets09Object(secrets09Scan(row.json, needles, "SECRETS-09 manifest JSON excludes raw and base64 values"));
 }
 
 function secrets09AssertCooldown(body: Record<string, unknown>): void {
@@ -1637,7 +1980,8 @@ function secrets09AssertCooldown(body: Record<string, unknown>): void {
   const rows = body.policy_values.map(secrets09Object).filter(row =>
     row.key === "provider_cooldown_max_wait_seconds"
     && secrets09Object(row.scope).level === "vault");
-  expect(rows.length > 0 && rows.every(row => row.value === 0)).toBe(true);
+  expect({ check: "SECRETS-09 vault cooldown max-wait is zero", ok: rows.length > 0 && rows.every(row => row.value === 0) })
+    .toEqual({ check: "SECRETS-09 vault cooldown max-wait is zero", ok: true });
 }
 
 /*
@@ -1665,6 +2009,9 @@ suite.test(test, "SECRETS-09", "Owner policy is off by default; a configured bac
     request: { method: "POST", path: "/v1/chat/completions", model: "policy-checker", fields: { stream: false } },
     response: { kind: "json", status: fixture.backendFailure.status, body: fixture.backendFailure.body },
   }] });
+  // A cleanup failure must not mask the body failure: capture the body error
+  // and report both together. Provider completeness stays strict.
+  let secrets09BodyError: unknown = null;
   try {
     const origin = providers.urls.policy;
     if (!origin) throw new Error("SECRETS-09 scripted policy origin is absent");
@@ -1679,13 +2026,18 @@ model = "policy:policy-checker"
 [models.dreamer]
 enabled = false
 ` });
+    let secrets09EngineError: unknown = null;
     try {
       const owner = engine.client;
       const initial = await secrets09Call(owner, "vault.policy.owner.get", {}, needles);
-      expect(initial.enabled).toBe(false);
-      expect(initial.configuration.owner_policy_enabled).toBe(false);
-      expect(initial.configuration.owner_policy_document == null).toBe(true);
-      expect(initial.configuration.owner_policy_output_contract == null).toBe(true);
+      expect({ check: "SECRETS-09 default owner policy is disabled", ok: initial.enabled })
+        .toEqual({ check: "SECRETS-09 default owner policy is disabled", ok: false });
+      expect({ check: "SECRETS-09 default authored owner policy is disabled", ok: initial.configuration.owner_policy_enabled })
+        .toEqual({ check: "SECRETS-09 default authored owner policy is disabled", ok: false });
+      expect({ check: "SECRETS-09 default owner document is absent", ok: initial.configuration.owner_policy_document == null })
+        .toEqual({ check: "SECRETS-09 default owner document is absent", ok: true });
+      expect({ check: "SECRETS-09 default owner output contract is absent", ok: initial.configuration.owner_policy_output_contract == null })
+        .toEqual({ check: "SECRETS-09 default owner output contract is absent", ok: true });
       expect(initial.configuration.owner_policy_patterns ?? []).toEqual([]);
       const shape = await secrets09Call(owner, "vault.shape.read", {}, needles);
       const defaultBody = secrets09Manifest(shape, initial.manifest_ref, needles);
@@ -1694,9 +2046,12 @@ enabled = false
       const off = await secrets09Decide(owner, input, needles);
       expect(off.body.action).toBe("allow");
       expect(off.body.verdict.decision).toBe("allow");
-      expect(off.body.outbound_halted).toBe(false);
-      expect(off.body.custom_tier_skipped).toBe(false);
-      expect(off.body.receipt_ref == null).toBe(true);
+      expect({ check: "SECRETS-09 off decision does not halt", ok: off.body.outbound_halted })
+        .toEqual({ check: "SECRETS-09 off decision does not halt", ok: false });
+      expect({ check: "SECRETS-09 off decision skips no custom tier", ok: off.body.custom_tier_skipped })
+        .toEqual({ check: "SECRETS-09 off decision skips no custom tier", ok: false });
+      expect({ check: "SECRETS-09 off decision leaves no policy receipt", ok: off.body.receipt_ref == null })
+        .toEqual({ check: "SECRETS-09 off decision leaves no policy receipt", ok: true });
       await secrets09CallReceipt(owner, off, "vault.policy.outbound.decide", engine.pairedActor.principalRef, "ok", needles);
       expect(providers.seenFixtureCalls.length).toBe(0);
 
@@ -1717,10 +2072,12 @@ enabled = false
           json: { ...defaultBody, policy_values: policyValues } } : row);
       const plan = await secrets09Call(owner, "vault.shape.plan", { seed: { rows } }, needles);
       expect(plan.items.length).toBe(1);
-      expect(plan.items.some(item => item.target.kind === "manifest"
-        && item.target.manifest_ref === initial.manifest_ref)).toBe(true);
+      expect({ check: "SECRETS-09 shape plan targets the default manifest", ok: plan.items.some(item => item.target.kind === "manifest"
+        && item.target.manifest_ref === initial.manifest_ref) })
+        .toEqual({ check: "SECRETS-09 shape plan targets the default manifest", ok: true });
       const applied = await secrets09Call(owner, "vault.shape.apply", { plan, approve: plan.items.map(item => item.seq) }, needles);
-      expect(applied.done).toBe(true);
+      expect({ check: "SECRETS-09 shape apply completed", ok: applied.done })
+        .toEqual({ check: "SECRETS-09 shape apply completed", ok: true });
       for (const item of applied.items) expect(item.state.state).toBe("landed");
       const cooled = await secrets09Call(owner, "vault.shape.read", {}, needles);
       secrets09AssertCooldown(secrets09Manifest(cooled, initial.manifest_ref, needles));
@@ -1747,10 +2104,10 @@ enabled = false
         action: "warn", scope: "Vault" } } } satisfies FacadeInput<"vault.policy.owner.row.change">;
       await secrets09Call(owner, "vault.policy.owner.row.change", rowChange, needles);
       const withRow = secrets09Manifest(await secrets09Call(owner, "vault.shape.read", {}, needles), initial.manifest_ref, needles);
-      expect(Array.isArray(withRow.owner_policy_rows) && withRow.owner_policy_rows.some(value => {
+      expect({ check: "SECRETS-09 owner row is readable through shape", ok: Array.isArray(withRow.owner_policy_rows) && withRow.owner_policy_rows.some(value => {
         const row = secrets09Object(value);
         return row.row_ref === "fixture.checklist" && row.text === rowText && row.action === "warn" && row.active === true;
-      })).toBe(true);
+      }) }).toEqual({ check: "SECRETS-09 owner row is readable through shape", ok: true });
       const configuration = { owner_policy_enabled: true,
         owner_policy_document: "Fixture-only checklist policy. Judge this synthetic candidate against the single active owner row.",
         owner_policy_output_contract: "binary", owner_policy_patterns: [],
@@ -1762,7 +2119,8 @@ enabled = false
       const configurationReceipt = await secrets09Gate(owner, configured.receipt_ref, needles);
       expect(configurationReceipt.reason_codes).toContain("gate.allow.owner_content_policy_configuration");
       const enabled = await secrets09Call(owner, "vault.policy.owner.get", {}, needles);
-      expect(enabled.enabled).toBe(true);
+      expect({ check: "SECRETS-09 owner policy is enabled after configure", ok: enabled.enabled })
+        .toEqual({ check: "SECRETS-09 owner policy is enabled after configure", ok: true });
       expect(enabled.configuration).toEqual(configuration);
       expect(enabled.body_hash).toBe(configured.configuration.body_hash);
 
@@ -1775,24 +2133,28 @@ enabled = false
       expect(wrongKindReceipt.actor_class).toBe("agent");
       const afterRefusal = await secrets09Call(owner, "vault.policy.owner.get", {}, needles);
       expect(afterRefusal.body_hash).toBe(enabled.body_hash);
-      expect(afterRefusal.enabled).toBe(true);
+      expect({ check: "SECRETS-09 owner policy stays enabled after agent refusal", ok: afterRefusal.enabled })
+        .toEqual({ check: "SECRETS-09 owner policy stays enabled after agent refusal", ok: true });
       expect(providers.seenFixtureCalls.length).toBe(0);
 
       const outage = await secrets09Decide(writer.client, input, needles);
       expect(outage.body.action).toBe("skipped");
       expect(outage.body.verdict.decision).toEqual({ skipped: "backend-unavailable" });
-      expect(outage.body.custom_tier_skipped).toBe(true);
-      expect(outage.body.outbound_halted).toBe(false);
+      expect({ check: "SECRETS-09 outage decision skips the custom tier", ok: outage.body.custom_tier_skipped })
+        .toEqual({ check: "SECRETS-09 outage decision skips the custom tier", ok: true });
+      expect({ check: "SECRETS-09 outage decision does not halt", ok: outage.body.outbound_halted })
+        .toEqual({ check: "SECRETS-09 outage decision does not halt", ok: false });
       expect(outage.body.verdict.plane_minted).toBe("owner_policy");
-      expect(outage.body.verdict.hosted_attestation == null).toBe(true);
+      expect({ check: "SECRETS-09 skipped verdict carries no hosted attestation", ok: outage.body.verdict.hosted_attestation == null })
+        .toEqual({ check: "SECRETS-09 skipped verdict carries no hosted attestation", ok: true });
       expect(providers.seenFixtureCalls.length).toBe(1);
       const seen = providers.seenFixtureCalls[0];
       if (!seen) throw new Error("SECRETS-09 classifier was not called");
       expect(seen.fixtureId).toBe("secrets09-owner-outage");
       const { body: providerBody, ...providerMetadata } = seen;
-      secrets09Scan(providerMetadata, needles);
+      secrets09Scan(providerMetadata, needles, "SECRETS-09 classifier metadata excludes raw and base64 values");
       const { messages, ...providerFields } = secrets09Object(providerBody);
-      secrets09Scan(providerFields, needles);
+      secrets09Scan(providerFields, needles, "SECRETS-09 classifier non-message fields exclude raw and base64 values");
       if (!Array.isArray(messages)) throw new Error("SECRETS-09 classifier messages are absent");
       let candidateMessages = 0;
       for (const value of messages) {
@@ -1800,8 +2162,8 @@ enabled = false
         if (message.role === "user" && message.content === input.content) {
           candidateMessages++;
           const { content: _candidate, ...otherFields } = message;
-          secrets09Scan(otherFields, needles);
-        } else secrets09Scan(message, needles);
+          secrets09Scan(otherFields, needles, "SECRETS-09 candidate message envelope excludes raw and base64 values");
+        } else secrets09Scan(message, needles, "SECRETS-09 non-candidate classifier message excludes raw and base64 values");
       }
       expect(candidateMessages).toBe(1);
 
@@ -1811,7 +2173,8 @@ enabled = false
       expect(policyReceipt.outcome).toBe("skipped");
       expect(policyReceipt.reason_codes).toContain("gate.policy_model.skipped");
       expect(policyReceipt.reason_codes).toContain("gate.policy_model.skip_reason.backend_unavailable");
-      expect(policyReceipt.reason_codes.includes("gate.policy_model.allow")).toBe(false);
+      expect({ check: "SECRETS-09 skipped receipt never claims allow", ok: policyReceipt.reason_codes.includes("gate.policy_model.allow") })
+        .toEqual({ check: "SECRETS-09 skipped receipt never claims allow", ok: false });
       expect(policyReceipt.actor_ref).toBe(agentRef);
       expect(policyReceipt.content_kind).toBe("action");
       const callReceipt = await secrets09CallReceipt(owner, outage, "vault.policy.outbound.decide", agentRef, "ok", needles);
@@ -1819,11 +2182,17 @@ enabled = false
       const slipId = callReceipt.credential_ref;
       if (!slipId || !/^[a-f0-9]{64}$/.test(slipId)) throw new Error("SECRETS-09 call receipt lacks a revocable slip id");
       const revoked = await owner.raw("POST", "/v1/core/slips/revoke", { slip_id: Array.from(Buffer.from(slipId, "hex")) });
-      secrets09Scan(revoked.bytes, needles);
-      secrets09Scan(revoked.body, needles);
-      secrets09Scan(Object.fromEntries(revoked.headers), needles);
-      expect(revoked.status).toBe(200);
-      expect(secrets09Object(revoked.body).revoked).toBe(true);
+      secrets09Scan(revoked.bytes, needles, "SECRETS-09 slip revocation bytes exclude raw and base64 values");
+      secrets09Scan(revoked.body, needles, "SECRETS-09 slip revocation body excludes raw and base64 values");
+      secrets09Scan(Object.fromEntries(revoked.headers), needles, "SECRETS-09 slip revocation headers exclude raw and base64 values");
+      try {
+        expect(revoked.status).toBe(200);
+      } catch (error) {
+        if (error instanceof Error) error.message = `${secrets09RefusalSummary("POST /v1/core/slips/revoke", revoked.status, revoked.body)} (${error.message})`;
+        throw error;
+      }
+      expect({ check: "SECRETS-09 slip revocation is acknowledged", ok: secrets09Object(revoked.body).revoked })
+        .toEqual({ check: "SECRETS-09 slip revocation is acknowledged", ok: true });
       const nextUse = await secrets09Refuse(writer.client, "vault.policy.outbound.decide", input, 401, "UNAUTHORIZED", needles);
       const nextUseReceipt = await secrets09CallReceipt(owner, nextUse, "vault.policy.outbound.decide", null,
         { refused: { code: "HTTP_401" } }, needles);
@@ -1831,7 +2200,8 @@ enabled = false
 
       await engine.restart();
       const restarted = await secrets09Call(owner, "vault.policy.owner.get", {}, needles);
-      expect(restarted.enabled).toBe(true);
+      expect({ check: "SECRETS-09 owner policy stays enabled across restart", ok: restarted.enabled })
+        .toEqual({ check: "SECRETS-09 owner policy stays enabled across restart", ok: true });
       expect(restarted.configuration).toEqual(configuration);
       expect(restarted.body_hash).toBe(enabled.body_hash);
       const durableShape = await secrets09Call(owner, "vault.shape.read", {}, needles);
@@ -1860,13 +2230,17 @@ enabled = false
       }, needles);
       await secrets09Gate(owner, disabled.receipt_ref, needles);
       const disabledView = await secrets09Call(owner, "vault.policy.owner.get", {}, needles);
-      expect(disabledView.enabled).toBe(false);
+      expect({ check: "SECRETS-09 owner policy is disabled after configure-off", ok: disabledView.enabled })
+        .toEqual({ check: "SECRETS-09 owner policy is disabled after configure-off", ok: false });
       expect(disabledView.configuration).toEqual({ ...configuration, owner_policy_enabled: false });
       const offAgain = await secrets09Decide(owner, input, needles);
       expect(offAgain.body.action).toBe("allow");
-      expect(offAgain.body.custom_tier_skipped).toBe(false);
-      expect(offAgain.body.outbound_halted).toBe(false);
-      expect(offAgain.body.receipt_ref == null).toBe(true);
+      expect({ check: "SECRETS-09 re-disabled decision skips no custom tier", ok: offAgain.body.custom_tier_skipped })
+        .toEqual({ check: "SECRETS-09 re-disabled decision skips no custom tier", ok: false });
+      expect({ check: "SECRETS-09 re-disabled decision does not halt", ok: offAgain.body.outbound_halted })
+        .toEqual({ check: "SECRETS-09 re-disabled decision does not halt", ok: false });
+      expect({ check: "SECRETS-09 re-disabled decision leaves no policy receipt", ok: offAgain.body.receipt_ref == null })
+        .toEqual({ check: "SECRETS-09 re-disabled decision leaves no policy receipt", ok: true });
       await secrets09CallReceipt(owner, offAgain, "vault.policy.outbound.decide", engine.pairedActor.principalRef, "ok", needles);
       expect(providers.seenFixtureCalls.length).toBe(1);
       await secrets09Call(owner, "vault.recall", { query: sentinel, effort: "light", limit: 10 }, needles);
@@ -1876,18 +2250,47 @@ enabled = false
       expect(Buffer.from(blake3(Buffer.from(exported.archive, "base64"))).toString("hex")).toBe(exported.digest);
       const members = publicZip(exported.archive);
       for (const [name, bytes] of members) {
-        secrets09Scan(name, needles);
-        secrets09Scan(bytes, needles);
+        secrets09Scan(name, needles, "SECRETS-09 export member name excludes raw and base64 values");
+        secrets09Scan(bytes, needles, "SECRETS-09 export member bytes exclude raw and base64 values");
       }
       await engine.close();
-      expect(engine.serverOutputHas(needles).found === false
-        && engine.serverOutputHas(needles).truncated === false).toBe(true);
-      expect(engine.serverOutputHas([value, base64]).found === false
-        && engine.serverOutputHas([value, base64]).truncated === false).toBe(true);
-    } finally {
-      await engine.close();
+      expect({ check: "SECRETS-09 server output excludes raw and base64 needles", ok: engine.serverOutputHas(needles).found === false
+        && engine.serverOutputHas(needles).truncated === false })
+        .toEqual({ check: "SECRETS-09 server output excludes raw and base64 needles", ok: true });
+      expect({ check: "SECRETS-09 server output excludes the candidate pair", ok: engine.serverOutputHas([value, base64]).found === false
+        && engine.serverOutputHas([value, base64]).truncated === false })
+        .toEqual({ check: "SECRETS-09 server output excludes the candidate pair", ok: true });
+    } catch (error) {
+      secrets09BodyError = error;
     }
-  } finally {
-    await providers.close();
+    try {
+      await engine.close();
+    } catch (error) {
+      secrets09EngineError = error;
+    }
+    if (secrets09BodyError !== null && secrets09EngineError !== null) {
+      throw new AggregateError(
+        [secrets09BodyError, secrets09EngineError],
+        `SECRETS-09 body failure: ${secrets09SafeMessage(secrets09BodyError)}; engine cleanup also failed: ${secrets09SafeMessage(secrets09EngineError)}`,
+      );
+    }
+    if (secrets09EngineError !== null) throw secrets09EngineError;
+    if (secrets09BodyError !== null) throw secrets09BodyError;
+  } catch (error) {
+    secrets09BodyError = error;
   }
+  let secrets09ProviderError: unknown = null;
+  try {
+    await providers.close();
+  } catch (error) {
+    secrets09ProviderError = error;
+  }
+  if (secrets09BodyError !== null && secrets09ProviderError !== null) {
+    throw new AggregateError(
+      [secrets09BodyError, secrets09ProviderError],
+      `SECRETS-09 body failure: ${secrets09SafeMessage(secrets09BodyError)}; provider cleanup also failed: ${secrets09SafeMessage(secrets09ProviderError)}`,
+    );
+  }
+  if (secrets09ProviderError !== null) throw secrets09ProviderError;
+  if (secrets09BodyError !== null) throw secrets09BodyError;
 });
