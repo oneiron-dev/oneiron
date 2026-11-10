@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::machine_identity::{Host, host, request_for};
 use super::support::RosterHead;
-use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, device, ed_key, owner_act, sign_ed, unsigned_entry};
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
@@ -1093,21 +1093,27 @@ fn rescued_successor() -> MarkPastFloor {
     )
 }
 
-/// Sol P2 round 17, F2: a retired tier-floor row in a re-root's line folds
+/// Sol P2 round 17, F2: a retired device-key row in a re-root's line folds
 /// only as that handoff's verified ancestry, and the handoff stands only by
-/// its vouch. A later owner row over the mark and that tier-floor row must
-/// not clear the mark's floor through that permission.
+/// its vouch. A later owner row over the mark and that retired row must not
+/// clear the mark's floor through that permission. The retired row is an
+/// owner enrollment: the device-tier floor this fixture used was deleted in
+/// cb0899ccc91, and it was the same retired class (`op_is_retired_device_op`).
 fn retired_permission() -> MarkPastFloor {
     let start = Start::new(116);
     let marked = start.mark(start.seq + 1);
-    let tier_floor = start.owner_row(
+    let retired = start.owner_row(
         start.seq + 2,
         vec![hash(&marked)],
-        AuthorityOp::SetTierFloor {
-            tier_floor: start.fold.tier_floor.unwrap_or(AuthorityTier::Software),
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(216)),
+                ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
         },
     );
-    let later = start.revoke(start.seq + 3, vec![hash(&tier_floor)], 15);
+    let later = start.revoke(start.seq + 3, vec![hash(&retired)], 15);
     let refused = start.revoke(start.seq, start.below_heads(), 16);
     let widening = start.widening(&marked);
     let next = HostSlipIssuer::from_secret(b"world floor permission root").unwrap();
@@ -1120,7 +1126,7 @@ fn retired_permission() -> MarkPastFloor {
     );
     start.replica(
         "retired permission",
-        &[&later, &refused, &marked, &tier_floor, &widening],
+        &[&later, &refused, &marked, &retired, &widening],
         Some(re_root),
     )
 }

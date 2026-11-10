@@ -31,7 +31,7 @@ fn peer_log_fixture(seed: u8) -> PeerLogFixture {
     let outsider = ed_key(seed.wrapping_add(4));
     let host_key = authority_key_from_ed(&host);
 
-    let genesis = genesis_entry(seed, 86_400, 1);
+    let genesis = genesis_entry(seed, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
 
     let enroll_admin = enroll_device_entry(
@@ -189,7 +189,7 @@ fn peer_entries_bind_only_the_authority_transcript_domain() {
         let mut enroll = fixture.entries[1].clone();
         let mut transcript = domain.to_vec();
         transcript.extend_from_slice(
-            &encode_value(&transcript_value_with_genesis_delay(&enroll, true)).unwrap(),
+            &encode_value(&transcript_value(&enroll)).unwrap(),
         );
         enroll.signer.signature = host_signing.sign(&transcript).to_bytes().to_vec();
 

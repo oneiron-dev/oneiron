@@ -576,7 +576,7 @@ fn equal_key_peer_histories_converge_in_both_orders_and_duplicate_replay() {
     let root = authority_entry_hash(&fixture.genesis).unwrap();
     let a = lifecycle_entry(&fixture, vec![root], 1, connect_action(&fixture));
     let other_peer = ed_key(212);
-    let other_vault = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
+    let other_vault = genesis_vault_id(&genesis_entry(212, 1)).unwrap();
     assert_ne!(fixture.peer_vault_id, other_vault);
     let b = lifecycle_entry(
         &fixture,
