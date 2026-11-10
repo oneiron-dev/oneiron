@@ -95,6 +95,8 @@ impl HostSelfDispatcher<'_> {
                     SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(output, Some(Vec::new())))
                 }
                 AgentWaitOpen::Changed => failed("task_wait_changed"),
+                // Two tries of one child are one child, as a repeated id is.
+                AgentWaitOpen::SameChild => failed("task_wait_invalid"),
                 AgentWaitOpen::NotOwn => failed("task_wait_not_own"),
             },
         )
