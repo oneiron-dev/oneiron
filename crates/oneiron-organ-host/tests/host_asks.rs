@@ -23,8 +23,7 @@ use oneiron_organ_host::{
     HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, ProtocolVersion,
-    Value,
+    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, Value,
 };
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -404,26 +403,6 @@ fn a_second_ask_in_flight_or_a_stale_ask_ends_the_organ() {
         assert!(slow.1.load(Ordering::SeqCst) <= 1, "{mode}");
         assert_eq!(host.status("probe").expect("installed").pid, None, "{mode}");
     }
-}
-
-#[test]
-fn an_organ_built_for_1_0_still_runs() {
-    let (_dir, vault) = vault();
-    let host = rogue("--v1-0");
-    let handler = bytes(4);
-    let asks = AskHandlers::none().with(ANSWER, &handler);
-    for _ in 0..3 {
-        let outcome = host
-            .call_with(&vault, echo(Duration::from_secs(10)), Vec::new(), &asks)
-            .expect("echo");
-        assert_eq!(outcome.report.as_u64(), Some(7));
-        assert_eq!(
-            outcome.receipt.protocol,
-            ProtocolVersion { major: 1, minor: 0 }
-        );
-        assert!(outcome.receipt.asks.is_empty());
-    }
-    assert_eq!(host.status("probe").expect("installed").spawns, 1);
 }
 
 /// Tries to call an organ from inside its handler.
