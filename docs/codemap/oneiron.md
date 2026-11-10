@@ -8127,7 +8127,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_delete_propagation.rs` | test | L | — | — | ONE-1135 — delete propagation transport (M4-10) |
 | `tests/it_sync/sync_edge_kind_gating.rs` | test | m | — | — | ONE-1122 seam-7 pin: sync ships ALL edge kinds; retrieval gates at read time |
 | `tests/it_sync/sync_facet_of_admission_boundary.rs` | test | m | — | — | ONE-1645 — the `FacetOf` type table at the FEDERATION ADMISSION BOUNDARY |
-| `tests/it_sync/sync_harness/mod.rs` | test | L | 38 crate-vis | — | Two-vault sync test harness (ONE-1136 / M4-14) |
+| `tests/it_sync/sync_harness/mod.rs` | test | L | 42 crate-vis | — | Two-vault sync test harness (ONE-1136 / M4-14) |
 | `tests/it_sync/sync_maintenance_quota.rs` | test | L | — | — | — |
 | `tests/it_sync/sync_pinned_window_catchup.rs` | test | s | — | — | The stall ticket: a window this vault pinned history-free still brings a peer that is behind it level… |
 | `tests/it_sync/sync_quarantine.rs` | test | XL | — | — | ONE-1124 — quarantine (`x:` family) gate-rejection table over Observer B |
@@ -8136,7 +8136,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_replay_reason.rs` | test | L | — | — | ONE-1133 — reason-aware tombstone replay across nodes (M4-06) |
 | `tests/it_sync/sync_sweep_executor.rs` | test | m | — | — | ONE-1087 / ONE-1091 — historical-carrier sweep executor, end-to-end delete-safety suite (phase 1) |
 | `tests/it_sync/sync_tombstone_v2.rs` | test | m | — | — | ONE-1132 — tombstone wire format v2 + delete-path CRDT correctness |
-| `tests/it_sync/sync_window_manager.rs` | test | m | — | — | Integration tests for the production window manager (ONE-1125) |
+| `tests/it_sync/sync_window_manager.rs` | test | L | — | — | Integration tests for the production window manager (ONE-1125) |
 | `tests/it_sync/sync_world_residence.rs` | test | m | — | — | World-month residence regressions through public engine doors |
 | `tests/it_sync/tagging_local_only.rs` | test | s | — | — | What a saved tag set and a provisional entity do across two devices of one vault (ARCH-0036, serving the… |
 | `tests/it_sync/task_authority_convergence.rs` | test | m | — | — | TASK authority across two real vaults |
