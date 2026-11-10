@@ -91,7 +91,8 @@ pub use weave_trigger::WeaveDigestRendered;
 mod access_class;
 mod access_gate;
 pub(crate) use access_gate::{
-    IDENTITY_SOURCE_AUDIENCE_KEY, RelationshipRead, claim_access_axes, relationship_read,
+    IDENTITY_SOURCE_AUDIENCE_KEY, RelationshipRead, claim_access_axes,
+    identity_put_moves_source_audience_in_txn, relationship_read,
 };
 mod actor_key;
 mod agent_grants;

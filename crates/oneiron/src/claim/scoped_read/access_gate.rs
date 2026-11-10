@@ -499,6 +499,88 @@ pub(crate) fn relationship_read(
 /// `private`.
 pub(crate) const IDENTITY_SOURCE_AUDIENCE_KEY: &str = "source_audience";
 
+/// What an identity row's body says under [`IDENTITY_SOURCE_AUDIENCE_KEY`].
+#[derive(Debug, PartialEq, Eq)]
+enum IdentitySourceAudience {
+    /// The body names none (or is not a map): the row is read as every
+    /// identity row was.
+    Unnamed,
+    /// The relationship scope of the naming words, and whether every one of
+    /// them was private.
+    Named {
+        space: RelationshipScope,
+        private: bool,
+    },
+    /// Repeated, not a map, or a field missing, repeated or malformed: the
+    /// row is read by no one.
+    Malformed,
+}
+
+fn identity_source_audience(bytes: &[u8]) -> IdentitySourceAudience {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return IdentitySourceAudience::Unnamed;
+    };
+    let mut audiences = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(IDENTITY_SOURCE_AUDIENCE_KEY))
+        .map(|(_, value)| value);
+    let Some(audience) = audiences.next() else {
+        return IdentitySourceAudience::Unnamed;
+    };
+    if audiences.next().is_some() {
+        return IdentitySourceAudience::Malformed;
+    }
+    let Some(audience) = audience.as_map() else {
+        return IdentitySourceAudience::Malformed;
+    };
+    let field = |name: &str| {
+        let mut found = audience
+            .iter()
+            .filter(move |(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value);
+        match (found.next(), found.next()) {
+            (Some(value), None) => Some(value),
+            _ => None,
+        }
+    };
+    let (Some(rel), Some(private)) = (
+        field("rel"),
+        field("private").and_then(rmpv::Value::as_bool),
+    ) else {
+        return IdentitySourceAudience::Malformed;
+    };
+    match crate::write_envelope::claim_body::decode_relationship_scope(rel) {
+        Ok(space) => IdentitySourceAudience::Named { space, private },
+        Err(_) => IdentitySourceAudience::Malformed,
+    }
+}
+
+/// Whether a put of `body` at `id` changes or drops the source audience the
+/// stored identity row there names (review of #7006). Widening an exposure
+/// is the owner's act (ILDF2 ratify:129), so a below-owner commit keeps it
+/// exactly. An absent row, a row of another kind, or one that names no
+/// audience is left to the other checks.
+pub(crate) fn identity_put_moves_source_audience_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    let crate::vault::LiveEntityRow::Live {
+        entity_type,
+        body: stored,
+    } = crate::vault::live_entity_row_in_txn(store, txn, id)?
+    else {
+        return Ok(false);
+    };
+    if !crate::tagging::label_kind_admitted(entity_type) {
+        return Ok(false);
+    }
+    let before = identity_source_audience(&stored);
+    Ok(before != IdentitySourceAudience::Unnamed && identity_source_audience(body) != before)
+}
+
 /// [`relationship_read_keyed`] for an identity row. A row whose body names
 /// no source audience is decided readable, as every identity row was. One
 /// that names it is gated on it as a MESSAGE is on its own `rel` and
@@ -514,39 +596,10 @@ fn identity_relationship_read<S>(
 where
     S: crate::store::ManifestDbs + crate::federation::record_scope::MachineHistoryScope,
 {
-    let mut cursor = std::io::Cursor::new(bytes);
-    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
-        return Ok(RelationshipRead::Decided(true));
-    };
-    let mut audiences = fields
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(IDENTITY_SOURCE_AUDIENCE_KEY))
-        .map(|(_, value)| value);
-    let Some(audience) = audiences.next() else {
-        return Ok(RelationshipRead::Decided(true));
-    };
-    if audiences.next().is_some() {
-        return Ok(RelationshipRead::Decided(false));
-    }
-    let Some(audience) = audience.as_map() else {
-        return Ok(RelationshipRead::Decided(false));
-    };
-    let field = |name: &str| {
-        let mut found = audience
-            .iter()
-            .filter(move |(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value);
-        match (found.next(), found.next()) {
-            (Some(value), None) => Some(value),
-            _ => None,
-        }
-    };
-    let (Some(rel), Some(private)) = (field("rel"), field("private").and_then(rmpv::Value::as_bool))
-    else {
-        return Ok(RelationshipRead::Decided(false));
-    };
-    let Ok(space) = crate::write_envelope::claim_body::decode_relationship_scope(rel) else {
-        return Ok(RelationshipRead::Decided(false));
+    let (space, private) = match identity_source_audience(bytes) {
+        IdentitySourceAudience::Unnamed => return Ok(RelationshipRead::Decided(true)),
+        IdentitySourceAudience::Malformed => return Ok(RelationshipRead::Decided(false)),
+        IdentitySourceAudience::Named { space, private } => (space, private),
     };
     let Some(record) = crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?
     else {
