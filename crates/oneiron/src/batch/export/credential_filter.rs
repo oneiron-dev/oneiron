@@ -680,6 +680,7 @@ mod tests {
     fn a_phrase_one_byte_word_per_item_leaves_by_no_release_door() -> Result<()> {
         // Mask on write applies: the default vault leaves the owner's scan switch on.
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+        let (_residue_dir, residue_vault) = vault_with_scan_off()?;
         let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
         // One word per item: MessagePack binary, MessagePack byte values, the
         // two mixed, byte values each in an array of its own, the phrase's
@@ -762,6 +763,31 @@ mod tests {
                 !carries_sausage(emitted.as_bytes()),
                 "bundle export: {emitted}"
             );
+            // Independent release coverage: the scan-off write still holds
+            // the phrase, so masking at the write door cannot satisfy these.
+            let residue = put_asset(&residue_vault, body)?;
+            let stored = residue_vault
+                .get(&residue)?
+                .ok_or(Error::InvariantViolation("stored residue"))?;
+            assert_eq!(&stored, body, "scan-off residue keeps the exact fixture bytes");
+            assert!(carries_sausage(&stored), "release fixture still holds the phrase");
+            let served = redacted_memory_payload(stored)?;
+            assert!(!carries_sausage(&served), "residual raw serving: {served:?}");
+            let bundle: Value =
+                serde_json::from_slice(&residue_vault.export_entity_bundle_json(&[residue])?)
+                    .map_err(|_| Error::InvariantViolation("residual bundle JSON"))?;
+            let entities = bundle["entities"].as_array().expect("residual bundle entities");
+            assert_eq!(entities.len(), 1);
+            assert_eq!(entities[0]["id"], residue.to_hex());
+            let emitted = entities[0]["body"].to_string();
+            assert!(
+                !carries_sausage(emitted.as_bytes()),
+                "residual bundle export: {emitted}"
+            );
+            assert!(
+                !carries_sausage(bundle.to_string().as_bytes()),
+                "residual bundle export: {bundle}"
+            );
         }
         // The hits were sealed into custody, not dropped.
         assert!(
@@ -777,6 +803,12 @@ mod tests {
             let mut body = Vec::new();
             let field = rmpv::Value::Map(vec![("notes:".into(), value)]);
             rmpv::encode::write_value(&mut body, &field).unwrap();
+            let residue = put_asset(&residue_vault, &body)?;
+            let stored = residue_vault
+                .get(&residue)?
+                .ok_or(Error::InvariantViolation("stored mapped residue"))?;
+            assert_eq!(stored, body, "scan-off mapped residue keeps the fixture bytes");
+            assert!(carries_sausage(&stored), "pack fixture still holds the phrase");
             let id = put_asset(&vault, &body).expect("LABEL-04: a mapped split-phrase write lands");
             let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
             assert!(
@@ -794,27 +826,29 @@ mod tests {
             &rmpv::Value::Map(vec![("title".into(), "kept asset words".into())]),
         )
         .unwrap();
-        put_asset(&vault, &kept)?;
-        for format in [
-            crate::context_pack::PackFormat::Json,
-            crate::context_pack::PackFormat::Yaml,
-            crate::context_pack::PackFormat::Toon,
-            crate::context_pack::PackFormat::Markdown,
-            crate::context_pack::PackFormat::Plaintext,
-        ] {
-            let pack = vault
-                .context_pack()
-                .search_temporal(1, 1, 64)
-                .filter_types(&[crate::registry::ENTITY_TYPE_ASSET])
-                .field_profile(crate::context_pack::FieldProfile::Full)
-                .token_budget(0)
-                .max_field_chars(0)
-                .max_item_tokens(0)
-                .format(format)
-                .run_serialized()?;
-            let text = String::from_utf8_lossy(&pack);
-            assert!(text.contains("kept asset words"), "{format:?}: {text}");
-            assert!(!carries_sausage(&pack), "{format:?}: {text}");
+        for pack_vault in [&vault, &residue_vault] {
+            put_asset(pack_vault, &kept)?;
+            for format in [
+                crate::context_pack::PackFormat::Json,
+                crate::context_pack::PackFormat::Yaml,
+                crate::context_pack::PackFormat::Toon,
+                crate::context_pack::PackFormat::Markdown,
+                crate::context_pack::PackFormat::Plaintext,
+            ] {
+                let pack = pack_vault
+                    .context_pack()
+                    .search_temporal(1, 1, 64)
+                    .filter_types(&[crate::registry::ENTITY_TYPE_ASSET])
+                    .field_profile(crate::context_pack::FieldProfile::Full)
+                    .token_budget(0)
+                    .max_field_chars(0)
+                    .max_item_tokens(0)
+                    .format(format)
+                    .run_serialized()?;
+                let text = String::from_utf8_lossy(&pack);
+                assert!(text.contains("kept asset words"), "{format:?}: {text}");
+                assert!(!carries_sausage(&pack), "{format:?}: {text}");
+            }
         }
         Ok(())
     }

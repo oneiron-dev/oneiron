@@ -140,6 +140,7 @@ fn owner_whole_vault_keeps_credentials_and_encoded_payloads_that_scoped_and_cont
         name: "owner-keeps-fixture".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: custody_value.clone(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -154,6 +155,20 @@ fn owner_whole_vault_keeps_credentials_and_encoded_payloads_that_scoped_and_cont
     let export = vault.export_whole_vault(true)?;
     export.manifest().validate()?;
     assert!(export.manifest().secrets_included);
+    assert!(
+        export.manifest().records.iter().any(|member| {
+            member.kind == ArchiveRecordKind::DerivationEnvelope
+                && member.path == "records/derivation_envelope.jsonl"
+        }),
+        "the archive names its derivation-envelopes section"
+    );
+    assert!(
+        export.manifest().records.iter().any(|member| {
+            member.kind == ArchiveRecordKind::AgentPack
+                && member.path == "records/agent_pack.jsonl"
+        }),
+        "the archive names its agent-packs section"
+    );
     let document = vault.read_whole_vault_archive(export.bytes())?;
     let row = document
         .evidence_ledger
