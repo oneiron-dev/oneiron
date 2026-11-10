@@ -194,6 +194,21 @@ struct StoredSettingRow {
     witness: Option<crate::entity_id::EntityId>,
     at: u64,
     why: String,
+    /// Whether a holder of `engine.controls` set this row through the
+    /// holder's door, not the owner through the owner's: an owner's pin
+    /// stands over a holder's at every scope a read walks
+    /// ([`resolution::resolve_in_txn`]). Not written on an owner's row,
+    /// whose bytes stay as they were before a holder set any row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    by_holder: bool,
+}
+
+/// Who sets a row: the owner through the owner's door, or a holder of
+/// `engine.controls` through the holder's.
+#[derive(Clone, Copy)]
+enum Setter {
+    Owner(crate::entity_id::EntityId),
+    Holder(crate::entity_id::EntityId),
 }
 
 impl RawValue for StoredSettingRow {
@@ -313,7 +328,8 @@ pub fn put_scoped_setting_row(
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         let witness = witness::put_in_txn(vault, wtxn, owner, scope, row)?;
-        put_row_in_txn(vault, wtxn, spec, scope, row, owner.entity_ref(), witness)
+        let setter = Setter::Owner(owner.entity_ref());
+        put_row_in_txn(vault, wtxn, spec, scope, row, setter, witness)
     })
 }
 
@@ -333,18 +349,22 @@ fn checked_spec(scope: &SettingScope, row: &SettingRow) -> Result<&'static Setti
     Ok(spec)
 }
 
-/// Stores `row` over `scope` as `by` set it, its act witnessed by `witness`,
-/// and refolds the knob's fits when the row moves them. The caller has
-/// checked the setter and the row in this writer.
+/// Stores `row` over `scope` as `setter` set it, its act witnessed by
+/// `witness`, and refolds the knob's fits when the row moves them. The
+/// caller has checked the setter and the row in this writer.
 fn put_row_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     spec: &SettingSpec,
     scope: &SettingScope,
     row: &SettingRow,
-    by: crate::entity_id::EntityId,
+    setter: Setter,
     witness: crate::entity_id::EntityId,
 ) -> Result<()> {
+    let (by, by_holder) = match setter {
+        Setter::Owner(owner) => (owner, false),
+        Setter::Holder(holder) => (holder, true),
+    };
     let stored = StoredSettingRow {
         v: ROW_VERSION,
         value: row.value,
@@ -353,6 +373,7 @@ fn put_row_in_txn(
         witness: Some(witness),
         at: row.at,
         why: row.why.clone(),
+        by_holder,
     };
     SETTING.put(
         &vault.store,
@@ -456,7 +477,8 @@ pub(crate) fn setting_override_in_txn(
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
 /// narrowest pin (the project's goal's, then the project's, then the
-/// type's, then the vault's); else the goal's fit, else the goal's seed;
+/// type's, then the vault's), the owner's pins before any pin a holder of
+/// `engine.controls` set; else the goal's fit, else the goal's seed;
 /// else the project's fit at this type, then its own fit, once either has
 /// own runs, else the project's seed; else the type's fit, else the type's
 /// seed; else the vault-scope fit, else the vault's seed, else the catalog
