@@ -437,14 +437,19 @@ pub fn read_branches_as(
 /// (its agent dispatch target, resident, turn-program waker or the Dreamer on
 /// its own stamp). A Steward of this shared vault reads the TASK's other
 /// branches by its role, as it reads a run's steps (slice 6.4f), each without
-/// its text: its last error, asks and signals are withheld, since a run's
-/// words carry no label for another reader's lane. The view names no TASK
-/// content.
+/// its text: its last error, asks and signals are withheld, and so are the
+/// words in its cancel state (`without_text`), since a run's words carry no
+/// label for another reader's lane. The view names no TASK content.
+///
+/// The caller's read authority is proved in the snapshot the branches are
+/// read in (`Memory::prove_read_authority_in_txn`): a bound credential that
+/// was revoked or has expired reads nothing.
 ///
 /// # Errors
 ///
-/// `FORBIDDEN` when the caller reads no branch of the ref: a ref that names
-/// no TASK, a TASK nothing has run, or one whose branches are not the
+/// `FORBIDDEN` for a caller whose bound credential grants it no read or no
+/// longer holds, and when the caller reads no branch of the ref: a ref that
+/// names no TASK, a TASK nothing has run, or one whose branches are not the
 /// caller's while it is no Steward; storage errors.
 pub fn read_branches_as_reader(
     memory: &Memory<'_>,
@@ -454,6 +459,7 @@ pub fn read_branches_as_reader(
     let vault = memory.vault();
     let caller = WriteActor::new(memory.actor(), memory.actor_class());
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
     let steward = crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)?;
     let records = match task_in(vault, &txn, input.task_ref) {
         Ok(task) => AttemptQueue::new(vault).list_task_in_txn(&txn, &task)?,
@@ -484,11 +490,38 @@ pub fn read_branches_as_reader(
                     view.last_error = None;
                     view.asks = Vec::new();
                     view.signals = Vec::new();
+                    view.cancel_state = without_text(view.cancel_state);
                 }
                 view
             })
             .collect(),
     })
+}
+
+/// A branch's cancel state without its words, for a reader the run's text
+/// carries no label for: a landing's status, each cancellation's and each
+/// receipt's reason and status, and the worker's marker of a resume point
+/// (blank, since the field is required). The structured state stays: the
+/// triggers, modes, grounds and standings, the actors, times, sequences and
+/// units, and a resume point's artifact ref.
+fn without_text(mut state: AttemptCancelState) -> AttemptCancelState {
+    if let Some(landing) = &mut state.landing {
+        landing.status = None;
+    }
+    if let Some(point) = &mut state.resume_point {
+        point.marker.clear();
+    }
+    if let Some(cancellation) = &mut state.cancellation {
+        cancellation.reason = None;
+    }
+    for receipt in &mut state.receipts {
+        receipt.status = None;
+        receipt.reason = None;
+        if let Some(point) = &mut receipt.resume_point {
+            point.marker.clear();
+        }
+    }
+    state
 }
 
 /// `vault.runs.branches.get` on an in-process handle: the embedded owner's

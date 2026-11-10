@@ -299,23 +299,36 @@ pub fn spend_lease_as_owner(
 /// stay the owner's acts; reserving and settling stay the engine's
 /// accounting.
 ///
+/// One snapshot proves the caller's read authority
+/// (`Memory::prove_read_authority_in_txn`: a bound credential that was
+/// revoked or has expired reads nothing), places the scope in a run of the
+/// caller's own, and reads the lease.
+///
 /// # Errors
 ///
-/// A malformed scope id; a scope outside the caller's own runs'
+/// A malformed scope id; a caller whose bound credential grants it no read
+/// or no longer holds, and a scope outside the caller's own runs'
 /// (`FORBIDDEN`); a missing scope; storage errors.
 pub fn spend_lease_as_reader(
     memory: &Memory<'_>,
     input: &SpendScopeRequest,
 ) -> MemoryResult<SpendLeaseView> {
     let scope = scope_id(&input.scope)?;
-    if !in_own_scope_tree(memory, &scope)? {
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    if !in_own_scope_tree_in_txn(memory, &txn, &scope)? {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "vault.budgets.lease reads the owner's leases and those of the caller's own runs",
             &["Call it as the vault's owner, or for a scope your run spends under or reserved."],
         ));
     }
-    lease_view(&AgentDispatcher::new(memory.vault()), &scope).map_err(MemoryError::from)
+    let lease = super::spend_record::SCOPE
+        .get(&vault.store, &txn, &scope.0)?
+        .ok_or_else(|| invalid("spend scope is missing"))?;
+    let spend = AgentDispatcher::new(vault).spend_read_at_in_txn(&txn, &scope)?;
+    Ok(SpendLeaseView { lease, spend })
 }
 
 /// `vault.budgets.lease` on an in-process handle: the embedded owner's read,
@@ -335,11 +348,15 @@ pub fn spend_lease_embedded(
 }
 
 /// Whether `scope`, or a scope above it in its tree, is the spend scope of an
-/// attempt the caller is the actor of. A launch root names no attempt.
-fn in_own_scope_tree(memory: &Memory<'_>, scope: &SpendScopeId) -> MemoryResult<bool> {
+/// attempt the caller is the actor of, as `txn` reads it. A launch root names
+/// no attempt.
+fn in_own_scope_tree_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    scope: &SpendScopeId,
+) -> MemoryResult<bool> {
     let vault = memory.vault();
     let caller = crate::WriteActor::new(memory.actor(), memory.actor_class());
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let mut seen = std::collections::HashSet::new();
     let mut next = Some(scope.clone());
     while let Some(id) = next {
@@ -348,12 +365,12 @@ fn in_own_scope_tree(memory: &Memory<'_>, scope: &SpendScopeId) -> MemoryResult<
             return Err(crate::Error::CorruptedIndex("spend scope parent cycle").into());
         }
         if let Ok(attempt) = attempt_id(id.as_str())
-            && crate::snapshot_read::is_attempt_actor_in_txn(vault, &txn, caller, attempt)?
+            && crate::snapshot_read::is_attempt_actor_in_txn(vault, txn, caller, attempt)?
         {
             return Ok(true);
         }
         next = super::spend_record::SCOPE
-            .get(&vault.store, &txn, &id.0)?
+            .get(&vault.store, txn, &id.0)?
             .and_then(|row| row.parent);
     }
     Ok(false)
