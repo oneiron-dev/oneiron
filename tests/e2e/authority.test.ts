@@ -701,17 +701,1094 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
 });
 
 // ---- MUSE identity cases (Muse Wonder Full, from the ratified promise register and canon;
-// merged by OPUS-E2E-2 at the Engine's 08:53 task). Cases 01-04 and 06 wait on harness
-// additions owned by OPUS-E2E-1; their written bodies are kept in
-// lanes/post-untangle/muse/7-e2e-cases/identity/legs/MUSE-IDENT-0N/ until then. ----
+// merged by OPUS-E2E-2 at the Engine's 08:53 task, on OPUS-E2E-1's Muse harness).
+// MUSE-IDENT-03 waits on a mint shape the harness does not have; its written body is kept in
+// lanes/post-untangle/muse/7-e2e-cases/identity/legs/MUSE-IDENT-03/ until then. ----
 
-suite.todo(test, "MUSE-IDENT-01", "waits on harness: an EngineFixture agent-token mint over the shipped `token agent` CLI with a tier — An agent token acts as an agent, never as the owner, and its receipts say so");
+// MUSE-IDENT-01 — an agent token acts as an agent, never as the owner.
+// Promises: P-IDENT-001 (agent token = agent principal, never owner-grade),
+// P-IDENT-002 (read-only agent credential cannot write), P-IDENT-006 (a
+// tools/call with no actor block runs as the actor resolved from its
+// credential), P-IDENT-008 (a session or sandbox ID cannot supply actor
+// identity). Doors: the proposed stopped-vault harness mint for
+// `oneiron token agent` (see HARNESS NEEDS in the report), MCP initialize /
+// tools/list / tools/call, and read-backs through the different HTTP facade
+// doors self.actor, vault.claims.list, vault.receipts[.get] and
+// vault.authority.audit; slip revoke through POST /v1/core/slips/revoke.
+// Unproved: a genuine sandbox ID and a genuine MCP session ID as the forged
+// actor (no deterministic public door in this fixture mints either; the
+// forged-actor leg uses a generated session-shaped ID, plus a real
+// x-oneiron-session header with no credential). The stdio `oneiron mcp`
+// bridge leg is not driven; the calls go to the same MCP endpoints directly.
+const museIdent01Predicate = "preference.food";
+const museIdent01RefKeys = [
+  "actor_ref", "actorRef", "principal_ref", "principalRef", "actor_id", "actorId", "ref", "id",
+] as const;
+const museIdent01ClassKeys = ["actor_class", "actorClass", "actor_kind", "class", "kind"] as const;
+const museIdent01ActorClasses = new Set(["agent", "human", "person", "system"]);
 
-suite.todo(test, "MUSE-IDENT-02", "waits on harness: an EngineFixture agent-token mint over the shipped `token agent` CLI with a tier — A mismatched MCP actor block is refused and a propose-scope credential cannot write through /v1/core/batch");
+interface museIdent01ActorBlock {
+  readonly ref: string;
+  readonly refKey: string;
+  readonly actorClass: string;
+  readonly block: Record<string, unknown>;
+}
+interface museIdent01ToolOutcome {
+  readonly refused: boolean;
+  readonly raw: unknown;
+  readonly rpcCode?: number;
+  readonly httpStatus?: number;
+}
+interface museIdent01ReceiptView {
+  readonly actorRef: string | null;
+  readonly actorClass: string;
+  readonly outcome: string;
+  readonly claimRef: string | null;
+  readonly transport: string | null;
+  readonly verb: string | null;
+}
+type museIdent01ClaimRows = FacadeResult<"vault.claims.list">["value"];
 
-suite.todo(test, "MUSE-IDENT-03", "waits on harness: an EngineFixture agent-token mint over the shipped `token agent` CLI with a tier — Re-mint replaces the old slip, a failed mint does not upgrade, and revoke stops the new slip at once");
+function museIdent01Record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
 
-suite.todo(test, "MUSE-IDENT-04", "waits on harness: facetRefs on PairActorOptions — A facet-narrowed agent sees only its facet, raw doors refuse it, and the owner cannot be narrowed");
+function museIdent01Parsed(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value) as unknown; } catch { return value; }
+}
+
+// The harness types MCP initialize/tools results as unknown, and canon does
+// not publish the actor block's key spellings. Find the one block that pairs
+// a ref-shaped key with an actor-class key, searching nested objects and
+// JSON text content; never invent a class or ref that is not on the wire.
+function museIdent01FindActor(value: unknown): museIdent01ActorBlock | undefined {
+  const parsed = museIdent01Parsed(value);
+  if (parsed !== value) {
+    const found = museIdent01FindActor(parsed);
+    if (found) return found;
+  }
+  if (Array.isArray(parsed)) {
+    for (const child of parsed) {
+      const found = museIdent01FindActor(child);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const record = museIdent01Record(parsed);
+  if (!record) return undefined;
+  let ref: string | undefined;
+  let refKey: string | undefined;
+  for (const key of museIdent01RefKeys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.length > 0) { ref = candidate; refKey = key; break; }
+  }
+  let actorClass: string | undefined;
+  for (const key of museIdent01ClassKeys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && museIdent01ActorClasses.has(candidate)) {
+      actorClass = candidate; break;
+    }
+  }
+  if (ref !== undefined && refKey !== undefined && actorClass !== undefined) {
+    return { ref, refKey, actorClass, block: record };
+  }
+  for (const child of Object.values(record)) {
+    const found = museIdent01FindActor(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function museIdent01ActorOf(value: unknown, door: string): museIdent01ActorBlock {
+  const found = museIdent01FindActor(value);
+  if (!found) throw new Error(`MUSE-IDENT-01: ${door} returned no actor block (body withheld)`);
+  return found;
+}
+
+function museIdent01FindString(value: unknown, keys: readonly string[]): string | undefined {
+  const parsed = museIdent01Parsed(value);
+  if (parsed !== value) {
+    const found = museIdent01FindString(parsed, keys);
+    if (found !== undefined) return found;
+  }
+  if (Array.isArray(parsed)) {
+    for (const child of parsed) {
+      const found = museIdent01FindString(child, keys);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const record = museIdent01Record(parsed);
+  if (!record) return undefined;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  }
+  for (const child of Object.values(record)) {
+    const found = museIdent01FindString(child, keys);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function museIdent01ToolIsError(value: unknown): boolean {
+  return museIdent01Record(value)?.["isError"] === true;
+}
+
+function museIdent01FindTool(value: unknown, name: string): Record<string, unknown> | undefined {
+  const parsed = museIdent01Parsed(value);
+  if (parsed !== value) {
+    const found = museIdent01FindTool(parsed, name);
+    if (found) return found;
+  }
+  if (Array.isArray(parsed)) {
+    for (const child of parsed) {
+      const found = museIdent01FindTool(child, name);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const record = museIdent01Record(parsed);
+  if (!record) return undefined;
+  if (record["name"] === name) return record;
+  for (const child of Object.values(record)) {
+    const found = museIdent01FindTool(child, name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+// Tool-first arguments wrap the verb input as { spec } when the published
+// tool schema says so; a schema hidden behind a reference falls back to that
+// same documented { spec } shape. Only a flat schema is called flat.
+function museIdent01ClaimsArgs(
+  toolsList: unknown,
+  input: FacadeInput<"vault.claims.upsert">,
+  actorBlock: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const tool = museIdent01FindTool(toolsList, "vault.claims.upsert");
+  expect(tool !== undefined).toBe(true);
+  const schema = museIdent01Record(tool?.["inputSchema"] ?? tool?.["input_schema"]);
+  const properties = museIdent01Record(schema?.["properties"]);
+  const wrapInSpec = properties === undefined || "spec" in properties;
+  const base: Record<string, unknown> = wrapInSpec ? { spec: input } : { ...input };
+  return actorBlock === undefined ? base : { ...base, actor: actorBlock };
+}
+
+// Same tools/call params McpClient.callTool builds, sent through rpc() so a
+// JSON-RPC refusal stays a value the case can assert on instead of a throw.
+async function museIdent01CallTool(
+  actor: PairedActor,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<museIdent01ToolOutcome> {
+  try {
+    const reply = await actor.mcp.rpc("tools/call", {
+      name, arguments: args, _meta: { "oneiron/invocation": secretHex(16) },
+    });
+    if ("error" in reply) return { refused: true, raw: reply, rpcCode: reply.error.code };
+    return { refused: museIdent01ToolIsError(reply.result), raw: reply.result };
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      return { refused: true, raw: error.reply.body, httpStatus: error.reply.status };
+    }
+    throw error;
+  }
+}
+
+async function museIdent01Claims(
+  client: PublicHttpClient,
+  subjectRef: string,
+): Promise<museIdent01ClaimRows> {
+  const page = await client.call("vault.claims.list", {
+    subject_ref: subjectRef, predicate: museIdent01Predicate, limit: 100,
+  });
+  return page.value;
+}
+
+function museIdent01ClaimsWithValue(
+  rows: museIdent01ClaimRows,
+  value: string,
+): museIdent01ClaimRows {
+  return rows.filter(row => row.value === value);
+}
+
+// Normalizes the two typed receipt doors without inventing fields: a
+// "call:" ref is read as a CallReceipt; any other ref is found in the
+// governance receipt page the way EngineFixture.awaitReceipt looks it up.
+async function museIdent01ReadReceipt(
+  owner: PublicHttpClient,
+  receiptRef: string,
+): Promise<museIdent01ReceiptView> {
+  if (receiptRef.startsWith("call:")) {
+    const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
+    if (!receipt) throw new Error("MUSE-IDENT-01: call receipt not readable by owner or its actor");
+    return {
+      actorRef: receipt.actor_ref, actorClass: receipt.actor_class,
+      outcome: receipt.outcome === "ok" ? "ok" : `refused:${receipt.outcome.refused.code}`,
+      claimRef: null, transport: receipt.transport, verb: receipt.verb,
+    };
+  }
+  const page = await owner.call("vault.receipts", { limit: 1000 });
+  const row = page.receipts.find(candidate => candidate.receipt_ref === receiptRef);
+  if (!row) throw new Error("MUSE-IDENT-01: governance receipt not readable by its ref");
+  return {
+    actorRef: row.actor_ref ?? null, actorClass: row.actor_class, outcome: row.outcome,
+    claimRef: row.claim_ref ?? null, transport: null, verb: null,
+  };
+}
+
+function museIdent01IsAgentReceipt(
+  receipt: museIdent01ReceiptView,
+  agentRefs: readonly string[],
+  ownerRefs: readonly string[],
+): void {
+  expect(receipt.actorClass).toBe("agent");
+  expect(receipt.actorRef !== null && agentRefs.includes(receipt.actorRef)).toBe(true);
+  expect(receipt.actorRef !== null && ownerRefs.includes(receipt.actorRef)).toBe(false);
+  if (receipt.transport !== null) expect(receipt.transport).toBe("mcp");
+  if (receipt.verb !== null) expect(receipt.verb).toBe("vault.claims.upsert");
+}
+
+suite.test(test, "MUSE-IDENT-01", "An agent token acts as an agent, never as the owner, and its receipts say so", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-IDENT-01", profile });
+  const ownerSelf = await engine.client.call("self.actor", {});
+  expect(ownerSelf.actor_class === "agent").toBe(false);
+  const ownerRefs: readonly string[] = [ownerSelf.actor_ref, engine.pairedActor.principalRef];
+
+  const writerName = `muse-ident-writer-${secretHex(4)}`;
+  const readerName = `muse-ident-reader-${secretHex(4)}`;
+  redactor.add(writerName, readerName);
+  const beforeWriter = await auditRows(engine.client);
+  const writer = await engine.mintAgentToken({ name: writerName, tier: "full-access" });
+  const afterWriter = await auditRows(engine.client);
+  const writerSlip = mintedSlip(beforeWriter, afterWriter, writer.principalRef);
+  const writerSlipId = writerSlip.subject_ref!;
+  const reader = await engine.mintAgentToken({ name: readerName, tier: "read-only" });
+  const afterReader = await auditRows(engine.client);
+  const readerSlip = mintedSlip(afterWriter, afterReader, reader.principalRef);
+  expect(readerSlip.entry_hash === writerSlip.entry_hash).toBe(false);
+
+  // P-IDENT-001: the token resolves to an agent principal over a typed door
+  // (HTTP facade self.actor) and over MCP initialize, neither is the owner.
+  const writerSelf = await writer.client.call("self.actor", {});
+  const readerSelf = await reader.client.call("self.actor", {});
+  expect(writerSelf.actor_class).toBe("agent");
+  expect(readerSelf.actor_class).toBe("agent");
+  const writerRefs: readonly string[] = [writerSelf.actor_ref, writer.principalRef];
+  const readerRefs: readonly string[] = [readerSelf.actor_ref, reader.principalRef];
+  expect(ownerRefs.includes(writerSelf.actor_ref)).toBe(false);
+  expect(ownerRefs.includes(readerSelf.actor_ref)).toBe(false);
+  expect(writerSelf.actor_ref === readerSelf.actor_ref).toBe(false);
+
+  const writerInit = museIdent01ActorOf(await writer.mcp.initialize(), "writer initialize");
+  const readerInit = museIdent01ActorOf(await reader.mcp.initialize(), "reader initialize");
+  expect(writerInit.actorClass).toBe("agent");
+  expect(readerInit.actorClass).toBe("agent");
+  expect(writerRefs.includes(writerInit.ref)).toBe(true);
+  expect(readerRefs.includes(readerInit.ref)).toBe(true);
+  expect(ownerRefs.includes(writerInit.ref)).toBe(false);
+  expect(ownerRefs.includes(readerInit.ref)).toBe(false);
+
+  const claimScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const writerSentinel = `muse-ident-01-food-${secretHex(8)}`;
+  const readerSentinel = `muse-ident-01-food-${secretHex(8)}`;
+  const forgedSentinel = `muse-ident-01-food-${secretHex(8)}`;
+  const sessionOnlySentinel = `muse-ident-01-food-${secretHex(8)}`;
+  redactor.add(writerSentinel, readerSentinel, forgedSentinel, sessionOnlySentinel);
+  const claimFor = (value: string): FacadeInput<"vault.claims.upsert"> => ({
+    scope: claimScope, predicate: museIdent01Predicate, subject_ref: ownerSelf.actor_ref,
+    value, source: "tool_output", confidence: 1,
+  });
+  const baseline = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(baseline, writerSentinel)).toHaveLength(0);
+
+  // P-IDENT-006: no actor key is sent; the credential supplies the actor.
+  const writerTools = await writer.mcp.listTools();
+  const writerArgs = museIdent01ClaimsArgs(writerTools, claimFor(writerSentinel), undefined);
+  expect("actor" in writerArgs).toBe(false);
+  const writerOutcome = await museIdent01CallTool(writer, "vault.claims.upsert", writerArgs);
+  expect(writerOutcome.refused).toBe(false);
+  const writerReceiptRef = museIdent01FindString(writerOutcome.raw, ["receipt_ref", "receiptRef"]);
+  const writerOwnSeen = await awaitPublic(
+    () => museIdent01Claims(writer.client, ownerSelf.actor_ref),
+    rows => museIdent01ClaimsWithValue(rows, writerSentinel).length === 1,
+    { label: "MUSE-IDENT-01 writer claim read-back" },
+  );
+  const writerClaim = museIdent01ClaimsWithValue(writerOwnSeen, writerSentinel)[0]!;
+  expect(writerClaim.predicate).toBe(museIdent01Predicate);
+  expect(writerClaim.subject_ref).toBe(ownerSelf.actor_ref);
+  expect(["auto", "proposed", "approved"].includes(writerClaim.approval)).toBe(true);
+  const ownerSeen = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(ownerSeen, writerSentinel)).toHaveLength(1);
+  if (writerReceiptRef === undefined) {
+    throw new Error("MUSE-IDENT-01: MCP claim result carries no lasting receipt_ref");
+  }
+  await engine.awaitReceipt(writerReceiptRef);
+  const writerReceipt = await museIdent01ReadReceipt(engine.client, writerReceiptRef);
+  museIdent01IsAgentReceipt(writerReceipt, writerRefs, ownerRefs);
+  if (writerReceipt.transport !== null) expect(writerReceipt.outcome).toBe("ok");
+  if (writerReceipt.claimRef !== null) {
+    expect([writerClaim.claim_ref, writerClaim.short_ref].includes(writerReceipt.claimRef)).toBe(true);
+  }
+
+  // P-IDENT-002: the read-only token is still listed the verb, but the call
+  // is refused, no claim lands, and the refusal receipt names the reader.
+  const readerTools = await reader.mcp.listTools();
+  const readerArgs = museIdent01ClaimsArgs(readerTools, claimFor(readerSentinel), undefined);
+  const readerOutcome = await museIdent01CallTool(reader, "vault.claims.upsert", readerArgs);
+  expect(readerOutcome.refused).toBe(true);
+  const afterReaderAttempt = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(afterReaderAttempt, readerSentinel)).toHaveLength(0);
+  expect(museIdent01ClaimsWithValue(afterReaderAttempt, writerSentinel)).toHaveLength(1);
+  const readerOwnSeen = await museIdent01Claims(reader.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(readerOwnSeen, readerSentinel)).toHaveLength(0);
+  const readerReceiptRef = museIdent01FindString(readerOutcome.raw, ["receipt_ref", "receiptRef"]);
+  if (readerReceiptRef === undefined) {
+    throw new Error("MUSE-IDENT-01: MCP write refusal carries no lasting receipt_ref");
+  }
+  await engine.awaitReceipt(readerReceiptRef);
+  const readerReceipt = await museIdent01ReadReceipt(engine.client, readerReceiptRef);
+  museIdent01IsAgentReceipt(readerReceipt, readerRefs, ownerRefs);
+  expect(readerReceipt.outcome === writerReceipt.outcome && writerReceipt.outcome === "ok").toBe(false);
+  expect(readerReceipt.outcome.length > 0).toBe(true);
+
+  // P-IDENT-008: an actor block naming a session-shaped ID is a mismatch,
+  // not an identity; and that ID with no credential at all gets nothing.
+  const sessionSentinel = secretHex(16);
+  redactor.add(sessionSentinel);
+  const forgedActorBlock: Record<string, unknown> = {
+    ...writerInit.block, [writerInit.refKey]: sessionSentinel,
+  };
+  const forgedOutcome = await museIdent01CallTool(writer, "vault.claims.upsert",
+    museIdent01ClaimsArgs(writerTools, claimFor(forgedSentinel), forgedActorBlock));
+  expect(forgedOutcome.refused).toBe(true);
+  expect(forgedOutcome.rpcCode === -32602
+    || (JSON.stringify(forgedOutcome.raw) ?? "").includes("mcp_actor_mismatch")).toBe(true);
+  const afterForge = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(afterForge, forgedSentinel)).toHaveLength(0);
+  const writerAfterForge = await museIdent01Claims(writer.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(writerAfterForge, forgedSentinel)).toHaveLength(0);
+
+  const anonymous = new PublicHttpClient(engine.url, { artifacts: engine.artifacts });
+  const sessionOnly = await anonymous.raw("POST", "/mcp/tool-first", {
+    jsonrpc: "2.0", id: 901, method: "tools/call",
+    params: {
+      name: "vault.claims.upsert",
+      arguments: museIdent01ClaimsArgs(writerTools, claimFor(sessionOnlySentinel), forgedActorBlock),
+      _meta: { "oneiron/invocation": secretHex(16) },
+    },
+  }, { "x-oneiron-session": sessionSentinel });
+  const sessionOnlyBody = museIdent01Record(sessionOnly.body);
+  expect(sessionOnly.status >= 400
+    || (sessionOnlyBody !== undefined
+      && ("error" in sessionOnlyBody || museIdent01ToolIsError(sessionOnlyBody["result"])))).toBe(true);
+  const afterSessionOnly = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(afterSessionOnly, sessionOnlySentinel)).toHaveLength(0);
+  expect(museIdent01ClaimsWithValue(afterSessionOnly, writerSentinel)).toHaveLength(1);
+  const writerAfterSessionOnly = await museIdent01Claims(writer.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(writerAfterSessionOnly, sessionOnlySentinel)).toHaveLength(0);
+
+  // Restart survival: the claim, both mints and the write receipt still
+  // read back, still as the agent.
+  await engine.restart();
+  const afterRestart = await museIdent01Claims(engine.client, ownerSelf.actor_ref);
+  expect(museIdent01ClaimsWithValue(afterRestart, writerSentinel)).toHaveLength(1);
+  expect(museIdent01ClaimsWithValue(afterRestart, readerSentinel)).toHaveLength(0);
+  expect(museIdent01ClaimsWithValue(afterRestart, forgedSentinel)).toHaveLength(0);
+  expect(museIdent01ClaimsWithValue(afterRestart, sessionOnlySentinel)).toHaveLength(0);
+  const writerSelfAfter = await writer.client.call("self.actor", {});
+  expect(writerSelfAfter.actor_class).toBe("agent");
+  expect(writerSelfAfter.actor_ref).toBe(writerSelf.actor_ref);
+  const receiptAfterRestart = await museIdent01ReadReceipt(engine.client, writerReceiptRef);
+  museIdent01IsAgentReceipt(receiptAfterRestart, writerRefs, ownerRefs);
+  const auditAfterRestart = await auditRows(engine.client);
+  expect(auditAfterRestart.some(row => row.entry_hash === writerSlip.entry_hash)).toBe(true);
+  expect(auditAfterRestart.some(row => row.entry_hash === readerSlip.entry_hash)).toBe(true);
+
+  // Losing it mid-flow: the owner revokes the writer slip through the same
+  // public door as AUTHORITY-05; its next use is refused, the reader is not.
+  const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+    slip_id: Array.from(Buffer.from(writerSlipId, "hex")),
+  });
+  expect(revoked.status).toBe(200);
+  expect(revoked.body.revoked).toBe(true);
+  const denied = await writer.client.raw<{ error: { code: string } }>(
+    "POST", "/v1/core/facade/vault.receipts", { limit: 1 });
+  expect(denied.status).toBe(401);
+  expect(denied.body.error.code).toBe("UNAUTHORIZED");
+  const finalAudit = await auditRows(engine.client);
+  expect(finalAudit.some(row => row.source_op === "slip_revoke"
+    && row.subject_ref === writerSlipId && row.fold_valid)).toBe(true);
+  const readerSelfFinal = await reader.client.call("self.actor", {});
+  expect(readerSelfFinal.actor_class).toBe("agent");
+  expect(readerSelfFinal.actor_ref).toBe(readerSelf.actor_ref);
+});
+
+// MUSE-IDENT-02 — P-IDENT-007 and P-IDENT-003.
+// Doors: MCP initialize + tools/list + tools/call (vault.claims.upsert), the typed HTTP facade
+// (self.actor, vault.structural.put, vault.writes.pending, vault.claims.history, vault.claims.list,
+// vault.conversations.create, vault.batch's input type for the raw body), POST /v1/core/batch raw,
+// POST /v1/core/slips/revoke, and the authority audit through the helpers already in this file.
+// Setup substitution, stated plainly: the canon mint door is `oneiron token agent --tier propose-only`
+// on a stopped vault, which this harness cannot drive; the proposer below is paired with exactly the
+// scopes canon names for that tier (core:read + core:propose). The stopped-vault mint itself, and any
+// governance receipt minted by the two refusals, stay unproved (see the report).
+
+interface MuseIdent02McpOutcome {
+  readonly refused: boolean;
+  readonly value: unknown;
+  readonly rpcCode: number | undefined;
+  readonly text: string;
+}
+
+interface MuseIdent02McpCaller {
+  callTool(name: string, args: unknown): Promise<unknown>;
+}
+
+function museIdent02Record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
+
+function museIdent02Json(value: unknown): string {
+  return JSON.stringify(value) ?? "";
+}
+
+function museIdent02FindString(value: unknown, key: string): string | undefined {
+  const record = museIdent02Record(value);
+  if (record) {
+    const direct = record[key];
+    if (typeof direct === "string") return direct;
+    for (const child of Object.values(record)) {
+      const found = museIdent02FindString(child, key);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = museIdent02FindString(child, key);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return museIdent02FindString(parsed, key);
+    } catch { return undefined }
+  }
+  return undefined;
+}
+
+function museIdent02CollectStrings(value: unknown, into: string[] = []): string[] {
+  if (typeof value === "string") into.push(value);
+  else if (Array.isArray(value)) for (const child of value) museIdent02CollectStrings(child, into);
+  else {
+    const record = museIdent02Record(value);
+    if (record) for (const child of Object.values(record)) museIdent02CollectStrings(child, into);
+  }
+  return into;
+}
+
+// The actor block's inner field names are not spelled in canon; only that `initialize` returns the
+// same block a tool call may carry. Find it by its `actor` key and treat it as opaque bytes.
+function museIdent02FindActorBlock(value: unknown): unknown {
+  const record = museIdent02Record(value);
+  if (record) {
+    const actor = record.actor;
+    if (museIdent02Record(actor) || typeof actor === "string") return actor;
+    for (const child of Object.values(record)) {
+      const found = museIdent02FindActorBlock(child);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = museIdent02FindActorBlock(child);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return museIdent02FindActorBlock(parsed);
+    } catch { return undefined }
+  }
+  return undefined;
+}
+
+function museIdent02ContainsRef(value: unknown, refs: readonly string[]): boolean {
+  const text = museIdent02Json(value);
+  return refs.some(ref => ref.length > 0 && text.includes(ref));
+}
+
+function museIdent02FindTool(value: unknown, name: string): Record<string, unknown> | undefined {
+  const record = museIdent02Record(value);
+  if (!record) return undefined;
+  if (record.name === name && (record.inputSchema !== undefined || record.input_schema !== undefined)) {
+    return record;
+  }
+  const tools = record.tools;
+  if (Array.isArray(tools)) {
+    for (const item of tools) {
+      const tool = museIdent02Record(item);
+      if (tool?.name === name) return tool;
+    }
+    return undefined;
+  }
+  for (const child of Object.values(record)) {
+    const found = museIdent02FindTool(child, name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function museIdent02SchemaProperties(schema: unknown): Record<string, unknown> | undefined {
+  return museIdent02Record(museIdent02Record(schema)?.properties);
+}
+
+// The generated facade types the HTTP claim input; the MCP tool's argument wrapper is read from the
+// tool's own published schema at runtime (spec / input / flat), and spec fields the schema does not
+// publish inline are dropped rather than guessed. The `actor` block is added only when forged.
+function museIdent02ClaimToolArguments(
+  tool: Record<string, unknown>,
+  spec: FacadeInput<"vault.claims.upsert">,
+  actorBlock?: unknown,
+): Record<string, unknown> {
+  const properties = museIdent02SchemaProperties(tool.inputSchema ?? tool.input_schema);
+  const allSpec: Record<string, unknown> = Object.fromEntries(Object.entries(spec));
+  let chosenSpec = allSpec;
+  const specProperties = properties ? museIdent02SchemaProperties(properties.spec) : undefined;
+  if (specProperties) {
+    chosenSpec = Object.fromEntries(
+      Object.entries(allSpec).filter(([key]) => key in specProperties));
+  }
+  let args: Record<string, unknown>;
+  if (properties && "input" in properties && !("spec" in properties)) {
+    args = { input: chosenSpec };
+  } else if (properties && "predicate" in properties && !("spec" in properties)) {
+    args = Object.fromEntries(
+      Object.entries(chosenSpec).filter(([key]) => key in properties));
+  } else {
+    args = { spec: chosenSpec };
+  }
+  if (actorBlock !== undefined) args.actor = actorBlock;
+  return args;
+}
+
+function museIdent02IsErrorResult(value: unknown): boolean {
+  return museIdent02Record(value)?.isError === true;
+}
+
+async function museIdent02CallTool(
+  mcp: MuseIdent02McpCaller, name: string, args: unknown,
+): Promise<MuseIdent02McpOutcome> {
+  try {
+    const value = await mcp.callTool(name, args);
+    return { refused: museIdent02IsErrorResult(value), value, rpcCode: undefined, text: museIdent02Json(value) };
+  } catch (error) {
+    if (error instanceof McpRpcError) {
+      const response = error.response;
+      const rpcCode = "error" in response ? response.error.code : undefined;
+      return { refused: true, value: response, rpcCode, text: museIdent02Json(response) };
+    }
+    throw error;
+  }
+}
+
+async function museIdent02PendingRows(
+  client: PublicHttpClient,
+): Promise<FacadeResult<"vault.writes.pending">> {
+  return client.call("vault.writes.pending", {
+    limit: 1000,
+  } satisfies FacadeInput<"vault.writes.pending">);
+}
+
+function museIdent02PendingRefs(rows: FacadeResult<"vault.writes.pending">): string[] {
+  return rows.map(row => row.claim_ref).sort();
+}
+
+function museIdent02BatchWrittenCount(body: unknown): number {
+  if (Array.isArray(body)) return body.length;
+  const record = museIdent02Record(body);
+  if (!record) return -1;
+  if (typeof record.count === "number") return record.count;
+  if (typeof record.written === "number") return record.written;
+  if (Array.isArray(record.entities)) return record.entities.length;
+  if (Array.isArray(record.ids)) return record.ids.length;
+  if (Array.isArray(record.written_ids)) return record.written_ids.length;
+  return -1;
+}
+
+function museIdent02HttpError(body: unknown): Record<string, unknown> | undefined {
+  const record = museIdent02Record(body);
+  return museIdent02Record(record?.error) ?? record;
+}
+
+function museIdent02ExpectCoreWriteRefusal(status: number, body: unknown): void {
+  expect(status).toBe(403);
+  const error = museIdent02HttpError(body);
+  expect(typeof error?.code).toBe("string");
+  expect(typeof error?.message).toBe("string");
+  expect(museIdent02Json(body)).toContain("core:write");
+}
+
+suite.test(test, "MUSE-IDENT-02", "A mismatched MCP actor block is refused and a propose-scope credential cannot write through /v1/core/batch", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-IDENT-02", profile });
+  const occurredAt = 1769947200;
+  const goodToken = `museident02good${secretHex(8)}`;
+  const forgedToken = `museident02forged${secretHex(8)}`;
+  const readerToken = `museident02reader${secretHex(8)}`;
+  const proposerName = `Muse Ident02 Proposer ${secretHex(4)}`;
+  const readerName = `Muse Ident02 Reader ${secretHex(4)}`;
+  redactor.add(goodToken, forgedToken, readerToken, proposerName, readerName);
+
+  // SETUP (owner door): a real PERSON row for the proposer, then a real pairing for it.
+  // No credential or authority comes from the row; the pairing supplies the scopes.
+  const proposerRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: proposerName }, occurred_at: occurredAt,
+  } satisfies FacadeInput<"vault.structural.put">);
+  const auditBeforePair = await auditRows(engine.client);
+  const proposer = await engine.pairActor({
+    principalRef: proposerRecord.id_hex, actorClass: "agent",
+    scope: ["core:read", "core:propose"],
+  });
+  const proposerMint = mintedSlip(auditBeforePair, await auditRows(engine.client), proposerRecord.id_hex);
+  const proposerSlipId = proposerMint.subject_ref;
+  if (!proposerSlipId) throw new Error("Proposer slip mint carried no slip id");
+
+  // PROOF ORDER, identity first: each credential binds the actor it says it binds.
+  const ownerSelf = await engine.client.call("self.actor", {
+  } satisfies FacadeInput<"self.actor">);
+  const proposerSelf = await proposer.client.call("self.actor", {
+  } satisfies FacadeInput<"self.actor">);
+  expect(proposerSelf.actor_class.toLowerCase()).toBe("agent");
+  expect(proposerSelf.actor_ref).not.toBe(ownerSelf.actor_ref);
+
+  const ownerActorBlock = museIdent02FindActorBlock(await engine.mcp.initialize());
+  const proposerActorBlock = museIdent02FindActorBlock(await proposer.mcp.initialize());
+  if (ownerActorBlock === undefined) throw new Error("Owner MCP initialize returned no actor block");
+  if (proposerActorBlock === undefined) throw new Error("Proposer MCP initialize returned no actor block");
+  expect(museIdent02ContainsRef(ownerActorBlock,
+    [ownerSelf.actor_ref, engine.pairedActor.principalRef])).toBe(true);
+  expect(museIdent02ContainsRef(proposerActorBlock,
+    [proposerSelf.actor_ref, proposer.principalRef, proposerRecord.id_hex, proposerRecord.entity_ref])).toBe(true);
+  expect(museIdent02Json(proposerActorBlock)).not.toBe(museIdent02Json(ownerActorBlock));
+
+  const claimTool = museIdent02FindTool(await proposer.mcp.listTools(), "vault.claims.upsert");
+  expect(claimTool).toBeDefined();
+  if (!claimTool) throw new Error("Tool-first MCP lists no vault.claims.upsert tool");
+
+  const claimScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  const claimSpec = (value: string): FacadeInput<"vault.claims.upsert"> => ({
+    predicate: "preference.food",
+    subject_ref: engine.pairedActor.principalRef,
+    value, confidence: 1, source: "tool_output",
+    scope: claimScope, occurred_at: occurredAt,
+  });
+
+  // ACT: the propose-scope credential writes through MCP with no actor block; the call runs
+  // as its credential and the claim can land at most Proposed.
+  const pendingBefore = await museIdent02PendingRows(engine.client);
+  const good = await museIdent02CallTool(proposer.mcp, "vault.claims.upsert",
+    museIdent02ClaimToolArguments(claimTool, claimSpec(goodToken)));
+  expect(good.refused).toBe(false);
+  const goodReceiptRef = museIdent02FindString(good.value, "receipt_ref");
+  if (!goodReceiptRef) throw new Error("MCP vault.claims.upsert result carried no receipt_ref");
+  expect(museIdent02FindString(good.value, "approval")?.toLowerCase()).toBe("proposed");
+
+  // OBSERVE (second doors): the public receipt names the proposer, the owner's pending queue and
+  // a targeted claim history hold the proposed claim, and its author reads its own proposal back.
+  const goodReceipt = await engine.awaitReceipt(goodReceiptRef);
+  const proposerReceiptRefs = new Set([
+    ...museIdent02CollectStrings(proposerActorBlock),
+    proposerSelf.actor_ref, proposer.principalRef, proposerRecord.id_hex, proposerRecord.entity_ref,
+  ]);
+  const goodReceiptActor = museIdent02FindString(goodReceipt, "actor_ref");
+  expect(museIdent02FindString(goodReceipt, "actor_class")?.toLowerCase()).toBe("agent");
+  expect(goodReceiptActor !== undefined && proposerReceiptRefs.has(goodReceiptActor)).toBe(true);
+
+  const pendingAfterGood = await museIdent02PendingRows(engine.client);
+  const beforeRefs = new Set(museIdent02PendingRefs(pendingBefore));
+  const newPending = pendingAfterGood.filter(row => !beforeRefs.has(row.claim_ref));
+  expect(newPending).toHaveLength(1);
+  const goodClaimRef = newPending[0]?.claim_ref;
+  if (!goodClaimRef) throw new Error("Proposed MCP claim left no pending claim ref");
+
+  const goodHistory = await engine.client.call("vault.claims.history", {
+    claim_ref: goodClaimRef,
+  } satisfies FacadeInput<"vault.claims.history">);
+  const goodRow = goodHistory.value.find(row => row.value === goodToken);
+  expect(goodRow).toBeDefined();
+  if (!goodRow) throw new Error("Claim history does not hold the proposer's proposed value");
+  expect(goodRow.predicate).toBe("preference.food");
+  expect(goodRow.subject_ref).toBe(engine.pairedActor.principalRef);
+  expect(goodRow.approval.toLowerCase()).toBe("proposed");
+
+  const proposerList = await proposer.client.call("vault.claims.list", {
+    subject_ref: engine.pairedActor.principalRef, predicate: "preference.food", limit: 10,
+  } satisfies FacadeInput<"vault.claims.list">);
+  expect(proposerList.value.some(row => row.value === goodToken)).toBe(true);
+
+  // REFUSE P-IDENT-007: the identical write carrying the OWNER's actor block on the proposer's
+  // credential is a mismatched actor claim, and nothing from it reaches the pending queue.
+  const forged = await museIdent02CallTool(proposer.mcp, "vault.claims.upsert",
+    museIdent02ClaimToolArguments(claimTool, claimSpec(forgedToken), ownerActorBlock));
+  expect(forged.refused).toBe(true);
+  expect(forged.rpcCode).toBe(-32602);
+  expect(forged.text).toContain("mcp_actor_mismatch");
+  expect(museIdent02PendingRefs(await museIdent02PendingRows(engine.client)))
+    .toEqual(museIdent02PendingRefs(pendingAfterGood));
+  const proposerListAfterForged = await proposer.client.call("vault.claims.list", {
+    subject_ref: engine.pairedActor.principalRef, predicate: "preference.food", limit: 10,
+  } satisfies FacadeInput<"vault.claims.list">);
+  expect(proposerListAfterForged.value.some(row => row.value === forgedToken)).toBe(false);
+
+  // WITHOUT THE GRANT: a read-only agent (core:read alone) cannot make the bound MCP write at all.
+  const readerRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: readerName }, occurred_at: occurredAt,
+  } satisfies FacadeInput<"vault.structural.put">);
+  const reader = await engine.pairActor({
+    principalRef: readerRecord.id_hex, actorClass: "agent", scope: ["core:read"],
+  });
+  const readerWrite = await museIdent02CallTool(reader.mcp, "vault.claims.upsert",
+    museIdent02ClaimToolArguments(claimTool, claimSpec(readerToken)));
+  expect(readerWrite.refused).toBe(true);
+  expect(museIdent02PendingRefs(await museIdent02PendingRows(engine.client)))
+    .toEqual(museIdent02PendingRefs(pendingAfterGood));
+
+  // REFUSE P-IDENT-003: the unbound batch route answers the owner's write credential and
+  // refuses the propose-scope credential, on an empty batch and on a real entity put whose
+  // entity_type and body were issued by a public conversation create, not hand-built.
+  const emptyBatch = { entities: [] } satisfies FacadeInput<"vault.batch">;
+  const ownerBatch = await engine.client.raw<unknown>("POST", "/v1/core/batch", emptyBatch);
+  expect(ownerBatch.status).toBe(200);
+  expect(museIdent02BatchWrittenCount(ownerBatch.body)).toBe(0);
+  const proposerEmptyBatch = await proposer.client.raw<unknown>("POST", "/v1/core/batch", emptyBatch);
+  museIdent02ExpectCoreWriteRefusal(proposerEmptyBatch.status, proposerEmptyBatch.body);
+
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurredAt, occurred_end: occurredAt, learned_at: occurredAt,
+  } satisfies FacadeInput<"vault.conversations.create">);
+  const proposerBatch = await proposer.client.raw<unknown>("POST", "/v1/core/batch", {
+    entities: [{
+      entity_type: conversation.entity_type,
+      occurred_start: occurredAt, occurred_end: occurredAt,
+      learned_at: conversation.learned_at, body: conversation.body,
+    }],
+  } satisfies FacadeInput<"vault.batch">);
+  museIdent02ExpectCoreWriteRefusal(proposerBatch.status, proposerBatch.body);
+  expect(museIdent02PendingRefs(await museIdent02PendingRows(engine.client)))
+    .toEqual(museIdent02PendingRefs(pendingAfterGood));
+
+  // RESTART: the credential still binds the same agent, the proposal still waits for consent,
+  // and the batch route still refuses this credential.
+  await engine.restart();
+  const proposerSelfAfterRestart = await proposer.client.call("self.actor", {
+  } satisfies FacadeInput<"self.actor">);
+  expect(proposerSelfAfterRestart.actor_ref).toBe(proposerSelf.actor_ref);
+  expect(proposerSelfAfterRestart.actor_class.toLowerCase()).toBe("agent");
+  expect(museIdent02PendingRefs(await museIdent02PendingRows(engine.client)))
+    .toContain(goodClaimRef);
+  const historyAfterRestart = await engine.client.call("vault.claims.history", {
+    claim_ref: goodClaimRef,
+  } satisfies FacadeInput<"vault.claims.history">);
+  const rowAfterRestart = historyAfterRestart.value.find(row => row.value === goodToken);
+  expect(rowAfterRestart).toBeDefined();
+  expect(rowAfterRestart?.approval.toLowerCase()).toBe("proposed");
+  const proposerBatchAfterRestart = await proposer.client.raw<unknown>(
+    "POST", "/v1/core/batch", emptyBatch);
+  museIdent02ExpectCoreWriteRefusal(proposerBatchAfterRestart.status, proposerBatchAfterRestart.body);
+
+  // LOSES IT MID-FLOW: the owner revokes the proposer's slip through the public revoke door;
+  // the same credential is refused at its very next use.
+  const revoked = await engine.client.request<{ revoked: boolean }>(
+    "POST", "/v1/core/slips/revoke", {
+      slip_id: Array.from(Buffer.from(proposerSlipId, "hex")),
+    });
+  expect(revoked.status).toBe(200);
+  expect(revoked.body.revoked).toBe(true);
+  const proposerAfterRevoke = await proposer.client.raw<unknown>(
+    "POST", "/v1/core/facade/self.actor", {});
+  expect(proposerAfterRevoke.status).toBe(401);
+  expect(typeof museIdent02HttpError(proposerAfterRevoke.body)?.code).toBe("string");
+});
+
+suite.todo(test, "MUSE-IDENT-03", "waits on harness: a mintAgentToken that reports a failed mint (ok, exitCode) and takes an authSecret — Re-mint replaces the old slip, a failed mint does not upgrade, and revoke stops the new slip at once");
+
+// MUSE-IDENT-04 — a facet-narrowed credential sees only its facets, and the owner cannot be narrowed.
+// Promises, stated precisely:
+//   P-IDENT-009 (MUST): A facet-narrowed credential sees out-of-facet records as missing and uncounted.
+//   P-IDENT-010 (MUST): A raw door refuses a facet-narrowed credential with HTTP 403 record-scope.
+//   P-IDENT-011 (MUST): Pairing refuses a facet limit on the owner's own credential.
+// Canon: ARCH-0028 #facet-limit-built, ARCH-0022 #facet-read-ruling. An agent key may opt in to
+// one or more facets and then reads only records stamped with one of them; an out-of-facet row
+// answers as missing and is never counted; a raw door refuses the narrowed key with 403
+// `record-scope`; pairing refuses a facet limit on the owner's own credential; an owner key
+// carries no facet limit.
+// Doors used: owner facade writes (vault.structural.put, vault.conversations.create,
+// vault.identity.facet, vault.claims.upsert), the paired agent's scoped read API
+// (self.actor, vault.scope.ceiling, vault.claims.list, vault.get over HTTP and over WS),
+// the raw REST facade door vault.kv.namespaces by client.raw (one of the raw/key-value doors
+// the 403 record-scope refusal covers), owner token pairing through engine.pairActor, the
+// authority audit, and POST /v1/core/slips/revoke as in AUTHORITY-05. Reuses this file's
+// auditRows helper and its AuditRow type.
+// Harness need (see report): engine.pairActor gains optional facetRefs/writeFacetRef and
+// forwards them to the shipped pairing door. No support/ edit is made here.
+// What stays unproved: identical enforcement over MCP tools/call (no typed MCP tool-argument
+// surface in the facade files given, so naming a tool or its argument wrapper would guess a
+// wire shape), a multi-facet key's write landing facet, rows with no facet, and TASK rows.
+
+const museIdent04OccurredAt = 1769947200; // Explicit public setup input reused from gate.test.ts, never a wall clock.
+
+type museIdent04Actor = EngineFixture["pairedActor"];
+
+async function museIdent04IdCandidates(client: PublicHttpClient, ref: string): Promise<string[]> {
+  const got = await client.call("vault.get", { entity_ref: ref });
+  return [ref, got.value?.id_hex, got.value?.short_ref]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+async function museIdent04Claims(client: PublicHttpClient, subjectRef: string, predicate: string) {
+  return client.call("vault.claims.list", { subject_ref: subjectRef, predicate, limit: 10 });
+}
+
+function museIdent04NewMints(before: readonly AuditRow[], after: readonly AuditRow[],
+  holders: readonly string[]): AuditRow[] {
+  const existing = new Set(before.map(row => row.entry_hash));
+  return after.filter(row => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint"
+    && typeof row.holder_ref === "string" && holders.includes(row.holder_ref));
+}
+
+suite.test(test, "MUSE-IDENT-04", "A facet-narrowed agent sees only its facet, raw doors refuse it, and the owner cannot be narrowed", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-IDENT-04", profile });
+  const catalog = await loadFixtures();
+  const facts = catalog.expected<{ lifetimeSeconds: number; unauthorizedCode: string }>("authority-pairing-law");
+
+  // Generated values only; every sentinel is registered before first use.
+  const seed = secretHex(8);
+  redactor.add(seed);
+  const agentName = `Muse Ident04 Agent ${seed}`;
+  const facetLabel = `muse-ident04-work-${seed}`;
+  const agentFacetLabel = `muse-ident04-agent-${seed}`;
+  const predicateIn = `muse_ident04_in_${seed}`;
+  const predicateOut = `muse_ident04_out_${seed}`;
+  const valueIn = `muse-ident04-in-facet-${seed}`;
+  const valueOut = `muse-ident04-out-facet-${seed}`;
+  redactor.add(agentName, facetLabel, agentFacetLabel, predicateIn, predicateOut, valueIn, valueOut);
+
+  // Identity first (owner): the paired owner token is a human acting for the owner principal.
+  const ownerSelf = await engine.client.call("self.actor", {});
+  expect(ownerSelf.actor_class).toBe("human");
+  const ownerCandidates = await museIdent04IdCandidates(engine.client, engine.pairedActor.principalRef);
+  expect(ownerCandidates).toContain(ownerSelf.actor_ref);
+  const ownerView = await engine.client.call("vault.get", { entity_ref: engine.pairedActor.principalRef });
+  const ownerId = ownerView.value?.id_hex;
+  if (!ownerId) throw new Error("Owner principal is not publicly readable");
+
+  // Act: declare the agent principal and a conversation it belongs to (the SECRETS-01 setup
+  // under which a paired agent reads), then let the owner mint a second, named facet.
+  const agentRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: agentName }, occurred_at: museIdent04OccurredAt,
+  });
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: { members: [engine.pairedActor.principalRef, agentRecord.id_hex] },
+    occurred_start: museIdent04OccurredAt, occurred_end: museIdent04OccurredAt,
+  });
+
+  const faceted = await engine.client.call("vault.identity.facet", {
+    entity: ownerId,
+    facets: [{ label: facetLabel }],
+    reassignment_map: [],
+    evidence: { refs: [], rationale: "The owner declares one work mask for this facet-limit case." },
+  } satisfies FacadeInput<"vault.identity.facet">);
+  expect(faceted.outcome).toBe("applied");
+  if (faceted.outcome !== "applied") throw new Error("Owner facet mint did not apply");
+  const facetAction = faceted.receipt.action;
+  expect(facetAction.op).toBe("facet");
+  if (facetAction.op !== "facet") throw new Error("Facet mint receipt names a different action");
+  const workFacetRef = facetAction.facets[0];
+  if (!workFacetRef) throw new Error("Facet mint returned no facet reference");
+  // Read the minted facet back through a second door before using it.
+  const workFacetView = await engine.client.call("vault.get", { entity_ref: workFacetRef });
+  expect(workFacetView.value?.kind).toBe("FACET");
+  const workFacetId = workFacetView.value?.id_hex;
+  if (!workFacetId) throw new Error("Minted facet has no public id");
+  const workFacetCandidates = [workFacetRef, workFacetId, workFacetView.value?.short_ref]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  const baseScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+  expect(workFacetId).not.toBe(baseScope.scope_facet_id);
+
+  // Act: one claim stamped with the substrate facet (out) and one with the work facet (in).
+  const outClaim = await engine.client.call("vault.claims.upsert", {
+    scope: baseScope, predicate: predicateOut, subject_ref: conversation.id,
+    value: valueOut, source: "user_stated", confidence: 1, occurred_at: museIdent04OccurredAt,
+  } satisfies FacadeInput<"vault.claims.upsert">);
+  await engine.awaitReceipt(outClaim.receipt_ref);
+  const inClaim = await engine.client.call("vault.claims.upsert", {
+    scope: { ...baseScope, scope_facet_id: workFacetId },
+    predicate: predicateIn, subject_ref: conversation.id,
+    value: valueIn, source: "user_stated", confidence: 1, occurred_at: museIdent04OccurredAt,
+  } satisfies FacadeInput<"vault.claims.upsert">);
+  await engine.awaitReceipt(inClaim.receipt_ref);
+
+  // Observe the writes back (owner, a different verb): both landed, each under its own facet stamp.
+  const ownerOut = await museIdent04Claims(engine.client, conversation.id, predicateOut);
+  expect(ownerOut.value).toHaveLength(1);
+  expect(ownerOut.value[0]!.value).toBe(valueOut);
+  expect(ownerOut.value[0]!.claim_scope.scope_facet_id).toBe(baseScope.scope_facet_id);
+  const ownerIn = await museIdent04Claims(engine.client, conversation.id, predicateIn);
+  expect(ownerIn.value).toHaveLength(1);
+  expect(ownerIn.value[0]!.value).toBe(valueIn);
+  expect(ownerIn.value[0]!.claim_scope.scope_facet_id).toBe(workFacetId);
+  const outClaimRef = ownerOut.value[0]!.claim_ref;
+  const inClaimRef = ownerIn.value[0]!.claim_ref;
+  expect(outClaimRef).not.toBe(inClaimRef);
+  expect((await engine.client.call("vault.get", { entity_ref: outClaimRef })).value).not.toBeNull();
+
+  // Act: pair the agent with its key narrowed to the work facet alone (harness need: pairActor
+  // forwards facetRefs/writeFacetRef to the shipped pairing door; see the report).
+  const auditBeforePair = await auditRows(engine.client);
+  const narrowed: museIdent04Actor = await engine.pairActor({
+    principalRef: agentRecord.id_hex,
+    actorClass: "agent",
+    scope: ["core:read", "core:write"],
+    facetRefs: [workFacetId],
+    writeFacetRef: workFacetId,
+  });
+  // The pairing receipt records the same actor the token now claims to be.
+  const agentCandidates = [...await museIdent04IdCandidates(engine.client, agentRecord.id_hex),
+    agentRecord.entity_ref];
+  const mints = museIdent04NewMints(auditBeforePair, await auditRows(engine.client), agentCandidates);
+  expect(mints).toHaveLength(1);
+  expect(mints[0]!.fold_valid).toBe(true);
+  expect(mints[0]!.subject_ref).toMatch(/^[a-f0-9]{64}$/);
+  const narrowedSlipId = mints[0]!.subject_ref!;
+
+  // Identity first (agent), then that kind's facet ceiling.
+  const narrowedSelf = await narrowed.client.call("self.actor", {});
+  expect(narrowedSelf.actor_class).toBe("agent");
+  expect(agentCandidates).toContain(narrowedSelf.actor_ref);
+  const ceiling = await narrowed.client.call("vault.scope.ceiling", {});
+  expect(ceiling.kind).toBe("ceiling");
+  const ceilingFacets = ceiling.scope.facets;
+  expect(ceilingFacets?.kind).toBe("some");
+  if (ceilingFacets?.kind !== "some") throw new Error("Narrowed credential reports no facet limit");
+  expect(ceilingFacets.values).toHaveLength(1);
+  expect(workFacetCandidates).toContain(ceilingFacets.values[0]!);
+  // The owner key carries no facet limit: it is not narrowed to the work facet.
+  const ownerCeiling = await engine.client.call("vault.scope.ceiling", {});
+  const ownerFacets = ownerCeiling.scope.facets;
+  let ownerNarrowedToWork = false;
+  if (ownerFacets?.kind === "some") {
+    ownerNarrowedToWork = ownerFacets.values.length === 1
+      && workFacetCandidates.includes(ownerFacets.values[0]!);
+  }
+  expect(ownerNarrowedToWork).toBe(false);
+
+  // P-IDENT-009: through the scoped read API the out-of-facet claim is missing, and no count
+  // of suppressed rows betrays it; the in-facet claim reads normally.
+  const agentIn = await museIdent04Claims(narrowed.client, conversation.id, predicateIn);
+  expect(agentIn.value).toHaveLength(1);
+  expect(agentIn.value[0]!.value).toBe(valueIn);
+  const agentOut = await museIdent04Claims(narrowed.client, conversation.id, predicateOut);
+  expect(agentOut.value).toHaveLength(0);
+  expect(agentOut.narrowing.suppressed_count).toBe(0);
+  expect((await narrowed.client.call("vault.get", { entity_ref: inClaimRef })).value).not.toBeNull();
+  expect((await narrowed.client.call("vault.get", { entity_ref: outClaimRef })).value).toBeNull();
+
+  // P-IDENT-010: the raw key-value door serves the owner but refuses the narrowed key outright.
+  const ownerRaw = await engine.client.raw("POST", "/v1/core/facade/vault.kv.namespaces", {});
+  expect(ownerRaw.status).toBe(200);
+  const agentRaw = await narrowed.client.raw("POST", "/v1/core/facade/vault.kv.namespaces", {});
+  expect(agentRaw.status).toBe(403);
+  expect(JSON.stringify(agentRaw.body)).toContain("record-scope");
+
+  // Refuse the wrong actor kind: the agent has write scope but is not the owner, so the
+  // owner facet door refuses it and no facet is minted.
+  const facetsBeforeAttempt = await engine.client.call("vault.neighbors", {
+    entity_ref: engine.pairedActor.principalRef, opts: { edge_kind: "has_facet", limit: 100 },
+  });
+  const facetAttempt = await narrowed.client.raw("POST", "/v1/core/facade/vault.identity.facet", {
+    entity: ownerId,
+    facets: [{ label: agentFacetLabel }],
+    reassignment_map: [],
+    evidence: { refs: [], rationale: "An agent attempt that must be refused." },
+  } satisfies FacadeInput<"vault.identity.facet">);
+  expect(facetAttempt.status).toBe(403);
+  const facetsAfterAttempt = await engine.client.call("vault.neighbors", {
+    entity_ref: engine.pairedActor.principalRef, opts: { edge_kind: "has_facet", limit: 100 },
+  });
+  expect(facetsAfterAttempt.value).toHaveLength(facetsBeforeAttempt.value.length);
+
+  // P-IDENT-011: pairing a facet limit onto the owner's own credential is refused, and the
+  // refusal leaves no minted slip for the owner in the audit.
+  const auditBeforeOwnerPair = await auditRows(engine.client);
+  let ownerPairError: unknown = undefined;
+  try {
+    await engine.pairActor({
+      principalRef: engine.pairedActor.principalRef,
+      actorClass: "human",
+      scope: ["core:read"],
+      facetRefs: [workFacetId],
+      writeFacetRef: workFacetId,
+    });
+  } catch (error) {
+    ownerPairError = error;
+  }
+  expect(ownerPairError).toBeInstanceOf(Error);
+  expect(museIdent04NewMints(auditBeforeOwnerPair, await auditRows(engine.client),
+    ownerCandidates)).toHaveLength(0);
+
+  // Survive a restart: stamps, the facet limit and the raw refusal all read the same.
+  await engine.restart();
+  expect((await museIdent04Claims(engine.client, conversation.id, predicateIn)).value).toHaveLength(1);
+  expect((await museIdent04Claims(engine.client, conversation.id, predicateOut)).value).toHaveLength(1);
+  expect((await museIdent04Claims(narrowed.client, conversation.id, predicateIn)).value).toHaveLength(1);
+  const agentOutAfterRestart = await museIdent04Claims(narrowed.client, conversation.id, predicateOut);
+  expect(agentOutAfterRestart.value).toHaveLength(0);
+  expect(agentOutAfterRestart.narrowing.suppressed_count).toBe(0);
+  // A second surface agrees after the restart: the bounded WS read of the same two records.
+  const socket = await engine.websocket(narrowed);
+  try {
+    expect((await socket.call("vault.get", { entity_ref: inClaimRef })).value.value).not.toBeNull();
+    expect((await socket.call("vault.get", { entity_ref: outClaimRef })).value.value).toBeNull();
+  } finally { socket.close() }
+  const agentRawAfterRestart = await narrowed.client.raw("POST", "/v1/core/facade/vault.kv.namespaces", {});
+  expect(agentRawAfterRestart.status).toBe(403);
+  expect(JSON.stringify(agentRawAfterRestart.body)).toContain("record-scope");
+
+  // Losing its authority mid-flow: the owner revokes the agent's slip through the public door
+  // and its next read is refused as unauthenticated, while the owner keeps reading.
+  const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+    slip_id: Array.from(Buffer.from(narrowedSlipId, "hex")),
+  });
+  expect(revoked.status).toBe(200);
+  expect(revoked.body.revoked).toBe(true);
+  const denied = await narrowed.client.raw<{ error: { code: string } }>("POST", "/v1/core/facade/vault.claims.list", {
+    subject_ref: conversation.id, predicate: predicateIn, limit: 10,
+  });
+  expect(denied.status).toBe(401);
+  expect(denied.body.error.code).toBe(facts.unauthorizedCode);
+  const finalAudit = await auditRows(engine.client);
+  expect(finalAudit.some(row => row.source_op === "slip_revoke"
+    && row.subject_ref === narrowedSlipId && row.fold_valid)).toBe(true);
+  expect((await museIdent04Claims(engine.client, conversation.id, predicateIn)).value).toHaveLength(1);
+
+  await engine.artifacts.json("muse-ident04-summary.json", {
+    substrateFacet: baseScope.scope_facet_id, workFacet: workFacetId,
+    inClaimRef, outClaimRef, agent: agentRecord.id_hex,
+    rawAfterRestart: agentRawAfterRestart.status, deniedAfterRevoke: denied.status,
+  });
+});
 
 type museIdent05Recipient = { publicKey: number[]; seedHex: string };
 interface museIdent05ErrorBody { error?: { code?: unknown; message?: unknown } }
@@ -961,7 +2038,243 @@ suite.test(test, "MUSE-IDENT-05", "Owner authority stays in its vault and a tran
     && row.holder_ref === foreignPrincipal)).toBe(false);
 });
 
-suite.todo(test, "MUSE-IDENT-06", "waits on harness: an optional timestamp argument on boundHeaders — A holder proof outside its freshness window is refused at POST /mcp and the same paired slip works after a restart");
+// MUSE-IDENT-06 — P-IDENT-013 and the restart-sized part of P-IDENT-014.
+// P-IDENT-013 (MUST): holder proofs outside the 60-second freshness window are
+// refused. P-IDENT-014 (MUST): closed-vault time and host sleep do not consume
+// a slip's lifetime; this case proves only that the same paired slip is usable
+// after one ordinary engine stop/restart, not after a closed period longer
+// than its lifetime and not after host sleep. See the report for why no public
+// door can make that longer closed period deterministically in this suite.
+// Doors: owner pairing through EngineFixture.pairActor, POST /mcp (McpClient
+// and raw JSON-RPC over the same public route), the typed facade over HTTP,
+// the WS facade, vault.authority.audit, and POST /v1/core/slips/revoke.
+// Harness need: boundHeaders must accept a caller-chosen signed timestamp
+// (seconds), as specified exactly in MUSE-IDENT-06.report.md. Until that
+// harness change lands this case cannot run as written.
+
+const museIdent06OccurredAt = 1769947200;
+
+type museIdent06AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+
+interface museIdent06McpWire {
+  jsonrpc?: string;
+  id?: number;
+  result?: unknown;
+  error?: { code?: unknown; message?: unknown };
+}
+
+interface museIdent06HttpError {
+  error?: { code?: unknown; message?: unknown };
+}
+
+async function museIdent06AuditRows(client: PublicHttpClient): Promise<museIdent06AuditRow[]> {
+  const rows: museIdent06AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = { limit: 500, ...(after ? { after } : {}) };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    // These fixtures never adopt an externally attested checkpoint image.
+    expect(page.cold_attested ?? []).toHaveLength(0);
+    if (!page.next_after) return rows;
+    expect(cursors.has(page.next_after)).toBe(false);
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function museIdent06MintedSlip(
+  before: readonly museIdent06AuditRow[],
+  after: readonly museIdent06AuditRow[],
+  holder: string,
+): museIdent06AuditRow {
+  const existing = new Set(before.map(row => row.entry_hash));
+  const minted = after.filter(row => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  expect(row.fold_valid).toBe(true);
+  expect(row.subject_ref).toMatch(/^[a-f0-9]{64}$/);
+  return row;
+}
+
+function museIdent06StaleHeaders(credential: string): Headers {
+  redactor.add(credential);
+  // 120 s in the past is outside the 60 s window on either reading of the
+  // exact boundary, and it needs no sleep and no change to any clock: it is
+  // the signed time this holder chooses to put in its own proof.
+  const signedAtSeconds = Math.floor(Date.now() / 1000) - 120;
+  const headers = boundHeaders(credential, signedAtSeconds);
+  const proof = headers.get("x-oneiron-binding");
+  if (!proof) throw new Error("Holder proof helper returned no binding header");
+  redactor.add(proof);
+  const parsed = JSON.parse(proof) as { nonce?: unknown; signature?: unknown };
+  if (typeof parsed.nonce === "string") redactor.add(parsed.nonce);
+  if (typeof parsed.signature === "string") redactor.add(parsed.signature);
+  headers.set("accept", "application/json");
+  return headers;
+}
+
+async function museIdent06McpInitialize(client: PublicHttpClient, id: number, headers?: Headers) {
+  return client.raw<museIdent06McpWire>("POST", "/mcp", {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "oneiron-e2e", version: "0.1.0" },
+    },
+  }, headers ?? { accept: "application/json" });
+}
+
+function museIdent06ExpectMcpAdmitted(
+  reply: Awaited<ReturnType<typeof museIdent06McpInitialize>>,
+  id: number,
+): void {
+  expect(reply.status).toBe(200);
+  expect(reply.body.jsonrpc).toBe("2.0");
+  expect(reply.body.id).toBe(id);
+  expect(reply.body.error).toBeUndefined();
+  expect(reply.body.result !== null && typeof reply.body.result === "object").toBe(true);
+}
+
+function museIdent06ExpectMcpRefused(
+  reply: Awaited<ReturnType<typeof museIdent06McpInitialize>>,
+): void {
+  expect(reply.status).toBe(401);
+  expect(reply.body.result).toBeUndefined();
+  expect(reply.body.error?.code).toBe("UNAUTHORIZED");
+  expect(typeof reply.body.error?.message).toBe("string");
+}
+
+async function museIdent06PairAgent(engine: EngineFixture, scope: readonly string[]) {
+  const name = `muse-ident-06-${secretHex(4)}`;
+  redactor.add(name);
+  // The owner creates the principal first; pairing creates no person or agent.
+  const record = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name }, occurred_at: museIdent06OccurredAt,
+  });
+  return engine.pairActor({
+    principalRef: record.id_hex, actorClass: "agent", scope, lifetimeSeconds: 3600,
+  });
+}
+
+suite.test(test, "MUSE-IDENT-06", "A holder proof outside its freshness window is refused at POST /mcp and the same paired slip works after a restart", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-IDENT-06", profile, surface: "primary" });
+  const namespace = ["muse-ident-06", "slip-clock"];
+
+  // Actor identity first: the fixture owner is the human, the newly paired
+  // principal is an agent, and each credential reports the actor it binds.
+  const ownerSelf = await engine.client.call("self.actor", {});
+  expect(ownerSelf.actor_class).toBe("human");
+  const beforeMainPair = await museIdent06AuditRows(engine.client);
+  const agent = await museIdent06PairAgent(engine, ["core:read", "core:write"]);
+  const minted = museIdent06MintedSlip(
+    beforeMainPair, await museIdent06AuditRows(engine.client), agent.principalRef,
+  );
+  const slipId = minted.subject_ref!;
+  const agentSelf = await agent.client.call("self.actor", {});
+  expect(agentSelf.actor_class).toBe("agent");
+  expect(agentSelf.actor_ref.length).toBeGreaterThan(0);
+  expect(agentSelf.actor_ref === ownerSelf.actor_ref).toBe(false);
+  expect(agent.principalRef === engine.pairedActor.principalRef).toBe(false);
+
+  // Fresh control on the promised door. The raw call is the A/B baseline for
+  // the stale call below: same route, same body, only the proof age differs.
+  const mcpClientInit = await agent.mcp.initialize();
+  expect(mcpClientInit !== null && typeof mcpClientInit === "object").toBe(true);
+  museIdent06ExpectMcpAdmitted(await museIdent06McpInitialize(agent.client, 6101), 6101);
+
+  // One admitted write, read back through a second surface (WS) and a second
+  // actor's receipt read, so the stale-write check below has known state.
+  const freshKey = `fresh-${secretHex(4)}`;
+  const freshValue = `fresh-value-${secretHex(8)}`;
+  const freshRequestId = secretHex(16);
+  redactor.add(freshKey, freshValue, freshRequestId);
+  const freshAddress = { namespace, key: freshKey };
+  const written = await agent.client.call("vault.kv.put", {
+    ...freshAddress, value: freshValue, request_id: freshRequestId,
+  });
+  expect(written.item.key).toBe(freshKey);
+  expect(written.item.value).toBe(freshValue);
+  expect(written.receipt_ref.length).toBeGreaterThan(0);
+  await engine.awaitReceipt(written.receipt_ref);
+  const freshSocket = await WsClient.connect(engine.url, agent.credential);
+  try { expect((await freshSocket.call("vault.kv.get", freshAddress)).value?.value).toBe(freshValue); }
+  finally { freshSocket.close(); }
+
+  // P-IDENT-013: the same holder, the same slip, a proof signed 120 s ago.
+  museIdent06ExpectMcpRefused(
+    await museIdent06McpInitialize(agent.client, 6102, museIdent06StaleHeaders(agent.credential)),
+  );
+  // The refused presenter must not be able to make its write land on the
+  // other slip-authenticated surface either.
+  const staleValue = `stale-value-${secretHex(8)}`;
+  const staleRequestId = secretHex(16);
+  redactor.add(staleValue, staleRequestId);
+  const staleWrite = await agent.client.raw<museIdent06HttpError>(
+    "POST", "/v1/core/facade/vault.kv.put",
+    { ...freshAddress, value: staleValue, request_id: staleRequestId },
+    museIdent06StaleHeaders(agent.credential),
+  );
+  expect(staleWrite.status).toBe(401);
+  expect(staleWrite.body.error?.code).toBe("UNAUTHORIZED");
+  expect(typeof staleWrite.body.error?.message).toBe("string");
+  expect((await agent.client.call("vault.kv.get", freshAddress))?.value).toBe(freshValue);
+  // Control: the stale attempt did not burn the still-live slip.
+  museIdent06ExpectMcpAdmitted(await museIdent06McpInitialize(agent.client, 6103), 6103);
+
+  // Substrate control: a fresh proof is not enough without the write scope.
+  const readOnly = await museIdent06PairAgent(engine, ["core:read"]);
+  const readOnlySelf = await readOnly.client.call("self.actor", {});
+  expect(readOnlySelf.actor_class).toBe("agent");
+  const readOnlyKey = `read-only-${secretHex(4)}`;
+  const readOnlyValue = `read-only-value-${secretHex(8)}`;
+  const readOnlyRequestId = secretHex(16);
+  redactor.add(readOnlyKey, readOnlyValue, readOnlyRequestId);
+  const readOnlyWrite = await readOnly.client.raw<museIdent06HttpError>(
+    "POST", "/v1/core/facade/vault.kv.put",
+    { namespace, key: readOnlyKey, value: readOnlyValue, request_id: readOnlyRequestId },
+  );
+  expect(readOnlyWrite.status).toBe(403);
+  expect(typeof readOnlyWrite.body.error?.code).toBe("string");
+  expect(typeof readOnlyWrite.body.error?.message).toBe("string");
+  expect(await readOnly.client.call("vault.kv.get", { namespace, key: readOnlyKey })).toBeNull();
+
+  // Restart: the vault closes and reopens. The same slip (not a new pairing)
+  // is admitted with a fresh proof, its mint is still in the owner's audit,
+  // its written value is still readable over WS, and a stale proof is still
+  // refused. This proves survival of one ordinary stop only; it does not
+  // prove that a closed period longer than the slip's lifetime is free.
+  await engine.restart();
+  const afterRestartAudit = await museIdent06AuditRows(engine.client);
+  expect(afterRestartAudit.some(row => row.entry_hash === minted.entry_hash
+    && row.subject_ref === slipId && row.fold_valid)).toBe(true);
+  museIdent06ExpectMcpAdmitted(await museIdent06McpInitialize(agent.client, 6104), 6104);
+  museIdent06ExpectMcpRefused(
+    await museIdent06McpInitialize(agent.client, 6105, museIdent06StaleHeaders(agent.credential)),
+  );
+  const restartSocket = await WsClient.connect(engine.url, agent.credential);
+  try { expect((await restartSocket.call("vault.kv.get", freshAddress)).value?.value).toBe(freshValue); }
+  finally { restartSocket.close(); }
+
+  // Losing the slip mid-flow: the owner revokes it in public, then even a
+  // fresh proof from that holder is refused while the owner's slip still
+  // works. The audit read-back is the durable record of both acts.
+  const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+    slip_id: Array.from(Buffer.from(slipId, "hex")),
+  });
+  expect(revoked.status).toBe(200);
+  expect(revoked.body.revoked).toBe(true);
+  museIdent06ExpectMcpRefused(await museIdent06McpInitialize(agent.client, 6106));
+  const finalAudit = await museIdent06AuditRows(engine.client);
+  expect(finalAudit.some(row => row.source_op === "slip_revoke"
+    && row.subject_ref === slipId && row.fold_valid)).toBe(true);
+  const ownerInit = await engine.mcp.initialize();
+  expect(ownerInit !== null && typeof ownerInit === "object").toBe(true);
+});
 
 // MUSE-IDENT-07 — PARTIAL
 // P-IDENT-019: Messages and spawn seeds cannot widen a recipient's Grant,
