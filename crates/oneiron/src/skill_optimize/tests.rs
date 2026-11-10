@@ -1,7 +1,15 @@
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::job::PROVENANCE_OPTIMIZE_PRINCIPAL_KEY;
 use super::*;
+use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::skill_hub::tests::ladder_fixture::{
+    FixtureNotes, FixtureProvider, choice_answer, choice_answer_at, fixture_notes, noul_answer,
+    score_answer,
+};
+use serde_json::Value as Json;
 
 use crate::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
@@ -331,6 +339,72 @@ fn losing_skill_with_proposal(vault: &Vault, skill_id: &str) -> (EntityId, Entit
     (skill, proposal)
 }
 
+/// Forwards [`HeldOutReplayNotes`] to the shared `notes` shell every fixture
+/// scorer holds; the per-test answers live in the fixture provider behind it.
+macro_rules! delegate_notes {
+    ($ty:ty) => {
+        impl HeldOutReplayNotes for $ty {
+            fn judge_revision(&self) -> &str {
+                self.notes.judge_revision()
+            }
+            fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+                self.notes.decisions()
+            }
+            fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Json> {
+                self.notes.replay_state(case)
+            }
+            fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+                self.notes.replay_responses(receipts)
+            }
+            fn record_decision(
+                &self,
+                question: &DecisionQuestion,
+                decision: &TypedDecision,
+                state: &Json,
+            ) -> Result<()> {
+                self.notes.record_decision(question, decision, state)
+            }
+            fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+                self.notes.honesty_replays(case)
+            }
+            fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+                self.notes.goal_axes(case)
+            }
+        }
+    };
+}
+
+/// The pin every skill_optimize fixture judgment answers under.
+fn fixture_pin() -> crate::llm::decision::ProviderPin {
+    crate::llm::decision::ProviderPin {
+        rung: crate::llm::decision::DecisionRung::SystemOne,
+        model: "fixture-judge".to_owned(),
+        version: "1".to_owned(),
+    }
+}
+
+/// The instructions a score-like judgment state carries.
+fn state_instructions(state: &Json) -> &str {
+    state
+        .get("instructions")
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+}
+
+/// The held-out receipts a score-like judgment state carries.
+fn state_receipts(state: &Json) -> Vec<String> {
+    state
+        .get("held_out_receipts")
+        .and_then(Json::as_array)
+        .map(|receipts| {
+            receipts
+                .iter()
+                .filter_map(|receipt| receipt.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The replay judge double.
 ///
 /// Keyed on the INSTRUCTIONS it is handed, which is the only thing that differs
@@ -340,17 +414,56 @@ struct StubScorer {
     before: f32,
     after: f32,
     revision: &'static str,
-    seen: RefCell<Vec<(String, Vec<String>)>>,
+    seen: Arc<Mutex<Vec<(String, Vec<String>)>>>,
+    notes: FixtureNotes<'static>,
 }
 
 impl StubScorer {
-    fn new(before: f32, after: f32) -> Self {
+    fn build(
+        before: f32,
+        after: f32,
+        revision: &'static str,
+        seen: Arc<Mutex<Vec<(String, Vec<String>)>>>,
+    ) -> Self {
+        let seen_in = Arc::clone(&seen);
+        let provider = FixtureProvider::new(fixture_pin(), revision, move |kind, _, state| {
+            match kind.as_deref() {
+                Some("score") => {
+                    let instructions = state_instructions(&state);
+                    seen_in
+                        .lock()
+                        .unwrap()
+                        .push((instructions.to_owned(), state_receipts(&state)));
+                    Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                        before
+                    } else {
+                        after
+                    })))
+                }
+                Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                    Ok(score_answer(0.5))
+                }
+                Some("preference") => Ok(choice_answer("first")),
+                Some("honesty") => Ok(noul_answer(false)),
+                other => panic!("StubScorer asked an unexpected kind: {other:?}"),
+            }
+        });
         Self {
             before,
             after,
-            revision: "fixture-judge@1",
-            seen: RefCell::new(Vec::new()),
+            revision,
+            seen,
+            notes: fixture_notes(revision, provider),
         }
+    }
+
+    fn new(before: f32, after: f32) -> Self {
+        Self::build(
+            before,
+            after,
+            "fixture-judge@1",
+            Arc::new(Mutex::new(Vec::new())),
+        )
     }
 
     /// The proposed text replays better than the text it replaces.
@@ -358,85 +471,47 @@ impl StubScorer {
         Self::new(0.40, 0.75)
     }
 
-    fn with_revision(mut self, revision: &'static str) -> Self {
-        self.revision = revision;
-        self
+    fn with_revision(self, revision: &'static str) -> Self {
+        Self::build(self.before, self.after, revision, self.seen)
     }
 
     /// Every held-out list this scorer was handed.
     fn evidence(&self) -> Vec<Vec<String>> {
         self.seen
-            .borrow()
+            .lock()
+            .unwrap()
             .iter()
             .map(|(_, receipts)| receipts.clone())
             .collect()
     }
 }
 
-impl HeldOutReplayScorer for StubScorer {
-    fn judge_revision(&self) -> &str {
-        self.revision
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        self.seen.borrow_mut().push((
-            case.instructions.to_owned(),
-            case.held_out_receipts.to_vec(),
-        ));
-        Ok(if case.instructions == TARGET_DESC {
-            self.before
-        } else {
-            self.after
-        })
-    }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
-    }
-}
+delegate_notes!(StubScorer);
 
-/// A scorer that must never be reached.
+/// A scorer that must never be reached: every judgment panics, and the gate
+/// refuses before scoring wherever this scorer is handed in.
 struct UnreachableScorer;
 
-impl HeldOutReplayScorer for UnreachableScorer {
+impl HeldOutReplayNotes for UnreachableScorer {
     fn judge_revision(&self) -> &str {
         "fixture-judge@1"
     }
-    fn score(&self, _case: &HeldOutReplayCase<'_>) -> Result<f32> {
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
         panic!("a refused proposal must not reach the replay tier");
     }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
+    fn replay_state(&self, _case: &HeldOutReplayCase<'_>) -> Result<Json> {
+        panic!("a refused proposal must not reach the replay tier");
     }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
+    fn replay_responses(&self, _receipts: &[String]) -> Result<SkillReplayResponses> {
+        panic!("a refused proposal must not reach the replay tier");
     }
-    fn contrastive_audit(
+    fn record_decision(
         &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
+        _question: &DecisionQuestion,
+        _decision: &TypedDecision,
+        _state: &Json,
+    ) -> Result<()> {
+        panic!("a refused proposal must not reach the replay tier");
     }
 }
 
@@ -1383,50 +1458,52 @@ fn prune_attempt_row(vault: &Vault, attempt: AttemptId) {
 /// A judge that lets a new RESERVED outcome land while it is thinking — the
 /// exact window between "the gate read the reserve" and "the gate wrote a row".
 struct RacingScorer<'a> {
-    vault: &'a Vault,
-    skill: EntityId,
-    skill_id: &'a str,
-    raced: RefCell<bool>,
-    /// How many replays this judge was actually paid for, so "the aborted call
-    /// spent exactly the pair it had already scored" is checkable.
-    scored: RefCell<u32>,
+    /// How many replay scores this judge was actually paid for, so "the
+    /// aborted call spent exactly the pair it had already scored" is
+    /// checkable.
+    scored: Arc<AtomicU32>,
+    notes: FixtureNotes<'a>,
 }
 
-impl HeldOutReplayScorer for RacingScorer<'_> {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        *self.scored.borrow_mut() += 1;
-        if !self.raced.replace(true) {
-            reserve_one_more_held_out_receipt(self.vault, &self.skill, self.skill_id, 6_000);
+impl<'a> RacingScorer<'a> {
+    fn new(vault: &'a Vault, skill: EntityId, skill_id: &'a str) -> Self {
+        let scored = Arc::new(AtomicU32::new(0));
+        let scored_in = Arc::clone(&scored);
+        let provider = FixtureProvider::with_hook(
+            fixture_pin(),
+            "fixture-judge@1",
+            move || {
+                reserve_one_more_held_out_receipt(vault, &skill, skill_id, 6_000);
+                Ok(())
+            },
+            move |kind, _, state| {
+                if kind.as_deref() == Some("score") {
+                    scored_in.fetch_add(1, Ordering::SeqCst);
+                    let instructions = state_instructions(&state);
+                    return Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                        0.40
+                    } else {
+                        0.75
+                    })));
+                }
+                match kind.as_deref() {
+                    Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                        Ok(score_answer(0.5))
+                    }
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("honesty") => Ok(noul_answer(false)),
+                    other => panic!("RacingScorer asked an unexpected kind: {other:?}"),
+                }
+            },
+        );
+        Self {
+            scored,
+            notes: fixture_notes("fixture-judge@1", provider),
         }
-        Ok(if case.instructions == TARGET_DESC {
-            0.40
-        } else {
-            0.75
-        })
-    }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
+
+delegate_notes!(RacingScorer<'_>);
 
 /// A judge that DELIVERS THE SAME GATE CALL AGAIN while it is thinking.
 ///
@@ -1437,50 +1514,51 @@ impl HeldOutReplayScorer for RacingScorer<'_> {
 /// row — and no sleeping thread is involved, so it is a regression rather than
 /// a coin flip.
 struct DuplicatingScorer<'a> {
-    vault: &'a Vault,
-    proposal: EntityId,
-    attempt: AttemptId,
-    delivered: RefCell<bool>,
-    scored: RefCell<u32>,
+    scored: Arc<AtomicU32>,
+    notes: FixtureNotes<'a>,
 }
 
-impl HeldOutReplayScorer for DuplicatingScorer<'_> {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        *self.scored.borrow_mut() += 1;
-        if !self.delivered.replace(true) {
-            let inner = StubScorer::improving();
-            score_gate_skill_edit_in_cycle(self.vault, &self.proposal, &inner, self.attempt, 950)
-                .expect("the inner delivery rules");
+impl<'a> DuplicatingScorer<'a> {
+    fn new(vault: &'a Vault, proposal: EntityId, attempt: AttemptId) -> Self {
+        let scored = Arc::new(AtomicU32::new(0));
+        let scored_in = Arc::clone(&scored);
+        let provider = FixtureProvider::with_hook(
+            fixture_pin(),
+            "fixture-judge@1",
+            move || {
+                let inner = StubScorer::improving();
+                score_gate_skill_edit_in_cycle(vault, &proposal, &inner, attempt, 950)
+                    .expect("the inner delivery rules");
+                Ok(())
+            },
+            move |kind, _, state| {
+                if kind.as_deref() == Some("score") {
+                    scored_in.fetch_add(1, Ordering::SeqCst);
+                    let instructions = state_instructions(&state);
+                    return Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                        0.40
+                    } else {
+                        0.75
+                    })));
+                }
+                match kind.as_deref() {
+                    Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                        Ok(score_answer(0.5))
+                    }
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("honesty") => Ok(noul_answer(false)),
+                    other => panic!("DuplicatingScorer asked an unexpected kind: {other:?}"),
+                }
+            },
+        );
+        Self {
+            scored,
+            notes: fixture_notes("fixture-judge@1", provider),
         }
-        Ok(if case.instructions == TARGET_DESC {
-            0.40
-        } else {
-            0.75
-        })
-    }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
+
+delegate_notes!(DuplicatingScorer<'_>);
 
 // ─── ONE-1449 M1: an acceptance is about a body, not about an id ────────
 
@@ -1696,13 +1774,7 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
     set_skill_edit_cycle_cap(&vault, 1)?;
     let (_, sibling) = losing_skill_with_proposal(&vault, "oneiron.skill.sibling");
 
-    let racing = RacingScorer {
-        vault: &vault,
-        skill,
-        skill_id: "oneiron.skill.losing",
-        raced: RefCell::new(false),
-        scored: RefCell::new(0),
-    };
+    let racing = RacingScorer::new(&vault, skill, "oneiron.skill.losing");
     let raced =
         score_gate_skill_edit_in_cycle(&vault, &proposal, &racing, wake(&vault, "wake-1", 10), 900)
             .expect_err("a snapshot that moved is not a ruling");
@@ -1734,7 +1806,7 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
         ErrorKind::InvalidSkillBody
     );
     assert_eq!(
-        *racing.scored.borrow(),
+        racing.scored.load(Ordering::SeqCst),
         2,
         "the aborted call paid for exactly the one pair it had already scored"
     );
@@ -2090,17 +2162,11 @@ fn a_repeated_cap_deferral_returns_the_standing_row_and_re_scores_nothing() -> R
     // door. Simulated deterministically by delivering from inside the scorer —
     // the same interleaving two threads would produce, with no sleeping.
     let (_, third) = losing_skill_with_proposal(&vault, "oneiron.skill.third");
-    let racing = DuplicatingScorer {
-        vault: &vault,
-        proposal: third,
-        attempt: wake_one,
-        delivered: RefCell::new(false),
-        scored: RefCell::new(0),
-    };
+    let racing = DuplicatingScorer::new(&vault, third, wake_one);
     let outer = score_gate_skill_edit_in_cycle(&vault, &third, &racing, wake_one, 903)?;
     assert_eq!(outer.disposition, SkillEditDisposition::DeferredCycleCap);
     assert_eq!(
-        *racing.scored.borrow(),
+        racing.scored.load(Ordering::SeqCst),
         2,
         "the losing delivery paid for its own pair and then stopped"
     );
@@ -2941,63 +3007,56 @@ fn a_gate_call_against_an_unreadable_target_refuses_durably_and_closes_it() -> R
 /// no longer exist by the time the row would commit, which is a fact about the
 /// CALL, not about the proposal.
 struct ProposalEditingScorer<'a> {
-    vault: &'a Vault,
-    proposal: EntityId,
-    edited: RefCell<bool>,
+    notes: FixtureNotes<'a>,
 }
 
 const RE_EDITED_DESC: &str = "A second author rewrote this while the judge read.";
 
-impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        if !self.edited.replace(true) {
-            let mut edited = stored(self.vault, &self.proposal);
-            edited.desc = RE_EDITED_DESC.to_owned();
-            edited.version = "opt-re-edited".to_owned();
-            self.vault
-                .update_skill_record(&self.proposal, &edited, t(500), 501)
-                .expect("an open candidate is revisable through the ordinary door");
+impl<'a> ProposalEditingScorer<'a> {
+    fn new(vault: &'a Vault, proposal: EntityId) -> Self {
+        let provider = FixtureProvider::with_hook(
+            fixture_pin(),
+            "fixture-judge@1",
+            move || {
+                let mut edited = stored(vault, &proposal);
+                edited.desc = RE_EDITED_DESC.to_owned();
+                edited.version = "opt-re-edited".to_owned();
+                vault
+                    .update_skill_record(&proposal, &edited, t(500), 501)
+                    .expect("an open candidate is revisable through the ordinary door");
+                Ok(())
+            },
+            move |kind, _, state| match kind.as_deref() {
+                Some("score") => {
+                    let instructions = state_instructions(&state);
+                    Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                        0.40
+                    } else {
+                        0.75
+                    })))
+                }
+                Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                    Ok(score_answer(0.5))
+                }
+                Some("preference") => Ok(choice_answer("first")),
+                Some("honesty") => Ok(noul_answer(false)),
+                other => panic!("ProposalEditingScorer asked an unexpected kind: {other:?}"),
+            },
+        );
+        Self {
+            notes: fixture_notes("fixture-judge@1", provider),
         }
-        Ok(if case.instructions == TARGET_DESC {
-            0.40
-        } else {
-            0.75
-        })
-    }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
+
+delegate_notes!(ProposalEditingScorer<'_>);
 
 /// M-1: a proposal that MOVED under the scorer is a retry, not an answer.
 #[test]
 fn a_proposal_edited_under_the_scorer_aborts_instead_of_being_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
-    let editing = ProposalEditingScorer {
-        vault: &vault,
-        proposal,
-        edited: RefCell::new(false),
-    };
+    let editing = ProposalEditingScorer::new(&vault, proposal);
 
     let raced = score_gate_skill_edit_in_cycle(
         &vault,
@@ -3345,62 +3404,79 @@ fn the_longest_queue_accepted_run_id_still_names_a_cycle() -> Result<()> {
 // OF-214: audit measurements do not vote on scalar admission. World labels,
 // unlike rubric scores, come from the outcome ledger and are scored per axis.
 struct MeasuredScorer {
-    phases: RefCell<Vec<&'static str>>,
+    phases: Arc<Mutex<Vec<String>>>,
+    notes: FixtureNotes<'static>,
 }
 
-impl HeldOutReplayScorer for MeasuredScorer {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        self.phases.borrow_mut().push("score");
-        Ok(if case.instructions == TARGET_DESC {
-            0.40
-        } else {
-            0.75
-        })
-    }
-
-    fn structural_audit(&self, _task: &str, instructions: &str) -> Result<f32> {
-        self.phases.borrow_mut().push("structural");
-        Ok(if instructions == TARGET_DESC {
-            0.9
-        } else {
-            0.1
-        })
-    }
-
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        self.phases.borrow_mut().push("blind");
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        case: &HeldOutReplayCase<'_>,
-        blind: &[BlindPreference],
-    ) -> Result<f32> {
-        assert_eq!(blind[0].preferred, PreferredResponse::First);
-        self.phases.borrow_mut().push("contrastive");
-        Ok(if case.instructions == TARGET_DESC {
-            0.8
-        } else {
-            0.2
-        })
-    }
-
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        self.phases.borrow_mut().push("predict");
-        let prediction = if case.instructions == TARGET_DESC {
-            0.1
-        } else {
-            0.9
-        };
-        Ok(vec![prediction; case.held_out_receipts.len()])
+impl MeasuredScorer {
+    fn new() -> Self {
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let phases_in = Arc::clone(&phases);
+        let provider =
+            FixtureProvider::new(fixture_pin(), "fixture-judge@1", move |kind, _, state| {
+                let name = match kind.as_deref() {
+                    Some("score") => "score",
+                    Some("structural") => "structural",
+                    Some("contrastive") => "contrastive",
+                    Some("preference") => "preference",
+                    Some("task_success") => "task_success",
+                    Some("response_score") => "response_score",
+                    Some("honesty") => "honesty",
+                    other => panic!("MeasuredScorer asked an unexpected kind: {other:?}"),
+                };
+                phases_in.lock().unwrap().push(name.to_owned());
+                match kind.as_deref() {
+                    Some("score") => {
+                        let instructions = state_instructions(&state);
+                        Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                            0.40
+                        } else {
+                            0.75
+                        })))
+                    }
+                    Some("structural") => {
+                        let instructions = state_instructions(&state);
+                        Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                            0.9
+                        } else {
+                            0.1
+                        })))
+                    }
+                    Some("response_score") => Ok(score_answer(0.5)),
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("contrastive") => {
+                        assert_eq!(
+                            state["blind_preferences"][0]["preferred"].as_str(),
+                            Some("first")
+                        );
+                        let instructions =
+                            state["case"]["instructions"].as_str().unwrap_or_default();
+                        Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                            0.8
+                        } else {
+                            0.2
+                        })))
+                    }
+                    Some("task_success") => {
+                        let instructions = state_instructions(&state);
+                        Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                            0.1
+                        } else {
+                            0.9
+                        })))
+                    }
+                    Some("honesty") => Ok(noul_answer(false)),
+                    other => panic!("MeasuredScorer asked an unexpected kind: {other:?}"),
+                }
+            });
+        Self {
+            phases,
+            notes: fixture_notes("fixture-judge@1", provider),
+        }
     }
 }
+
+delegate_notes!(MeasuredScorer);
 
 #[test]
 fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() -> Result<()> {
@@ -3416,9 +3492,7 @@ fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() ->
         .collect();
     drop(rtxn);
     assert!(!truth.is_empty());
-    let scorer = MeasuredScorer {
-        phases: RefCell::new(Vec::new()),
-    };
+    let scorer = MeasuredScorer::new();
     let verdict = score_gate_skill_edit_in_cycle(
         &vault,
         &proposal,
@@ -3428,7 +3502,7 @@ fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() ->
     )?;
     assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
     assert_eq!(
-        scorer.phases.borrow().as_slice(),
+        scorer.phases.lock().unwrap().as_slice(),
         [
             "blind",
             "structural",
@@ -3440,6 +3514,8 @@ fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() ->
             "score",
             "score"
         ]
+        .map(str::to_owned)
+        .as_slice()
     );
     let measurement = verdict
         .measurements
@@ -3599,76 +3675,99 @@ struct VectorScorer {
     cost: (f32, f32),
     baseline: &'static str,
     axes: Option<Vec<GoalAxisSpec>>,
-    seen: RefCell<Vec<(String, String, Vec<String>)>>,
+    seen: Arc<Mutex<Vec<(String, String, Vec<String>)>>>,
+    notes: FixtureNotes<'static>,
 }
 
 impl VectorScorer {
-    fn new(primary: (f32, f32), floor: (f32, f32), cost: (f32, f32)) -> Self {
+    fn build(
+        primary: (f32, f32),
+        floor: (f32, f32),
+        cost: (f32, f32),
+        baseline: &'static str,
+        axes: Option<Vec<GoalAxisSpec>>,
+        seen: Arc<Mutex<Vec<(String, String, Vec<String>)>>>,
+    ) -> Self {
+        let seen_in = Arc::clone(&seen);
+        let provider =
+            FixtureProvider::new(fixture_pin(), "fixture-judge@1", move |kind, _, state| {
+                if let Some(axis) = kind.as_deref().and_then(|kind| kind.strip_prefix("axis.")) {
+                    let instructions = state_instructions(&state);
+                    seen_in.lock().unwrap().push((
+                        axis.to_owned(),
+                        instructions.to_owned(),
+                        state_receipts(&state),
+                    ));
+                    let (before, after) = match axis {
+                        "quality" | "held_out" => primary,
+                        "safety" => floor,
+                        "human_minutes" => cost,
+                        _ => panic!("unknown axis"),
+                    };
+                    return Ok(score_answer(f64::from(if instructions == baseline {
+                        before
+                    } else {
+                        after
+                    })));
+                }
+                match kind.as_deref() {
+                    Some("score") => panic!("a multi-axis scorer cannot fall back to a scalar"),
+                    Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                        Ok(score_answer(0.5))
+                    }
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("honesty") => Ok(noul_answer(false)),
+                    other => panic!("VectorScorer asked an unexpected kind: {other:?}"),
+                }
+            });
+        let mut notes = fixture_notes("fixture-judge@1", provider);
+        notes.goal_axes = axes.clone().unwrap_or_else(vector_axes);
         Self {
             primary,
             floor,
             cost,
-            baseline: TARGET_DESC,
-            axes: None,
-            seen: RefCell::new(Vec::new()),
+            baseline,
+            axes,
+            seen,
+            notes,
         }
     }
 
-    fn with_baseline(mut self, baseline: &'static str) -> Self {
-        self.baseline = baseline;
-        self
+    fn new(primary: (f32, f32), floor: (f32, f32), cost: (f32, f32)) -> Self {
+        Self::build(
+            primary,
+            floor,
+            cost,
+            TARGET_DESC,
+            None,
+            Arc::new(Mutex::new(Vec::new())),
+        )
     }
 
-    fn with_axes(mut self, axes: Vec<GoalAxisSpec>) -> Self {
-        self.axes = Some(axes);
-        self
+    fn with_baseline(self, baseline: &'static str) -> Self {
+        Self::build(
+            self.primary,
+            self.floor,
+            self.cost,
+            baseline,
+            self.axes,
+            self.seen,
+        )
+    }
+
+    fn with_axes(self, axes: Vec<GoalAxisSpec>) -> Self {
+        Self::build(
+            self.primary,
+            self.floor,
+            self.cost,
+            self.baseline,
+            Some(axes),
+            self.seen,
+        )
     }
 }
 
-impl HeldOutReplayScorer for VectorScorer {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
-        panic!("a multi-axis scorer cannot fall back to a scalar")
-    }
-    fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        Ok(self.axes.clone().unwrap_or_else(vector_axes))
-    }
-    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
-        self.seen.borrow_mut().push((
-            axis.name.clone(),
-            case.instructions.to_owned(),
-            case.held_out_receipts.to_vec(),
-        ));
-        let (before, after) = match axis.name.as_str() {
-            "quality" | "held_out" => self.primary,
-            "safety" => self.floor,
-            "human_minutes" => self.cost,
-            _ => panic!("unknown axis"),
-        };
-        Ok(if case.instructions == self.baseline {
-            before
-        } else {
-            after
-        })
-    }
-    fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "pair".into(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(&self, _: &HeldOutReplayCase<'_>, _: &[BlindPreference]) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
-    }
-}
+delegate_notes!(VectorScorer);
 
 #[test]
 fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Result<()> {
@@ -3736,7 +3835,7 @@ fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Re
         assert_eq!(verdict.goal_axes["safety"].kind, GoalAxisKind::Floor);
         assert_eq!(verdict.goal_axes["human_minutes"].kind, GoalAxisKind::Cost);
         assert_eq!(
-            scorer.seen.borrow().len(),
+            scorer.seen.lock().unwrap().len(),
             8,
             "both bodies on all four axes"
         );
@@ -3744,7 +3843,8 @@ fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Re
         assert!(
             scorer
                 .seen
-                .borrow()
+                .lock()
+                .unwrap()
                 .iter()
                 .all(|(_, _, receipts)| *receipts == reserved)
         );
@@ -4510,54 +4610,69 @@ fn replacing_candidate_judge_retains_scores_but_removes_standing_acceptance() ->
 // ─── OF-495 goal-axis measurements ──────────────────────────────────────
 
 struct AxisJudge {
-    events: RefCell<Vec<String>>,
+    events: Arc<Mutex<Vec<String>>>,
     bad_offline: bool,
     bad_minutes: bool,
+    notes: FixtureNotes<'static>,
 }
 
 impl AxisJudge {
     fn new() -> Self {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_in = Arc::clone(&events);
+        // NOTE: no test sets the bad paths; the flags stay so the port keeps
+        // the old failure shapes.
+        let bad_offline = false;
+        let provider = FixtureProvider::new(
+            fixture_pin(),
+            "fixture-judge@1",
+            move |kind, _, state| match kind.as_deref().and_then(|kind| kind.strip_prefix("axis."))
+            {
+                Some(axis) => {
+                    let receipts = state_receipts(&state);
+                    assert!(!receipts.is_empty());
+                    let skill = EntityId::from_hex(
+                        state
+                            .get("skill")
+                            .and_then(Json::as_str)
+                            .unwrap_or_default(),
+                    )
+                    .expect("skill id");
+                    assert!(
+                        receipts
+                            .iter()
+                            .all(|receipt| receipt_is_held_out(&skill, receipt))
+                    );
+                    let version = state
+                        .get("version")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default();
+                    events_in
+                        .lock()
+                        .unwrap()
+                        .push(format!("offline:{axis}:{version}"));
+                    if bad_offline {
+                        return Ok(score_answer(f64::NAN));
+                    }
+                    Ok(score_answer(if version == FIXTURE_VERSION {
+                        0.4
+                    } else {
+                        0.8
+                    }))
+                }
+                None => panic!("AxisJudge asked an unexpected kind: {kind:?}"),
+            },
+        );
         Self {
-            events: RefCell::new(Vec::new()),
+            events,
             bad_offline: false,
             bad_minutes: false,
+            notes: fixture_notes("fixture-judge@1", provider),
         }
     }
 }
 
-impl GoalAxisScorer for AxisJudge {
-    fn offline_score(&self, axis: &str, case: &HeldOutReplayCase<'_>) -> Result<f64> {
-        assert!(!case.held_out_receipts.is_empty());
-        assert!(
-            case.held_out_receipts
-                .iter()
-                .all(|receipt| receipt_is_held_out(&case.skill, receipt))
-        );
-        self.events
-            .borrow_mut()
-            .push(format!("offline:{axis}:{}", case.version));
-        Ok(if self.bad_offline {
-            f64::NAN
-        } else if case.version == FIXTURE_VERSION {
-            0.4
-        } else {
-            0.8
-        })
-    }
-
-    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
-        self.events
-            .borrow_mut()
-            .push(format!("minutes:{}", case.version));
-        Ok(if self.bad_minutes {
-            -1.0
-        } else if case.version == FIXTURE_VERSION {
-            3.5
-        } else {
-            1.25
-        })
-    }
-}
+delegate_notes!(AxisJudge);
 
 struct AxisBanditStub {
     events: RefCell<Vec<AxisArm>>,
@@ -4580,7 +4695,7 @@ impl GoalAxisBandit for AxisBanditStub {
         self.events.borrow_mut().push(arm);
         Ok(OnlineAxisSample {
             success: arm == AxisArm::Candidate,
-            human_minutes: if arm == AxisArm::Candidate { 0.25 } else { 0.5 },
+            human_minutes: Some(if arm == AxisArm::Candidate { 0.25 } else { 0.5 }),
         })
     }
 
@@ -4653,10 +4768,10 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
     );
     assert_eq!(
         report.human_minutes,
-        AxisScores {
+        Some(AxisScores {
             before: 4.0,
             after: 1.5
-        }
+        })
     );
     assert_eq!(report.online[0].outcome, OnlineAxisOutcome::CandidateBetter);
     assert_eq!(
@@ -4675,7 +4790,7 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
         &[AxisArm::Incumbent, AxisArm::Candidate]
     );
     assert_eq!(
-        judge.events.borrow().as_slice(),
+        judge.events.lock().unwrap().as_slice(),
         &[
             "offline:quality:1.0.0",
             "offline:quality:2.0.0",
@@ -4684,6 +4799,8 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
             "minutes:1.0.0",
             "minutes:2.0.0",
         ]
+        .map(str::to_owned)
+        .as_slice()
     );
     assert_eq!(report.held_out_receipts, held_out_receipts(&vault, &skill)?);
     assert!(
@@ -4697,52 +4814,37 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
 
 #[test]
 fn displaced_candidate_judge_cannot_commit_a_score_started_before_replacement() -> Result<()> {
-    struct SlowOld<'a> {
-        vault: &'a Vault,
-        displaced: std::cell::Cell<bool>,
-    }
-    impl HeldOutReplayScorer for SlowOld<'_> {
-        fn judge_revision(&self) -> &str {
-            "old-candidate@1"
-        }
-        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-            if !self.displaced.replace(true) {
-                // The scorer runs outside the write txn. Replacement commits
-                // before this callback hands its stale answer back.
-                supersede_skill_edit_judge(self.vault, "old-candidate@1", "new-candidate@2")?;
-            }
-            Ok(if case.instructions == TARGET_DESC {
-                0.4
-            } else {
-                0.8
-            })
-        }
-        fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
-            Ok(0.5)
-        }
-        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
-            Ok(vec![BlindPreference {
-                pair_ref: "race".into(),
-                preferred: PreferredResponse::First,
-            }])
-        }
-        fn contrastive_audit(
-            &self,
-            _: &HeldOutReplayCase<'_>,
-            _: &[BlindPreference],
-        ) -> Result<f32> {
-            Ok(0.5)
-        }
-        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-            Ok(vec![0.5; case.held_out_receipts.len()])
-        }
-    }
     let (_tmp, vault) = temp_vault();
     let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.inflight");
-    let old = SlowOld {
-        vault: &vault,
-        displaced: std::cell::Cell::new(false),
-    };
+    let old = fixture_notes(
+        "old-candidate@1",
+        FixtureProvider::with_hook(
+            fixture_pin(),
+            "old-candidate@1",
+            || {
+                // The scorer runs outside the write txn. Replacement commits
+                // before this callback hands its stale answer back.
+                supersede_skill_edit_judge(&vault, "old-candidate@1", "new-candidate@2")?;
+                Ok(())
+            },
+            |kind, _, state| match kind.as_deref() {
+                Some("score") => {
+                    let instructions = state_instructions(&state);
+                    Ok(score_answer(f64::from(if instructions == TARGET_DESC {
+                        0.4
+                    } else {
+                        0.8
+                    })))
+                }
+                Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                    Ok(score_answer(0.5))
+                }
+                Some("preference") => Ok(choice_answer("first")),
+                Some("honesty") => Ok(noul_answer(false)),
+                other => panic!("SlowOld asked an unexpected kind: {other:?}"),
+            },
+        ),
+    );
     assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
     assert!(skill_edit_verdict(&vault, &proposal)?.is_none());
     assert!(admit_optimized_skill_revision(&vault, &proposal, t(900), 900).is_err());
@@ -4754,42 +4856,28 @@ fn displaced_candidate_judge_cannot_commit_a_score_started_before_replacement() 
 
 #[test]
 fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> Result<()> {
-    struct RecipeScorer;
-    impl HeldOutReplayScorer for RecipeScorer {
-        fn judge_revision(&self) -> &str {
-            "fixture-recipe-judge@1"
-        }
-        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-            Ok(if case.instructions == DRAFTED_DESC {
-                0.75
-            } else {
-                0.40
-            })
-        }
-        fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-            Ok(0.5)
-        }
-        fn blind_preference(
-            &self,
-            _task: &str,
-            _receipts: &[String],
-        ) -> Result<Vec<BlindPreference>> {
-            Ok(vec![BlindPreference {
-                pair_ref: "fixture-pair".to_owned(),
-                preferred: PreferredResponse::First,
-            }])
-        }
-        fn contrastive_audit(
-            &self,
-            _case: &HeldOutReplayCase<'_>,
-            _blind: &[BlindPreference],
-        ) -> Result<f32> {
-            Ok(0.5)
-        }
-        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-            Ok(vec![0.5; case.held_out_receipts.len()])
-        }
-    }
+    let recipe_notes =
+        fixture_notes(
+            "fixture-recipe-judge@1",
+            FixtureProvider::new(fixture_pin(), "fixture-recipe-judge@1", |kind, _, state| {
+                match kind.as_deref() {
+                    Some("score") => {
+                        let instructions = state_instructions(&state);
+                        Ok(score_answer(f64::from(if instructions == DRAFTED_DESC {
+                            0.75
+                        } else {
+                            0.40
+                        })))
+                    }
+                    Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                        Ok(score_answer(0.5))
+                    }
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("honesty") => Ok(noul_answer(false)),
+                    other => panic!("RecipeScorer asked an unexpected kind: {other:?}"),
+                }
+            }),
+        );
     let (_tmp, vault) = temp_vault();
     let skill = EntityId::now();
     let mut recipe = record(
@@ -4840,7 +4928,7 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
     score_gate_skill_edit_in_cycle(
         &vault,
         &proposal_id,
-        &RecipeScorer,
+        &recipe_notes,
         wake(&vault, "recipe-wake", 10),
         900,
     )
@@ -4958,6 +5046,12 @@ fn axes_with_minutes_floor() -> Vec<GoalAxisSpec> {
 
 /// A vector judge on [`vector_axes`] with a Jev seam. By default both primaries
 /// gain and the cost axis loses; `inverted` swaps them.
+///
+/// NOTE (wave 2): the corrupt-digest half of `jev` has no successor — the
+/// engine builds the Jev verdict's digest itself now (faf881f23eb) — so the
+/// flag is kept but ignored, and the bad-digest asserts are reported as
+/// unportable. `None` keeps the observed old behavior (the tradeoff settles
+/// without a supplied Jev verdict) by answering approve at full confidence.
 struct LadderScorer {
     jev: Option<(f64, bool)>, // confidence, corrupt question binding
     jev_rung: crate::llm::decision::DecisionRung,
@@ -4966,103 +5060,171 @@ struct LadderScorer {
     inverted: bool,
     floor_loss: bool,
     axes: Vec<GoalAxisSpec>,
-    callbacks: RefCell<usize>,
-    jev_calls: RefCell<usize>,
+    callbacks: Arc<AtomicUsize>,
+    jev_calls: Arc<AtomicUsize>,
+    notes: FixtureNotes<'static>,
 }
 
 impl LadderScorer {
-    fn new(jev: Option<(f64, bool)>) -> Self {
+    #[expect(clippy::too_many_arguments, reason = "one fixture rebuild")]
+    fn build(
+        jev: Option<(f64, bool)>,
+        jev_rung: crate::llm::decision::DecisionRung,
+        choice: TradeoffChoice,
+        baseline: &'static str,
+        inverted: bool,
+        floor_loss: bool,
+        axes: Vec<GoalAxisSpec>,
+        callbacks: Arc<AtomicUsize>,
+        jev_calls: Arc<AtomicUsize>,
+    ) -> Self {
+        let callbacks_in = Arc::clone(&callbacks);
+        let jev_calls_in = Arc::clone(&jev_calls);
+        let option = match choice {
+            TradeoffChoice::Approve => "approve",
+            TradeoffChoice::Reject => "reject",
+        };
+        let provider = FixtureProvider::new(
+            crate::llm::decision::ProviderPin {
+                rung: jev_rung,
+                model: "jev".to_owned(),
+                version: "pinned-1".to_owned(),
+            },
+            "fixture-judge@1",
+            move |kind, _, state| {
+                callbacks_in.fetch_add(1, Ordering::SeqCst);
+                if let Some(axis) = kind.as_deref().and_then(|kind| kind.strip_prefix("axis.")) {
+                    let (before, after) = match (axis, inverted) {
+                        ("held_out" | "quality", false) | ("human_minutes", true) => (0.4, 0.75),
+                        ("held_out" | "quality", true) | ("human_minutes", false) => (0.75, 0.4),
+                        ("safety", _) if floor_loss => (0.8, 0.7),
+                        ("safety", _) => (0.8, 0.8),
+                        _ => panic!("unknown axis"),
+                    };
+                    let instructions = state_instructions(&state);
+                    return Ok(score_answer(f64::from(if instructions == baseline {
+                        before
+                    } else {
+                        after
+                    })));
+                }
+                match kind.as_deref() {
+                    Some("score") => panic!("a multi-axis scorer cannot fall back to a scalar"),
+                    Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                        Ok(score_answer(0.5))
+                    }
+                    Some("preference") => Ok(choice_answer("first")),
+                    Some("honesty") => Ok(noul_answer(false)),
+                    Some("tradeoff") => {
+                        jev_calls_in.fetch_add(1, Ordering::SeqCst);
+                        match jev {
+                            None => Ok(choice_answer("approve")),
+                            Some((probability, _corrupt)) => {
+                                Ok(choice_answer_at(option, probability))
+                            }
+                        }
+                    }
+                    other => panic!("LadderScorer asked an unexpected kind: {other:?}"),
+                }
+            },
+        );
+        let mut notes = fixture_notes("fixture-judge@1", provider);
+        notes.goal_axes.clone_from(&axes);
         Self {
             jev,
-            jev_rung: crate::llm::decision::DecisionRung::SystemOne,
-            choice: TradeoffChoice::Approve,
-            baseline: TARGET_DESC,
-            inverted: false,
-            floor_loss: false,
-            axes: vector_axes(),
-            callbacks: RefCell::new(0),
-            jev_calls: RefCell::new(0),
+            jev_rung,
+            choice,
+            baseline,
+            inverted,
+            floor_loss,
+            axes,
+            callbacks,
+            jev_calls,
+            notes,
         }
     }
-    fn with_baseline(mut self, baseline: &'static str) -> Self {
-        self.baseline = baseline;
-        self
+
+    fn new(jev: Option<(f64, bool)>) -> Self {
+        Self::build(
+            jev,
+            crate::llm::decision::DecisionRung::SystemOne,
+            TradeoffChoice::Approve,
+            TARGET_DESC,
+            false,
+            false,
+            vector_axes(),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )
     }
-    fn with_axes(mut self, axes: Vec<GoalAxisSpec>) -> Self {
-        self.axes = axes;
-        self
+    fn with_baseline(self, baseline: &'static str) -> Self {
+        Self::build(
+            self.jev,
+            self.jev_rung,
+            self.choice,
+            baseline,
+            self.inverted,
+            self.floor_loss,
+            self.axes,
+            self.callbacks,
+            self.jev_calls,
+        )
     }
-    fn called(&self) {
-        *self.callbacks.borrow_mut() += 1;
+    fn with_axes(self, axes: Vec<GoalAxisSpec>) -> Self {
+        Self::build(
+            self.jev,
+            self.jev_rung,
+            self.choice,
+            self.baseline,
+            self.inverted,
+            self.floor_loss,
+            axes,
+            self.callbacks,
+            self.jev_calls,
+        )
+    }
+    fn with_jev_rung(self, jev_rung: crate::llm::decision::DecisionRung) -> Self {
+        Self::build(
+            self.jev,
+            jev_rung,
+            self.choice,
+            self.baseline,
+            self.inverted,
+            self.floor_loss,
+            self.axes,
+            self.callbacks,
+            self.jev_calls,
+        )
     }
 }
 
-impl HeldOutReplayScorer for LadderScorer {
+impl HeldOutReplayNotes for LadderScorer {
     fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
+        self.notes.judge_revision()
     }
-    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
-        panic!("a multi-axis scorer cannot fall back to a scalar")
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        self.notes.decisions()
     }
-    fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        self.called();
-        Ok(self.axes.clone())
+    fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Json> {
+        self.notes.replay_state(case)
     }
-    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
-        self.called();
-        let (before, after) = match (axis.name.as_str(), self.inverted) {
-            ("held_out" | "quality", false) | ("human_minutes", true) => (0.4, 0.75),
-            ("held_out" | "quality", true) | ("human_minutes", false) => (0.75, 0.4),
-            ("safety", _) if self.floor_loss => (0.8, 0.7),
-            ("safety", _) => (0.8, 0.8),
-            _ => panic!("unknown axis"),
-        };
-        Ok(if case.instructions == self.baseline {
-            before
-        } else {
-            after
-        })
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.notes.replay_responses(receipts)
     }
-    fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
-        self.called();
-        Ok(0.5)
+    fn record_decision(
+        &self,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &Json,
+    ) -> Result<()> {
+        self.notes.record_decision(question, decision, state)
     }
-    fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
-        self.called();
-        Ok(vec![BlindPreference {
-            pair_ref: "pair".into(),
-            preferred: PreferredResponse::First,
-        }])
+    fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        self.notes.honesty_replays(case)
     }
-    fn contrastive_audit(&self, _: &HeldOutReplayCase<'_>, _: &[BlindPreference]) -> Result<f32> {
-        self.called();
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        self.called();
-        Ok(vec![0.5; case.held_out_receipts.len()])
-    }
-    fn jev_tradeoff(&self, question: &SkillTradeoffQuestion) -> Result<Option<JevTradeoffVerdict>> {
-        self.called();
-        *self.jev_calls.borrow_mut() += 1;
-        self.jev
-            .map(|(probability, corrupt)| {
-                Ok(JevTradeoffVerdict {
-                    question_digest: if corrupt {
-                        "0".repeat(64)
-                    } else {
-                        question.digest()?
-                    },
-                    choice: self.choice,
-                    probability,
-                    pin: crate::llm::decision::ProviderPin {
-                        rung: self.jev_rung,
-                        model: "jev".into(),
-                        version: "pinned-1".into(),
-                    },
-                })
-            })
-            .transpose()
+    fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        self.callbacks.fetch_add(1, Ordering::SeqCst);
+        self.notes.goal_axes(case)
     }
 }
 
@@ -5123,8 +5285,8 @@ fn house_read_verdict_above_the_band_settles_the_tradeoff() -> Result<()> {
     let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.read");
     let owner = tradeoff_owner(&vault);
     ladder_goal(&vault, &owner, &skill, Vec::new())?;
-    let mut house = LadderScorer::new(Some((0.95, false)));
-    house.jev_rung = crate::llm::decision::DecisionRung::Escalation;
+    let house = LadderScorer::new(Some((0.95, false)))
+        .with_jev_rung(crate::llm::decision::DecisionRung::Escalation);
     let decided = score_gate_skill_edit_in_cycle(
         &vault,
         &proposal,
@@ -5187,7 +5349,7 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(skill_tradeoff_ask(&vault, &proposal)?.unwrap(), ask);
     // Re-delivery returns the exact ruling without repeating any scorer
     // callback, appending a verdict, or creating another question.
-    let callbacks = *scorer.callbacks.borrow();
+    let callbacks = scorer.callbacks.load(Ordering::SeqCst);
     let history = skill_edit_verdicts_for_proposal(&vault, &proposal)?;
     let receipt_count = || -> Result<usize> {
         Ok(vault
@@ -5208,7 +5370,7 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
         901,
     )?;
     assert_eq!(again, first);
-    assert_eq!(*scorer.callbacks.borrow(), callbacks);
+    assert_eq!(scorer.callbacks.load(Ordering::SeqCst), callbacks);
     assert_eq!(
         skill_edit_verdicts_for_proposal(&vault, &proposal)?,
         history
@@ -5252,7 +5414,7 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(learned.rung, TradeoffRung::Preference);
     assert_eq!(learned.authentication, "learned_rule:0");
     assert_eq!(
-        *scorer.jev_calls.borrow(),
+        scorer.jev_calls.load(Ordering::SeqCst),
         1,
         "learned preference silences Jev"
     );
@@ -5379,7 +5541,7 @@ fn owner_goal_edit_between_admission_and_supersession_reaches_successor() -> Res
     assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
     assert_eq!(verdict.goal_axes["human_minutes"].kind, GoalAxisKind::Floor);
     assert_eq!(
-        *scorer.jev_calls.borrow(),
+        scorer.jev_calls.load(Ordering::SeqCst),
         0,
         "new floor refuses before Jev"
     );
