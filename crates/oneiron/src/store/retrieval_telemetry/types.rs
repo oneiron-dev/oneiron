@@ -32,10 +32,11 @@ const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 /// Gated training rewards a tuning pass needs, when its caller sets no
 /// `min_reward_count`, before a not-worse held-out verdict may admit the
 /// candidate. A smaller trial cannot establish not-worse sufficiency, so the
-/// declared update keeps it as an offer and the nightly pass writes nothing
-/// (ARCH-0037 #tune-retrieval-gaps: "Update keeps regression or insufficient
-/// evidence as an offer"). Every fifth run is held out, so the floor also
-/// leaves about five held-out runs to judge on. The owner's explicit
+/// declared update keeps it as an offer and the nightly pass writes no blend
+/// weight table (ARCH-0037 #tune-retrieval-gaps: "Update keeps regression or
+/// insufficient evidence as an offer"). Every fifth run is held out, so with
+/// one usable label per run the floor also leaves about five held-out runs to
+/// judge on. The owner's explicit
 /// `min_reward_count` may lower it.
 pub(crate) const RETRIEVAL_BLEND_TUNING_DEFAULT_MIN_REWARD_COUNT: usize = 20;
 
