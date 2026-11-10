@@ -159,7 +159,7 @@ impl LlmBackend for ScopeBackend {
 }
 impl crate::llm::SingleRouteBackend for ScopeBackend {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
-        self.inner.preflight(request, stream)
+        crate::llm::SingleRouteBackend::preflight(&self.inner, request, stream)
     }
 }
 
