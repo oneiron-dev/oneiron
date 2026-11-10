@@ -4,6 +4,7 @@
 
 mod admission;
 mod agent_verb;
+mod agent_wait;
 mod binding;
 mod browser_admission;
 mod connector_answer;

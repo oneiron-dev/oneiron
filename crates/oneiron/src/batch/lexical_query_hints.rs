@@ -539,7 +539,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
 /// body is a lexical query hint for `target` stored under its own derived
 /// id. Past the scan's threshold row it raises one check and reads on, so no
 /// hint of `target` is left behind.
-pub(super) fn lexical_query_hint_claim_ids_for_target(
+pub(crate) fn lexical_query_hint_claim_ids_for_target(
     store: &Store,
     wtxn: &RoTxn<'_>,
     target: &EntityId,

@@ -11,7 +11,7 @@ pub(crate) trait ClaimReadStatusExt {
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        predicate_class: (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
@@ -23,7 +23,10 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
         self.admits_status(
             filter,
-            crate::claim::claim_generic_readable(body),
+            (
+                crate::claim::claim_generic_readable(body),
+                crate::claim::claim_exact_store(body),
+            ),
             body.approval,
             body.lifecycle,
             body.stale,
@@ -31,30 +34,33 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     }
 
     /// [`Self::admits`] over the status a claim's access class carries
-    /// (FIX 11915): whether its predicate reads generically, its approval,
-    /// its lifecycle and its staleness.
+    /// (FIX 11915): its predicate class (whether it reads generically, and
+    /// whether it is an exact-store claim), its approval, its lifecycle and
+    /// its staleness.
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        (generic_readable, exact_store): (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
     ) -> bool {
-        generic_readable
-            && match self {
-                Self::Surfaceable => {
-                    matches!(
-                        approval,
-                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                    ) && lifecycle == ClaimLifecycleStatus::Active
-                        && (filter.include_stale || !stale)
-                }
-                // Every approval and lifecycle status, and stale claims
-                // whatever the floor says; the caller's own exclusion of
-                // stale claims binds here too (FIX 3977).
-                Self::Recorded => !(stale && filter.caller_excludes_stale),
+        let surfaceable = matches!(
+            approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) && lifecycle == ClaimLifecycleStatus::Active;
+        match self {
+            Self::Surfaceable => {
+                generic_readable && surfaceable && (filter.include_stale || !stale)
             }
+            // Every approval and lifecycle status, and stale claims
+            // whatever the floor says; the caller's own exclusion of
+            // stale claims binds here too (FIX 3977).
+            Self::Recorded => generic_readable && !(stale && filter.caller_excludes_stale),
+            // The keyed reader takes the heads its own scan takes: active,
+            // auto or approved, and not stale ([E2E-KV-GET-PREFILTER]).
+            Self::ExactStore => exact_store && surfaceable && !stale,
+        }
     }
 }
 
