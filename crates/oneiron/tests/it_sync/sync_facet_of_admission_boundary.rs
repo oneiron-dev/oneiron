@@ -443,14 +443,23 @@ fn observer_b_is_the_only_gate_on_the_plain_window_update_arm() {
     let person = EntityId::from_bytes([0x75; 16]).unwrap();
     let event = EntityId::from_bytes([0x76; 16]).unwrap();
     let facet = EntityId::from_bytes([0x77; 16]).unwrap();
-    for (id, entity_type) in [
-        (&person, ENTITY_TYPE_PERSON),
-        (&event, ENTITY_TYPE_EVENT),
-        (&facet, ENTITY_TYPE_FACET),
-    ] {
+    for (id, entity_type) in [(&person, ENTITY_TYPE_PERSON), (&facet, ENTITY_TYPE_FACET)] {
         seed(&vault, id, entity_type);
     }
     client.ensure_window(WINDOW).unwrap();
+    // FIX 7774/9596 (d2423e39bbc): native births lock the default facet; receive
+    // the EVENT unstamped so only the later control replay creates its stamp.
+    let setup = create_window_doc("setup", &WindowKey::new(WINDOW));
+    map_insert_bytes(
+        &setup.get_map("entities"),
+        &event.to_hex(),
+        &entity_blob(ENTITY_TYPE_EVENT, b"admission fixture"),
+    );
+    setup.commit();
+    let setup_update = setup.export(ExportMode::all_updates()).unwrap();
+    client
+        .handle_server_message(&window_update_frame(WINDOW, &setup_update))
+        .expect("setup EVENT carrier must land unstamped");
 
     let remote = create_window_doc("peer", &WindowKey::new(WINDOW));
     let edges = remote.get_map("edges");

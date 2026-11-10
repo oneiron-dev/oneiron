@@ -586,6 +586,13 @@ fn remat_gates_fail_closed_on_non_binary_tombstone() {
         &format_edge_key(&s, EdgeKind::Mentions, &e3),
         &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.9, 9, Some(Vad::NEUTRAL), None).unwrap(),
     );
+    // FIX 7774 (d2423e39bbc): pre-carry S's birth edge so only tombstoned candidates remain.
+    let birth_key = format_edge_key(&s, EdgeKind::FacetOf, &vault.default_facet().unwrap());
+    map_insert_bytes(
+        &edges,
+        &birth_key,
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 1.0, LEARNED_AT, None, None).unwrap(),
+    );
     doc.commit();
 
     let marker = format!("pm:{}:{}", key.as_str(), s.to_hex());
