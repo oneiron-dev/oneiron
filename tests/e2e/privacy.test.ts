@@ -560,6 +560,16 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
   }, {
+    // The consolidation pass re-extracts the still-active source turn (job 7,
+    // 2026-11-10: two unscripted sends at cleanup, the two ladder passes of one
+    // generate as in PRIVACY-02's source-reextract). An empty reply is lawful
+    // and writes nothing, so eligible-people stays the only minting extraction.
+    id: "archive-reextract", origin: "extraction", role: "extraction_teacher",
+    purpose: "consolidation re-extraction of the active archive source turn",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
+    response: openaiText("archive-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
     id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
     standing: true,
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
@@ -786,6 +796,11 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
         expect(message.byte_range[1]).toBeGreaterThan(message.byte_range[0]);
       }
     }
+    // DEFECT (2026-11-10, FIX DREAMER-STAMP-FACET): the SUMMARY birth parks with "summary landing
+    // refused: invalid active facet": actor_stamp_in_txn (provenance/actor_stamp.rs) and bind_peer
+    // (typed_body.rs) build their bookkeeping CLAIM with ClaimBody::new, whose scope facet is the
+    // subject's PERSON substrate facet, and the Dreamer is a MACHINE with no such FACET. PRIVACY-02
+    // stays red at this wait until both writers take the vault default facet.
     const queued = await engine.client.call("vault.summaries.create", {
       scope: { conversation_ref: source.id, path: "canonical" },
     });
@@ -1254,7 +1269,12 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle: only a person h
     conversation_ref: "", occurred_at: Math.floor(Date.now() / 1000), messages: [
       { author: "user", message_type: "text", content: room.visibleTexts[0], is_visible: true, order: 0 },
       { author: "user", message_type: "text", content: room.visibleTexts[1], is_visible: true, order: 1 },
-      { author: "user", message_type: "reasoning", content: room.hiddenText, is_visible: false, order: 2 },
+    ] } });
+  // Hidden reasoning is a companion row in a turn of its own: an invisible `user` row is a malformed
+  // envelope (witness_message_body.rs: a user's own words are never invisible), and a TURN has one speaker.
+  await owner.client.call("vault.off_record.rooms.witness", { ...q, turn: {
+    conversation_ref: "", occurred_at: Math.floor(Date.now() / 1000), messages: [
+      { author: "companion", message_type: "reasoning", content: room.hiddenText, is_visible: false, order: 0 },
     ] } });
   // A suggestion and a decline save nothing; neither the guest nor the proposer may save in either form.
   const suggested = await proposer.client.call("vault.off_record.rooms.suggest_save", q);
