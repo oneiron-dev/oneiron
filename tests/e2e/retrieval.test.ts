@@ -2802,18 +2802,22 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
 //   P-RECALL-004  Recall accepts light, medium, high, xhigh and max.
 //   P-RECALL-005  Light recall makes no model call and requires no budget lease.
 //   P-RECALL-006  At its deadline, recall returns the best pack ready so far.
-//   P-RECALL-007  A limit above 1,000 is clamped to 1,000 and reported
-//                 as limit_clamped.
+//   P-RECALL-007  FIX 56 supersedes the old 1,000 clamp: limit=1,001
+//                 is served whole over HTTP, WS and after restart, without
+//                 limit_clamped=true (engine-20261111-e2e4-recall-contract 1=A).
+//                 requested_result_rows=1_048_576; only above it, ask and serve.
 // Doors used (public only): vault.structural.put + pairActor (agent setup),
-// vault.conversations.create, vault.witness,
-// vault.get (second door read-back), vault.recall (HTTP facade and WS),
+// vault.conversations.create, vault.witness, vault.batch (1,002 PERSON memories),
+// vault.get + vault.hydrate (second-door read-backs), vault.recall (HTTP and WS),
 // vault.retrieval.hyde.pending (second door for "no model work queued"),
 // vault.authority.audit + POST /v1/core/slips/revoke (grant loss + its
 // audit receipt), engine.restart().
 // Finished through existing doors: configured ScriptedProviders zero-call
 // light control, and an unanswered HyDE host item forcing a deadline pack.
 // Unproved: internal recall lease accounting (no retrieval-run lease field),
-// a >1000-row corpus inside this flow budget, and ranking quality.
+// full populated delivery above 1,048,576 (09 covers the cheap ask), and ranking quality.
+// The enlarged flow has a stated 60 s bound and belongs to the nightly tier;
+// The accompanying report gives the source-only timing estimate.
 
 type MuseRecall02Pack = FacadeResult<"vault.recall">;
 type MuseRecall02AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
@@ -2857,7 +2861,7 @@ function museRecall02MintedSlip(
   return slipId;
 }
 
-suite.test(test, "MUSE-RECALL-02", "Recall takes the five effort levels, light makes no model call, a deadline returns the best pack so far, and a big limit is clamped and said", async () => {
+suite.test(test, "MUSE-RECALL-02", "Recall takes the five effort levels, light makes no model call, a deadline returns the best pack so far, and a limit of 1,001 is served whole with no clamp flag", async () => {
   const providers = await ScriptedProviders.start({
     id: "muse-recall-02", origins: ["reranker"], steps: [],
   });
@@ -2876,7 +2880,7 @@ suite.test(test, "MUSE-RECALL-02", "Recall takes the five effort levels, light m
   } finally {
     try { await engine?.close(); } finally { await providers.close(); }
   }
-});
+}, 60_000);
 
 function museRecall02ExpectBoolean(
   label: string,
@@ -2894,12 +2898,18 @@ function museRecall02ExpectBoolean(
   }
 }
 
-function museRecall02ExpectClampedPack(label: string, pack: MuseRecall02Pack): void {
+function museRecall02ExpectWholePack(
+  surface: string,
+  requestedLimit: number,
+  pack: MuseRecall02Pack,
+): void {
   try {
-    expect(pack.retrieval_meta.limit_clamped).toBe(true);
+    expect(pack.items.length).toBe(requestedLimit);
+    expect(pack.retrieval_meta.limit_clamped).not.toBe(true);
+    expect(new Set(pack.items.map(item => item.record?.id ?? item.short_id)).size).toBe(requestedLimit);
   } catch (error) {
     throw new Error(
-      `MUSE-RECALL-02 SPEC UNCLEAR 2026-11-11: P-RECALL-007 (ARCH-0044:134) says limit=1001 is served at 1000 and flagged, FIX 56 task-cap row 5 outcome (b) says the whole requested limit is served with no clamp; ${label}; retrieval_meta.limit_clamped=${String(pack.retrieval_meta.limit_clamped)} itemCount=${pack.items.length} meta=${redactor.text(JSON.stringify(pack.retrieval_meta) ?? "<missing>")}; ${errorText(error)}`,
+      `MUSE-RECALL-02 full requested delivery (FIX 56; ruling engine-20261111-e2e4-recall-contract 1=A): surface=${surface} requested_limit=${requestedLimit} item_count=${pack.items.length} limit_clamped=${String(pack.retrieval_meta.limit_clamped)} retrieval_meta=${redactor.text(JSON.stringify(pack.retrieval_meta) ?? "<missing>")}; ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -3050,30 +3060,6 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
     { itemCount: readerPack.items.length, partial: readerPack.retrieval_meta.partial ?? null });
   expect(providers.seenFixtureCalls.length).toBe(callsBeforeReaderLight);
 
-  // P-RECALL-007: at the boundary nothing is clamped; past it, the pack
-  // says so. The WS surface must say the same (second door).
-  const atLimitPack = await engine.client.call("vault.recall", {
-    query: queryToken, effort: "light", limit: 1000,
-  });
-  museRecall02ExpectBoolean("HTTP limit=1000 is not clamped",
-    atLimitPack.retrieval_meta.limit_clamped ?? false, false);
-  const clampedPack = await engine.client.call("vault.recall", {
-    query: queryToken, effort: "light", limit: 1001,
-  });
-  museRecall02ExpectClampedPack("HTTP vault.recall", clampedPack);
-  expect(clampedPack.items.length).toBeLessThanOrEqual(1000);
-  museRecall02ExpectBoolean("HTTP clamped pack contains witnessed query token",
-    museRecall02Contains(clampedPack, queryToken), true);
-  const socket = await engine.websocket();
-  try {
-    const clampedOverWs = (await socket.call("vault.recall", {
-      query: queryToken, effort: "light", limit: 1001,
-    })).value;
-    museRecall02ExpectClampedPack("WS vault.recall", clampedOverWs);
-    museRecall02ExpectBoolean("WS clamped pack contains witnessed query token",
-      museRecall02Contains(clampedOverWs, queryToken), true);
-  } finally { socket.close() }
-
   // P-RECALL-006: hold a real public expansion work item until recall's
   // deadline. No sleep or private clock decides when the deadline lands.
   const binding: FacadeInput<"vault.retrieval.hyde.configure"> = { binding: {
@@ -3177,17 +3163,68 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   museRecall02ExpectBoolean("owner light control after reader revoke contains witnessed query token",
     museRecall02Contains(ownerControl, queryToken), true);
 
+  // One atomic public batch, not 1,002 witness turns or structural calls.
+  // PERSON is a content kind: each distinct row becomes its own pack item,
+  // without the MESSAGE-to-TURN fold. Keep paid/deadline probes on the small
+  // corpus above; only the whole-limit light probes need this larger corpus.
+  const corpusItemCount = 1002;
+  const corpusTexts = Array.from({ length: corpusItemCount }, (_, index) =>
+    `${queryToken} ${contentToken} corpus ${String(index).padStart(4, "0")}`);
+  const corpusReceipt = await engine.client.call("vault.batch", {
+    entities: corpusTexts.map(content => ({
+      entity_type: 10, // PERSON, pinned registry type byte.
+      occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+      body: { name: content }, text: [{ field: "body", value: content }],
+    })),
+  } satisfies FacadeInput<"vault.batch">);
+  expect(corpusReceipt.count).toBe(corpusItemCount);
+  expect(corpusReceipt.entities).toHaveLength(corpusItemCount);
+  const corpusIds = corpusReceipt.entities.map(entity => entity.id);
+  // The write receipt is not proof: a separate public list read must return
+  // every seeded row, its distinct id, and its exact indexed matching text.
+  const corpusRead = await engine.client.call("vault.hydrate", { refs: corpusIds });
+  expect(corpusRead.value).toHaveLength(corpusItemCount);
+  expect(corpusRead.value.map(view => view.id_hex)).toEqual(corpusIds);
+  expect(new Set(corpusRead.value.map(view => view.id_hex)).size).toBe(corpusItemCount);
+  expect(corpusRead.value.every(view => view.kind === "PERSON")).toBe(true);
+  expect(corpusRead.value.map(view => museRecall02Object(view.body).name)).toEqual(corpusTexts);
+
+  // FIX 56 / ruling 1=A: isolate the row limit from the optional token budget.
+  // token_budget=0 is the public uncut setting, not a changed engine default.
+  const atLimitPack = await engine.client.call("vault.recall", {
+    query: queryToken, effort: "light", limit: 1000, token_budget: 0,
+  });
+  museRecall02ExpectWholePack("HTTP vault.recall control", 1000, atLimitPack);
+  const wholePack = await engine.client.call("vault.recall", {
+    query: queryToken, effort: "light", limit: 1001, token_budget: 0,
+  });
+  museRecall02ExpectWholePack("HTTP vault.recall", 1001, wholePack);
+  museRecall02ExpectBoolean("HTTP whole pack contains witnessed query token",
+    museRecall02Contains(wholePack, queryToken), true);
+  const socket = await engine.websocket();
+  try {
+    const wholeOverWs = (await socket.call("vault.recall", {
+      query: queryToken, effort: "light", limit: 1001, token_budget: 0,
+    })).value;
+    museRecall02ExpectWholePack("WS vault.recall", 1001, wholeOverWs);
+    museRecall02ExpectBoolean("WS whole pack contains witnessed query token",
+      museRecall02Contains(wholeOverWs, queryToken), true);
+  } finally { socket.close() }
+
   await engine.artifacts.json("muse-recall-02.json", {
     witnessReceipt: witnessed.receipt_ref,
     efforts: ["light", ...museRecall02OtherEfforts],
     lightRerank: lightPack.retrieval_meta.rerank ?? null,
     clampedAt1000: atLimitPack.retrieval_meta.limit_clamped ?? false,
-    clampedAt1001: clampedPack.retrieval_meta.limit_clamped ?? false,
+    clampedAt1001: wholePack.retrieval_meta.limit_clamped ?? false,
+    seededCorpusItems: corpusRead.value.length,
+    servedAt1000: atLimitPack.items.length,
+    servedAt1001: wholePack.items.length,
     deadlinePartial: deadlinePack.retrieval_meta.partial ?? null,
     deadlineHeldSeed: museRecall02Contains(deadlinePack, queryToken),
   });
 
-  // Survive a restart: the memory, the clamp law and the revocation all
+  // Survive a restart: the memory, whole-limit delivery and the revocation all
   // read the same afterwards.
   await engine.restart();
   const callsBeforeRestartLight = providers.seenFixtureCalls.length;
@@ -3203,10 +3240,10 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   );
   museRecall02ExpectBoolean("owner light pack after restart contains witnessed query token",
     museRecall02Contains(afterRestartPack, queryToken), true);
-  const clampedAfterRestart = await engine.client.call("vault.recall", {
-    query: queryToken, effort: "light", limit: 1001,
+  const wholeAfterRestart = await engine.client.call("vault.recall", {
+    query: queryToken, effort: "light", limit: 1001, token_budget: 0,
   });
-  museRecall02ExpectClampedPack("HTTP vault.recall after restart", clampedAfterRestart);
+  museRecall02ExpectWholePack("HTTP vault.recall after restart", 1001, wholeAfterRestart);
   expect(providers.seenFixtureCalls.length).toBe(callsBeforeRestartLight);
   const stillRevokedReply = await reader.client.raw("POST", "/v1/core/facade/vault.recall", {
     query: queryToken, effort: "light", limit: 10,
@@ -3214,6 +3251,126 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   expect(stillRevokedReply.status).toBe(401);
   museRecall02ExpectErrorEnvelope(stillRevokedReply.body);
 }
+
+// MUSE-RECALL-09 — FIX 56, engine-20261111-e2e4-recall-contract 1=A.
+// A sparse corpus suffices to cross requested_result_rows: the input count,
+// not a million stored rows, raises the observation-only question. Read it
+// through GET /v1/owner/wire-health, never a private telemetry/store read.
+// The worker folds crossings every 15 s; the 60 s nightly bound covers that
+// public read-only wait, setup, the refusal receipt, and restart.
+// Unproved: delivery of 1,048,577 populated items and a human's answer to the ask.
+interface MuseRecall09HealthChecks {
+  readonly checks: readonly {
+    readonly subject: string;
+    readonly first_raised: number;
+    readonly source: string;
+    readonly crossing: Readonly<Record<string, unknown>>;
+  }[];
+}
+
+suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit question while serving available memories, refuses a write-only agent, and keeps the question and memory after restart", async () => {
+  const providers = await ScriptedProviders.start({
+    id: "muse-recall-09", origins: ["reranker"], steps: [],
+  });
+  let engine: EngineFixture | undefined;
+  try {
+    const activeEngine = await EngineFixture.start({ id: "MUSE-RECALL-09", profile,
+      initArgs: ["--dimensions", "4"], serverConfig: rerankConfig(providers.urls.reranker!) });
+    engine = activeEngine;
+    const occurredAt = 1769947200;
+    const requestedLimit = 1_048_577;
+    const questionSubject = "limit:limits.requested_result_rows";
+    const queryToken = `recallthreshold${secretHex(6)}`;
+    const contentToken = `thresholdmemory${secretHex(6)}`;
+    const content = `${queryToken} ${contentToken}`;
+    redactor.add(queryToken, contentToken);
+    await activeEngine.requireHttpDoor("/v1/owner/wire-health", "GET");
+    const readHealth = async (): Promise<MuseRecall09HealthChecks> =>
+      (await activeEngine.client.request<MuseRecall09HealthChecks>("GET", "/v1/owner/wire-health")).body;
+    const before = await readHealth();
+    expect(before.checks.some(check => check.subject === questionSubject)).toBe(false);
+
+    const seeded = await activeEngine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: content },
+      text_fields: [{ field: "body", value: content }], occurred_at: occurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const saved = await activeEngine.client.call("vault.get", { entity_ref: seeded.entity_ref });
+    if (!saved.value) throw new Error("MUSE-RECALL-09 seeded PERSON is not publicly readable");
+    expect((saved.value.body as { readonly name?: unknown }).name).toBe(content);
+
+    const writerRecord = await activeEngine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "Recall Threshold Writer Agent" }, occurred_at: occurredAt,
+    });
+    await museRecallReadSetup(activeEngine, writerRecord.entity_ref, "PERSON");
+    const writer = await activeEngine.pairActor({
+      principalRef: writerRecord.id_hex, actorClass: "agent", scope: ["core:write"],
+    });
+    const request = {
+      query: queryToken, effort: "light", limit: requestedLimit, token_budget: 0,
+    } satisfies FacadeInput<"vault.recall">;
+    const refusal = await writer.client.raw<{
+      readonly error: { readonly code: string; readonly message: string };
+    }>("POST", "/v1/core/facade/vault.recall", request);
+    expect(refusal.status).toBe(403);
+    expect(refusal.body.error.code.length).toBeGreaterThan(0);
+    expect(refusal.body.error.message.length).toBeGreaterThan(0);
+    expect(refusal.raw.includes(contentToken)).toBe(false);
+    await museRecallHttpRefusalReceipt(activeEngine, "MUSE-RECALL-09", refusal, "vault.recall");
+
+    // Act once above the threshold. A sparse result is not a count clamp:
+    // retain the request count in the independent crossing read-back below.
+    const pack = await activeEngine.client.call("vault.recall", request);
+    try {
+      expect(pack.items.some(item => item.value_text.includes(content))).toBe(true);
+      expect(pack.retrieval_meta.limit_clamped).not.toBe(true);
+    } catch (error) {
+      throw new Error(
+        `MUSE-RECALL-09 HTTP vault.recall requested_limit=${requestedLimit} item_count=${pack.items.length} limit_clamped=${String(pack.retrieval_meta.limit_clamped)} retrieval_meta=${redactor.text(JSON.stringify(pack.retrieval_meta))}; ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    const observed = await awaitPublic(
+      readHealth,
+      value => value.checks.some(check => check.subject === questionSubject
+        && check.source === "limit"
+        && check.crossing.row === "limits.requested_result_rows"
+        && check.crossing.bound === 1_048_576
+        && typeof check.crossing.observed === "number"
+        && check.crossing.observed === requestedLimit),
+      { timeoutMs: 25_000,
+        label: `MUSE-RECALL-09 requested_limit=${requestedLimit} must serve and publish ${questionSubject} bound=1048576 observed=1048577` },
+    );
+    const question = observed.checks.find(check => check.subject === questionSubject);
+    if (!question) throw new Error("MUSE-RECALL-09 observed limit question disappeared");
+    expect(providers.seenFixtureCalls).toHaveLength(0);
+
+    await activeEngine.restart();
+    const savedAfterRestart = await activeEngine.client.call("vault.get", { entity_ref: seeded.entity_ref });
+    if (!savedAfterRestart.value) throw new Error("MUSE-RECALL-09 seeded PERSON is absent after restart");
+    expect((savedAfterRestart.value.body as { readonly name?: unknown }).name).toBe(content);
+    const recalledAfterRestart = await activeEngine.client.call("vault.recall", {
+      query: queryToken, effort: "light", limit: 10,
+    });
+    expect(recalledAfterRestart.items.some(item => item.value_text.includes(content))).toBe(true);
+    // Do not cross the threshold again: this must be the durable earlier ask.
+    const healthAfterRestart = await readHealth();
+    const questionAfterRestart = healthAfterRestart.checks.find(check => check.subject === questionSubject);
+    expect(questionAfterRestart?.source).toBe("limit");
+    expect(questionAfterRestart?.first_raised).toBe(question.first_raised);
+    expect(questionAfterRestart?.crossing.row).toBe("limits.requested_result_rows");
+    expect(questionAfterRestart?.crossing.bound).toBe(1_048_576);
+    expect(questionAfterRestart?.crossing.observed).toBe(question.crossing.observed);
+    expect(providers.seenFixtureCalls).toHaveLength(0);
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    throw new Error(
+      `MUSE-RECALL-09 requested_limit=1048577 public threshold/health/receipt flow: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    );
+  } finally {
+    try { await engine?.close(); } finally { await providers.close(); }
+  }
+}, 60_000);
 
 // MUSE-RECALL-03 (PARTIAL) — promises, doors, and what stays unproved.
 // Promises (promise register wording, with the canon source for each):
@@ -5007,18 +5164,20 @@ async function museRecall07ExpectRawRefusal(
  * Proved here: a short id hydrates to the same entity that vault.get reads for
  * the owner and for a core:read agent; an agent without core:read is refused;
  * a read agent whose slip is revoked is refused at its next use; a
- * hard-deleted PERSON no longer hydrates and its pr short id is not given to
- * later PERSON records, including after a restart; and one 50-ref
- * native batch hydrate returns live rows and per-input errors when refs are retired or
- * were never assigned.
+ * hard-erased PERSON answers not_found without a result; a soft-deleted
+ * PERSON answers deleted; neither bare pr short id is given to later PERSON
+ * records, including after restart (engine-20261111-e2e4-recall-contract 2=A).
+ * One 50-ref native batch returns live rows beside hard-erased, soft-deleted
+ * and never-assigned refs.
  * Finished P-RECALL-025 through POST /v1/core/batch/shortId/hydrate:
  * 50 qualified refs return per-input live/deleted/not_found rows; a denied
  * live row is hidden as not_found while its readable neighbor succeeds.
- * Unproved P-RECALL-024: no public single door distinguishes deleted and
- * never-assigned with HTTP 404; the native single door returns deleted at 200.
+ * P-RECALL-024, ruled subset: HardErase removes the mapping (not_found),
+ * while user_delete keeps a deleted shell (deleted), also after restart.
+ * Unproved: the single-door HTTP 404 distinction; native hydration uses 200.
  * Explicit access_denied reporting is also absent, not invented here.
  */
-suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers, a hard-deleted person's short id is not reused, and a 50-ref hydrate returns live rows despite retired and never-assigned refs", async () => {
+suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers, hard-erased and soft-deleted persons' short ids are not reused, and a 50-ref hydrate returns live rows despite erased, deleted and never-assigned refs", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-RECALL-07", profile });
   try {
     const occurredAt = 1769947200;
@@ -5167,10 +5326,11 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     ): void => {
       const row = batch.results[index];
       try {
-        expect(row?.outcome).toBe("deleted");
+        expect(row?.outcome).toBe("not_found");
+        expect(row?.result).toBeUndefined();
       } catch (error) {
         throw new Error(
-          `MUSE-RECALL-07 SPEC UNCLEAR 2026-11-11: hard-deleted PERSON ref=${retiredPerson.shortRef} expected=deleted outcome=${row?.outcome ?? "<missing>"} result_status=${row?.result?.status ?? "<missing>"} row=${redactor.text(JSON.stringify(row) ?? "<missing>")}; ${stage}; HYD retirement versus ARCH-0038 hard purge; ${errorText(error)}`,
+          `MUSE-RECALL-07 HardErase answers not_found (ruling engine-20261111-e2e4-recall-contract 2=A): ref=${retiredPerson.shortRef} expected=not_found,no_result outcome=${row?.outcome ?? "<missing>"} result_status=${row?.result?.status ?? "<missing>"} row=${redactor.text(JSON.stringify(row) ?? "<missing>")}; ${stage}; ${errorText(error)}`,
           { cause: error },
         );
       }
@@ -5212,6 +5372,54 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     const retiredBatch = await museRecall07BatchHydrate(engine.client, [retiredPerson.shortRef]);
     expectRetiredRow(retiredBatch, 0, "owner batch hydrate after hard delete");
 
+    // user_delete is the public soft delete: keep its resolvable shell,
+    // unlike HardErase. Refuse the write-only agent and read the refusal
+    // receipt and the still-live PERSON back before the owner deletes it.
+    const softDeletedPerson = await museRecall07CreatePerson(
+      engine, "Muse Recall 07 Soft Deleted Person", occurredAt,
+    );
+    const softDeletedShortId = museRecall07RequirePersonShortId(softDeletedPerson);
+    const softDeleteDenied = await museRecall07ExpectRawRefusal(
+      writer.client,
+      "/v1/core/facade/vault.delete",
+      {
+        entity_ref: softDeletedPerson.view.id_hex, reason: "user_delete",
+      } satisfies FacadeInput<"vault.delete">,
+      403,
+    );
+    await readRefusalReceipt(softDeleteDenied, "vault.delete");
+    expect((await museRecall07Get(engine.client, softDeletedPerson.shortRef)).id_hex)
+      .toBe(softDeletedPerson.view.id_hex);
+    const softDeleted = await engine.client.call("vault.delete", {
+      entity_ref: softDeletedPerson.view.id_hex, reason: "user_delete",
+    } satisfies FacadeInput<"vault.delete">);
+    expect(softDeleted.existed).toBe(true);
+    const softDeletedRead = await awaitPublic(
+      () => engine.client.call("vault.get", { entity_ref: softDeletedPerson.shortRef }),
+      read => read.value === null,
+      { label: `MUSE-RECALL-07 soft-deleted PERSON ref=${softDeletedPerson.shortRef} reads absent through vault.get` },
+    );
+    expect(softDeletedRead.value).toBeNull();
+    const expectSoftDeletedRow = (
+      batch: MuseRecall07BatchReply,
+      index: number,
+      stage: string,
+    ): void => {
+      const row = batch.results[index];
+      try {
+        expect(row?.outcome).toBe("deleted");
+        expect(row?.result?.status).toBe("deleted");
+        expect(row?.result?.id).toBe(softDeletedPerson.view.id_hex);
+      } catch (error) {
+        throw new Error(
+          `MUSE-RECALL-07 soft delete answers deleted (ruling engine-20261111-e2e4-recall-contract 2=A): ref=${softDeletedPerson.shortRef} expected=deleted outcome=${row?.outcome ?? "<missing>"} row=${redactor.text(JSON.stringify(row) ?? "<missing>")}; ${stage}; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+    };
+    const softDeletedBatch = await museRecall07BatchHydrate(engine.client, [softDeletedPerson.shortRef]);
+    expectSoftDeletedRow(softDeletedBatch, 0, "owner batch hydrate after soft delete");
+
     const replacementPersons: MuseRecall07Person[] = [];
     for (const name of [
       "Muse Recall 07 Replacement One",
@@ -5222,17 +5430,19 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     }
     const replacementShortIds = replacementPersons.map(museRecall07RequirePersonShortId);
     expect(replacementShortIds.includes(retiredShortId)).toBe(false);
+    expect(replacementShortIds.includes(softDeletedShortId)).toBe(false);
     const firstReplacement = replacementPersons[0];
     if (!firstReplacement) throw new Error("Expected a replacement PERSON");
 
     const neverAssignedRefs = Array.from(
-      { length: 46 },
+      { length: 45 },
       (_unused, index) => `pr${900000 + index}:00`,
     );
     const batchRefs = [
       liveShortId,
       firstReplacement.shortRef,
       retiredPerson.shortRef,
+      softDeletedPerson.shortRef,
       "ms999999:00",
       ...neverAssignedRefs,
     ];
@@ -5246,7 +5456,8 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(batch.results[1]?.outcome).toBe("live");
     expect(batch.results[1]?.result?.id).toBe(firstReplacement.view.id_hex);
     expectRetiredRow(batch, 2, "owner mixed 50-ref batch hydrate");
-    for (const row of batch.results.slice(3)) {
+    expectSoftDeletedRow(batch, 3, "owner mixed 50-ref batch hydrate");
+    for (const row of batch.results.slice(4)) {
       expect(row.outcome).toBe("not_found");
       expect(row.error?.kind).toBe("not_found");
     }
@@ -5267,27 +5478,34 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(liveAfterRestart.id_hex).toBe(liveView.id_hex);
     expect(museRecall07BodyField(liveAfterRestart.body, "content")).toBe(liveText);
     const hydratedAfterRestart = await museRecall07BatchHydrate(engine.client, [
-      liveShortId, retiredPerson.shortRef, "ms999999:00",
+      liveShortId, retiredPerson.shortRef, softDeletedPerson.shortRef, "ms999999:00",
     ]);
     try {
-      expect(hydratedAfterRestart.results.map(row => row.outcome)).toEqual(["live", "deleted", "not_found"]);
+      expect(hydratedAfterRestart.results.map(row => row.outcome)).toEqual(["live", "not_found", "deleted", "not_found"]);
     } catch (error) {
       throw new Error(
-        `MUSE-RECALL-07 batch outcomes after restart: retired_ref=${retiredPerson.shortRef} expected=live,deleted,not_found rows=${redactor.text(JSON.stringify(hydratedAfterRestart.results) ?? "<missing>")}; ${errorText(error)}`,
+        `MUSE-RECALL-07 HardErase answers not_found (ruling engine-20261111-e2e4-recall-contract 2=A); soft delete answers deleted; batch outcomes after restart: retired_ref=${retiredPerson.shortRef} soft_deleted_ref=${softDeletedPerson.shortRef} expected=live,not_found,deleted,not_found rows=${redactor.text(JSON.stringify(hydratedAfterRestart.results) ?? "<missing>")}; ${errorText(error)}`,
         { cause: error },
       );
     }
     expect(hydratedAfterRestart.results[0]?.result?.id).toBe(liveView.id_hex);
+    expectRetiredRow(hydratedAfterRestart, 1, "owner batch hydrate after restart");
+    expectSoftDeletedRow(hydratedAfterRestart, 2, "owner batch hydrate after restart");
     const retiredAfterRestart = await engine.client.call("vault.get", {
       entity_ref: retiredPerson.shortRef,
     } satisfies FacadeInput<"vault.get">);
     expect(retiredAfterRestart.value).toBeNull();
+    const softDeletedAfterRestart = await engine.client.call("vault.get", {
+      entity_ref: softDeletedPerson.shortRef,
+    });
+    expect(softDeletedAfterRestart.value).toBeNull();
 
     const postRestartPerson = await museRecall07CreatePerson(
       engine, "Muse Recall 07 Post Restart Person", occurredAt,
     );
     const postRestartShortId = museRecall07RequirePersonShortId(postRestartPerson);
     expect(postRestartShortId === retiredShortId).toBe(false);
+    expect(postRestartShortId === softDeletedShortId).toBe(false);
     const postRestartHydrated = await museRecall07Hydrate(
       engine.client, [postRestartPerson.shortRef],
     );
@@ -5307,6 +5525,8 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       liveIdHex: liveView.id_hex,
       retiredShortId,
       retiredIdHex: retiredPerson.view.id_hex,
+      softDeletedShortId,
+      softDeletedIdHex: softDeletedPerson.view.id_hex,
       deleteReceiptRef: deleted.receipt_ref,
       replacementShortIds,
       postRestartShortId,
