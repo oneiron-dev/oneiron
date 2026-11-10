@@ -315,6 +315,44 @@ mod masked {
             .expect("the granted reader pages the TURN");
         assert_eq!(paged.text.as_deref(), Some(shown.as_str()));
 
+        // A handle whose filter admits TURN rows only (review of #6983): the
+        // TURN's words come from MESSAGE rows that filter withholds, so the
+        // TURN is not served at all, and no row serves the value. Its spans
+        // under the same filter are withheld.
+        let turns_only = oneiron::memory::ReadFilterInput {
+            entity_types: Some(std::collections::BTreeSet::from([
+                oneiron::registry::ENTITY_TYPE_TURN,
+            ])),
+            ..oneiron::memory::ReadFilterInput::default()
+        };
+        let narrowed = oneiron::verbs::vault_snapshot_open(
+            &theirs,
+            SnapshotOpenRequest {
+                kinds: vec![SnapshotKind::Turn],
+                filter: Some(turns_only.clone()),
+                lifetime_secs: None,
+            },
+        )?;
+        let narrowed = oneiron::verbs::vault_snapshot_page(
+            &theirs,
+            SnapshotPageRequest {
+                handle: narrowed.handle,
+                cursor: None,
+                limit: None,
+            },
+        )?
+        .value;
+        assert!(narrowed.rows.iter().all(|row| row.version.entity != turn));
+        assert!(
+            !narrowed
+                .rows
+                .iter()
+                .any(|row| row.text.as_deref().is_some_and(|text| text.contains(secret)))
+        );
+        let withheld = spans(&theirs.with_read_filter(Some(&turns_only)), turn, None, &[])?;
+        assert_eq!(withheld.status, EvidenceSourceStatus::Withheld);
+        assert!(withheld.spans.is_empty());
+
         // The whole text: the masked one, never the value.
         let whole = spans(&theirs, turn, None, &[])?;
         assert_eq!(whole.status, EvidenceSourceStatus::Current);
