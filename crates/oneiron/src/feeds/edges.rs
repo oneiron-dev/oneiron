@@ -131,7 +131,10 @@ pub(super) fn redirty_head_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Resul
 }
 
 /// Up to `limit` edge feed rows after `after`: each shown when the subscriber's lane shows both
-/// ends now.
+/// ends now and the edge passes the exact-pair diary check the scoped graph reads ask
+/// (`note::diary_edge_access_in`, review #6981): a SameAs edge naming a diary NOTE is a candidate
+/// only while that very pair is linked and shared, never through the ends' other links. So a
+/// lane is shown no SameAs link its authors did not both consent to, and no removal of one.
 pub(super) fn edges_after_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -165,6 +168,9 @@ pub(super) fn edges_after_in_txn(
         let Some(record) = vault.store.port_entity_record(txn, &row.source)? else {
             continue;
         };
+        if !crate::note::diary_edge_access_in(vault, txn, row.source, kind, row.target)? {
+            continue;
+        }
         scanned.entries.push(Candidate {
             entry: FeedEntry {
                 position: FeedPosition::of(position)?,
