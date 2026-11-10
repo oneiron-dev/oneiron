@@ -57,12 +57,23 @@ fn projector_failure_keeps_receipt_resolvable_without_committing_policy() -> Res
         )?;
         assert_eq!(applied.proposal, FanoutProposalOutcome::NotProposed);
     }
+    // The projector fault. The standing-N dial this test once corrupted is gone
+    // (d247ce92e83, FIX 9802), so one earlier ledger row of this scope reads as
+    // undecodable bytes while the third ruling lands, and is put back after it.
+    let (row_key, row_bytes) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut rows = vault
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, crate::side_table::EDIT_DISTANCE_ESCALATION.prefix)?;
+        let (key, value) = rows.next().expect("an earlier escalation ledger row")?;
+        (key.to_vec(), value.to_vec())
+    };
     vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(
-            txn,
-            crate::side_table::EDIT_DISTANCE_ESCALATION_STANDING_N.prefix,
-            &[3],
-        )?;
+        vault
+            .store
+            .vault_meta
+            .put(txn, &row_key, b"not an escalation ledger row")?;
         Ok(())
     })?;
     let applied = apply_escalation_ruling(
@@ -71,6 +82,10 @@ fn projector_failure_keeps_receipt_resolvable_without_committing_policy() -> Res
         FanoutEscalationRuling::Approve,
         RATIONALE.to_owned(),
     )?;
+    vault.with_write_txn(|txn| {
+        vault.store.vault_meta.put(txn, &row_key, &row_bytes)?;
+        Ok(())
+    })?;
     assert!(matches!(applied.proposal, FanoutProposalOutcome::Failed(_)));
     let receipt_id = format!("escalation:{}", applied.receipt_ref.to_hex());
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
@@ -84,7 +99,6 @@ fn projector_failure_keeps_receipt_resolvable_without_committing_policy() -> Res
         3
     );
     assert!(standing_policy_for(&vault, SCOPE, EscalationTrigger::Unsure)?.is_none());
-    crate::edit_distance::escalation::set_escalation_standing_n(&vault, 3)?;
     assert!(standing_policy_for(&vault, SCOPE, EscalationTrigger::Unsure)?.is_none());
     let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
     assert!(receipts.iter().any(|r| r.receipt_id == receipt_id));

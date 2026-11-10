@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::LoroDoc;
 use oneiron::edge::EdgeKind;
 use oneiron::habit::TaskRole;
@@ -45,17 +47,19 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     cfg.max_readers = 16;
-    let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), cfg));
     (dir, vault)
 }
 
-/// 25-byte envelope: type u8 + occurred_start/end + learned_at u64 BE.
+/// The metadata header: type u8 + occurred_start/end + learned_at +
+/// row_version u64 BE (zero).
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     blob.push(entity_type);
     blob.extend_from_slice(&occurred.start.to_be_bytes());
     blob.extend_from_slice(&occurred.end.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(data);
     blob
 }
@@ -204,6 +208,17 @@ fn edge_provenance_claim_body_with(
     edge_ref.extend_from_slice(&[0x11; 16]);
     edge_ref.push(EdgeKind::Mentions as u8);
     edge_ref.extend_from_slice(&[0x22; 16]);
+    // FIX 8909: the write door deleted the legacy evid carrier; the validated
+    // class persists as the value-record actor_class key (0 = human). A caller
+    // passing evid=None forges the missing-class shape: no injection.
+    let val = match (val, evid.is_some()) {
+        (rmpv::Value::Map(mut record), true) => {
+            record.push((rmpv::Value::from("actor_class"), rmpv::Value::from(0u8)));
+            rmpv::Value::Map(record)
+        }
+        (val, _) => val,
+    };
+    let _ = evid; // never emitted: both-places fails closed, record-only passes
     let mut entries = vec![
         (
             rmpv::Value::from("pred"),
@@ -211,10 +226,25 @@ fn edge_provenance_claim_body_with(
         ),
         (rmpv::Value::from("val"), val),
         (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
+        // FIX 7761: D18 requires the band and basis beside conf (house mapping:
+        // certain >= 0.9, high >= 0.7, medium >= 0.4, else low).
+        (
+            rmpv::Value::from("confBand"),
+            rmpv::Value::from(if conf >= 0.9 {
+                "certain"
+            } else if conf >= 0.7 {
+                "high"
+            } else if conf >= 0.4 {
+                "medium"
+            } else {
+                "low"
+            }),
+        ),
+        (
+            rmpv::Value::from("confBasis"),
+            rmpv::Value::from("deterministic_fallback"),
+        ),
     ];
-    if let Some(evid) = evid {
-        entries.push((rmpv::Value::from("evid"), evid));
-    }
     if let Some(from) = valid_from {
         entries.push((rmpv::Value::from("from"), rmpv::Value::from(from)));
     }
@@ -1632,18 +1662,18 @@ fn sign_as_host(vault: &Vault, id: EntityId, body: &mut oneiron::workspace_roste
     claims.parent_id = None;
     claims.holder_ref = "host".into();
     let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
-    let anchor = vault.project(id).unwrap().unwrap().anchor();
+    let anchor = vault.project(id).unwrap().unwrap().anchor().unwrap();
     let signed_at = slip.claims.issued_at;
     let version = oneiron::workspace_roster::ProjectProofVersion::V3;
     let challenge = body
         .authority_at(version)
-        .write_challenge(id, version, signed_at, Some(&anchor))
+        .write_challenge(id, version, signed_at, &anchor)
         .unwrap();
     body.write_proof = Some(oneiron::workspace_roster::ProjectWriteProof {
         slip_wire: slip.to_token().unwrap(),
         holder_signature: issuer.binding_proof(&slip, &challenge).unwrap(),
         signed_at,
-        anchor: Some(Box::new(anchor)),
+        anchor,
         version,
     });
 }

@@ -49,26 +49,29 @@ impl QualificationConnector for Stub {
     }
 }
 impl QualificationConnection for Connection {
-    fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-        Ok(vec![ProbeTool {
-            name: if self.fault == Fault::Lists && self.number == 1 {
-                "different".into()
-            } else {
-                "memory".into()
-            },
-            input_schema: if self.fault == Fault::Key {
-                json!({"type":"object"})
-            } else {
-                json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}})
-            },
-            trigger: None,
-            result_types: BTreeSet::from([if self.fault == Fault::ResultType {
-                "unknown".into()
-            } else {
-                "record".into()
-            }]),
-            writes: self.fault != Fault::HiddenWrite && self.fault != Fault::ReadOnly,
-        }])
+    fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+        Ok(ProbeToolsList {
+            tools: vec![ProbeTool {
+                name: if self.fault == Fault::Lists && self.number == 1 {
+                    "different".into()
+                } else {
+                    "memory".into()
+                },
+                input_schema: if self.fault == Fault::Key {
+                    json!({"type":"object"})
+                } else {
+                    json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}})
+                },
+                trigger: None,
+                result_types: BTreeSet::from([if self.fault == Fault::ResultType {
+                    "unknown".into()
+                } else {
+                    "record".into()
+                }]),
+                writes: self.fault != Fault::HiddenWrite && self.fault != Fault::ReadOnly,
+            }],
+            requests: Vec::new(),
+        })
     }
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
         let mut headers = BTreeMap::from([
@@ -79,11 +82,12 @@ impl QualificationConnection for Connection {
             headers.insert("Mcp-Name".into(), "wrong".into());
         }
         let body = json!({"jsonrpc":"2.0","id":request.id,"method":"tools/call","params":{"name":request.name,"arguments":request.arguments}});
-        let mut disposition = if request.arguments["outside"] == true {
-            ProbeDisposition::NoRecord
-        } else {
-            ProbeDisposition::Answer
-        };
+        let mut disposition =
+            if request.arguments["outside"] == true || request.arguments["unanswerable"] == true {
+                ProbeDisposition::NoRecord
+            } else {
+                ProbeDisposition::Answer
+            };
         if self.fault == Fault::RefusedCommitted
             && request.arguments["write"] == true
             && request.arguments["timeout_once"] != true
@@ -125,11 +129,13 @@ impl QualificationConnection for Connection {
                 }],
             });
         }
-        let mut kinds = vec![
-            ProbeTraceKind::Start,
-            ProbeTraceKind::Retrieval,
-            ProbeTraceKind::ForeignAsk,
-        ];
+        let mut kinds = vec![ProbeTraceKind::Start, ProbeTraceKind::Retrieval];
+        match request.arguments.get("ingress").and_then(Value::as_str) {
+            Some("fetched_content") => kinds.push(ProbeTraceKind::FetchedContent),
+            Some("tool_result") => kinds.push(ProbeTraceKind::ToolResult),
+            _ => {}
+        }
+        kinds.push(ProbeTraceKind::ForeignAsk);
         if self.fault != Fault::Foreign {
             kinds.push(ProbeTraceKind::Quarantine);
         }
@@ -210,13 +216,42 @@ fn plan() -> QualificationPlan {
         in_scope: true,
         allowed_predicates: BTreeSet::from(["profile.name".into()]),
     };
+    let injection = |surface: QualificationInjectionSurface, id: &str| QualificationInjection {
+        surface,
+        baseline: case(
+            &format!("{id}-baseline"),
+            json!({"idempotency_key": format!("{id}-baseline-key")}),
+        ),
+        injected: case(
+            &format!("{id}-injected"),
+            json!({"idempotency_key": format!("{id}-injected-key"), "ingress": id}),
+        ),
+    };
     let mut outside = case(
         "outside",
         json!({"outside":true,"idempotency_key":"outside-key"}),
     );
     outside.in_scope = false;
+    let mut escape = case(
+        "scope-escape",
+        json!({"outside":true,"idempotency_key":"scope-escape-key"}),
+    );
+    escape.in_scope = false;
     QualificationPlan {
         reads: vec![case("read", json!({"idempotency_key":"read-key"})), outside],
+        unanswerable: case(
+            "unanswerable",
+            json!({"unanswerable":true,"idempotency_key":"unanswerable-key"}),
+        ),
+        injections: vec![
+            injection(
+                QualificationInjectionSurface::FetchedContent,
+                "fetched_content",
+            ),
+            injection(QualificationInjectionSurface::ToolResult, "tool_result"),
+            injection(QualificationInjectionSurface::ForeignAsk, "foreign_ask"),
+        ],
+        scope_escape: vec![escape],
         write: Some(case(
             "write",
             json!({"write":true,"idempotency_key":"write-key"}),
@@ -342,6 +377,9 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         spends: false,
         sends_outward: false,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     }];
     let slate_id = vault.store_connector_slate(
         &manifest,
@@ -489,10 +527,10 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         inner: Box<dyn QualificationConnection + 'a>,
     }
     impl QualificationConnection for TriggerConnection<'_> {
-        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-            let mut tools = self.inner.tools_list()?;
-            tools[0].trigger = Some("automatic".into());
-            Ok(tools)
+        fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+            let mut listed = self.inner.tools_list()?;
+            listed.tools[0].trigger = Some("automatic".into());
+            Ok(listed)
         }
         fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
             self.inner.call(request)
@@ -522,6 +560,9 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         spends: false,
         sends_outward: false,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     };
     let make_slate = |manifest: &[SlateToolManifest]| -> crate::error::Result<EntityId> {
         vault.store_connector_slate(
@@ -584,7 +625,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
 
     // A narrowed declaration carries the prior owner's consent without a tap.
     let mut narrower = draft_connector_slate(std::slice::from_ref(&read_tool));
-    narrower[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    narrower[0].disposition = crate::connector_key::SlateDisposition::AlwaysAsk;
     let narrow_slate = vault.store_connector_slate(
         std::slice::from_ref(&read_tool),
         &serde_json::to_string(&narrower).unwrap(),
@@ -626,7 +667,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
     );
     // Removing declared send authority is a narrowing, not another approval.
     let mut narrowed_rows = draft_connector_slate(std::slice::from_ref(&read_tool));
-    narrowed_rows[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    narrowed_rows[0].disposition = crate::connector_key::SlateDisposition::AlwaysAsk;
     let narrower_declaration = vault.store_connector_slate(
         std::slice::from_ref(&read_tool),
         &serde_json::to_string(&narrowed_rows).unwrap(),
@@ -646,7 +687,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
     let mut triggered_tool = read_tool;
     triggered_tool.trigger = Some("automatic".into());
     let mut triggered_rows = draft_connector_slate(std::slice::from_ref(&triggered_tool));
-    triggered_rows[0].disposition = crate::connector_key::SlateDisposition::ConfirmFirst;
+    triggered_rows[0].disposition = crate::connector_key::SlateDisposition::AlwaysAsk;
     let triggered_slate = vault.store_connector_slate(
         std::slice::from_ref(&triggered_tool),
         &serde_json::to_string(&triggered_rows).unwrap(),
@@ -725,6 +766,9 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
         spends: false,
         sends_outward: false,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     };
     let slate = vault.store_connector_slate(
         std::slice::from_ref(&tool),
@@ -795,10 +839,10 @@ fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Res
         schema: Value,
     }
     impl QualificationConnection for SchemaConnection<'_> {
-        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-            let mut tools = self.inner.tools_list()?;
-            tools[0].input_schema = self.schema.clone();
-            Ok(tools)
+        fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+            let mut listed = self.inner.tools_list()?;
+            listed.tools[0].input_schema = self.schema.clone();
+            Ok(listed)
         }
         fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
             self.inner.call(request)
@@ -836,6 +880,9 @@ fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Res
         spends: false,
         sends_outward: false,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     };
     let make_slate = |tool: &SlateToolManifest| -> crate::error::Result<EntityId> {
         let tools = std::slice::from_ref(tool);
@@ -938,15 +985,19 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
         inner: Box<dyn QualificationConnection + 'a>,
     }
     impl QualificationConnection for TwoConnections<'_> {
-        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-            let first = self.inner.tools_list()?.remove(0);
-            Ok(["A", "B"]
-                .into_iter()
-                .map(|name| ProbeTool {
-                    name: name.into(),
-                    ..first.clone()
-                })
-                .collect())
+        fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+            let mut listed = self.inner.tools_list()?;
+            let first = listed.tools.remove(0);
+            Ok(ProbeToolsList {
+                tools: ["A", "B"]
+                    .into_iter()
+                    .map(|name| ProbeTool {
+                        name: name.into(),
+                        ..first.clone()
+                    })
+                    .collect(),
+                requests: listed.requests,
+            })
         }
         fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
             self.inner.call(request)
@@ -982,10 +1033,13 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
         spends: false,
         sends_outward: false,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     };
     let manifest = vec![tool("A"), tool("B")];
     let mut old_rows = draft_connector_slate(&manifest);
-    old_rows[0].enabled = false;
+    old_rows[0].disposition = crate::connector_key::SlateDisposition::NeverAllow;
     let old = vault.store_connector_slate(&manifest, &serde_json::to_string(&old_rows).unwrap())?;
     let (id, _) = vault.register_connector(
         ConnectorCatalogEntry {
@@ -1020,7 +1074,7 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
         .qualify_connector_key(&id, "A", &make_connector(), &read_plan, &Oracle, 101)
         .unwrap();
     let mut next_rows = draft_connector_slate(&manifest);
-    next_rows[1].enabled = false;
+    next_rows[1].disposition = crate::connector_key::SlateDisposition::NeverAllow;
     next_rows.reverse();
     let next =
         vault.store_connector_slate(&manifest, &serde_json::to_string(&next_rows).unwrap())?;

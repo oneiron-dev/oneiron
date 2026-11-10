@@ -340,9 +340,10 @@ fn an_authority_fact_admits_only_an_exact_echo() {
     );
 }
 
-/// F24 round 5 (H219): at the cap of eight bindings, every class a party
-/// holds keeps one, so a consult its creator minted as an agent is one it
-/// still moves as that agent.
+/// F24 round 5 (H219): every class a party holds keeps its binding, so a
+/// consult its creator minted as an agent is one it still moves as that
+/// agent. The eight-binding cap is gone (c1d228f0fcb, Rule 5): all ten
+/// bindings stay named.
 #[test]
 fn a_generation_at_the_cap_keeps_every_class() {
     let held: Vec<_> = (0..8)
@@ -350,7 +351,7 @@ fn a_generation_at_the_cap_keeps_every_class() {
         .chain([("agent", [0xF0; 32]), ("system", [0xF1; 32])])
         .collect();
     let generation = BindingGeneration::from_classed_bindings(&held).expect("a generation");
-    assert_eq!(generation.bindings().len(), MAX_GENERATION_BINDINGS);
+    assert_eq!(generation.bindings().len(), held.len());
     assert!(generation.names(&[0xF0; 32]), "the agent binding is kept");
     assert!(generation.names(&[0xF1; 32]), "the system binding is kept");
     assert!(

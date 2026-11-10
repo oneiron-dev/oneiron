@@ -297,8 +297,12 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
-                // Conversation append is ordinary authored content. Generated
-                // auto still requires an actor-bound source-trust permit.
+                // Conversation append is ordinary authored content, labelled
+                // by who composed it: a person's own record is user-stated and
+                // needs no permit. An agent's or another writer's, and words
+                // the engine composed (a scope summary's reply, a Retry's
+                // turn), are generated: auto still requires an actor-bound
+                // source-trust permit.
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
