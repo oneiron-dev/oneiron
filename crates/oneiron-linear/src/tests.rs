@@ -390,10 +390,12 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         EffectorBudgetWindow,
     };
     use oneiron::outbound::OutboundDispatchGate;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     let dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("responses");
     let vault =
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault open");
+    vault.install_device_keystore(keys.clone());
     let actor = EntityId::from_bytes([0x56; 16]).expect("actor");
     vault
         .put_entity(
@@ -545,6 +547,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     drop(vault);
     let reopened =
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    reopened.install_device_keystore(keys.clone());
     let resumed = crate::VaultLinearOutboundDoor::new(
         &reopened,
         transport(),
@@ -568,9 +571,11 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
 #[test]
 fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_restart() {
     use oneiron::outbound::OutboundDispatchGate;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     let dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("responses");
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
+    vault.install_device_keystore(keys.clone());
     let actor = EntityId::from_bytes([0x66; 16]).expect("actor");
     vault
         .put_entity(
@@ -636,6 +641,7 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
     drop(vault);
     let reopened =
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    reopened.install_device_keystore(keys.clone());
     let healthy = JournalTransport {
         writes: writes.clone(),
         calls: calls.clone(),
@@ -660,6 +666,7 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
 #[test]
 fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
     use oneiron::outbound::OutboundDispatchGate;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     fn make<'a>(
         vault: &'a oneiron::Vault,
         responses: &tempfile::TempDir,
@@ -687,6 +694,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
     let dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("responses");
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
+    vault.install_device_keystore(keys.clone());
     let actor = EntityId::from_bytes([0x67; 16]).expect("actor");
     vault
         .put_entity(
@@ -777,6 +785,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
     drop(vault);
     let reopened =
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    reopened.install_device_keystore(keys.clone());
     let mut replay = LinearHostEgress::new(
         make(&reopened, &responses, scheduler, &calls, &writes, None, 1002),
         config(),
@@ -797,10 +806,12 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
 fn interrupted_request_staging_retries_same_operation_after_restart() {
     use oneiron::outbound::OutboundDispatchGate;
     use std::io::Write;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     let vault_dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("host response custody");
     let vault =
         oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default()).expect("open");
+    vault.install_device_keystore(keys.clone());
     let actor = EntityId::from_bytes([0x68; 16]).expect("actor");
     vault
         .put_entity(
@@ -877,6 +888,7 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     drop(vault);
     let reopened =
         oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    reopened.install_device_keystore(keys.clone());
     let door = crate::VaultLinearOutboundDoor::new(
         &reopened,
         JournalTransport {
