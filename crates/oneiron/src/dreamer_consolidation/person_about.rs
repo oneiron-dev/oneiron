@@ -71,7 +71,8 @@ const PERSON_ABOUT: SideTable<EntityId, PersonAbout, Named> =
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersonAbout {
-    /// Digest of the facts the newest queued attempt writes from.
+    /// Digest of the facts the newest queued attempt writes from, or of the
+    /// facts a validated publish read in its own write.
     asked: [u8; 32],
     /// Digest of the facts `lines` were written from. Lines whose digest is
     /// not `asked` stand on facts that moved, and the board shows none.
@@ -309,6 +310,11 @@ pub(crate) fn publish_person_about_in_txn(
     });
     row.written = written_from;
     row.at = at;
+    // The facts were read in this write and hash to `written_from`, so the
+    // lines stand on the facts a reader would be asked with now: they read
+    // back at once, with no wake pass in between.
+    row.asked = written_from;
+    row.moved = false;
     PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
     Ok(Ok(()))
 }
