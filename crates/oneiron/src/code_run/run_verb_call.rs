@@ -57,6 +57,14 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
             )
         }
         RunVerb::VaultClaimsPut => SelfCall::MemoryPutClaim(claim_put_call(decode(input)?, now)?),
+        RunVerb::VaultAgentsPut => {
+            let args: super::AgentPutInput = decode(input)?;
+            SelfCall::AgentsPut(Box::new(super::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(args.into_call()?)
