@@ -542,18 +542,20 @@ pub(crate) fn readable_with_read_in(
     judge.row_readable(id, Some(raw))
 }
 
-/// The source-audience policies a read of the row `id` by every one of
-/// `viewers` meets, as [`readable_with_read_in`] judges it (slice 6.4e,
-/// `vault.policy.preflight`): those carried to the row and the one binding
-/// it, and those of every row its words came from, along the same lineage
-/// the judge walks. Of a CLAIM's supports, one of which the read needs,
-/// only those of each support that reads to `viewers` count, so no policy
-/// is named that the read did not meet. A row gone from `dbs` adds its own
-/// binding and carried policies and nothing more. A vault that holds no
-/// policy answers none.
+/// The source-audience policies a read of the rows `roots` by every one of
+/// `viewers` meets, as [`readable_with_read_in`] judges each of them (slice
+/// 6.4e, `vault.policy.preflight`): those carried to each row and the one
+/// binding it, and those of every row its words came from, along the same
+/// lineage the judge walks. Of a CLAIM's supports, one of which the read
+/// needs, only those of each support that reads to `viewers` count, so no
+/// policy is named that the read did not meet. A row gone from `dbs` adds
+/// its own binding and carried policies and nothing more. A vault that
+/// holds no policy answers none.
 ///
-/// It names the policies of a row a read admitted; it judges nothing of
-/// the row itself.
+/// The caller names every row its read met: a witnessed TURN and each
+/// MESSAGE row its projected text was read from, whose lineage the TURN's
+/// own does not reach (review of #6985, round 2). It names the policies of
+/// rows a read admitted; it judges nothing of the rows themselves.
 ///
 /// # Errors
 ///
@@ -562,7 +564,7 @@ pub(crate) fn read_audience_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
-    id: &EntityId,
+    roots: &[EntityId],
     viewers: &[EntityId],
 ) -> Result<BTreeSet<EntityId>> {
     let mut policies = BTreeSet::new();
@@ -577,8 +579,8 @@ pub(crate) fn read_audience_in(
         policies: BTreeMap::new(),
         rows: BTreeMap::new(),
     };
-    let mut seen = BTreeSet::from([*id]);
-    let mut pending = vec![*id];
+    let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
+    let mut pending: Vec<EntityId> = seen.iter().copied().collect();
     while let Some(row) = pending.pop() {
         if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
             policies.extend(carried);
