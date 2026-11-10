@@ -5112,8 +5112,9 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
       expect(reply.name).toBe(name);
       museGate11ExpectNoValues(reply, secretValues);
       // Second door: custody view, keyed by name rather than the register.
-      const custody = await engine.client.call("vault.secrets.custody.get", { name }
-        satisfies FacadeInput<"vault.secrets.custody.get">);
+      const custody = await engine.client.call("vault.secrets.custody.get", {
+        name,
+      } satisfies FacadeInput<"vault.secrets.custody.get">);
       expect(custody.known).toBe(true);
       expect(custody.held_here).toBe(true);
       // Cross-vault values stay non-portable: custody does not leave here.
@@ -5123,8 +5124,9 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
       expect(custody.generation).toBe(reply.rotation_generation);
       museGate11ExpectNoValues(custody, secretValues);
       // Third door: the handle card an agent reads before any use.
-      const card = await sender.client.call("reveal.describe", { handle: reply.secret_id }
-        satisfies FacadeInput<"reveal.describe">);
+      const card = await sender.client.call("reveal.describe", {
+        handle: reply.secret_id,
+      } satisfies FacadeInput<"reveal.describe">);
       expect(card.handle.length).toBeGreaterThan(0);
       expect(card.status).toBe("active");
       museGate11ExpectNoValues(card, secretValues);
@@ -5221,8 +5223,10 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
 
     // Discover the live send channel from the connector catalog instead of
     // inventing a channel string. Common verb vocabulary: "send".
-    const connectors = await engine.client.call("connector.list", {}
-      satisfies FacadeInput<"connector.list">);
+    const connectors = await engine.client.call(
+      "connector.list",
+      {} satisfies FacadeInput<"connector.list">,
+    );
     const sendConnector = connectors.find((entry) => entry.verbs.includes("send"));
     if (!sendConnector) {
       throw new BlockedDoor("waits on a send-capable outbound connector manifest in a fresh vault");
@@ -5323,8 +5327,9 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
 
     // Remove it before testing disclosure alone; the live registry is the
     // read-back that the action grant is gone.
-    await engine.client.call("vault.consent.revoke", { grant: actionGrant1 }
-      satisfies FacadeInput<"vault.consent.revoke">);
+    await engine.client.call("vault.consent.revoke", {
+      grant: actionGrant1,
+    } satisfies FacadeInput<"vault.consent.revoke">);
     expect((await museGate11LiveGrantRefs()).includes(actionGrant1)).toBe(false);
 
     // Proof order 2b: disclosure grant alone is not either-gate enough.
@@ -5403,8 +5408,9 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
 
     // Proof order 3: the sender loses the action grant mid-flow and is
     // refused at its next use, even though the disclosure grant remains.
-    await engine.client.call("vault.consent.revoke", { grant: actionGrant2 }
-      satisfies FacadeInput<"vault.consent.revoke">);
+    await engine.client.call("vault.consent.revoke", {
+      grant: actionGrant2,
+    } satisfies FacadeInput<"vault.consent.revoke">);
     expect((await museGate11LiveGrantRefs()).includes(actionGrant2)).toBe(false);
     await museGate11RegistryRow(disclosureGrant, "disclosure");
     const afterActionRevokeVerdict = await museGate11CanAs(sender.client, "after-action-revoke");
