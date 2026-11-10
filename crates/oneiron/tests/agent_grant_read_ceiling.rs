@@ -28,8 +28,10 @@ struct Fixture {
     owner: EntityId,
     agent: EntityId,
     other_world: EntityId,
+    third_world: EntityId,
     base_claim: EntityId,
     other_claim: EntityId,
+    third_claim: EntityId,
     owner_key: ScopedReadActorKey,
     agent_key: ScopedReadActorKey,
 }
@@ -127,7 +129,24 @@ fn write_owner_claim(
     id
 }
 
-fn fixture() -> Fixture {
+/// The worlds each of the agent's Grants names, given the second world's id:
+/// one Grant per set, each minted alone.
+type GrantWorlds = fn(EntityId) -> Vec<BTreeSet<ScopeId>>;
+
+/// One Grant, naming the base world only.
+fn base_grant(_other: EntityId) -> Vec<BTreeSet<ScopeId>> {
+    vec![BTreeSet::from([ScopeId(base_world_id())])]
+}
+
+/// Two Grants: one names the base world, the other the second world.
+fn base_and_second_grants(other: EntityId) -> Vec<BTreeSet<ScopeId>> {
+    vec![
+        BTreeSet::from([ScopeId(base_world_id())]),
+        BTreeSet::from([ScopeId(other)]),
+    ]
+}
+
+fn fixture(grants: GrantWorlds) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
@@ -135,6 +154,9 @@ fn fixture() -> Fixture {
     let other_world = vault
         .create_world(&owner_proof, "Grant-excluded world", OCCURRED_AT)
         .expect("owner creates the second world");
+    let third_world = vault
+        .create_world(&owner_proof, "World no Grant names", OCCURRED_AT)
+        .expect("owner creates the third world");
     let base_claim = write_owner_claim(
         &vault,
         owner,
@@ -148,6 +170,13 @@ fn fixture() -> Fixture {
         &owner_proof,
         other_world,
         "grant-excluded-world claim",
+    );
+    let third_claim = write_owner_claim(
+        &vault,
+        owner,
+        &owner_proof,
+        third_world,
+        "third-world claim",
     );
 
     let agent = EntityId::now();
@@ -167,28 +196,30 @@ fn fixture() -> Fixture {
         },
     )
     .expect("owner creates an enabled, active agent definition");
-    let mut authority_scope = Scope::top();
-    authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
-    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-    let minted = mint_agent_grant_as(
-        &vault,
-        &owner_proof,
-        ActSurface::ThisInstall,
-        AgentGrantMintRequest {
-            agent,
-            authority_scope,
-            expires_at: None,
-            repo_bounds: None,
-            verb_classes: BTreeSet::new(),
-            wallet_ref: None,
-        },
-    )
-    .expect("owner mints the agent's base-world read Grant");
-    assert!(
-        minted.grant.confers,
-        "actor=agent {agent:?}; expected live read Grant for names=[base]; seen names={:?}, confers={}",
-        minted.grant.authority_scope.worlds, minted.grant.confers,
-    );
+    for worlds in grants(other_world) {
+        let mut authority_scope = Scope::top();
+        authority_scope.worlds = ScopeAxis::Some(worlds.clone());
+        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+        let minted = mint_agent_grant_as(
+            &vault,
+            &owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+            },
+        )
+        .expect("owner mints the agent a read Grant");
+        assert!(
+            minted.grant.confers,
+            "actor=agent {agent:?}; expected live read Grant for worlds={worlds:?}; seen worlds={:?}, confers={}",
+            minted.grant.authority_scope.worlds, minted.grant.confers,
+        );
+    }
     let slip = paired_agent_slip(&vault, &issuer, &owner_proof, agent);
     let agent_key = vault
         .credential_read_key(&slip)
@@ -204,8 +235,10 @@ fn fixture() -> Fixture {
         owner,
         agent,
         other_world,
+        third_world,
         base_claim,
         other_claim,
+        third_claim,
         owner_key,
         agent_key,
     }
@@ -233,7 +266,7 @@ fn world_names(vault: &Vault, key: ScopedReadActorKey) -> BTreeSet<String> {
 
 #[test]
 fn paired_agent_lists_only_its_grant_worlds() {
-    let fixture = fixture();
+    let fixture = fixture(base_grant);
     let other_name = fixture.other_world.to_hex();
     let owner_names = world_names(&fixture.vault, fixture.owner_key.clone());
     assert!(
@@ -257,10 +290,13 @@ fn paired_agent_lists_only_its_grant_worlds() {
 
 #[test]
 fn paired_agent_reads_no_row_outside_its_grant_worlds() {
-    let fixture = fixture();
+    let fixture = fixture(base_grant);
     let base_path = format!("/worlds/base/claims/{}", fixture.base_claim.to_hex());
     let other_name = fixture.other_world.to_hex();
-    let other_path = format!("/worlds/{other_name}/claims/{}", fixture.other_claim.to_hex());
+    let other_path = format!(
+        "/worlds/{other_name}/claims/{}",
+        fixture.other_claim.to_hex()
+    );
     let owner_lane = fixture
         .vault
         .scoped_read(fixture.owner_key)
@@ -305,4 +341,79 @@ fn paired_agent_reads_no_row_outside_its_grant_worlds() {
         "actor=agent {:?}; expected readable names=[{base_path}], not [{other_path}]; seen names={agent_names:?}",
         fixture.agent,
     );
+}
+
+/// Two Grants, each alone (Engine RULING GRANT-COMBINE Q1 = A): the agent
+/// lists and reads the world each one names, and no world neither names.
+#[test]
+fn paired_agent_reads_each_grant_world_alone() {
+    let fixture = fixture(base_and_second_grants);
+    let other_name = fixture.other_world.to_hex();
+    let third_name = fixture.third_world.to_hex();
+    let owner_names = world_names(&fixture.vault, fixture.owner_key.clone());
+    assert!(
+        owner_names.contains("base")
+            && owner_names.contains(&other_name)
+            && owner_names.contains(&third_name),
+        "actor=owner {:?}; expected names to include [base, {other_name}, {third_name}]; seen names={owner_names:?}",
+        fixture.owner,
+    );
+
+    let agent_names = world_names(&fixture.vault, fixture.agent_key.clone());
+    assert!(
+        agent_names.contains("base") && agent_names.contains(&other_name),
+        "actor=agent {:?}; expected names to include [base, {other_name}]; seen names={agent_names:?}",
+        fixture.agent,
+    );
+    assert!(
+        !agent_names.contains(&third_name),
+        "actor=agent {:?}; expected names to exclude [{third_name}]; seen names={agent_names:?}",
+        fixture.agent,
+    );
+
+    let paths = [
+        format!("/worlds/base/claims/{}", fixture.base_claim.to_hex()),
+        format!(
+            "/worlds/{other_name}/claims/{}",
+            fixture.other_claim.to_hex()
+        ),
+        format!(
+            "/worlds/{third_name}/claims/{}",
+            fixture.third_claim.to_hex()
+        ),
+    ];
+    let owner_lane = fixture
+        .vault
+        .scoped_read(fixture.owner_key)
+        .recorded_lane()
+        .expect("owner record lane");
+    let owner_tree = owner_lane.graph_fs(GraphFsOptions::default());
+    let agent_lane = fixture
+        .vault
+        .scoped_read(fixture.agent_key)
+        .recorded_lane()
+        .expect("agent record lane");
+    let agent_tree = agent_lane.graph_fs(GraphFsOptions::default());
+    for (index, path) in paths.iter().enumerate() {
+        let owner_read = owner_tree.read_file(path).expect("owner claim read");
+        assert!(
+            owner_read.value.is_some(),
+            "actor=owner {:?}; expected readable name={path}; seen none",
+            fixture.owner,
+        );
+        let agent_read = agent_tree.read_file(path).expect("agent claim read");
+        if index < 2 {
+            assert_eq!(
+                agent_read.value, owner_read.value,
+                "actor=agent {:?}; expected name={path} to read back the owner's row; seen {agent_read:?}",
+                fixture.agent,
+            );
+        } else {
+            assert!(
+                agent_read.value.is_none(),
+                "actor=agent {:?}; expected name={path} withheld; seen {agent_read:?}",
+                fixture.agent,
+            );
+        }
+    }
 }
