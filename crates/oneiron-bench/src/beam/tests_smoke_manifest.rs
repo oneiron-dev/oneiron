@@ -199,7 +199,8 @@ neighbors:
             offline_amortized_cost: CostComponentInput::default(),
         };
 
-        let pack = super::super::arms::configured_context_pack_builder(&vault, &case)
+        // The case carries no query embedding, so the arm passes no query vector.
+        let pack = super::super::arms::configured_context_pack_builder(&vault, &case, None)
             .run()
             .expect("a pack");
 
