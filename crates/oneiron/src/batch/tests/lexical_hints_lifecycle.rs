@@ -62,10 +62,10 @@ fn claim_candidate_lexical_hints_write_read_and_search_source_claim() -> Result<
     assert_eq!(hint_claims.len(), 2);
     let mut stored_queries = Vec::new();
     for hint_claim in &hint_claims {
+        // 24ce6480969 (#6035 FIX 9597): hint ids are derived, not prefixed.
         assert!(
-            hint_claim
-                .as_bytes()
-                .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+            hint_claim.has_derived_stamp(),
+            "lexical hint side claims carry derived ids"
         );
         assert!(
             !has_pending_embedding_marker(&vault, hint_claim)?,
@@ -80,6 +80,11 @@ fn claim_candidate_lexical_hints_write_read_and_search_source_claim() -> Result<
         assert!(stored.evidence.is_some());
         let value = crate::claim::decode_lexical_query_hint_value(&stored.value)?;
         assert_eq!(value.target, claim);
+        assert_eq!(
+            *hint_claim,
+            lexical_query_hint_claim_id(&claim, &value.query)?,
+            "a hint id is derived from its target and normalized query"
+        );
         stored_queries.push(value.query);
     }
     stored_queries.sort();
@@ -413,10 +418,12 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
     raw[ENTITY_ID_LEN - 1] &= 0x7F;
     let hint =
         EntityId::from_bytes(raw).map_err(|_| Error::InvariantViolation("invalid test id"))?;
-    assert!(
-        !hint
-            .as_bytes()
-            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    // 24ce6480969 (#6035 FIX 9597): the prefix refusal is gone, but the
+    // expected-id rule still refuses a well-formed hint under any other id.
+    assert_ne!(
+        hint,
+        lexical_query_hint_claim_id(&target, "non lh id hint")?,
+        "the fixture id must not be the derived hint id"
     );
     let mut body = ClaimBody::new(
         crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
@@ -433,7 +440,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         .batch()
         .put(&hint, ENTITY_TYPE_CLAIM, test_time_range(10, 10), 11, &data)
         .commit()
-        .expect_err("lexical.query_hint records must live under derived LH ids");
+        .expect_err("lexical.query_hint records must live under their derived id");
     assert_matches!(err, Error::InvalidClaimBody(_));
     assert!(vault.get_claim(&hint)?.is_none());
     Ok(())
