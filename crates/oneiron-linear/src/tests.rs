@@ -339,6 +339,22 @@ fn grant_linear_effects(vault: &oneiron::Vault, scheduler: EntityId, writer: Ent
             1,
         )
         .expect("install policy");
+    // The TASK writer also needs owner consent; policy permission alone does not opt it in.
+    vault
+        .mint_standing_outbound_grant(
+            &owner,
+            EntityId::now(),
+            &oneiron::genui::GrantMintIntent {
+                principal_ref: writer.to_hex(),
+                origin_component_id: "linear-egress-test".into(),
+                origin_action_id: "escalate_always_this_verb_class".into(),
+                origin_receipt_ref: None,
+                scope: oneiron::genui::GrantMintIntentScope::VerbClass {
+                    verb_class: "linear_issue_create".into(),
+                },
+            },
+        )
+        .expect("writer consent");
 }
 
 fn linear_task(
