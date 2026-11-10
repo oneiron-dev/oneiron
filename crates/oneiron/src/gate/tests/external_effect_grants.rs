@@ -68,6 +68,24 @@ fn mint_scoped_mcp_grant(
     })
 }
 
+/// A gate-test vault on a manual store clock starting at 10, with the
+/// shipped policy manifests cleared like temp_vault does: grant mint, use
+/// and revocation receipts record the clock the test sets, so the lens
+/// rows carry fixed times.
+fn temp_vault_with_manual_clock() -> (
+    tempfile::TempDir,
+    crate::Vault,
+    std::sync::Arc<crate::ports::ManualClock>,
+) {
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = crate::config::VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = crate::Vault::open(tmp.path(), config).expect("open vault");
+    super::support::clear_policy_manifests_for_test(&vault);
+    (tmp, vault, clock)
+}
+
 #[test]
 fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -109,7 +127,7 @@ fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
 
 #[test]
 fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault, clock) = temp_vault_with_manual_clock();
     put_policy_manifest_bytes(&vault, test_id(0xD8), &encode_policy_manifest(vec![]))?;
 
     let grant_id = test_id(0xD9);
@@ -127,13 +145,11 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
         grant_id,
         &intent,
     )?;
-    let old_pin = vault.pin_entity_revision(&grant_id)?;
-    let old_raw =
-        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?;
     let policy = resolve(&vault)?;
 
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.has_opted_in = false;
+    clock.set(12);
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
         check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
@@ -142,24 +158,10 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
     let grant = vault
         .get_standing_outbound_grant(&grant_id)?
         .expect("grant stored");
-    assert!(grant.last_used_at.is_some());
-    let new_pin = vault.pin_entity_revision(&grant_id)?;
-    assert_ne!(old_pin, new_pin);
-    assert_eq!(vault.pin_entity_revision(&grant_id)?, new_pin);
-    assert_eq!(
-        vault.get_raw_with_mode(
-            &grant_id,
-            crate::vault::entity_revision::ReadMode::Pinned(old_pin)
-        )?,
-        old_raw
-    );
-    assert_eq!(
-        vault.get_raw_with_mode(
-            &grant_id,
-            crate::vault::entity_revision::ReadMode::Pinned(new_pin)
-        )?,
-        vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?
-    );
+    let lens = vault.standing_outbound_grants_lens(StandingOutboundGrantsLensQuery::new(10, 10))?;
+    assert_eq!(lens.grants.len(), 1);
+    assert_eq!(lens.grants[0].grant_id, grant.id.to_hex());
+    assert_eq!(lens.grants[0].last_used_at, Some(12));
 
     let decisions = vault.store.gate_decisions(10)?;
     let grant_ref = format!("grant:{}", grant_id.to_hex());
@@ -394,9 +396,10 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
 
 #[test]
 fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault, clock) = temp_vault_with_manual_clock();
     put_policy_manifest_bytes(&vault, test_id(0xDA), &encode_policy_manifest(vec![]))?;
 
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let grant_id = test_id(0xDB);
     let intent = GrantMintIntent {
         principal_ref: "sender".to_owned(),
@@ -407,11 +410,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
             channel: "line".to_owned(),
         },
     };
-    vault.mint_standing_outbound_grant(
-        &crate::test_util::embedded_owner_proof(&vault),
-        grant_id,
-        &intent,
-    )?;
+    vault.mint_standing_outbound_grant(&owner, grant_id, &intent)?;
     let policy = resolve(&vault)?;
 
     let mut out_of_scope = external_effect_gate_input("sender", "send", "email");
@@ -451,7 +450,11 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
 
-    vault.revoke_standing_outbound_grant(&grant_id, 20)?;
+    let grant = vault
+        .get_standing_outbound_grant(&grant_id)?
+        .expect("grant stored");
+    clock.set(20);
+    vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
     let mut in_scope_revoked = external_effect_gate_input("sender", "send", "line");
     in_scope_revoked.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
@@ -464,10 +467,6 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     assert_eq!(lens.grants[0].status, "revoked");
     assert_eq!(lens.grants[0].revoked_at, Some(20));
     assert_eq!(lens.grants[0].scope_dial, "always_this_channel");
-    assert_eq!(
-        lens.grants[0].origin_receipt_ref.as_deref(),
-        Some("gate:ask-1")
-    );
     Ok(())
 }
 

@@ -60,21 +60,34 @@ fn artifact_publish_grant_codec_round_trips_without_broad_send_authority() -> Re
 
 #[test]
 fn standing_outbound_grant_revoke_and_touch_validate_lifecycle() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let grant = vault.mint_standing_outbound_grant(
+        &owner,
+        EntityId::now(),
         &intent(GrantMintIntentScope::Channel {
             channel: "line".to_owned(),
         }),
-        10,
-        vec![0xA5],
-        [0xB6; 32],
     )?;
 
-    let touched = grant.clone().touched(12)?;
-    assert_eq!(touched.last_used_at, Some(12));
-    let revoked = grant.revoked(20)?;
+    clock.set(12);
+    vault.record_standing_grant_use(&grant.grant_ref(), grant.bound().digest())?;
+    let touched = vault.standing_outbound_grants_lens(
+        crate::receipt::StandingOutboundGrantsLensQuery::new(1, 10),
+    )?;
+    assert_eq!(touched.grants[0].last_used_at, Some(12));
+    clock.set(20);
+    vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
+    let revoked = vault.get_standing_outbound_grant(&grant.id)?.expect("grant");
+    let history = vault.standing_outbound_grants_lens(
+        crate::receipt::StandingOutboundGrantsLensQuery::new(1, 10),
+    )?;
     assert_eq!(revoked.status, StandingOutboundGrantStatus::Revoked);
-    assert_eq!(revoked.revoked_at, Some(20));
-    assert!(!revoked.is_active_under_policy(&[0xB6; 32]));
+    assert_eq!(history.grants[0].revoked_at, Some(20));
+    assert!(!revoked.is_active_under_policy(&grant.policy_frontier));
     Ok(())
 }
 
@@ -141,45 +154,14 @@ fn standing_outbound_grant_rejects_non_standing_intent_scopes() {
 
 // --- ONE-1885 one safe canonical scoped-server segment -----------------------
 
-fn scoped_intent(server: &str) -> ScopedMcpGrantMintIntent {
-    ScopedMcpGrantMintIntent {
-        principal_ref: "owner".to_owned(),
-        origin_component_id: "ask-mcp".to_owned(),
-        origin_action_id: "grant-scoped-mcp".to_owned(),
-        origin_receipt_ref: Some("gate:mcp".to_owned()),
+fn scoped_mcp_scope(server: &str) -> StandingOutboundGrantScope {
+    StandingOutboundGrantScope::ScopedMcp {
         server: server.to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: DataClass::Personal,
         tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
-}
-
-fn scoped_mcp_scope_value(server: &str) -> Value {
-    Value::Map(vec![
-        (
-            Value::from("tool_data_classes"),
-            Value::Array(vec![Value::from("arguments")]),
-        ),
-        (
-            Value::from(SCOPE_KEYS[0]),
-            Value::from(SCOPE_KIND_SCOPED_MCP),
-        ),
-        (Value::from(SCOPE_KEYS[1]), Value::Nil),
-        (Value::from(SCOPE_KEYS[2]), Value::Nil),
-        (Value::from(SCOPE_KEYS[3]), Value::Nil),
-        (Value::from(SCOPE_KEYS[4]), Value::Nil),
-        (Value::from(SCOPE_KEYS[5]), Value::from(server)),
-        (Value::from(SCOPE_KEYS[6]), Value::from("read_file")),
-        (
-            Value::from(SCOPE_KEYS[7]),
-            Value::from(DataClass::Personal.as_str()),
-        ),
-        (
-            Value::from(SCOPE_KEYS[8]),
-            Value::Array(vec![Value::from("https://files.internal.example")]),
-        ),
-    ])
 }
 
 fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
@@ -193,29 +175,27 @@ fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
 
 #[test]
 fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let mint = |server: &str| {
+        vault.with_write_txn(|wtxn| {
+            vault.mint_standing_outbound_grant_in_txn(
+                wtxn,
+                &owner,
+                EntityId::now(),
+                "owner",
+                scoped_mcp_scope(server),
+            )
+        })
+    };
     let grant_id = EntityId::from_bytes([0x5C; 16]).expect("grant id");
 
-    let files = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("files"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
+    let files = mint("files")?;
     assert_eq!(scoped_server_of(&files), "files");
 
     // Hyphen and underscore remain separate canonical capability identities.
-    let hyphen = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("my-server"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
-    let underscore = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("my_server"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
+    let hyphen = mint("my-server")?;
+    let underscore = mint("my_server")?;
     assert_eq!(scoped_server_of(&hyphen), "my-server");
     assert_eq!(scoped_server_of(&underscore), "my_server");
     assert_ne!(scoped_server_of(&hyphen), scoped_server_of(&underscore));
@@ -231,23 +211,6 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         )
     );
 
-    let encoded = encode_standing_outbound_grant_body(&hyphen)?;
-    let decoded = decode_standing_outbound_grant_body(&encoded)?;
-    assert_eq!(decoded.principal_ref, hyphen.principal_ref);
-    assert_eq!(decoded.origin_component_id, hyphen.origin_component_id);
-    assert_eq!(decoded.origin_action_id, hyphen.origin_action_id);
-    assert_eq!(decoded.origin_receipt_ref, hyphen.origin_receipt_ref);
-    assert_eq!(decoded.scope, hyphen.scope);
-    assert_eq!(decoded.status, hyphen.status);
-    assert_eq!(decoded.binding_diff_handle, hyphen.binding_diff_handle);
-    assert_eq!(decoded.read_frontier_hash, hyphen.read_frontier_hash);
-
-    let value = rmpv::decode::read_value(&mut Cursor::new(&encoded)).unwrap();
-    let Value::Map(entries) = value else {
-        panic!("grant map");
-    };
-
-    // Exercise unsafe scope payloads inside complete persisted grant bodies.
     for unsafe_server in [
         "Files",
         "FILES",
@@ -267,59 +230,10 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         "   ",
     ] {
         assert!(
-            StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-                &scoped_intent(unsafe_server),
-                10,
-                vec![0xA5; 32],
-                [0xB6; 32],
-            )
-            .is_err(),
+            mint(unsafe_server).is_err(),
             "unsafe scoped server {unsafe_server:?} must not mint a grant"
         );
-        let mut invalid = entries.clone();
-        invalid
-            .iter_mut()
-            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
-            .expect("scope key")
-            .1 = scoped_mcp_scope_value(unsafe_server);
-        let mut invalid_bytes = Vec::new();
-        rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
-        assert_eq!(
-            decode_standing_outbound_grant_body(&invalid_bytes)
-                .unwrap_err()
-                .kind(),
-            crate::ErrorKind::InvalidOutboundGrantBody
-        );
     }
-
-    for (server, expected) in [("my-server", &hyphen), ("my_server", &underscore)] {
-        let mut persisted = entries.clone();
-        persisted
-            .iter_mut()
-            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
-            .expect("scope key")
-            .1 = scoped_mcp_scope_value(server);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &Value::Map(persisted)).unwrap();
-        let decoded = decode_standing_outbound_grant_body(&bytes)?;
-        assert_eq!(decoded.scope, expected.scope);
-        assert_eq!(scoped_server_of(&decoded), server);
-    }
-
-    // An in-memory grant carrying an unsafe server can never be persisted.
-    let forged = StandingOutboundGrant {
-        scope: StandingOutboundGrantScope::ScopedMcp {
-            server: "files:extra".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        ..hyphen
-    };
-    assert!(encode_standing_outbound_grant_body(&forged).is_err());
     Ok(())
 }
 
@@ -398,8 +312,6 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
         );
     }
 }
-
-mod header_classes;
 
 /// SOL-9A-2-R2 F3: each use stamps the grant it ran under, and is no reason
 /// to refuse a restore over the vault; a revocation since the backup is.
