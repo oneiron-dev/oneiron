@@ -570,6 +570,30 @@ pub(super) fn next_ref_in_txn(
     Ok(next.and_then(|((named, turn), ())| (named == *entity).then_some(turn)))
 }
 
+/// Every MESSAGE a saved mention naming `entity` is in, across every turn
+/// whose tag set names it.
+pub(super) fn naming_messages_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let mut messages = BTreeSet::new();
+    let mut after = None;
+    while let Some(turn) = next_ref_in_txn(store, txn, entity, after.as_ref())? {
+        after = Some(turn);
+        let Some(tags) = TAG_SET.get(store, txn, &turn)? else {
+            continue;
+        };
+        messages.extend(
+            tags.mentions
+                .iter()
+                .filter(|mention| mention.link.entities().contains(entity))
+                .map(|mention| mention.message),
+        );
+    }
+    Ok(messages)
+}
+
 /// The turns whose tag sets name `entity`.
 pub(super) fn refs_in_txn(
     store: &Store,

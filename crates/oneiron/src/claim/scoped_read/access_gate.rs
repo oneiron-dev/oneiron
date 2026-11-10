@@ -492,6 +492,74 @@ pub(crate) fn relationship_read(
     relationship_read_keyed(store, txn, id, raw, false)
 }
 
+/// The body key an identity row (a kind a tag can mint) keeps the audience
+/// of the words that named it under, when a confirmed provisional entity was
+/// named only in relationship-scoped or private MESSAGEs (OPUS-LEAKS): a map
+/// of `rel` (a relationship scope, as a claim's `scopeRelationshipId`) and
+/// `private`.
+pub(crate) const IDENTITY_SOURCE_AUDIENCE_KEY: &str = "source_audience";
+
+/// [`relationship_read_keyed`] for an identity row. A row whose body names
+/// no source audience is decided readable, as every identity row was. One
+/// that names it is gated on it as a MESSAGE is on its own `rel` and
+/// `scope`; a malformed or repeated one is refused.
+fn identity_relationship_read<S>(
+    store: &S,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    kind: u8,
+    bytes: &[u8],
+) -> Result<RelationshipRead>
+where
+    S: crate::store::ManifestDbs + crate::federation::record_scope::MachineHistoryScope,
+{
+    let mut cursor = std::io::Cursor::new(bytes);
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(RelationshipRead::Decided(true));
+    };
+    let mut audiences = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(IDENTITY_SOURCE_AUDIENCE_KEY))
+        .map(|(_, value)| value);
+    let Some(audience) = audiences.next() else {
+        return Ok(RelationshipRead::Decided(true));
+    };
+    if audiences.next().is_some() {
+        return Ok(RelationshipRead::Decided(false));
+    }
+    let Some(audience) = audience.as_map() else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    let field = |name: &str| {
+        let mut found = audience
+            .iter()
+            .filter(move |(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value);
+        match (found.next(), found.next()) {
+            (Some(value), None) => Some(value),
+            _ => None,
+        }
+    };
+    let (Some(rel), Some(private)) = (field("rel"), field("private").and_then(rmpv::Value::as_bool))
+    else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    let Ok(space) = crate::write_envelope::claim_body::decode_relationship_scope(rel) else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    let Some(record) = crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?
+    else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    Ok(RelationshipRead::Gated {
+        kind,
+        space,
+        private,
+        record,
+    })
+}
+
 /// [`relationship_read`] for a key that may open unscoped rows: with
 /// `unscoped_rows_open` (a vault-internal reader,
 /// `require_relationship_grants`), a MESSAGE or SUMMARY that names neither a
@@ -534,6 +602,9 @@ where
             return Ok(RelationshipRead::Decided(false));
         }
         return Ok(RelationshipRead::claim(&decode_claim_body(bytes, true)?));
+    }
+    if crate::tagging::label_kind_admitted(kind) {
+        return identity_relationship_read(store, txn, id, raw, kind, bytes);
     }
     if !matches!(kind, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY) {
         return Ok(RelationshipRead::Decided(true));
