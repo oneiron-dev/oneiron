@@ -10,10 +10,10 @@
         "revision": "437433b99f702078631058579c9fd89e41e5b6cf0ba0efb6e32cf24be74e0a17"
       },
       "licence": "Apache-2.0",
-      "sha256": "a0e77502951a666a8352dcdcba52ef1fb38d1f11b826873e5657f9eaff5c51d3",
+      "sha256": "8e36ee3d438b2fc4b0e1d78f4a79815745fcbc351ec0ade1d1a7430fcdd54327",
       "expectedFacts": {
         "plannedFiles": 29,
-        "plannedTests": 261,
+        "plannedTests": 267,
         "publicRegistryRows": 443,
         "excludedRegistryRows": 3
       },
@@ -50,6 +50,12 @@
         "PRIVACY-06",
         "PRIVACY-07",
         "PRIVACY-08",
+        "MUSE-LABEL-01",
+        "MUSE-LABEL-02",
+        "MUSE-LABEL-03",
+        "MUSE-LABEL-04",
+        "MUSE-LABEL-05",
+        "MUSE-LABEL-06",
         "PORTABILITY-01",
         "PORTABILITY-02",
         "PORTABILITY-03",

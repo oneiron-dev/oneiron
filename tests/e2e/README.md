@@ -7,10 +7,11 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 261 IDs, 443 public registry rows, and three explicit
+The pinned plan has 29 files, 267 IDs, 443 public registry rows, and three explicit
 excluded rows. The owner plan's 242 IDs plus MUSE-IDENT-01..08 in `authority.test.ts`
-(ruling E2E2-MUSE-PLAN-IDS = A) and MUSE-GATE-01..11 in `gate.test.ts` (Engine task,
-10 Nov), which cite PROMISE-REGISTER ids in `promises`. The
+(ruling E2E2-MUSE-PLAN-IDS = A), MUSE-GATE-01..11 in `gate.test.ts` and
+MUSE-LABEL-01..06 in `privacy.test.ts` (Engine, 10 Nov), which cite PROMISE-REGISTER
+ids in `promises`. The
 runner takes the file and ID counts from the plan pin's `expectedFacts` in
 `fixtures/manifest.json`; adding IDs means re-pinning the plan with new counts. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while

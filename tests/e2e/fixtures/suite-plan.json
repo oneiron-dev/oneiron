@@ -48,6 +48,19 @@
         "file": "gate.test.ts",
         "ruling": "Engine TASK 2026-11-10 09:33 JST (Muse Wonder gate cases)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-LABEL-01",
+          "MUSE-LABEL-02",
+          "MUSE-LABEL-03",
+          "MUSE-LABEL-04",
+          "MUSE-LABEL-05",
+          "MUSE-LABEL-06"
+        ],
+        "file": "privacy.test.ts",
+        "ruling": "Engine NOTE 2026-11-10 09:56 JST (Muse Wonder label cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
       }
     ]
   },
@@ -442,7 +455,7 @@
       "file": "privacy.test.ts",
       "area": "Deletion and privacy",
       "slots": 1,
-      "estimatedSeconds": 55,
+      "estimatedSeconds": 100,
       "tests": [
         {
           "id": "PRIVACY-01",
@@ -552,6 +565,94 @@
           "source": [
             "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
             "/registry/oneiron/#OF-500"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-01",
+          "name": "A claim write missing any of its four scope keys is rejected and lands nothing, and a complete claim keeps its birth facet through read-backs, an agent grant, wrong-actor attempts and a restart",
+          "rows": [],
+          "source": [
+            "/oneiron/identity/oneiron-arch-0022-identity-world-model-v1/#scoping-matrix"
+          ],
+          "promises": [
+            "P-LABEL-001",
+            "P-LABEL-004",
+            "P-LABEL-007"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-02",
+          "name": "Strict facet recall stays in the mask, a facet-limited agent reads only its facet, and the owner reads every facet",
+          "rows": [],
+          "source": [
+            "/oneiron/gate/one-1592-ildf2-ratify/#pin-notes",
+            "/oneiron/identity/oneiron-arch-0022-identity-world-model-v1/#facet-read-ruling",
+            "/oneiron/identity/oneiron-arch-0022-identity-world-model-v1/#scoping-matrix"
+          ],
+          "promises": [
+            "P-LABEL-002",
+            "P-LABEL-003",
+            "P-LABEL-008",
+            "P-LABEL-011"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-03",
+          "name": "An unstamped claim citing an owner-only turn stays out of public-only recall, hydrate and scoped export",
+          "rows": [],
+          "source": [
+            "/oneiron/gate/one-1592-ildf2-ratify/#pins",
+            "/oneiron/gate/one-1592-ildf2-ratify/#resolver-built"
+          ],
+          "promises": [
+            "P-LABEL-013",
+            "P-LABEL-014",
+            "P-LABEL-022"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-04",
+          "name": "A guest federation grant stays inside its named-world read/propose ceiling and a revoked guest grant mints no new slip",
+          "rows": [],
+          "source": [
+            "/oneiron/identity/#federation-boundary"
+          ],
+          "promises": [
+            "P-LABEL-025"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-05",
+          "name": "Widening needs the owner: a facet fork is owner-only, never restamps the original, and is ledgered",
+          "rows": [],
+          "source": [
+            "/oneiron/gate/one-1592-ildf2-ratify/#pins",
+            "/oneiron/identity/oneiron-arch-0022-identity-world-model-v1/#scoping-matrix"
+          ],
+          "promises": [
+            "P-LABEL-006",
+            "P-LABEL-015",
+            "P-LABEL-016"
+          ]
+        },
+        {
+          "id": "MUSE-LABEL-06",
+          "name": "waits on typed room presence/identification reporting, local contact-clearance set/read, room-scoped disclosure assembly, roster-barrier and owner-credential disclosure override doors",
+          "rows": [],
+          "source": [
+            "/oneiron/gate/one-1592-ildf2-ratify/#owner-presence-built",
+            "/oneiron/gate/one-1592-ildf2-ratify/#pins",
+            "/oneiron/gate/one-1592-ildf2-ratify/#rule"
+          ],
+          "promises": [
+            "P-LABEL-009",
+            "P-LABEL-010",
+            "P-LABEL-012",
+            "P-LABEL-017",
+            "P-LABEL-018",
+            "P-LABEL-019",
+            "P-LABEL-020",
+            "P-LABEL-021"
           ]
         }
       ]
