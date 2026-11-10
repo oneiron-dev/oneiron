@@ -213,6 +213,7 @@ mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
+mod snapshot_read_settings_doors;
 mod standing_doors;
 mod steward_doors;
 // Untangle 6.6c: who reads engine substrate rows through a host door.
