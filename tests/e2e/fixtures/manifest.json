@@ -10,10 +10,10 @@
         "revision": "437433b99f702078631058579c9fd89e41e5b6cf0ba0efb6e32cf24be74e0a17"
       },
       "licence": "Apache-2.0",
-      "sha256": "78f68656d5f9a10b8d9f91035e7154d959202d81eb9ab1ed5e2438ba3ac32106",
+      "sha256": "3a8bf7231254d4b0f54ee36dee194fc022a08c00437913d8db7ebdc88ed176ed",
       "expectedFacts": {
         "plannedFiles": 29,
-        "plannedTests": 242,
+        "plannedTests": 250,
         "publicRegistryRows": 443,
         "excludedRegistryRows": 3
       },
@@ -96,6 +96,14 @@
         "RETRIEVAL-10",
         "RETRIEVAL-11",
         "RETRIEVAL-12",
+        "MUSE-RECALL-01",
+        "MUSE-RECALL-02",
+        "MUSE-RECALL-03",
+        "MUSE-RECALL-04",
+        "MUSE-RECALL-05",
+        "MUSE-RECALL-06",
+        "MUSE-RECALL-07",
+        "MUSE-RECALL-08",
         "EMBEDDINGS-01",
         "EMBEDDINGS-02",
         "EMBEDDINGS-03",
