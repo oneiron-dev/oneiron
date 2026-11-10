@@ -324,6 +324,8 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
 ///
 /// Taking the rows out never fails on a shape the policy decode accepts, so
 /// a pack that decodes is never read as it was written (review of #6913).
+/// Putting them back holds on the `Generated` shorthand too
+/// ([`list_generated_shorthand`]).
 ///
 /// # Errors
 ///
@@ -335,11 +337,15 @@ pub(crate) fn body_with_steward_rows(
 ) -> Result<Option<Vec<u8>>> {
     let mut entries = decode_live(live)?;
     let stripped = strip_actor_rows(&mut entries, actor_ref);
+    let derive = verbs.contains(crate::federation::grant_scope::STEWARD_DERIVE_VERB);
+    if derive {
+        list_generated_shorthand(&mut entries);
+    }
     let changed = match push_dreamer_rows(
         &mut entries,
         actor_ref,
         verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB),
-        verbs.contains(crate::federation::grant_scope::STEWARD_DERIVE_VERB),
+        derive,
     ) {
         Ok(pushed) => stripped | pushed,
         // A list that will not take the grant's rows leaves the pack with
@@ -354,6 +360,37 @@ pub(crate) fn body_with_steward_rows(
         return Ok(None);
     }
     encode_live(entries).map(Some)
+}
+
+/// Writes a lone `Generated` shorthand row (`false`, a band number or a band
+/// name: one class-wide row, bound to no writer) as a one-row list, so the
+/// grant's permit can sit beside it as beside any other row. The decode reads
+/// that pair as it reads any class-wide row beside a bound one: no Auto for
+/// either. So the pack's own "never lands by itself" stands under a grant with
+/// `derive`, and the grant's read row stays (review of #6913, round 2: the
+/// push refused the shorthand, and the fallback read the pack with every row
+/// of the agent out, its read row with them). Only the fold's reading does
+/// this; the owner's grant on a vault no host has opened still refuses such a
+/// pack and writes nothing.
+fn list_generated_shorthand(entries: &mut [(Value, Value)]) {
+    let Some((_, Value::Map(sources))) = entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(POLICY_SOURCE_TRUST_KEY))
+    else {
+        return;
+    };
+    let Some((_, generated)) = sources
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(ClaimSource::Generated.as_str()))
+    else {
+        return;
+    };
+    if matches!(
+        generated,
+        Value::Boolean(false) | Value::Integer(_) | Value::String(_)
+    ) {
+        *generated = Value::Array(vec![std::mem::replace(generated, Value::Nil)]);
+    }
 }
 
 /// Whether the live policy holds the rows of `actor_ref` (untangle 6.3, the
