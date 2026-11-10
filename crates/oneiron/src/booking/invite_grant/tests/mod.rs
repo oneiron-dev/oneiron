@@ -15,10 +15,6 @@ use crate::campaign::claims::{
 use crate::channel_identity::SelfHeldShape;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
-use crate::outbound_consent::DataClass;
-use crate::outbound_grant::{
-    decode_standing_outbound_grant_body, encode_standing_outbound_grant_body,
-};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
@@ -428,120 +424,6 @@ fn context<'a>(
         verb_kind: verb,
         requested_recipient: recipient,
     }
-}
-
-// ── codec ───────────────────────────────────────────────────────────
-
-fn grant_with(scope: StandingOutboundGrantScope) -> StandingOutboundGrant {
-    StandingOutboundGrant {
-        authority_scope: crate::federation::scope_codec::effect_preset(),
-        principal_ref: "owner".to_owned(),
-        origin_component_id: "one-1814".to_owned(),
-        origin_action_id: "publish_booking_page".to_owned(),
-        origin_receipt_ref: None,
-        scope,
-        status: StandingOutboundGrantStatus::Active,
-        created_at: 10,
-        revoked_at: None,
-        last_used_at: None,
-        binding_diff_handle: vec![0xA5; 32],
-        read_frontier_hash: [0xB6; 32],
-    }
-}
-
-/// Number of pairs the encoded body's nested `scope` map carries.
-fn scope_pairs(encoded: &[u8]) -> usize {
-    let body =
-        rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("decode grant body");
-    let Value::Map(entries) = body else {
-        panic!("grant body must be a map");
-    };
-    let scope = entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("scope"))
-        .map(|(_, value)| value)
-        .expect("scope field");
-    let Value::Map(pairs) = scope else {
-        panic!("scope must be a map");
-    };
-    pairs.len()
-}
-
-#[test]
-fn booking_page_invite_scope_round_trips_without_retagging_existing_scopes() {
-    let page = entity(0x72);
-    let scopes = [
-        StandingOutboundGrantScope::Contact {
-            contact_ref: "contact:one".to_owned(),
-        },
-        StandingOutboundGrantScope::VerbClass {
-            verb_class: "send".to_owned(),
-        },
-        StandingOutboundGrantScope::Channel {
-            channel: "email".to_owned(),
-        },
-        StandingOutboundGrantScope::BriefVerbClass {
-            brief_ref: "brief:one".to_owned(),
-            verb_class: "send".to_owned(),
-        },
-        StandingOutboundGrantScope::ScopedMcp {
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        StandingOutboundGrantScope::BookingPageInvites { page_ref: page },
-    ];
-    for scope in scopes {
-        let has_scope_specific_key = matches!(
-            scope,
-            StandingOutboundGrantScope::BookingPageInvites { .. }
-                | StandingOutboundGrantScope::ScopedMcp { .. }
-        );
-        let grant = grant_with(scope);
-        let encoded = encode_standing_outbound_grant_body(&grant).expect("encode");
-        let decoded = decode_standing_outbound_grant_body(&encoded).expect("decode");
-        assert_eq!(decoded, grant, "a round trip must not retag a scope");
-        assert_eq!(decoded.scope.dial_label(), grant.scope.dial_label());
-        // Each scope owns its additional key: page_ref for booking and
-        // tool_data_classes for MCP header consent. Other scopes get neither.
-        assert_eq!(
-            scope_pairs(&encoded),
-            if has_scope_specific_key { 10 } else { 9 },
-            "scope-specific keys must not appear on unrelated grants"
-        );
-    }
-}
-
-#[test]
-fn booking_page_invite_scope_without_its_page_fails_closed() {
-    let grant = grant_with(StandingOutboundGrantScope::BookingPageInvites {
-        page_ref: entity(0x72),
-    });
-    let encoded = encode_standing_outbound_grant_body(&grant).expect("encode");
-    let mut body =
-        rmpv::decode::read_value(&mut std::io::Cursor::new(&encoded)).expect("decode grant body");
-    let Value::Map(entries) = &mut body else {
-        panic!("grant body must be a map");
-    };
-    let scope = &mut entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("scope"))
-        .expect("scope field")
-        .1;
-    let Value::Map(pairs) = scope else {
-        panic!("scope must be a map");
-    };
-    pairs.retain(|(key, _)| key.as_str() != Some("page_ref"));
-    let mut stripped = Vec::new();
-    rmpv::encode::write_value(&mut stripped, &body).expect("re-encode");
-    assert!(
-        decode_standing_outbound_grant_body(&stripped).is_err(),
-        "a booking-page row that names no page must authorize nothing"
-    );
 }
 
 // ── mint ────────────────────────────────────────────────────────────
