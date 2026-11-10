@@ -30,6 +30,24 @@
         "file": "authority.test.ts",
         "ruling": "E2E2-MUSE-PLAN-IDS = A (Engine TASK 2026-11-10 09:02 JST)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-GATE-01",
+          "MUSE-GATE-02",
+          "MUSE-GATE-03",
+          "MUSE-GATE-04",
+          "MUSE-GATE-05",
+          "MUSE-GATE-06",
+          "MUSE-GATE-07",
+          "MUSE-GATE-08",
+          "MUSE-GATE-09",
+          "MUSE-GATE-10",
+          "MUSE-GATE-11"
+        ],
+        "file": "gate.test.ts",
+        "ruling": "Engine TASK 2026-11-10 09:33 JST (Muse Wonder gate cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
       }
     ]
   },
@@ -662,7 +680,7 @@
       "file": "gate.test.ts",
       "area": "Authority and consent",
       "slots": 1,
-      "estimatedSeconds": 50,
+      "estimatedSeconds": 160,
       "tests": [
         {
           "id": "GATE-01",
@@ -818,6 +836,156 @@
             "/registry/oneiron/#OF-294",
             "/registry/oneiron/#OF-487",
             "/registry/oneiron/#OF-520"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-01",
+          "name": "A standing action Grant lets a bounded outbound schedule run without a fresh ask until the owner revokes it",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model"
+          ],
+          "promises": [
+            "P-GATE-002",
+            "P-GATE-003",
+            "P-GATE-004",
+            "P-GATE-010"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-02",
+          "name": "A reveal confirmation offers approve once, approve-and-stop-asking and deny, and each does only what it says",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model",
+            "/oneiron/gate/oneiron-arch-0072-foreign-actor-admission-grants-v1/#living"
+          ],
+          "promises": [
+            "P-GATE-007",
+            "P-GATE-008",
+            "P-GATE-009"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-03",
+          "name": "a reversible MCP claim write runs Auto inside an owner-granted ceiling and source permit, parks as a consent ask when proposed-only, outside a read-only slip, and after the grant is revoked",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model"
+          ],
+          "promises": [
+            "P-GATE-001",
+            "P-GATE-005"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-04",
+          "name": "A bypass is off by default, only the owner creates it from its scoped warning, and the live bypass reads back active until revoked",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model",
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#widen-world-floor"
+          ],
+          "promises": [
+            "P-GATE-011",
+            "P-GATE-012",
+            "P-GATE-013",
+            "P-GATE-014"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-05",
+          "name": "A proposer cannot settle or grant its own proposal, and a non-holder policy change stays a proposal",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0005-policy-residence/#policy-change",
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#proposals"
+          ],
+          "promises": [
+            "P-GATE-015",
+            "P-GATE-016",
+            "P-GATE-017",
+            "P-GATE-028"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-06",
+          "name": "A connector draft grants nothing until the owner accepts it, and a widened connector asks again while carried rows keep their ruling",
+          "rows": [],
+          "source": [
+            "/oneiron/gate/oneiron-arch-0072-foreign-actor-admission-grants-v1/#drafter",
+            "/oneiron/gate/oneiron-arch-0072-foreign-actor-admission-grants-v1/#drift"
+          ],
+          "promises": [
+            "P-GATE-018",
+            "P-GATE-019"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-07",
+          "name": "A guest grant encodes only read and propose, and an empty ceiling exports nothing while an empty selector narrows nothing",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0005-policy-residence/#scope",
+            "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/#guest-grants"
+          ],
+          "promises": [
+            "P-GATE-020",
+            "P-GATE-022"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-08",
+          "name": "Generated and inferred input cannot raise authority or silently replace what the user stated",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#content-check",
+            "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model"
+          ],
+          "promises": [
+            "P-GATE-006",
+            "P-GATE-023",
+            "P-GATE-024",
+            "P-GATE-025"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-09",
+          "name": "waits on a reader-projected ProposalOutcome read (typed level/row/role diagnostic for admitted readers, 'blocked by policy' for hidden ones) and a policy-row-answered rejection producer",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#proposals"
+          ],
+          "promises": [
+            "P-GATE-026",
+            "P-GATE-027"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-10",
+          "name": "A wire-rate threshold crossing raises a typed health question and still serves every burst write",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#registration",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#c5-title"
+          ],
+          "promises": [
+            "P-GATE-032",
+            "P-GATE-033"
+          ]
+        },
+        {
+          "id": "MUSE-GATE-11",
+          "name": "A bound secret is usable through self.use without revealing its value, and a private outbound send is allowed only with both action and disclosure standing grants",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model",
+            "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/#cross-vault"
+          ],
+          "promises": [
+            "P-GATE-029",
+            "P-GATE-030"
           ]
         }
       ]

@@ -66,7 +66,8 @@ export interface BuildManifest {
 }
 export interface PlannedTest {
   readonly id: string; readonly name: string; readonly rows: readonly string[]; readonly source: readonly string[];
-  /** PROMISE-REGISTER ids (P-<AREA>-NNN) the case proves, for cases added after the owner plan. */
+  /** PROMISE-REGISTER ids (P-<AREA>-NNN) the case is written to prove, for cases added after the owner plan.
+   * An id the case's header says it does not prove stays out. */
   readonly promises?: readonly string[];
 }
 export interface PlannedFile {
