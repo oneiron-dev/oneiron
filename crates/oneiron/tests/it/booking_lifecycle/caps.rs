@@ -152,3 +152,46 @@ fn a_daily_cap_binds_at_confirm_and_a_move_never_charges_itself() {
     ));
     expect_confirmed(run(&fixture, &config, BookingVerbRequest::Confirm(second)));
 }
+
+/// Weekly cap 1: a Monday booking closes Tuesday too, even for a request
+/// that asks about Tuesday alone, and moving it to Tuesday is still allowed.
+#[test]
+fn a_weekly_cap_counts_the_whole_visitor_week() {
+    let fixture = Fixture::open();
+    let config = capped(None, Some(1));
+    let first = hold(&fixture, &config, b"first", hour(9));
+    let booked = expect_confirmed(run(&fixture, &config, BookingVerbRequest::Confirm(first)));
+
+    let tuesday = SolveRequest {
+        event_type: config.key.clone(),
+        window: TimeRange {
+            start: hour(24 + 9),
+            end: hour(24 + 14) - 1,
+        },
+        constraint: None,
+        visitor_tz: "UTC".to_owned(),
+    };
+    let solver = CappedSolver {
+        fixture: &fixture,
+        exclude: None,
+        config: &config,
+    };
+    assert_eq!(
+        solver.solve(&tuesday).expect("solve").slots,
+        Vec::new(),
+        "Monday's booking fills the week's one place"
+    );
+
+    expect_revision(run(
+        &fixture,
+        &config,
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token,
+            new_slot: slot(hour(24 + 10)),
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+    ));
+    assert_eq!(solver.solve(&tuesday).expect("solve").slots, Vec::new());
+}

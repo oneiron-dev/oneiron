@@ -17,16 +17,21 @@
 //!    field to travel in.
 
 use crate::common::entity as test_id;
+use oneiron::booking::config::BOOKING_EVENT_TYPE_PREDICATE;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-    booking::ActiveHoldSource, booking::BookingError, booking::BookingSolver,
-    booking::ConstraintObject, booking::DEFAULT_INTRO_DURATION_MIN, booking::DisclosureRung,
-    booking::EventDetailsRow, booking::EventRow, booking::EventTypeConfig, booking::EventTypeKey,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, booking::ActiveHoldSource, booking::BOOKING_EVENT_TYPE_META_PREFIX,
+    booking::BOOKING_EVENT_TYPE_SCHEMA_VERSION, booking::BookingError,
+    booking::BookingEventTypeClaimValue, booking::BookingSolver, booking::ConstraintObject,
+    booking::DEFAULT_INTRO_DURATION_MIN, booking::DisclosureRung, booking::EventDetailsRow,
+    booking::EventRow, booking::EventTypeConfig, booking::EventTypeKey,
     booking::HostAvailabilityConfig, booking::NoActiveHolds, booking::RoutingMode,
     booking::RungProjection, booking::SlotOracle, booking::SolveRequest, booking::SolveResult,
-    booking::SurfaceClass, booking::WeeklyWallWindow, booking::project_at_rung, booking::slot_mask,
+    booking::SurfaceClass, booking::WeeklyWallWindow, booking::encode_event_type_claim_value,
+    booking::event_type_index_key, booking::is_booking_claim_predicate, booking::project_at_rung,
+    booking::slot_mask,
 };
 use rmpv::Value;
 
@@ -179,6 +184,62 @@ fn store_event(
     }
 }
 
+/// One `booking.event_type` configuration claim, written through the same
+/// ordinary claim-candidate door a page editor would use.
+fn store_event_type_claim(
+    vault: &Vault,
+    actor: EntityId,
+    page: EntityId,
+    index: u8,
+    config: EventTypeConfig,
+) {
+    store_event_type_claim_at(
+        vault,
+        actor,
+        page,
+        index,
+        config,
+        ClaimApprovalStatus::Approved,
+    );
+}
+
+/// The same door at an explicit approval status, for the read-admission oracle.
+fn store_event_type_claim_at(
+    vault: &Vault,
+    actor: EntityId,
+    page: EntityId,
+    index: u8,
+    config: EventTypeConfig,
+    approval: ClaimApprovalStatus,
+) {
+    let value = BookingEventTypeClaimValue {
+        schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+        page_ref: page,
+        config,
+    };
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id(PAGE_SEED, index),
+            ClaimCandidate::new(
+                BOOKING_EVENT_TYPE_PREDICATE,
+                ClaimSubject::Entity(page),
+                encode_event_type_claim_value(&value).expect("encode configuration"),
+                1.0,
+            ),
+            &WriteEnvelope::new(
+                WriteActor::new(actor, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
+                approval,
+            ),
+            at(1),
+            1,
+        )
+        .commit()
+        .expect("the booking claim family passes the write door");
+}
+
 fn window(weekday: u8, start_hour: u16, end_hour: u16) -> WeeklyWallWindow {
     WeeklyWallWindow {
         weekday,
@@ -260,9 +321,11 @@ fn slot_hours(result: &SolveResult) -> Vec<u64> {
         .collect()
 }
 
+const SURVIVOR_MORNING: u64 = 9 * 60 + 30;
 const HOLD_WITNESS: u64 = 10 * 60;
 const BUSY_WITNESS: u64 = 11 * 60;
 const CONSTRAINT_WITNESS: u64 = 12 * 60;
+const SURVIVOR_AFTERNOON: u64 = 12 * 60 + 30;
 
 /// The busy-hour fixture the oracle removes candidates around.
 fn seed_busy_hour(vault: &Vault, actor: EntityId) {
@@ -346,6 +409,123 @@ fn busy_union_is_consumed_without_status_refilter() {
         "a cancelled EVENT bills no availability"
     );
     assert!(!hours.contains(&BUSY_WITNESS), "the busy hour is occupied");
+}
+
+/// PACKET_AMEND (ONE-1823, `crates/oneiron/src/gate.rs`).
+///
+/// `gate::default_policy_manifest()` resolves criticality from an allow-list of
+/// predicate prefixes and defaults everything else to `critical`. It carried a
+/// `calendar.` rule but no `booking.` one, so every booking-family claim fell to
+/// that default and was gate-pending on write — the production page-editor path
+/// for a `booking.event_type` configuration was dead, and a claim-backed solve
+/// was reachable only from a gate-free fixture vault. The fix is the one prefix
+/// rule CAL landed for `calendar.`, pinned here exactly as
+/// `tests/calendar_surface_oracle.rs` pins it there.
+#[test]
+fn booking_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
+    let (_dir, vault) = temp_vault();
+    let actor = booking_actor(&vault);
+    let page = booking_page(&vault);
+
+    // The ordinary page-editor write door, on a STOCK vault with no manifest
+    // edit: the `booking.` prefix rule resolves criticality `normal`, so the
+    // floor does not pend an approved configuration write.
+    store_event_type_claim(&vault, actor, page, 9, oracle_config());
+    let stored = vault
+        .get_claim(&claim_id(PAGE_SEED, 9))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, BOOKING_EVENT_TYPE_PREDICATE);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+
+    // ...and what the door admitted is what the solver reads: the production
+    // configuration path is live, not merely storable.
+    let calendars = vec![(
+        test_id(HOST_A_SEED),
+        vec![oneiron::CalendarSel { system: None }],
+    )];
+    let solved = BookingSolver {
+        vault: &vault,
+        page_ref: page,
+        calendars_by_host: &calendars,
+        holds: &NoActiveHolds,
+        now_utc: NOW,
+        synthetic_config: None,
+    }
+    .solve(&request(None))
+    .expect("the page claim configures the solve on a stock vault");
+    assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
+}
+
+#[test]
+fn booking_event_type_index_uses_canonical_prefix() {
+    let (_dir, vault) = temp_vault();
+    let page = booking_page(&vault);
+
+    let key = EventTypeKey("intro-call".to_owned());
+    let index_key = event_type_index_key(page, &key);
+    assert!(index_key.starts_with(BOOKING_EVENT_TYPE_META_PREFIX));
+    assert_eq!(BOOKING_EVENT_TYPE_META_PREFIX, b"booking.event_type.v1:");
+    // Both axes of `(page_ref, key)` are in the shortcut.
+    assert_ne!(index_key, event_type_index_key(test_id(0x54), &key));
+    assert_ne!(
+        index_key,
+        event_type_index_key(page, &EventTypeKey("deep-dive".to_owned()))
+    );
+
+    // Synced truth is the claim: with no node-local shortcut written at all,
+    // the configuration still resolves, exactly as it must on a replica whose
+    // claim arrived by replication and left no local index row behind.
+    let actor = booking_actor(&vault);
+    assert!(is_booking_claim_predicate(BOOKING_EVENT_TYPE_PREDICATE));
+    store_event_type_claim(&vault, actor, page, 0, oracle_config());
+
+    let calendars = vec![(
+        test_id(HOST_A_SEED),
+        vec![oneiron::CalendarSel { system: None }],
+    )];
+    let solve_from_claim = |vault: &Vault, page: EntityId| {
+        BookingSolver {
+            vault,
+            page_ref: page,
+            calendars_by_host: &calendars,
+            holds: &NoActiveHolds,
+            now_utc: NOW,
+            synthetic_config: None,
+        }
+        .solve(&request(None))
+    };
+    let solved = solve_from_claim(&vault, page).expect("the page claim configures the solve");
+    assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
+
+    // One live configuration per `(page_ref, key)`: after an update supersedes
+    // the first claim, the solve reflects the NEW hours and never the retired
+    // ones — a superseded claim is stored history, not configuration.
+    let mut narrowed = oracle_config();
+    narrowed.hosts[0].working_hours = vec![window(0, 12, 14)];
+    store_event_type_claim(&vault, actor, page, 1, narrowed);
+    vault
+        .supersede_claim(&claim_id(PAGE_SEED, 1), &claim_id(PAGE_SEED, 0), 2)
+        .expect("the update supersedes the previous configuration");
+    assert_eq!(
+        slot_hours(&solve_from_claim(&vault, page).expect("the live claim configures the solve")),
+        [CONSTRAINT_WITNESS, SURVIVOR_AFTERNOON],
+        "only the live claim's afternoon hours are offered; the retired claim's \
+         morning hours are gone"
+    );
+
+    // A claim for another event type is not this one's configuration.
+    let (_other_dir, other_vault) = temp_vault();
+    let other_actor = booking_actor(&other_vault);
+    let other_page = booking_page(&other_vault);
+    let mut other_key = oracle_config();
+    other_key.key = EventTypeKey("deep-dive".to_owned());
+    store_event_type_claim(&other_vault, other_actor, other_page, 2, other_key);
+    assert!(matches!(
+        solve_from_claim(&other_vault, other_page),
+        Err(BookingError::InvalidConfig(_))
+    ));
 }
 
 #[test]

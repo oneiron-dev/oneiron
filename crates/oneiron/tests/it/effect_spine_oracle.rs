@@ -786,6 +786,25 @@ mod seam {
 
 // ===== ONE-1715 (ES-02) — OutboundIntent -> TASK subkind reparent =====
 
+/// Doc 13 §9.2: the ONE-1499 dispatch pipeline survives as the EXECUTOR for
+/// connector-assigned tasks — executing the one task emits exactly one send
+/// receipt, and that receipt carries TASK lineage (spine: RECEIPT is the
+/// only record).
+#[test]
+fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
+    let (_dir, vault) = open_vault();
+    seam::schedule_send(&vault, "party-Yuki", "email");
+    // Scheduling alone must not send: zero receipts and zero wire
+    // dispatches until the EXECUTOR runs (doc 13 §1/§9.2 — the pipeline is
+    // the executor, not a bystander to an immediate send).
+    assert_eq!(seam::count_send_receipts(&vault), 0);
+    assert_eq!(seam::count_dispatched_sends(&vault), 0);
+    let executed = seam::run_connector_task_executor(&vault);
+    assert_eq!(executed, 1);
+    assert_eq!(seam::count_send_receipts(&vault), 1);
+    assert_eq!(seam::count_send_receipts_with_task_lineage(&vault), 1);
+}
+
 // ===== ONE-1716 (ES-03) — comm.* projector + contact-record demotion =====
 
 /// Doc 13 §4 (widening half, FAIL-CLOSED): clearing opt_out is human-gated +
@@ -1403,6 +1422,12 @@ mod one1891 {
             .expect("write provider prior")
     }
 
+    pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
+        oneiron::provider_confidence::effective_confidence(vault, claim)
+            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
+            .expect("effective")
+    }
+
     pub(super) fn decide(
         vault: &Vault,
         candidates: &[EntityResolutionCandidate],
@@ -1410,6 +1435,10 @@ mod one1891 {
     ) -> EntityResolutionWaterfallDecision {
         oneiron::evaluate_entity_resolution_waterfall(vault, candidates, high_collision)
             .expect("waterfall")
+    }
+
+    pub(super) fn close(actual: f32, expected: f32) -> bool {
+        (actual - expected).abs() < 1e-6
     }
 
     /// `(PERSON entities, CLAIM entities)` — the two counts a read must never
@@ -1435,6 +1464,10 @@ mod one1891 {
             vault, provider, evidence,
         )
         .expect("evidence-carrying prior count")
+    }
+
+    pub(super) fn clear_indexes(vault: &Vault, provider: &str) {
+        oneiron::clear_provider_confidence_indexes(vault, provider).expect("clear indexes");
     }
 
     pub(super) fn set_indexes(
@@ -1848,6 +1881,68 @@ mod one1891_ruling {
     // the ordinary put_claim gate must continue rejecting these Auto writes.
 
     #[test]
+    fn one1891_twin_merge_projects_newest_prior_and_keeps_cache_reads_scope_one() {
+        let (_dir, vault) = open_vault();
+        let provider = "provider_merge_twins";
+        let smaller = f::put_provider_actor(&vault, 0x11, provider);
+        let older = f::write_prior(&vault, provider, 0.70, "evidence:older");
+        let larger = f::put_provider_actor(&vault, 0x22, provider);
+        f::set_indexes(&vault, provider, Some(larger.as_bytes()), None);
+        let newer = f::write_prior(&vault, provider, 0.30, "evidence:newer");
+        let old_body = vault.get_claim(&older).unwrap().unwrap();
+        let new_body = vault.get_claim(&newer).unwrap().unwrap();
+        assert!((new_body.valid_from, newer) > (old_body.valid_from, older));
+        merge(&vault, vec![larger], smaller);
+        assert_eq!(
+            vault.get_claim(&older).unwrap().unwrap().subject,
+            ClaimSubject::Entity(smaller),
+        );
+        assert_eq!(
+            vault.get_claim(&newer).unwrap().unwrap().subject,
+            ClaimSubject::Entity(larger),
+        );
+        let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.80);
+        f::clear_indexes(&vault, provider);
+        let before = f::counts(&vault);
+        assert!(f::close(
+            f::effective(&vault, &candidate.confidence_claim_ref),
+            0.24,
+        ));
+        assert_eq!(f::counts(&vault), before);
+
+        // A shell-prior shortcut must preserve the projected trust outcome.
+        f::set_indexes(&vault, provider, None, Some(newer.as_bytes()));
+        for _ in 0..2 {
+            assert!(f::close(
+                f::effective(&vault, &candidate.confidence_claim_ref),
+                0.24,
+            ));
+            assert_eq!(f::counts(&vault), before);
+        }
+        let direct = f::write_prior(&vault, provider, 0.60, "evidence:survivor");
+        let direct_body = vault.get_claim(&direct).unwrap().unwrap();
+        assert_eq!(direct_body.subject, ClaimSubject::Entity(smaller));
+        assert!((direct_body.valid_from, direct) > (new_body.valid_from, newer));
+        f::set_indexes(&vault, provider, None, Some(newer.as_bytes()));
+        let before = f::counts(&vault);
+        for _ in 0..2 {
+            assert!(f::close(
+                f::effective(&vault, &candidate.confidence_claim_ref),
+                0.48,
+            ));
+            assert_eq!(f::counts(&vault), before);
+        }
+        assert_eq!(
+            vault.get_claim(&older).unwrap().unwrap().subject,
+            ClaimSubject::Entity(smaller),
+        );
+        assert_eq!(
+            vault.get_claim(&newer).unwrap().unwrap().subject,
+            ClaimSubject::Entity(larger),
+        );
+    }
+
+    #[test]
     fn one1891_cross_key_strand_blocks_reads_and_mint_without_index_repair() {
         fn assert_stranded<T: std::fmt::Debug>(result: oneiron::Result<T>) {
             assert!(matches!(
@@ -1898,6 +1993,46 @@ mod one1891_ruling {
                 .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error),
             );
             assert_eq!(f::counts(&vault), before);
+        }
+    }
+
+    #[test]
+    fn one1891_split_provider_priors_are_stranded_even_with_one_matching_head() {
+        fn assert_stranded<T: std::fmt::Debug>(result: oneiron::Result<T>) {
+            assert!(matches!(
+                result.expect_err("stranded prior must fail closed"),
+                Error::InvalidClaimBody(_),
+            ));
+        }
+
+        for head_count in 0..=2 {
+            let (_dir, vault) = open_vault();
+            let provider = "provider_split";
+            let actor = f::put_provider_actor(&vault, 0x11, provider);
+            let prior = f::write_prior(&vault, provider, 0.30, "evidence:split");
+            let heads = (0..head_count)
+                .map(|i| f::put_provider_actor(&vault, 0x21 + i, provider))
+                .collect();
+            split(&vault, actor, heads);
+            let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.90);
+            f::clear_indexes(&vault, provider);
+            let before = f::counts(&vault);
+            assert_stranded(oneiron::provider_confidence::effective_confidence(
+                &vault,
+                &candidate.confidence_claim_ref,
+            ));
+            assert_eq!(f::counts(&vault), before);
+            assert_stranded(oneiron::provider_confidence::write_provider_prior(
+                &vault,
+                provider,
+                0.50,
+                "evidence:no-fork",
+            ));
+            assert_eq!(f::counts(&vault), before);
+            assert_eq!(
+                vault.get_claim(&prior).unwrap().unwrap().subject,
+                ClaimSubject::Entity(actor),
+            );
         }
     }
 
@@ -1988,5 +2123,34 @@ mod one1891_ruling {
                 ..candidate
             },
         );
+    }
+
+    #[test]
+    fn one1891_canonical_ties_agree_on_two_devices_not_shell_order() {
+        let mut decisions = Vec::new();
+        for reverse in [false, true] {
+            let (_dir, vault) = open_vault();
+            let shell = f::candidate(&vault, 0x11, 0x41, "provider_tie", 0.80);
+            let head = f::put_person(&vault, 0x33);
+            let direct = f::candidate(&vault, 0x22, 0x42, "provider_tie", 0.80);
+            merge(&vault, vec![shell.subject], head);
+            let candidates = if reverse {
+                [direct, shell]
+            } else {
+                [shell, direct]
+            };
+            let decision = f::decide(&vault, &candidates, false);
+            assert_eq!(decision.selected, Some(direct.subject));
+            assert_eq!(
+                decision
+                    .ranked
+                    .iter()
+                    .map(|row| row.candidate.subject)
+                    .collect::<Vec<_>>(),
+                vec![direct.subject, head]
+            );
+            decisions.push(decision);
+        }
+        assert_eq!(decisions[0], decisions[1]);
     }
 }

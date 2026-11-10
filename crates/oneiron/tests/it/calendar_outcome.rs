@@ -27,15 +27,18 @@
 
 use crate::common::entity as test_id;
 use oneiron::calendar::outcome::{
-    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
-    MachineOutcomeEvidence, MeetingClassSignals, PREDICATE_CALENDAR_EVENT_OUTCOME,
+    CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis,
+    EventOutcomeClaimValue, MachineOutcomeEvidence, MeetingClassSignals,
+    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, check_in_recording_artifact_id,
     outcome_from_machine_evidence, project_event_outcome, read_event_outcome, record_event_outcome,
+    resolve_owner_check_in,
 };
 use oneiron::error::GateError;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Error, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
+    blob_artifact::BlobArtifactBody, blob_artifact::BlobVersionProvenance,
 };
 use rmpv::Value;
 
@@ -44,6 +47,7 @@ const EVENT_SEED: u8 = 0x61;
 const SECOND_EVENT_SEED: u8 = 0x62;
 const PERSON_SEED: u8 = 0x63;
 const EVIDENCE_SEED: u8 = 0x64;
+const ACTOR_SEED: u8 = 0x71;
 
 const EVENT_START: u64 = 1_754_400_000;
 const EVENT_END: u64 = EVENT_START + 3_600;
@@ -448,4 +452,137 @@ fn gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement() {
         project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
         EventOutcome::Held
     );
+}
+
+#[test]
+fn owner_answer_records_owner_attested_basis() {
+    let (_dir, vault) = temp_vault();
+    let event_ref = event(&vault, EVENT_SEED);
+
+    let CheckInResolution::Outcome(value) =
+        resolve_owner_check_in(event_ref, CheckInAnswer::Held, EVENT_END + 1_800)
+    else {
+        panic!("a held answer resolves to an outcome");
+    };
+    assert_eq!(
+        value,
+        EventOutcomeClaimValue {
+            outcome: EventOutcome::Held,
+            basis: EventOutcomeBasis::OwnerAttested,
+            recorded_at: EVENT_END + 1_800,
+        }
+    );
+    record_event_outcome(&vault, event_ref, &value, ClaimSource::UserStated).expect("record");
+
+    let stored = read_event_outcome(&vault, event_ref)
+        .expect("read")
+        .expect("present");
+    assert_eq!(stored.basis, EventOutcomeBasis::OwnerAttested);
+    assert_eq!(stored.outcome, EventOutcome::Held);
+    // The answer resolves the check-in.
+    assert!(
+        vault
+            .inbox_meeting_outcome_check_ins(&[due(event_ref, "wake-1", meeting())])
+            .expect("project")
+            .is_empty()
+    );
+}
+
+#[test]
+fn recording_drop_zone_appends_blob_and_does_not_infer_outcome() {
+    let (_dir, vault) = temp_vault();
+    let event_ref = event(&vault, EVENT_SEED);
+    let uploader = test_id(ACTOR_SEED);
+    vault
+        .put_entity(
+            &uploader,
+            ENTITY_TYPE_PERSON,
+            at(EVENT_START),
+            EVENT_START,
+            b"uploader",
+        )
+        .expect("put uploader");
+    let actor = WriteActor::new(uploader, EdgeActorClass::Human);
+
+    let artifact = accept_check_in_recording(
+        &vault,
+        event_ref,
+        BlobArtifactBody::new("standup.m4a", "audio/mp4"),
+        EVENT_END + 300,
+    )
+    .expect("open recording artifact");
+    assert_eq!(
+        artifact,
+        check_in_recording_artifact_id(&event_ref).expect("derived id")
+    );
+
+    // The bytes ride the existing append-only chain.
+    let first = vault
+        .append_blob_artifact_version(
+            &artifact,
+            b"riff-bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(EVENT_END + 300),
+            EVENT_END + 300,
+        )
+        .expect("append version");
+    assert_eq!(first.version, 1);
+
+    // The drop zone infers nothing: the outcome is still unknown.
+    assert_eq!(read_event_outcome(&vault, event_ref).expect("read"), None);
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
+        EventOutcome::Unknown
+    );
+    // ...and the check-in is still open, because a recording is not an answer.
+    assert_eq!(
+        vault
+            .inbox_meeting_outcome_check_ins(&[due(event_ref, "wake-1", meeting())])
+            .expect("project")
+            .len(),
+        1
+    );
+
+    // A second drop appends to the same artifact rather than forking one.
+    let again = accept_check_in_recording(
+        &vault,
+        event_ref,
+        BlobArtifactBody::new("standup-2.m4a", "audio/mp4"),
+        EVENT_END + 900,
+    )
+    .expect("second drop");
+    assert_eq!(again, artifact);
+    let second = vault
+        .append_blob_artifact_version(
+            &artifact,
+            b"riff-bytes-2",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(EVENT_END + 900),
+            EVENT_END + 900,
+        )
+        .expect("append version");
+    assert_eq!(second.version, 2);
+
+    // A recording dropped on a non-EVENT is refused.
+    let person = test_id(PERSON_SEED);
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            at(EVENT_START),
+            EVENT_START,
+            b"person",
+        )
+        .expect("put person");
+    assert!(matches!(
+        accept_check_in_recording(
+            &vault,
+            person,
+            BlobArtifactBody::new("standup.m4a", "audio/mp4"),
+            EVENT_END,
+        ),
+        Err(Error::EntityNotFound)
+    ));
 }

@@ -1087,6 +1087,38 @@ mod cb_a {
         }
     }
 
+    /// ONE-1699 · 08b §4.2: fan-out to N peers is exactly N consult tasks;
+    /// answers land on the asker's board and each answer is EXACTLY one of
+    /// evidence-backed or abstention (F10 partition); no default budget
+    /// blocks a consult.
+    #[test]
+    fn fan_out_to_three_peers_is_three_consult_tasks() {
+        let fan = arm_consult_fan_out();
+        assert_eq!(fan.consult_tasks_minted, 3);
+        assert_eq!(fan.distinct_assignees, 3);
+        assert_eq!(fan.answers.len(), 3);
+        let mut answer_assignees: Vec<&str> =
+            fan.answers.iter().map(|a| a.assignee.as_str()).collect();
+        answer_assignees.sort_unstable();
+        answer_assignees.dedup();
+        assert_eq!(answer_assignees.len(), 3);
+        let exactly_one_of_two = fan
+            .answers
+            .iter()
+            .filter(|a| a.has_evidence != a.abstained_with_reason)
+            .count();
+        assert_eq!(exactly_one_of_two, 3);
+        assert_eq!(fan.answers.iter().filter(|a| a.has_evidence).count(), 2);
+        assert_eq!(
+            fan.answers
+                .iter()
+                .filter(|a| a.abstained_with_reason)
+                .count(),
+            1
+        );
+        assert_eq!(fan.consults_blocked_by_default_budget, 0);
+    }
+
     /// Durable-delegation observations across an engine restart.
     struct DurableDelegation {
         suspended_steps_before_restart: usize,
@@ -1370,6 +1402,20 @@ mod cb_a {
             row_shows_human_assignee,
             plugin_packs_installed,
         }
+    }
+
+    /// ONE-1708 · 08b §4.4 (r12): assignee=human → NO job realization;
+    /// Dreamer follow-up machinery instead; renders in the same TASKS
+    /// section with the assignee column telling the story. Ticket AC:
+    /// NATIVE humans are "Engine-level, no pack needed".
+    #[test]
+    fn human_assigned_task_realizes_no_jobs_and_engages_followup() {
+        let human = arm_human_task();
+        assert_eq!(human.jobs_realized, 0);
+        assert_eq!(human.dreamer_followups_engaged, 1);
+        assert_eq!(human.tasks_section_rows, 1);
+        assert!(human.row_shows_human_assignee);
+        assert_eq!(human.plugin_packs_installed, 0);
     }
 
     /// Wait-for-human-signal observations.

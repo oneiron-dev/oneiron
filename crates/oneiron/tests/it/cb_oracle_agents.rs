@@ -26,6 +26,196 @@
 //        kill · ONE-1709 team-lead · ONE-1710 peer-answer trust)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_a {
+    /// One rendered AGENTS-section row.
+    struct AgentRow {
+        /// Actor handle (children: run/agent id; peers: connection-keyed).
+        id: String,
+        /// "child" or "peer".
+        lane: String,
+        /// Exact rendered text of the row.
+        line: String,
+        /// Harness label carried on peer rows (a label, never the identity).
+        harness_label: Option<String>,
+    }
+
+    struct AgentsSectionRender {
+        rows: Vec<AgentRow>,
+    }
+
+    /// ONE-1697 fixture: children `child_a` + `child_b` (running, M8 driver
+    /// state) + 2 peer connections of the SAME vendor/harness ("claude-code")
+    /// registered under two different config dirs whose owner-assigned actor
+    /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
+    /// render the AGENTS section collapsed.
+    fn arm_render_agents_section() -> AgentsSectionRender {
+        use oneiron::agent_run_status::AgentRunStatus;
+        use oneiron::context_board::{ChildAgentPresence, PeerPresence};
+        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
+
+        let node = RunTreeNode {
+            attempt_id: "child_a".to_owned(),
+            run_id: None,
+            parent_id: None,
+            worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            worker: None,
+            agent_id: None,
+            status: RunTreeStatus::Running,
+            result_ref: None,
+            timestamps: RunTreeTimestamps {
+                created_at: 1,
+                updated_at: 1,
+            },
+            failure: None,
+            events: Vec::new(),
+            children: Vec::new(),
+        };
+        let children = [
+            ChildAgentPresence::from_run_tree_node(&node)
+                .expect("running driver node must produce child presence"),
+            ChildAgentPresence {
+                id: "child_b".to_owned(),
+                status: AgentRunStatus::Working,
+                label: None,
+                role: "worker".to_owned(),
+            },
+        ];
+        let peers = [
+            PeerPresence {
+                actor_handle: "cc-main".to_owned(),
+                harness_label: "claude-code".to_owned(),
+                last_seen: Some(1),
+            },
+            PeerPresence {
+                actor_handle: "cc-second".to_owned(),
+                harness_label: "claude-code".to_owned(),
+                last_seen: Some(2),
+            },
+        ];
+
+        let section = oneiron::context_board::render_agents_section(&children, &peers);
+        let rows = section
+            .rows
+            .into_iter()
+            .map(|row| AgentRow {
+                id: row.id,
+                lane: row.lane.as_str().to_string(),
+                line: row.line,
+                harness_label: row.harness_label,
+            })
+            .collect();
+        AgentsSectionRender { rows }
+    }
+
+    /// ONE-1697 · 08b §4.1–4.2: one-line rows; children from driver state;
+    /// peer identity keys on the CONNECTION (config dir), never the vendor —
+    /// two same-vendor connections are two named actors (`cc-main` /
+    /// `cc-second`); harness is a row label with an exact value (F9).
+    #[test]
+    fn agents_section_renders_children_and_connection_keyed_peers() {
+        let section = arm_render_agents_section();
+        assert_eq!(section.rows.len(), 4);
+        let one_liners = section
+            .rows
+            .iter()
+            .filter(|r| r.line.lines().count() == 1)
+            .count();
+        assert_eq!(one_liners, 4);
+        let mut child_ids: Vec<&str> = section
+            .rows
+            .iter()
+            .filter(|r| r.lane == "child")
+            .map(|r| r.id.as_str())
+            .collect();
+        child_ids.sort_unstable();
+        assert_eq!(child_ids, ["child_a", "child_b"]);
+        let peers: Vec<&AgentRow> = section.rows.iter().filter(|r| r.lane == "peer").collect();
+        assert_eq!(peers.len(), 2);
+        let mut peer_ids: Vec<&str> = peers.iter().map(|r| r.id.as_str()).collect();
+        peer_ids.sort_unstable();
+        assert_eq!(peer_ids, ["cc-main", "cc-second"]);
+        let exact_labels = peers
+            .iter()
+            .filter(|r| r.harness_label.as_deref() == Some("claude-code"))
+            .count();
+        assert_eq!(exact_labels, 2);
+    }
+
+    /// Outcome of a zero-config spawn.
+    struct DefaultPresetSpawn {
+        spawned_children: usize,
+        /// Logical id the spawn RESOLVED to, read back off the stored row the
+        /// dispatch named (engine-observed output, never a caller-side flag —
+        /// G6 vacuous-pass hazard).
+        resolved_logical_id: String,
+        /// Logical id the engine registers as its default base agent.
+        system_default_logical_id: String,
+    }
+
+    /// ONE-1698 fixture: call `agents.spawn` with NO agent definition and a
+    /// plain task prompt; observe the RESOLVED logical id of the spawned child
+    /// and, separately, the registered system-default base logical id.
+    fn arm_zero_config_spawn() -> DefaultPresetSpawn {
+        use oneiron::agent_dispatch::{
+            AgentDispatchOutcome, AgentDispatcher, DEFAULT_BASE_LOGICAL_ID,
+        };
+        use oneiron::dreamer_runner::{
+            DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
+        };
+        use oneiron::{AttemptQueue, Vault, VaultConfig};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let vault = Vault::open(dir.path(), config).expect("open vault");
+        let dispatcher = AgentDispatcher::new(&vault);
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, 1)
+            .expect("zero-config dispatch")
+        else {
+            panic!("expected one fresh spawn");
+        };
+        let resolved_id = status
+            .input
+            .target
+            .agent_definition_ref()
+            .expect("agent target");
+        let resolved_logical_id = vault
+            .get_agent_definition(&resolved_id)
+            .expect("read the resolved row")
+            .expect("the resolved row exists")
+            .logical_id
+            .expect("a seeded row carries a logical id");
+        let spawned_children = AttemptQueue::new(&vault)
+            .list()
+            .expect("observe dispatch attempts")
+            .into_iter()
+            .filter(|attempt| {
+                attempt.kind == DREAMER_RUNNER_ATTEMPT_KIND
+                    && decode_dreamer_attempt_payload(&attempt.payload).is_ok_and(|payload| {
+                        payload.attempt_type == oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                    })
+            })
+            .count();
+
+        DefaultPresetSpawn {
+            spawned_children,
+            resolved_logical_id,
+            system_default_logical_id: DEFAULT_BASE_LOGICAL_ID.to_owned(),
+        }
+    }
+
+    /// ONE-1698 · 08b §4.1 (r8): one generic default base agent — spawn works
+    /// with zero definition; the spawned child resolves to THAT seeded row.
+    #[test]
+    fn spawn_with_zero_definition_uses_default_base_preset() {
+        let spawn = arm_zero_config_spawn();
+        assert_eq!(spawn.spawned_children, 1);
+        assert!(!spawn.system_default_logical_id.is_empty());
+        assert_eq!(spawn.resolved_logical_id, spawn.system_default_logical_id);
+    }
+
     /// Kill-authority matrix over one spawn tree.
     struct KillMatrix {
         /// Spawner kills its own spawn → effects.
@@ -808,6 +998,100 @@ mod cb_a {
         assert_eq!(panel.syntheses_delivered, 1);
     }
 
+    /// Landing + consolidation observations for one peer answer.
+    struct PeerAnswerLanding {
+        /// Turns stored for the answer (storage never gated).
+        stored_turns: usize,
+        /// Human gate prompts raised by STORAGE of the answer.
+        storage_gate_prompts: usize,
+        /// Claims the Dreamer derived from the answer.
+        derived_claims: usize,
+        /// Of those, claims carrying source = tool_output.
+        claims_with_source_tool_output: usize,
+        /// Of those, claims carrying a confidence value.
+        claims_with_confidence: usize,
+        /// Answer-turn hops present in the provenance chain (required kind).
+        chain_answer_turn_hops: usize,
+        /// Consult-task hops present in the provenance chain (required kind).
+        chain_consult_task_hops: usize,
+        /// Total provenance chain length. 08b r15 requires the CHAIN, not a
+        /// fixed length — richer conforming chains (e.g. + actor-signature
+        /// hop) must pass (F23 canon correction).
+        provenance_chain_len: usize,
+    }
+
+    /// ONE-1710 fixture: a peer answers one consult; the Dreamer
+    /// consolidates the answer into exactly one derived claim.
+    fn arm_peer_answer_landing() -> PeerAnswerLanding {
+        use oneiron::ClaimSource;
+        use oneiron::dreamer_consolidation::ConsolidationProvenanceHopKind;
+
+        let fixture = super::peer_fixture::PeerFixture::open();
+        // §1 order: the answer TURN and the consult TASK result land FIRST,
+        // through the ordinary ledger doors, before any consolidation
+        // decision exists to make.
+        let answer = fixture.land_peer_answer("ACME");
+        let stored_turns = usize::from(fixture.entity_exists(answer.answer_turn_ref));
+        let storage_gate_prompts = fixture.pending_gate_consents();
+
+        let (outcome, _) = fixture.consolidate_peer_answer(&answer, "ACME", 0.7, None);
+        let derived_claims = outcome.landed.len();
+
+        let bodies: Vec<_> = outcome.landed.iter().map(|id| fixture.claim(*id)).collect();
+        let claims_with_source_tool_output = bodies
+            .iter()
+            .filter(|body| body.source == Some(ClaimSource::ToolOutput))
+            .count();
+        let claims_with_confidence = bodies
+            .iter()
+            .filter(|body| body.confidence.is_finite() && body.confidence > 0.0)
+            .count();
+
+        let chains: Vec<_> = bodies
+            .iter()
+            .map(super::peer_fixture::stored_chain)
+            .collect();
+        let chain_answer_turn_hops = chains
+            .iter()
+            .flatten()
+            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::AnswerTurn)
+            .count();
+        let chain_consult_task_hops = chains
+            .iter()
+            .flatten()
+            .filter(|hop| hop.kind == ConsolidationProvenanceHopKind::ConsultTask)
+            .count();
+        let provenance_chain_len = chains.iter().map(Vec::len).sum();
+
+        PeerAnswerLanding {
+            stored_turns,
+            storage_gate_prompts,
+            derived_claims,
+            claims_with_source_tool_output,
+            claims_with_confidence,
+            chain_answer_turn_hops,
+            chain_consult_task_hops,
+            provenance_chain_len,
+        }
+    }
+
+    /// ONE-1710 · 08b §7.5 (r15): storage is never gated; derived claims
+    /// carry source:tool_output + confidence + a provenance chain containing
+    /// the answer-turn and consult-task hops (r15 names the chain, not a
+    /// length — floor assert, richer chains conform).
+    #[test]
+    fn peer_answer_lands_ungated_with_full_provenance_chain() {
+        let landing = arm_peer_answer_landing();
+        assert_eq!(landing.stored_turns, 1);
+        assert_eq!(landing.storage_gate_prompts, 0);
+        assert_eq!(landing.derived_claims, 1);
+        assert_eq!(landing.claims_with_source_tool_output, 1);
+        assert_eq!(landing.claims_with_confidence, 1);
+        assert_eq!(landing.chain_answer_turn_hops, 1);
+        assert_eq!(landing.chain_consult_task_hops, 1);
+        assert!(landing.provenance_chain_len >= 2);
+    }
+
     /// The same valid candidate fails without the Generated lineage permit,
     /// then lands when that permit names the unchanged System-class Dreamer.
     #[test]
@@ -1054,6 +1338,72 @@ mod cb_a {
             forgery.write_paths_attempted
         );
         assert_eq!(forgery.forged_label_claims_stored, 0);
+    }
+
+    /// Trust-surface observations after a conflicting peer answer.
+    struct TrustSurfaces {
+        /// Human digest entries for the landing.
+        human_digest_entries: usize,
+        /// conflict.open surfacings for the contradiction.
+        conflict_open_surfacings: usize,
+        /// Writes needed to correct the wrong note (one supersede).
+        correction_writes: usize,
+        /// True iff read-time resolution ranks the HIGHER-confidence claim
+        /// above the contradicting lower-confidence peer claim (ticket:
+        /// "read-time confidence weighting" — F24 confidence half).
+        higher_confidence_ranked_first_at_read: bool,
+    }
+
+    /// ONE-1710 fixture: a peer answer contradicting an existing first-party
+    /// note lands (at lower confidence than the note) and is consolidated;
+    /// read back the contradicted fact; then the owner corrects it.
+    fn arm_trust_surfaces() -> TrustSurfaces {
+        let fixture = super::peer_fixture::PeerFixture::open();
+
+        // A first-party note the owner already trusts, at HIGH confidence.
+        let note = fixture.owner_note("Globex", 0.9);
+
+        // The peer answers the same question differently, at LOWER
+        // confidence. Storage is ungated and consolidation lands the claim.
+        let answer = fixture.land_peer_answer("ACME");
+        let (outcome, candidate) = fixture.consolidate_peer_answer(&answer, "ACME", 0.4, None);
+        let peer_claim = *outcome
+            .landed
+            .first()
+            .expect("the peer answer lands as one claim");
+
+        // Wrong-note protection is the EXISTING conflict machinery: one open
+        // conflict over the contradicted identity, both claims still
+        // legible, and one informational digest line.
+        let (conflict_open_surfacings, conflict_open_ref) =
+            fixture.detect_open_conflict(&candidate, note.claim_id);
+        let human_digest_entries = fixture.surface_digest(&answer, peer_claim, conflict_open_ref);
+
+        // Read-time confidence weighting ranks the higher-confidence head
+        // first WHILE the contradiction stands.
+        let ranked = fixture.read_ranked_heads();
+        let higher_confidence_ranked_first_at_read = ranked.first() == Some(&note.claim_id);
+
+        // One superseding write corrects the wrong note.
+        let correction = fixture.correct_with_supersession(&answer, peer_claim, "Globex", 0.9);
+
+        TrustSurfaces {
+            human_digest_entries,
+            conflict_open_surfacings,
+            correction_writes: correction,
+            higher_confidence_ranked_first_at_read,
+        }
+    }
+
+    /// Peer storage still needs no approval. Attributed contradiction closure
+    /// uses the W7 deferred gate, then the owner confirms the correction.
+    #[test]
+    fn peer_storage_is_unqueued_and_attributed_correction_is_confirmed() {
+        let surfaces = arm_trust_surfaces();
+        assert_eq!(surfaces.human_digest_entries, 1);
+        assert_eq!(surfaces.conflict_open_surfacings, 1);
+        assert_eq!(surfaces.correction_writes, 1);
+        assert!(surfaces.higher_confidence_ranked_first_at_read);
     }
 }
 
@@ -1990,6 +2340,137 @@ mod lead_fixture {
 // CB-X — agent run status registry mints (ONE-1711)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_x {
+    /// AgentRunStatus contract observations.
+    struct AgentRunStatusContract {
+        /// The status states, in contract order.
+        states: Vec<String>,
+        /// Illegal transitions attempted by the fixture: spawned→archived,
+        /// spawned→delivered, working→spawned, delivered→working,
+        /// archived→working (F25 matrix).
+        illegal_transitions_attempted: usize,
+        /// Of those, rejected by the contract (must be all).
+        illegal_transitions_rejected: usize,
+        /// Of those, accepted (must be none).
+        illegal_transitions_accepted: usize,
+    }
+
+    /// ONE-1711 fixture: enumerate the AgentRunStatus contract and attempt
+    /// FIVE illegal transitions: spawned→archived, spawned→delivered,
+    /// working→spawned, delivered→working, archived→working.
+    fn arm_agent_run_status_contract() -> AgentRunStatusContract {
+        use oneiron::agent_run_status::{AgentRunStatus, validate_agent_run_status_transition};
+        let states = AgentRunStatus::RATIFIED_FLOW
+            .iter()
+            .map(|status| status.as_str().to_owned())
+            .collect();
+        let attempts = [
+            (AgentRunStatus::Spawned, AgentRunStatus::Archived),
+            (AgentRunStatus::Spawned, AgentRunStatus::Delivered),
+            (AgentRunStatus::Working, AgentRunStatus::Spawned),
+            (AgentRunStatus::Delivered, AgentRunStatus::Working),
+            (AgentRunStatus::Archived, AgentRunStatus::Working),
+        ];
+        let rejected = attempts
+            .iter()
+            .filter(|(from, to)| validate_agent_run_status_transition(*from, *to).is_err())
+            .count();
+        AgentRunStatusContract {
+            states,
+            illegal_transitions_attempted: attempts.len(),
+            illegal_transitions_rejected: rejected,
+            illegal_transitions_accepted: attempts.len() - rejected,
+        }
+    }
+
+    /// ONE-1711 · 08b registry: AgentRunStatus is exactly spawned → working
+    /// → needs_input → delivered → archived; every out-of-order jump in the
+    /// fixture matrix rejects.
+    #[test]
+    fn agent_run_status_contract_is_five_states_in_order() {
+        use oneiron::agent_run_status::{
+            AgentRunStatus, ExecutorTerminalCause, project_abandoned_terminal,
+            project_agent_run_status, validate_agent_run_status_transition,
+        };
+
+        let contract = arm_agent_run_status_contract();
+        assert_eq!(AgentRunStatus::RATIFIED_FLOW.len(), 5);
+        for (status, (expected, representation)) in AgentRunStatus::RATIFIED_FLOW.iter().zip([
+            (AgentRunStatus::Spawned, "spawned"),
+            (AgentRunStatus::Working, "working"),
+            (AgentRunStatus::NeedsInput, "needs_input"),
+            (AgentRunStatus::Delivered, "delivered"),
+            (AgentRunStatus::Archived, "archived"),
+        ]) {
+            assert_eq!(*status, expected);
+            assert_eq!(status.as_str(), representation);
+        }
+        assert_eq!(contract.illegal_transitions_attempted, 5);
+        assert_eq!(contract.illegal_transitions_rejected, 5);
+        assert_eq!(contract.illegal_transitions_accepted, 0);
+
+        assert_eq!(AgentRunStatus::TERMINAL.len(), 3);
+        for status in [
+            AgentRunStatus::Archived,
+            AgentRunStatus::Failed,
+            AgentRunStatus::Abandoned,
+        ] {
+            assert!(AgentRunStatus::TERMINAL.contains(&status));
+        }
+        for status in AgentRunStatus::TERMINAL {
+            assert!(status.is_terminal());
+        }
+        for status in [
+            AgentRunStatus::Spawned,
+            AgentRunStatus::Working,
+            AgentRunStatus::NeedsInput,
+            AgentRunStatus::Delivered,
+        ] {
+            assert!(!status.is_terminal());
+        }
+        assert!(
+            validate_agent_run_status_transition(
+                AgentRunStatus::Delivered,
+                AgentRunStatus::Archived,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_agent_run_status_transition(AgentRunStatus::Failed, AgentRunStatus::Working)
+                .is_err()
+        );
+        assert!(
+            validate_agent_run_status_transition(
+                AgentRunStatus::Abandoned,
+                AgentRunStatus::Working,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Failed),
+            AgentRunStatus::Failed,
+        );
+        assert_eq!(
+            project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
+            AgentRunStatus::Failed,
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),
+            Some(AgentRunStatus::Abandoned),
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::NeverAnswered),
+            Some(AgentRunStatus::Abandoned),
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::ExecutionFailed),
+            None,
+        );
+        assert_eq!(
+            project_abandoned_terminal(ExecutorTerminalCause::Cancelled),
+            None,
+        );
+    }
+
     /// needs_input round-trip observations (EF-049 lineage → OF twin).
     struct NeedsInputRoundTrip {
         /// Runs sitting in needs_input after the agent asks.

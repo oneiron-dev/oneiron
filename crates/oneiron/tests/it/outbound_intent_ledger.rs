@@ -1,0 +1,39 @@
+use std::collections::BTreeSet;
+
+use oneiron::{
+    outbound_intent_ledger::INTENT_LEDGER_SCHEMA_VERSION,
+    outbound_intent_ledger::INTENT_LEDGER_VALUE_KEYS,
+    outbound_intent_ledger::OUTBOUND_BINDING_VERSION,
+};
+
+// The former direct-ledger send/recovery assertions are folded into the
+// crate-internal chokepoint interface tests, where the sole effectful entry is
+// accessible. This integration pin keeps the public greenfield format honest.
+#[test]
+fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
+    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 3);
+    assert_eq!(OUTBOUND_BINDING_VERSION, 2);
+    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 22);
+    assert_eq!(
+        INTENT_LEDGER_VALUE_KEYS
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len(),
+        INTENT_LEDGER_VALUE_KEYS.len(),
+        "the canonical row has no duplicate fields"
+    );
+    for required in [
+        "binding_version",
+        "resolved_endpoint",
+        // The typed per-grant capability identity is part of the canonical row
+        // (ONE-1885): it is what recovery reads instead of connector text.
+        "capability_provenance",
+        "budget_accounting",
+        "admitted_approval",
+        "recorded_outcome",
+        "delivery_uncertain",
+    ] {
+        assert!(INTENT_LEDGER_VALUE_KEYS.contains(&required));
+    }
+}

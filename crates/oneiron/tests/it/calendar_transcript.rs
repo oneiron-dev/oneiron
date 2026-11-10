@@ -8,6 +8,7 @@ use oneiron::calendar::transcript::{
     ingest_file_drop_transcript_fail_after_turns_for_test, seed_file_drop_machine_fixture,
 };
 use oneiron::claim::ClaimApprovalStatus;
+use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::edge::{EdgeActorClass, EdgeKind};
 use oneiron::ingest::{self};
 use oneiron::write_envelope::WriteActor;
@@ -70,6 +71,239 @@ fn uploaded_blob(vault: &Vault, at: u64) -> EntityId {
     blob
 }
 
+/// A CONVERSATION for pre-existing (non-imported) dirty turns to hang from.
+fn seed_conversation(vault: &Vault, at: u64) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: at, end: at },
+            at,
+            b"\x80",
+        )
+        .unwrap();
+    id
+}
+
+/// One pre-existing admissible dirty TURN in the shape the production scan
+/// admits: a GATE-10 role key plus the structural ChildOf conversation edge.
+fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> EntityId {
+    let turn = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+            (
+                rmpv::Value::from("txt"),
+                rmpv::Value::from("pre-existing turn"),
+            ),
+        ]),
+    )
+    .unwrap();
+    vault
+        .batch()
+        .put(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .edge(&turn, EdgeKind::ChildOf, conversation, 1.0)
+        .commit()
+        .unwrap();
+    turn
+}
+
+fn meso_partition_attempt_count(vault: &Vault) -> usize {
+    AttemptQueue::new(vault)
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|attempt| attempt.kind == oneiron::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
+        .map(|attempt| decode_dreamer_attempt_payload(&attempt.payload).unwrap())
+        .filter(|payload| payload.attempt_type == "meso")
+        .count()
+}
+#[test]
+fn speaker_transcript_mints_one_session_and_ordered_turns() {
+    let (_dir, vault) = vault();
+    let outcome = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: EntityId::now(),
+            decoded_text: "Alice: hello\nBob: hi",
+            arrived_at_ms: 1_000,
+        },
+    )
+    .unwrap();
+    let TranscriptIngestOutcome::Session {
+        session_ref,
+        turn_refs,
+        ..
+    } = outcome
+    else {
+        panic!("must mint a session")
+    };
+    assert_eq!(turn_refs.len(), 2);
+    assert_eq!(
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_SESSION)
+            .unwrap(),
+        vec![session_ref]
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_TURN)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
+    let (_dir, vault) = vault();
+    let blob = EntityId::now();
+    let TranscriptIngestOutcome::Session { turn_refs, .. } = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: blob,
+            decoded_text: "[123400] Ada: first\n[123500] Bob: second",
+            arrived_at_ms: 200_000,
+        },
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let first: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&turn_refs[0]).unwrap().unwrap()).unwrap();
+    let second: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&turn_refs[1]).unwrap().unwrap()).unwrap();
+    // The source display name is PROVENANCE, and lives under a key outside the
+    // dirty scan's `speaker|spkr` alias set. The GATE-10 keys carry the role, so
+    // a named import decodes as an admissible User turn instead of `Unknown`.
+    assert_eq!(first["speaker_label"], "Ada");
+    assert_eq!(first["speaker"], "user");
+    assert_eq!(first["spkr"], "user");
+    assert_eq!(first["role"], "user");
+    assert_eq!(first["ordinal"], 0);
+    assert_eq!(second["speaker_label"], "Bob");
+    assert_eq!(second["speaker"], "user");
+    assert_eq!(second["ordinal"], 1);
+    assert_eq!(first["source_blob_ref"], blob.to_hex());
+    assert_eq!(first["claimed_start_ms"], 123400);
+    assert_eq!(first["claimed_end_ms"], 123400);
+    assert_eq!(first["arrived_at_ms"], 200000);
+    assert_eq!(
+        vault.get_entity_type(&turn_refs[0]).unwrap(),
+        Some(oneiron::registry::ENTITY_TYPE_TURN)
+    );
+}
+/// MIXED state (the case the deleted empty-only fallback could never serve): a
+/// pre-existing admissible dirty turn AND a named-speaker import in one ingest
+/// land in the SAME round — both planned, one attempt per partition, watermark
+/// settled at the max `learned_at` of the planned prefix.
+#[test]
+fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
+    let (_dir, vault) = vault();
+    let conversation = seed_conversation(&vault, 100);
+    let pre_existing = seed_dirty_turn(&vault, &conversation, 100);
+    let before = meso_partition_attempt_count(&vault);
+
+    let TranscriptIngestOutcome::Session {
+        turn_refs,
+        wake_turn_refs,
+        extraction_enqueued,
+        ..
+    } = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: EntityId::now(),
+            decoded_text: "Ada: imported\nBob: reply",
+            arrived_at_ms: 200_000,
+        },
+    )
+    .unwrap()
+    else {
+        panic!()
+    };
+
+    let mut expected = vec![pre_existing];
+    expected.extend(turn_refs.iter().copied());
+    assert_eq!(
+        wake_turn_refs, expected,
+        "the round plans the pre-existing dirty turn AND the import, in temporal order"
+    );
+    assert!(extraction_enqueued);
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        before + 2,
+        "one attempt per partition: the pre-existing conversation and the import's own"
+    );
+    assert!(
+        vault.open_session().unwrap().is_none(),
+        "the import closes its own sitting exactly once"
+    );
+    assert_eq!(
+        oneiron::dreamer_consolidation::read_watermark(
+            &vault,
+            oneiron::dreamer_runner::DreamerConsolidationScope::Meso
+        )
+        .unwrap()
+        .last_learned_at,
+        200,
+        "the watermark settles at the max learned_at of the planned prefix"
+    );
+}
+#[test]
+fn session_end_enqueues_existing_extraction_path_once() {
+    let (_dir, vault) = vault();
+    let before = meso_partition_attempt_count(&vault);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let TranscriptIngestOutcome::Session { session_ref, .. } = ingest_file_drop_transcript(
+        &vault,
+        TranscriptFileDropRequest {
+            source_blob_ref: EntityId::now(),
+            decoded_text: "Ada: wake",
+            arrived_at_ms: now_ms,
+        },
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let after_first = meso_partition_attempt_count(&vault);
+    assert_eq!(
+        after_first,
+        before + 1,
+        "first close must enqueue exactly one Meso partition attempt"
+    );
+    let wake = vault.plan_session_end_wake().unwrap();
+    assert!(
+        vault
+            .end_session_with_wake(
+                &session_ref,
+                oneiron::session_lifecycle::SessionClosePredicate::Explicit,
+                7,
+                &wake
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        meso_partition_attempt_count(&vault),
+        after_first,
+        "duplicate close creates no Meso partition attempt"
+    );
+}
 #[test]
 fn open_interactive_session_causes_retry_without_partial_turn_writes() {
     let (_dir, vault) = vault();
@@ -303,5 +537,60 @@ fn raw_blob_is_retained_and_calendar_adapter_does_not_rewrite_blob_storage() {
     assert_eq!(
         vault.read_blob_artifact_version(&blob, 1).unwrap(),
         before_bytes
+    );
+}
+
+/// T48 pin (packet "Second read, added tests"): the file-drop fixture's
+/// policy manifest is written through `batch::apply_ops` — the batch entry —
+/// not a hand-packed raw store write (the defect `calendar/transcript.rs:
+/// 370-388` used to have). `seed_file_drop_machine_fixture` never returns the
+/// minted manifest's id, so it is found by diffing `entities_by_type` before
+/// and after seeding.
+///
+/// The packet also asks for a short-id row, but `ENTITY_TYPE_POLICY_MANIFEST`
+/// has no short-id prefix (`registry/registry_table.rs`), so the batch entry
+/// writes none for this entity type; the type_index row is asserted instead.
+/// `entities_by_type` is itself backed by the `type_index` table
+/// (`ports::EntityStoreRead::port_entity_ids_by_type`, `type_index()`), so
+/// the manifest appearing there after seeding (and not before) already is
+/// that assertion — it is repeated explicitly below so the intent reads
+/// standalone rather than riding on the id-finding diff.
+#[test]
+fn the_file_drop_fixture_writes_its_policy_manifest_through_the_batch_entry() {
+    let (_dir, vault) = vault();
+    let before = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .unwrap();
+    seed_file_drop_machine_fixture(&vault, 1_000).unwrap();
+    let after = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .unwrap();
+    let minted: Vec<EntityId> = after
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(
+        minted.len(),
+        1,
+        "the fixture mints exactly one policy manifest"
+    );
+    let manifest_id = minted[0];
+
+    // The type_index row: no short-id row exists to check for this entity
+    // type, so this re-confirms what the diff above already proved.
+    assert!(
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+            .unwrap()
+            .contains(&manifest_id),
+        "the batch entry's type_index row for the seeded policy manifest"
+    );
+
+    // The entity-put audit row: only the batch entry writes it
+    // (`crate::ports::audit_entity_put_in_txn`, called from
+    // `batch/put_apply/apply.rs`'s `apply_put`).
+    assert!(
+        vault.entity_put_audit_count_for_test(&manifest_id).unwrap() >= 1,
+        "the batch entry's entity-put audit row for the seeded policy manifest"
     );
 }

@@ -400,6 +400,90 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     Ok(())
 }
 
+#[test]
+fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    let host = EntityId::now();
+    vault.put_entity(
+        &host,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"host",
+    )?;
+    let source_id = EntityId::now();
+    let source = ProjectRecord::new(
+        source_id,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        host,
+    )
+    .expect("fixture");
+    vault.put_project(source_id, &source, 1)?;
+    let room = EntityId::from_hex(&source.home_room)?;
+    let trunk = EntityId::now();
+    speak(&vault, host, room, trunk, EntityId::now(), None);
+    let thread = EntityId::now();
+    let message = EntityId::now();
+    speak(&vault, host, room, thread, message, Some(trunk));
+    let id = EntityId::now();
+    let mut record = ProjectRecord::new(
+        id,
+        Some(source_id),
+        EntityId::from_hex(&source.claims_scope_ref)?,
+        host,
+    )
+    .expect("fixture");
+    record.born_from = Some(host.to_hex()); // wrong type: PERSON, not MESSAGE
+    record.origin_room = Some(room.to_hex());
+    record.origin_thread = Some(thread.to_hex());
+    record.origin_at = Some(2);
+    assert_eq!(
+        vault.put_project(id, &record, 3).unwrap_err().kind(),
+        oneiron::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(id)?.is_none());
+    record.born_from = Some(EntityId::now().to_hex()); // missing dependency stays pending for replay
+    assert_eq!(
+        vault.put_project(id, &record, 3).unwrap_err().kind(),
+        oneiron::ErrorKind::ProjectDependencyPending
+    );
+    assert!(
+        vault
+            .project_room(EntityId::from_hex(&record.home_room)?)?
+            .is_none()
+    );
+    record.born_from = Some(message.to_hex());
+    vault
+        .put_project(id, &record, 3)
+        .expect("valid generic origin");
+    assert_eq!(vault.thread_project(room, thread)?, Some(id));
+    let second = EntityId::now();
+    let mut duplicate = ProjectRecord::new(
+        second,
+        Some(source_id),
+        EntityId::from_hex(&source.claims_scope_ref)?,
+        host,
+    )
+    .expect("fixture");
+    duplicate.born_from = record.born_from.clone();
+    duplicate.origin_room = record.origin_room.clone();
+    duplicate.origin_thread = record.origin_thread.clone();
+    duplicate.origin_at = record.origin_at;
+    assert!(vault.put_project(second, &duplicate, 3).is_err());
+    assert!(
+        vault
+            .convert_thread_to_project(room, thread, message, second, None, 3)
+            .is_err()
+    );
+    assert!(vault.project(second)?.is_none());
+    // Common delete cleans the mapping; a new typed conversion can use the origin.
+    assert!(vault.delete_entity(&id)?);
+    assert_eq!(vault.thread_project(room, thread)?, None);
+    Ok(())
+}
+
 /// Forbid the task-holder override in this fixture's shipped conversion row.
 /// Only the closed fixture store is edited; no policy door is added.
 fn forbid_holder_override(vault: Vault, path: &std::path::Path) -> Vault {

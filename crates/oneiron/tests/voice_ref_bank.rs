@@ -25,6 +25,49 @@ fn pack(id: &str, voice_id: &str, owner: EntityId, origin: VoiceRefOrigin) -> Vo
 }
 
 #[test]
+fn designed_captured_and_generated_packs_belong_to_a_vault_identity() -> Result<()> {
+    let (_dir, vault) = open();
+    let (_other_dir, other) = open();
+    let owner = EntityId::now();
+    let designed = pack(
+        "design",
+        "voice-1",
+        owner,
+        VoiceRefOrigin::Designed {
+            vendor: "design-tool".into(),
+        },
+    );
+    let captured = pack("capture", "voice-2", owner, VoiceRefOrigin::Captured);
+    let generated = pack("generated", "voice-1", owner, VoiceRefOrigin::Generated);
+    assert!(vault.store_voice_ref_pack(&generated).is_err());
+    assert!(vault.voice_identity("voice-1")?.is_none());
+    vault.store_voice_ref_pack(&designed)?;
+    vault.store_voice_ref_pack(&captured)?;
+    vault.store_voice_ref_pack(&generated)?;
+    vault.store_voice_ref_pack(&generated)?; // idempotent retry
+    assert_eq!(
+        vault.voice_identity("voice-1")?.unwrap().pack_ids,
+        vec!["design", "generated"]
+    );
+    assert_eq!(
+        vault.voice_identity("voice-2")?.unwrap().pack_ids,
+        vec!["capture"]
+    );
+    assert_eq!(
+        vault.voice_ref_pack("generated")?.unwrap().origin,
+        VoiceRefOrigin::Generated
+    );
+    assert!(other.voice_identity("voice-1")?.is_none());
+    let mut changed = generated;
+    changed.clips[0].audio.push(4);
+    assert!(vault.store_voice_ref_pack(&changed).is_err());
+    changed.id = "another".into();
+    changed.owner = EntityId::now();
+    assert!(vault.store_voice_ref_pack(&changed).is_err());
+    Ok(())
+}
+
+#[test]
 fn withdrawing_owner_deletes_identity_packs_and_target_pointers() -> Result<()> {
     let (_dir, vault) = open();
     let owner = EntityId::now();

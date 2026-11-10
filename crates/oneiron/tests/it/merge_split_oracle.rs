@@ -788,6 +788,16 @@ mod seam {
 
 // ===== ONE-1744 (MS-02) — redirect projection + read-time resolution =====
 
+/// r2/§4: a split into ZERO heads makes the original resolve to the EMPTY
+/// set — the id is "gone" but the ledger event and shell remain.
+#[test]
+fn ms02_redirect_zero_heads_resolves_to_empty_set() {
+    let (_dir, vault) = open_vault();
+    let entity = put_person(&vault, 0x21);
+    seam::split_into_zero_heads(&vault, &entity);
+    assert_eq!(seam::resolve_entity(&vault, &entity).len(), 0);
+}
+
 /// r1/§3: after merge(B → A), B resolves to exactly ONE canonical head.
 #[test]
 fn ms02_redirect_one_head_resolves_to_single_survivor() {
@@ -796,6 +806,64 @@ fn ms02_redirect_one_head_resolves_to_single_survivor() {
     let loser = put_person(&vault, 0x22);
     real_merge(&vault, vec![loser], survivor, 200);
     assert_eq!(seam::resolve_entity(&vault, &loser), vec![survivor]);
+}
+
+/// r2/§4: a split into N heads resolves the original to the EXACT set of
+/// N heads (residue claims read through all heads).
+#[test]
+fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    real_split(&vault, original, vec![head_a, head_b], 200);
+    let mut resolved = seam::resolve_entity(&vault, &original);
+    resolved.sort();
+    let mut expected = vec![head_a, head_b];
+    expected.sort();
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved, expected);
+}
+
+/// r1/§3 + CID-7/ARCH-0035: the redirect table is a rebuildable projection
+/// — dropping it and rebuilding from ENGINE-AUTHORED TRUTH ALONE yields
+/// identical resolution. The projection is never authoritative.
+///
+/// DOC RE-SCOPED BY ONE-1744 (arming, not weakening — every assert below is
+/// kept and the op sequence is STRENGTHENED): the contract was authored as
+/// "from the `merged_into`/`split_into` edges ALONE / edges are the sole
+/// truth". That holds for every edge-ful op, but this ticket lifts the
+/// zero-head split, which shells its entity while writing NO edge — so no
+/// edge set can distinguish a retired id from a live one. The rebuild input
+/// is therefore edges PLUS the type-76 identity-topology event ledger, both
+/// append-only engine-authored truth. D11's "edges are canonical" is
+/// unchanged; the TABLE remains the only droppable projection, so CID-7 is
+/// intact.
+///
+/// Per that lift the fixture now carries a zero-head split alongside the
+/// merge, because it is exactly the arm a from-edges-only rebuild would get
+/// wrong, and a rebuild-identity test that omits it cannot see the
+/// difference.
+#[test]
+fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    let retired = put_person(&vault, 0x24);
+    real_merge(&vault, vec![loser], survivor, 200);
+    seam::split_into_zero_heads(&vault, &retired);
+
+    let before = seam::resolve_entity(&vault, &loser);
+    let before_retired = seam::resolve_entity(&vault, &retired);
+    seam::drop_redirect_projection(&vault);
+    seam::rebuild_redirect_projection_from_edges(&vault);
+    let after = seam::resolve_entity(&vault, &loser);
+    assert_eq!(before, after);
+    assert_eq!(after, vec![survivor]);
+    // The zero-head arm survives the round trip identically: still the empty
+    // set, not the live-entity identity a from-edges-only rebuild would give.
+    assert_eq!(seam::resolve_entity(&vault, &retired), before_retired);
+    assert_eq!(seam::resolve_entity(&vault, &retired).len(), 0);
 }
 
 /// [NEG] r6/§9: claim subjects keep original entity ids FOREVER. After
@@ -819,6 +887,119 @@ fn ms02_refs_never_rewritten_after_merge() {
 }
 
 // ===== ONE-1745 (MS-03) — reassignment map + FACET minting =====
+
+/// r2/§4: the reassignment map assigns each claim of the split entity to a
+/// specific head — exact per-head counts, nothing lost, nothing doubled.
+#[test]
+fn ms03_reassignment_assigns_each_claim_to_a_head() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    let claim_1 = seam::write_note_claim_about(&vault, &original);
+    let claim_2 = seam::write_note_claim_about(&vault, &original);
+    let claim_3 = seam::write_note_claim_about(&vault, &original);
+
+    seam::apply_split_with_map(
+        &vault,
+        &original,
+        &[head_a, head_b],
+        &[
+            (claim_1, Some(head_a)),
+            (claim_2, Some(head_a)),
+            (claim_3, Some(head_b)),
+        ],
+    );
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_a), 2);
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_b), 1);
+
+    // Fully assigned map: ZERO claims remain on the split original.
+    assert_eq!(seam::count_claims_on_original(&vault, &original), 0);
+
+    // Identity, not just cardinality: each head carries EXACTLY the claim
+    // ids the map assigned, and the head sets are disjoint.
+    let mut on_a = seam::claim_ids_assigned_to_head(&vault, &head_a);
+    on_a.sort();
+    let mut expected_a = vec![claim_1, claim_2];
+    expected_a.sort();
+    assert_eq!(on_a, expected_a);
+    assert_eq!(
+        seam::claim_ids_assigned_to_head(&vault, &head_b),
+        vec![claim_3]
+    );
+}
+
+/// [NEG] r2/§4: unattributable residue is NEVER force-assigned — it stays
+/// on the original entity marked ambiguous. A force-assign-everything
+/// implementation must fail here.
+#[test]
+fn ms03_reassignment_residue_stays_ambiguous_on_original() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    let assigned = seam::write_note_claim_about(&vault, &original);
+    let residue = seam::write_note_claim_about(&vault, &original);
+
+    seam::apply_split_with_map(
+        &vault,
+        &original,
+        &[head_a, head_b],
+        &[(assigned, Some(head_a)), (residue, None)],
+    );
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_a), 1);
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_b), 0);
+    assert_eq!(seam::count_claims_on_original(&vault, &original), 1);
+    assert_eq!(seam::count_ambiguous_residue_claims(&vault, &original), 1);
+}
+
+/// r5/§5: facet(entity, facets[]) mints exactly N ARCH-0022 FACET
+/// (type-13) scenario masks. The PERSON put already minted the mandatory
+/// substrate mask, so the total `facets_of` count is N+1; the assertion
+/// distinguishes the substrate from the scenario masks it pins.
+#[test]
+fn ms03_facet_mints_exactly_n_type13_entities() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x21);
+    let minted = seam::apply_facet(&vault, &person, &["reg-a", "reg-b"], &[]);
+    assert_eq!(minted.len(), 2);
+    assert_ne!(minted[0], minted[1]);
+    let all = vault.facets_of(&person).expect("facets of");
+    assert_eq!(all.len(), 3);
+    assert!(all.contains(&oneiron::claim::substrate_facet_id(person).expect("fixture")));
+    let scenario_count = all
+        .into_iter()
+        .filter(|mask| *mask != oneiron::claim::substrate_facet_id(person).expect("fixture"))
+        .count();
+    assert_eq!(scenario_count, 2);
+    assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);
+}
+
+/// r5/r6/r9: the facet op scopes the named behavioral claims by forking each
+/// under its mask and mints NO new base entity ids — facet ops touch no
+/// entity ids beyond the FACET entities and the claim forks themselves.
+#[test]
+fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x21);
+    let people_before = seam::count_entities_of_type(&vault, oneiron::registry::ENTITY_TYPE_PERSON);
+    let claim_1 = seam::write_note_claim_about(&vault, &person);
+    let claim_2 = seam::write_note_claim_about(&vault, &person);
+
+    let minted = seam::apply_facet(
+        &vault,
+        &person,
+        &["reg-a", "reg-b"],
+        &[(claim_1, 0), (claim_2, 1)],
+    );
+    assert_eq!(minted.len(), 2);
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[0]), 1);
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
+    assert_eq!(
+        seam::count_entities_of_type(&vault, oneiron::registry::ENTITY_TYPE_PERSON),
+        people_before
+    );
+}
 
 /// [NEG] r5/§5 + ARCH-0022 no-merge canon: a facet op never blends
 /// behavioral profiles across masks — a claim scoped to one facet is not
@@ -858,7 +1039,101 @@ fn ms03_facet_never_blends_profiles_across_masks() {
 
 // ===== ONE-1746 (MS-04) — entity.distinct_from =====
 
+/// §9 G.1 row: the pair key is the normalized symmetric order
+/// `(min(a,b), max(a,b))` — asserting both directions yields exactly ONE
+/// claim.
+#[test]
+fn ms04_assert_distinct_is_symmetric_single_claim() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::assert_distinct(&vault, &b, &a);
+    assert_eq!(seam::count_active_distinct_claims(&vault, &a, &b), 1);
+    assert_eq!(seam::count_active_distinct_claims(&vault, &b, &a), 1);
+}
+
+/// §6: after assert_distinct(a, b), a merge proposal for (a, b) is
+/// suppressed — rejections route, they don't dead-end into re-asks
+/// (Wikidata P1889 semantics).
+#[test]
+fn ms04_distinct_from_suppresses_merge_reproposal() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::propose_merge(&vault, &a, &b);
+    assert_eq!(seam::count_open_merge_proposals(&vault, &a, &b), 0);
+}
+
+/// [NEG] §6: distinct_from(a, b) suppresses ONLY the asserted pair — a
+/// proposal for (a, c) still surfaces. A suppress-everything-touching-a
+/// implementation must fail here.
+#[test]
+fn ms04_distinct_from_does_not_suppress_unrelated_pairs() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::propose_merge(&vault, &a, &c);
+    assert_eq!(seam::count_open_merge_proposals(&vault, &a, &c), 1);
+}
+
 // ===== ONE-1747 (MS-05) — proposal-outcome receipts + reserved delta =====
+
+/// r7/§7: a resolved proposal yields exactly one of approved-untouched /
+/// approved-amended / rejected.
+#[test]
+fn ms05_proposal_outcome_has_exactly_three_states() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let d = put_person(&vault, 0x24);
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &b);
+    let (outcome, _) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
+
+    let amended = seam::submit_merge_proposal(&vault, &a, &c);
+    let narrowed = amendment_body(vec![c], a);
+    let (outcome, _) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
+    assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
+
+    let rejected = seam::submit_merge_proposal(&vault, &a, &d);
+    let (outcome, _) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+    assert_eq!(outcome, ProposalOutcome::Rejected);
+}
+
+/// r7/§7: an approved-amended outcome carries a present, non-empty
+/// amendment-delta payload; approved-untouched and rejected carry none.
+#[test]
+fn ms05_amended_receipt_carries_delta_others_do_not() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let d = put_person(&vault, 0x24);
+
+    let amended = seam::submit_merge_proposal(&vault, &a, &b);
+    let narrowed = amendment_body(vec![b], a);
+    let (_, amended_receipt) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
+    assert_eq!(
+        seam::receipt_delta_payload(&vault, amended_receipt),
+        Some(narrowed)
+    );
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &c);
+    let (_, untouched_receipt) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    assert_eq!(seam::receipt_delta_payload(&vault, untouched_receipt), None);
+
+    let rejected = seam::submit_merge_proposal(&vault, &a, &d);
+    let (_, rejected_receipt) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+    assert_eq!(seam::receipt_delta_payload(&vault, rejected_receipt), None);
+}
 
 /// r7 + ARCH-0056 boundary — POLARITY FLIPPED BY ONE-1757 (ED-01), the
 /// pre-declared seam artifact for §6 edge #1.
@@ -936,7 +1211,45 @@ fn ms05_amendment_body_stays_opaque_while_ed01_fills_the_reserved_delta_slot() {
     assert_eq!(seam::project_amendment_deltas(&vault), 0);
 }
 
+/// The Δ slot follows the PRODUCER artifact exactly: outcomes that amended
+/// nothing carry neither, even after the projection pass runs over them.
+#[test]
+fn ms05_unamended_outcomes_carry_no_delta_after_the_projection_pass() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &b);
+    let (_, untouched_receipt) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    let rejected = seam::submit_merge_proposal(&vault, &a, &c);
+    let (_, rejected_receipt) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+
+    assert_eq!(seam::project_amendment_deltas(&vault), 0);
+    assert_eq!(
+        seam::receipt_amendment_delta(&vault, untouched_receipt),
+        None
+    );
+    assert_eq!(
+        seam::receipt_amendment_delta(&vault, rejected_receipt),
+        None
+    );
+}
+
 // ===== ONE-1748 (MS-06) — consent-graduation ramp =====
+
+/// r7/§7: a ramp scope keys on the EXACT tuple
+/// (op kind × target class × skill/agent) — two scopes differing only in
+/// agent are distinct; identical tuples resolve to the same scope.
+#[test]
+fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
+    let (_dir, vault) = open_vault();
+    let scope_a = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let scope_b = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-b");
+    let scope_a_again = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    assert_ne!(scope_a, scope_b);
+    assert_eq!(scope_a, scope_a_again);
+}
 
 /// r7/§7 + DEC-0006 invariant 5: production approval receipts create an
 /// offer, never standing authority, until the authenticated owner accepts.
@@ -1088,6 +1401,20 @@ fn ms07_harderase_of_head_cascades_to_redirect_shells() {
     seam::hard_erase_entity(&vault, &survivor);
     assert_eq!(seam::readable_payload_bytes(&vault, &survivor), 0);
     assert_eq!(seam::readable_payload_bytes(&vault, &loser), 0);
+}
+
+/// r6/§9: the redirect table joins the ARCH-0038 carrier enumeration —
+/// membership assert against the sweep's carrier classes.
+#[test]
+fn ms07_redirect_table_is_an_arch0038_carrier() {
+    let (_dir, vault) = open_vault();
+    let classes = seam::arch0038_carrier_classes(&vault);
+    let redirect_class = seam::redirect_carrier_class();
+    assert!(
+        classes.contains(&redirect_class),
+        "ARCH-0038 carrier enumeration must include the redirect table \
+         (got {classes:?})"
+    );
 }
 
 /// [NEG] r6/§9: after HardErase of the head and a redirect-projection
