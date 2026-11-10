@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7250 | 926 | 241 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7251 | 930 | 241 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 6 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 67 | 1 | 0 |
@@ -253,7 +253,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `secret_custody` | dir | 85 | L | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `secret_lease` | dir | 14 | m | yes | ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single… |
 | `secret_manifest` | file+dir | 2 | s | — | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
-| `secret_record` | dir | 7 | s | — | Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are… |
+| `secret_record` | dir | 8 | m | — | Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are… |
 | `secret_rotation` | file+dir | 5 | m | yes | Core half of `secret_rotation`: its store-layer items live in `oneiron_store::secret_rotation` and are… |
 | `secret_snapshot` | file+dir | 2 | s | yes | Snapshot-time secret custody filtering (ARCH-0069 S4/S5) |
 | `self_heal` | dir | 53 | m | yes | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
@@ -1103,7 +1103,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `reaction_predicate` | file | 1 | s | Reaction outcome predicate stored by event-outcome projections |
 | `reader_fold_receipt` | file | 1 | s | Stored reader-fold receipts and their occurrence vocabulary |
 | `receipt_identity` | file | 1 | s | The identity marker carried after receipt attribution is erased |
-| `receipt_row` | file | 1 | m | Receipt row fields, query values, and deterministic ordering |
+| `receipt_row` | file | 1 | s | Receipt row fields, query values, and deterministic ordering |
 | `receive_scan` | file | 1 | s | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `record_links` | dir | 2 | m | Pure parsing of record links in Markdown text |
 | `record_ref` | file | 1 | s | Typed record references and bounded record display labels |
