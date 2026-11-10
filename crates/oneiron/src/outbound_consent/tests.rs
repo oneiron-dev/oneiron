@@ -1,6 +1,5 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::outbound_grant::ScopedMcpGrantMintIntent;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, RecordedOutboundOutcome, intent_ledger_records,
 };
@@ -42,32 +41,20 @@ fn prepared_fixture(
         && key.retained_manifest.is_some()
         && key.status == crate::connector_key::ConnectorKeyStatus::Active
     {
-        return vault
-            .prepare_connector_tool_call(
-                &id,
-                call,
-                tool,
-                &args,
-                tool_call::MutationIntent::default(),
-            )
-            .expect("prepare exact approved connector schema");
+        return ready_tool_call(
+            vault
+                .prepare_connector_tool_call(
+                    &id,
+                    call,
+                    tool,
+                    &args,
+                    tool_call::MutationIntent::default(),
+                )
+                .expect("prepare exact approved connector schema"),
+        );
     }
     tool_call::prepare_tool_call(call, tool, &args, tool_call::MutationIntent::default())
         .expect("prepare fixture")
-}
-
-fn scoped_intent() -> ScopedMcpGrantMintIntent {
-    ScopedMcpGrantMintIntent {
-        principal_ref: "principal:owner".to_owned(),
-        origin_component_id: "consent:scope".to_owned(),
-        origin_action_id: "grant:scoped_tool".to_owned(),
-        origin_receipt_ref: Some("gate:scoped-tool".to_owned()),
-        server: "files".to_owned(),
-        tool: "read_file".to_owned(),
-        data_class_ceiling: DataClass::Personal,
-        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
-        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-    }
 }
 
 const SCOPED_PRINCIPAL: &str = "principal:owner";
@@ -91,9 +78,37 @@ fn mint_scoped_grant(
     scope: crate::outbound_grant::StandingOutboundGrantScope,
 ) -> crate::error::Result<crate::outbound_grant::StandingOutboundGrant> {
     let owner = crate::test_util::embedded_owner_proof(vault);
+    mint_scoped_grant_as(vault, &owner, grant_id, principal_ref, scope)
+}
+
+/// Today's owner mint for one scoped grant under the proof under test, so an
+/// authentication test mints with its own proof instead of the embedded one.
+fn mint_scoped_grant_as(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    grant_id: &EntityId,
+    principal_ref: &str,
+    scope: crate::outbound_grant::StandingOutboundGrantScope,
+) -> crate::error::Result<crate::outbound_grant::StandingOutboundGrant> {
     vault.with_write_txn(|wtxn| {
-        vault.mint_standing_outbound_grant_in_txn(wtxn, &owner, *grant_id, principal_ref, scope)
+        vault.mint_standing_outbound_grant_in_txn(wtxn, owner, *grant_id, principal_ref, scope)
     })
+}
+
+/// The prepared call a fixture preparation minted. The vault's own driver
+/// takes a `ConsentRequired` candidate the same way; a fixture tool is never
+/// `Denied` (its key carries the default slate).
+fn ready_tool_call(
+    preparation: tool_call::ConnectorToolCallPreparation,
+) -> tool_call::PreparedToolCall {
+    match preparation {
+        tool_call::ConnectorToolCallPreparation::Ready(prepared)
+        | tool_call::ConnectorToolCallPreparation::ConsentRequired { candidate: prepared } => {
+            Some(prepared)
+        }
+        tool_call::ConnectorToolCallPreparation::Denied { .. } => None,
+    }
+    .expect("fixture tool is callable")
 }
 
 fn scoped_call() -> ScopedMcpCallContext {
@@ -772,7 +787,13 @@ fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
         .propose_connector_charter(&key_id, "never write_file", 11)
         .expect("propose charter");
     vault
-        .approve_connector_charter(&key_id, pending.compiled_hash, "owner", 12)
+        .approve_connector_charter(
+            &key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            12,
+        )
         .expect("approve charter");
     let mut drifted = vault
         .get_connector_key(&key_id)
@@ -1013,7 +1034,10 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
             rows[0].budget_accounting.budget_class,
             crate::outbound_intent_ledger::BudgetClass::Send
         );
-        assert_eq!(rows[0].budget_accounting.matched_rows, vec![0]);
+        assert_eq!(
+            rows[0].budget_accounting.matched_rows,
+            vec![crate::connector_key::EffectorBudgetRowId::key(0)]
+        );
         assert_eq!(rows[0].budget_accounting.sends_debit, 1);
         rows[0].budget_accounting.clone()
     };
@@ -1247,7 +1271,13 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
         .propose_connector_charter(&key_id, "never read_file", 12)
         .expect("propose never-list");
     vault
-        .approve_connector_charter(&key_id, proposal.compiled_hash, "owner", 13)
+        .approve_connector_charter(
+            &key_id,
+            proposal.text_hash,
+            proposal.compiled_hash,
+            "owner",
+            13,
+        )
         .expect("approve never-list");
 
     let mut transport = RecordingResultSender::default();
@@ -1613,7 +1643,7 @@ fn stamp_charter(vault: &Vault, key_id: &EntityId, text: &str) {
         .propose_connector_charter(key_id, text, 12)
         .expect("propose charter");
     vault
-        .approve_connector_charter(key_id, pending.compiled_hash, "owner", 13)
+        .approve_connector_charter(key_id, pending.text_hash, pending.compiled_hash, "owner", 13)
         .expect("approve charter");
 }
 

@@ -22,12 +22,16 @@ fn owner(vault: &Vault) -> AuthenticatedOwner {
 fn grant(vault: &Vault, classes: Vec<ToolGrantDataClass>) -> (EntityId, StandingOutboundGrant) {
     let owner = owner(vault);
     let id = entity(0xB2);
-    let mut intent = scoped_intent();
-    intent.principal_ref = owner.principal_ref().to_owned();
-    intent.tool_data_classes = classes;
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant_with_owner(&owner, &id, &intent, 10)
-        .unwrap();
+    let mut scope = scoped_mcp_scope();
+    if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+        tool_data_classes,
+        ..
+    } = &mut scope
+    {
+        *tool_data_classes = classes;
+    }
+    let grant =
+        mint_scoped_grant_as(vault, &owner, &id, owner.principal_ref(), scope).unwrap();
     let key_id = register_active_scoped_connector_key_with_budget(vault, &id, "files", 100);
     // Header tests use one approved descriptor with the same resolved header
     // schema that their prepared calls freeze.
@@ -65,23 +69,25 @@ fn prepare(
         "record": {"type": "string"},
         "dry_run": {"type": "boolean"}
     }});
-    vault
-        .prepare_connector_tool_call(
-            &vault
-                .connector_key_for(&scoped_capability_connector("files", grant_id), None)
-                .unwrap()
-                .unwrap()
-                .0,
-            scoped_call(),
-            ToolCallDescriptor {
-                schema: &schema,
-                destructive_hint: true,
-                replay: fixture_descriptor(),
-            },
-            arguments,
-            mutation,
-        )
-        .unwrap()
+    ready_tool_call(
+        vault
+            .prepare_connector_tool_call(
+                &vault
+                    .connector_key_for(&scoped_capability_connector("files", grant_id), None)
+                    .unwrap()
+                    .unwrap()
+                    .0,
+                scoped_call(),
+                ToolCallDescriptor {
+                    schema: &schema,
+                    destructive_hint: true,
+                    replay: fixture_descriptor(),
+                },
+                arguments,
+                mutation,
+            )
+            .unwrap(),
+    )
 }
 
 #[test]
@@ -254,18 +260,21 @@ fn explicit_mutation_does_not_supply_missing_consent_or_relax_sensitivity() {
             .unwrap()
             .unwrap()
             .0;
-        let prepared = vault.prepare_connector_tool_call(
-            &key_ref,
-            call,
-            ToolCallDescriptor {
-                schema: &json!({"properties":{"tenant":{"type":"string","x-mcp-header":"X-Tenant"},"record":{"type":"string"},"dry_run":{"type":"boolean"}}}),
-                destructive_hint: true,
-                replay: fixture_descriptor(),
-            },
-            &json!({"tenant":"original", "dry_run":true}),
-            MutationIntent::ExplicitMutation,
-        )
-        .unwrap();
+        let prepared = ready_tool_call(
+            vault
+                .prepare_connector_tool_call(
+                    &key_ref,
+                    call,
+                    ToolCallDescriptor {
+                        schema: &json!({"properties":{"tenant":{"type":"string","x-mcp-header":"X-Tenant"},"record":{"type":"string"},"dry_run":{"type":"boolean"}}}),
+                        destructive_hint: true,
+                        replay: fixture_descriptor(),
+                    },
+                    &json!({"tenant":"original", "dry_run":true}),
+                    MutationIntent::ExplicitMutation,
+                )
+                .unwrap(),
+        );
         let attempt = AttemptId::now();
         let authorization = authority
             .authorize_request(
@@ -312,18 +321,36 @@ fn explicit_mutation_does_not_supply_missing_consent_or_relax_sensitivity() {
 #[test]
 fn header_class_requires_owner_door_and_revocation_blocks_prepared_mutation() {
     let (_dir, vault) = temp_vault();
-    let mut intent = scoped_intent();
-    intent
-        .tool_data_classes
-        .push(ToolGrantDataClass::XMcpHeader);
+    let classes = vec![
+        ToolGrantDataClass::Arguments,
+        ToolGrantDataClass::XMcpHeader,
+    ];
+    let probe_owner = owner(&vault);
+    let (_foreign_tmp, _foreign_vault, foreign) = crate::test_util::foreign_owner_proof(
+        probe_owner.actor(),
+        probe_owner.principal_ref(),
+    );
+    let mut scope = scoped_mcp_scope();
+    if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+        tool_data_classes,
+        ..
+    } = &mut scope
+    {
+        *tool_data_classes = classes.clone();
+    }
     assert_eq!(
-        vault
-            .mint_scoped_mcp_outbound_grant(&entity(0xB3), &intent, 10)
-            .unwrap_err()
-            .kind(),
+        mint_scoped_grant_as(
+            &vault,
+            &foreign,
+            &entity(0xB3),
+            probe_owner.principal_ref(),
+            scope
+        )
+        .unwrap_err()
+        .kind(),
         crate::ErrorKind::ConsentOwnerNotAuthenticated
     );
-    let (id, grant) = grant(&vault, intent.tool_data_classes);
+    let (id, grant) = grant(&vault, classes);
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let prepared = prepare(
         &vault,
@@ -347,7 +374,9 @@ fn header_class_requires_owner_door_and_revocation_blocks_prepared_mutation() {
             .binding
             .is_some()
     );
-    vault.revoke_standing_outbound_grant(&id, 11).unwrap();
+    vault
+        .revoke_consent_grant(&owner(&vault), &grant.grant_ref())
+        .unwrap();
     let mut sender = RecordingResultSender::default();
     let result = prepared
         .execute(
@@ -408,6 +437,7 @@ fn prepared_effect(
             has_opted_in: false,
             has_permission: false,
             policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+            send_autonomy: None,
         },
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
@@ -420,6 +450,8 @@ fn prepared_effect(
         dedupe_key: None,
         suppression_receipt: None,
         admission_ceiling: None,
+        co_actor: None,
+        exclusive_route: None,
     }
 }
 
@@ -477,24 +509,26 @@ mod foreign_owner_proof {
         let (_other_tmp, _other, foreign) =
             crate::test_util::foreign_owner_proof(own.actor(), own.principal_ref());
         let id = entity(0xB2);
-        let mut intent = scoped_intent();
-        intent.principal_ref = own.principal_ref().to_owned();
-        intent.tool_data_classes = vec![
-            ToolGrantDataClass::Arguments,
-            ToolGrantDataClass::XMcpHeader,
-        ];
+        let mut scope = scoped_mcp_scope();
+        if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+            tool_data_classes,
+            ..
+        } = &mut scope
+        {
+            *tool_data_classes = vec![
+                ToolGrantDataClass::Arguments,
+                ToolGrantDataClass::XMcpHeader,
+            ];
+        }
 
         assert_eq!(
-            vault
-                .mint_scoped_mcp_outbound_grant_with_owner(&foreign, &id, &intent, 10)
+            mint_scoped_grant_as(&vault, &foreign, &id, own.principal_ref(), scope.clone())
                 .unwrap_err()
                 .kind(),
             crate::ErrorKind::ConsentOwnerNotAuthenticated
         );
         assert!(vault.get_standing_outbound_grant(&id).unwrap().is_none());
-        vault
-            .mint_scoped_mcp_outbound_grant_with_owner(&own, &id, &intent, 10)
-            .unwrap();
+        mint_scoped_grant_as(&vault, &own, &id, own.principal_ref(), scope).unwrap();
         assert!(vault.get_standing_outbound_grant(&id).unwrap().is_some());
     }
 }
@@ -510,26 +544,28 @@ mod revoked_owner_credential {
         let vault = std::rc::Rc::new(vault);
         let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"header grant");
         let id = entity(0xB2);
-        let mut intent = scoped_intent();
-        intent.principal_ref = owner.principal_ref().to_owned();
-        intent.tool_data_classes = vec![
-            ToolGrantDataClass::Arguments,
-            ToolGrantDataClass::XMcpHeader,
-        ];
+        let mut scope = scoped_mcp_scope();
+        if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+            tool_data_classes,
+            ..
+        } = &mut scope
+        {
+            *tool_data_classes = vec![
+                ToolGrantDataClass::Arguments,
+                ToolGrantDataClass::XMcpHeader,
+            ];
+        }
         crate::test_util::revoke_before_the_next_write(&vault, slip);
 
         assert_eq!(
-            vault
-                .mint_scoped_mcp_outbound_grant_with_owner(&owner, &id, &intent, 10)
+            mint_scoped_grant_as(&vault, &owner, &id, owner.principal_ref(), scope.clone())
                 .unwrap_err()
                 .kind(),
             crate::ErrorKind::ConsentOwnerNotAuthenticated
         );
         assert!(vault.get_standing_outbound_grant(&id).unwrap().is_none());
         let (fresh, _) = crate::test_util::credentialed_owner_proof(&vault, b"header grant again");
-        vault
-            .mint_scoped_mcp_outbound_grant_with_owner(&fresh, &id, &intent, 10)
-            .unwrap();
+        mint_scoped_grant_as(&vault, &fresh, &id, fresh.principal_ref(), scope).unwrap();
         assert!(vault.get_standing_outbound_grant(&id).unwrap().is_some());
     }
 }
