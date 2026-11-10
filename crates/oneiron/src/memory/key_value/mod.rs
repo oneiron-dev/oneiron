@@ -14,7 +14,9 @@ mod writes;
 use super::support::{json_to_rmpv, verify_actor_binding_in_txn};
 use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, ClaimSubject, PointRead,
+};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error};
 use crate::serialize::msgpack_value_to_json;
@@ -209,6 +211,12 @@ impl Memory<'_> {
     /// own and LMDB allows one per thread; a head written between the two
     /// is not in the set, so it reads as withheld. `None` for a handle bound
     /// to no credential, which reads no extra snapshot.
+    ///
+    /// The lane reads in its exact-store mode: every check of the
+    /// credential's lane (its live proof, row caveats, ceilings, audience,
+    /// relationship and policy) applies, but not the generic-read exclusion
+    /// of exact-store claims, which would withhold every head
+    /// ([E2E-KV-GET-PREFILTER]).
     fn key_value_readable(&self) -> MemoryResult<Option<BTreeSet<EntityId>>> {
         if self.read_proof.is_none() {
             return Ok(None);
@@ -220,7 +228,19 @@ impl Memory<'_> {
                 .map(|(_, id, _)| id)
                 .collect()
         };
-        self.credential_readable_ids(&ids)
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        let rows = self
+            .read_lane(ClaimReadStatus::ExactStore)?
+            .read(&reads, None)
+            .map_err(MemoryError::from)?
+            .value;
+        Ok(Some(
+            rows.into_iter()
+                .flatten()
+                .filter(|row| row.body.is_some())
+                .map(|row| row.id)
+                .collect(),
+        ))
     }
 
     /// The bound actor/class's live keyed heads, by address. With
