@@ -218,6 +218,87 @@ pub fn drop_dreamer_rows(vault: &Vault) -> Result<()> {
     )
 }
 
+/// Rewrites the shipped policy with `edit` and puts it back as the vault's
+/// trusted default pack.
+fn rewrite_shipped_policy(
+    vault: &Vault,
+    edit: impl FnOnce(&mut Vec<(rmpv::Value, rmpv::Value)>) -> Result<()>,
+) -> Result<()> {
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .map_err(|_| Error::InvalidConfig("default policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("default policy is not a map".into()));
+    };
+    edit(&mut entries)?;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+/// The value under `key` in a policy map.
+fn policy_entry<'a>(
+    entries: &'a mut [(rmpv::Value, rmpv::Value)],
+    key: &str,
+) -> Result<&'a mut rmpv::Value> {
+    entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
+        .ok_or_else(|| Error::InvalidConfig(format!("the shipped policy has no {key}")))
+}
+
+/// The shipped policy with the trust of tool output written as the
+/// shorthand row `false` (no Auto, bound to no writer), as the policy decode
+/// accepts it. The Dreamer's rows stay as shipped.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_shorthand_tool_output_trust(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Map(sources) = policy_entry(entries, "source_trust")? else {
+            return Err(Error::InvalidConfig("source trust is not a map".into()));
+        };
+        *policy_entry(sources, "tool_output")? = rmpv::Value::Boolean(false);
+        Ok(())
+    })
+}
+
+/// The shipped policy with every actor ceiling but the Dreamer's taken out,
+/// so the Dreamer's Auto row is the only one in the list.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn keep_only_the_dreamer_ceiling(vault: &Vault) -> Result<()> {
+    let dreamer = dreamer(vault)?.to_hex();
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Array(rows) = policy_entry(entries, "actor_ceilings")? else {
+            return Err(Error::InvalidConfig("actor ceilings are not a list".into()));
+        };
+        rows.retain(|row| {
+            row.as_map().is_some_and(|fields| {
+                fields.iter().any(|(key, value)| {
+                    key.as_str() == Some("actor_ref") && value.as_str() == Some(dreamer.as_str())
+                })
+            })
+        });
+        if rows.len() != 1 {
+            return Err(Error::InvalidConfig(format!(
+                "the shipped policy holds {} Dreamer ceilings",
+                rows.len()
+            )));
+        }
+        Ok(())
+    })
+}
+
 /// Where `agent`'s Steward grant stands, or `None` before any mint.
 ///
 /// # Errors
