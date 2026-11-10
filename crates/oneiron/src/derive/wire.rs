@@ -26,13 +26,16 @@ use crate::snapshot_read::SourceVersion;
 use crate::verbs::IdentityProposedOp;
 
 /// A row an item names: `{"stored": "<id>"}` for a stored row, or
-/// `{"local": "<name>"}` for the row an earlier item of the batch lands.
+/// `{"local": "<name>"}` for the row an earlier item of the batch creates.
+/// Only a claim, a settlement, a SameAs and a topology item create a row
+/// that can be named; a stored row is always named as stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveRef {
     /// A stored row, by id.
     Stored(EntityId),
-    /// The row an earlier item of the batch lands, by that item's local name.
+    /// The row an earlier item of the batch creates, by that item's local
+    /// name.
     Local(String),
 }
 
