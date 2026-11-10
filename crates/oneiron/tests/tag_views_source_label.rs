@@ -26,7 +26,9 @@ use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
     CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
 };
-use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{
+    MEMORY_CODE_NOT_FOUND, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{
     MentionLink, TaggingMarkerConfig, TaggingMentionsRequest, TaggingMode, TaggingReconciler,
@@ -382,7 +384,8 @@ fn tag_views_serve_no_mention_from_a_message_outside_the_readers_relationship() 
 /// each hit is judged by its own TURN and MESSAGE), and a hit the outsider
 /// sees does not point at a mention in the R MESSAGE: a pronoun in the S
 /// MESSAGE that corefers with "Mirela" in the R MESSAGE shows with no
-/// antecedent (review round 1 of #6970).
+/// antecedent (review round 1 of #6970). While Mirela is named only in the
+/// R MESSAGE, her id answers the outsider as an absent id does (round 2).
 #[test]
 fn a_mentions_hit_never_points_at_a_mention_outside_the_readers_relationship() {
     let fixture = tagged_fixture();
@@ -401,6 +404,30 @@ fn a_mentions_hit_never_points_at_a_mention_outside_the_readers_relationship() {
             _ => None,
         })
         .expect("FIXTURE: Mirela minted a provisional entity");
+
+    // So far Mirela is named only in the R MESSAGE: to the outsider her id
+    // answers as an id that names nothing (review round 2 of #6970).
+    let outsider_mentions = |entity_ref: String| {
+        fixture
+            .vault
+            .memory(fixture.outsider, EdgeActorClass::Human)
+            .tagging_mentions(&TaggingMentionsRequest {
+                entity_ref,
+                limit: 1,
+            })
+            .map(|read| read.value.mentions.len())
+            .map_err(|error| (error.code, error.message))
+    };
+    let absent = outsider_mentions(EntityId::now().to_hex());
+    assert_eq!(
+        outsider_mentions(mirela.to_hex()),
+        absent,
+        "LEAK: a provisional entity named only in the R MESSAGE answers apart from an id that names nothing"
+    );
+    assert!(
+        matches!(&absent, Err((code, _)) if code == MEMORY_CODE_NOT_FOUND),
+        "FIXTURE: an id that names nothing is not found: {absent:?}"
+    );
 
     // A second turn: "Mirela called." in R, then "She is fine." in S.
     let turn = EntityId::now();
