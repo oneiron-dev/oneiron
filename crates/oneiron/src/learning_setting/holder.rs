@@ -188,7 +188,7 @@ impl Vault {
             &rendered(scope, row.mode, Some(row.value)),
             |wtxn| {
                 owner_rows_admit(self, &*wtxn, spec, scope, row.mode, class, Some(row.value))?;
-                let witness = witness::holder_put_in_txn(self, wtxn, holder, scope, row)?;
+                let witness = witness::holder_put_in_txn(self, wtxn, scope, row)?;
                 let setter = Setter::Holder(holder);
                 put_row_in_txn(self, wtxn, spec, scope, row, setter, witness)
             },
