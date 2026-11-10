@@ -77,6 +77,16 @@ pub struct RuntimeConfig {
     #[serde(skip)]
     #[schema(ignore)]
     pub seat_host_aliases: Vec<String>,
+    /// `[runtime] clock`: the clock this server's vault reads, and with it
+    /// the HTTP idempotency layer. The host's clock by default.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub clock: super::RuntimeClock,
+    /// `[runtime] clock_file`: the file a `manual` clock reads its time
+    /// from ([`super::ManualClockFile`]). Named only with `clock = "manual"`.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub clock_file: Option<std::path::PathBuf>,
 }
 
 /// Whether a host runs the queued official CLI attempts itself when its
@@ -94,6 +104,8 @@ impl PartialEq for RuntimeConfig {
             && self.seat_model_providers == other.seat_model_providers
             && self.seat_host == other.seat_host
             && self.seat_host_aliases == other.seat_host_aliases
+            && self.clock == other.clock
+            && self.clock_file == other.clock_file
     }
 }
 
@@ -111,6 +123,8 @@ impl fmt::Debug for RuntimeConfig {
             .field("seat_model_providers", &self.seat_model_providers)
             .field("seat_host", &self.seat_host)
             .field("seat_host_aliases", &self.seat_host_aliases)
+            .field("clock", &self.clock)
+            .field("clock_file", &self.clock_file)
             .finish()
     }
 }
@@ -138,6 +152,8 @@ impl RuntimeConfig {
             seat_model_providers: BTreeMap::new(),
             seat_host: SEAT_HOST_DEFAULT,
             seat_host_aliases: Vec::new(),
+            clock: super::RuntimeClock::System,
+            clock_file: None,
         }
     }
 
@@ -156,6 +172,12 @@ impl RuntimeConfig {
         }
         if let Some(aliases) = value.seat_host_aliases {
             self.seat_host_aliases = aliases;
+        }
+        if let Some(clock) = value.clock {
+            self.clock = clock;
+        }
+        if let Some(clock_file) = value.clock_file {
+            self.clock_file = Some(clock_file);
         }
         // The BYO key's source is one choice: a layer that names one replaces
         // both, before a BYO mode looks for one.
@@ -198,6 +220,45 @@ impl RuntimeConfig {
 
     /// The BYO key's source: an environment variable or a vault secret's
     /// name, not both.
+    /// `[runtime] clock` and `clock_file` agree: a manual clock names a file
+    /// that holds Unix milliseconds, and the system clock names none.
+    pub(crate) fn validate_clock(&self) -> anyhow::Result<()> {
+        match (self.clock, &self.clock_file) {
+            (super::RuntimeClock::System, None) => Ok(()),
+            (super::RuntimeClock::System, Some(_)) => {
+                anyhow::bail!("runtime: clock_file is read only with clock = \"manual\"")
+            }
+            (super::RuntimeClock::Manual, None) => {
+                anyhow::bail!("runtime: clock = \"manual\" needs clock_file")
+            }
+            (super::RuntimeClock::Manual, Some(path)) => super::ManualClockFile::read(path)
+                .map(drop)
+                .map_err(|error| anyhow::anyhow!("runtime: clock_file: {error}")),
+        }
+    }
+
+    /// The vault clock `[runtime] clock` names: `None` for the system clock,
+    /// which a vault config already holds. A manual clock whose file can no
+    /// longer be read is `None` too, and the error says why; config
+    /// validation refuses that file before a server starts
+    /// ([`Self::validate_clock`]).
+    ///
+    /// # Errors
+    /// The manual clock's file cannot be read.
+    pub fn store_clock(&self) -> anyhow::Result<Option<oneiron::store::ports::StoreClock>> {
+        match (self.clock, &self.clock_file) {
+            (super::RuntimeClock::Manual, Some(path)) => {
+                let clock = super::ManualClockFile::open(path)
+                    .map_err(|error| anyhow::anyhow!("runtime: clock_file: {error}"))?;
+                Ok(Some(clock.store_clock()))
+            }
+            (super::RuntimeClock::Manual, None) => {
+                anyhow::bail!("runtime: clock = \"manual\" needs clock_file")
+            }
+            (super::RuntimeClock::System, _) => Ok(None),
+        }
+    }
+
     pub(crate) fn validate_key_source(&self) -> anyhow::Result<()> {
         if self.byo_key_env.is_some() && self.byo_key_secret.is_some() {
             anyhow::bail!("runtime: set byo_key_env or byo_key_secret, not both");
