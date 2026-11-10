@@ -445,6 +445,22 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
             object.insert("run_ref".to_owned(), json!("census-run"));
             object.insert("task".to_owned(), json!("summarize the current board"));
         }
+        McpEndpointTool::ReadResult => {
+            object.remove("page");
+            object.remove("cache");
+            object.insert("run_ref".to_owned(), json!("census-run"));
+            object.insert("ref".to_owned(), json!("census-result"));
+            object.insert("facet".to_owned(), json!("describe"));
+            object.insert("input".to_owned(), json!({}));
+        }
+        McpEndpointTool::InvokeAction => {
+            object.remove("page");
+            object.remove("cache");
+            object.insert("verb".to_owned(), json!("census.action"));
+            object.insert("args".to_owned(), json!([]));
+            object.insert("idempotencyKey".to_owned(), json!("census-key"));
+            object.insert("liveRun".to_owned(), json!("census-live-run"));
+        }
         McpEndpointTool::Verb(verb) => {
             object.insert("arguments".to_owned(), endpoint_census_arguments(verb));
         }
@@ -741,7 +757,7 @@ fn page_snapshot(row: &str) -> McpPageSnapshot {
         source: McpPageSource::complete(1),
         health: McpRetrievalHealth::Healthy,
         keyframe: None,
-        rows: Vec::new(),
+        rows: Some(Vec::new()),
     }
 }
 
