@@ -553,7 +553,7 @@ async function sync05Standing(client: EngineFixture["client"], predicate: string
  *   vault.notes.edit on the device replica refuses "replica NOTE edits require
  *   authenticated authority" (note/operations.rs:493-495); the private canary
  *   for a narrow reader (the device carries only the owner credential);
- *   repeated reconnects adding nothing (covered for claims by SYNC-01).
+ *   repeated reconnects adding nothing (not proved anywhere yet: SYNC-01 has one partition and one heal).
  */
 suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authorized body local, readable with the home link cut and after a crash, leaves claim source and approval unchanged, and receives the home's offline-time edit on rejoin", async () => {
   const scenario = await sync05Scenario();
