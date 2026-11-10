@@ -6152,7 +6152,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/anchor_independence.rs",
@@ -6438,16 +6438,8 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 57
+      "crate-vis": 53
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/tier_floor.rs",
-     "purpose": "Signer assurance is constrained by causal and concurrent vault floors",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -8255,7 +8247,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "mod": 1,
       "re-export": 3
      }
@@ -62641,18 +62633,10 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound_grant/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/outbound_grant/tests/header_classes.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -65314,7 +65298,7 @@
      "path": "src/ppr/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -98397,6 +98381,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/consolidation_facade_facet.rs",
+     "purpose": "Regression for a facade claim's facet on the consolidation root-pin path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dag_append_composed_source.rs",
      "purpose": "The DAG append's source label follows who composed the words (Engine ruling…",
      "surface": {}
@@ -99468,7 +99460,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 279,
+     "files": 278,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100392,7 +100384,7 @@
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
     "outbound_grant": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101039,7 +101031,7 @@
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7249,
-   "test_files": 921
+   "test_files": 920
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -118706,8 +118698,7 @@
      "path": "src/policy_model/contract.rs",
      "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
+      "const": 2,
       "enum": 1,
       "fn": 5,
       "struct": 1
