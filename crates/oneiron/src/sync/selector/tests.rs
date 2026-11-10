@@ -1949,8 +1949,7 @@ fn a_pending_staged_stamp_outlives_the_age_a_peer_stamp_retires_at() {
         "precondition: both lanes hold their stamps"
     );
 
-    let aged =
-        vault.store.clock.now_recorded_at() + 30 * 24 * 60 * 60;
+    let aged = vault.store.clock.now_recorded_at() + 30 * 24 * 60 * 60;
     let retire = |now| {
         crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
             Ok(grants.clone())
@@ -3778,12 +3777,11 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     let repact = |seq: u64, facet_byte: u8, nonce_byte: u8| {
         let scope = selector_pact_scope(ScopeAxis::from_iter([entity_id(facet_byte)].map(ScopeId)));
         let nonce = [nonce_byte; 16];
-        let digest =
-            federation_scope_digest(
-                &[0x68; 32],
-                &nonce,
-                &encode_federation_pact_scope(&scope).unwrap(),
-            );
+        let digest = federation_scope_digest(
+            &[0x68; 32],
+            &nonce,
+            &encode_federation_pact_scope(&scope).unwrap(),
+        );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Rescope,
             &pact_id,
@@ -3966,12 +3964,11 @@ fn seed_scoped_pacts_for_grant(
             lo_to_hi: scope.clone(),
             hi_to_lo: scope.clone(),
         };
-        let digest =
-            federation_scope_digest(
-                &[0x68; 32],
-                &nonce,
-                &encode_federation_pact_scope(&pact_scope).unwrap(),
-            );
+        let digest = federation_scope_digest(
+            &[0x68; 32],
+            &nonce,
+            &encode_federation_pact_scope(&pact_scope).unwrap(),
+        );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Connect,
             &pact_id,

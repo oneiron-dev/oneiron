@@ -1104,7 +1104,11 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         &host,
         seq + 2,
         &before.append_heads,
-        AuthorityOp::SlipMint(SlipMintAction { claims, renews: None, minting_member: None }),
+        AuthorityOp::SlipMint(SlipMintAction {
+            claims,
+            renews: None,
+            minting_member: None,
+        }),
         None,
     );
     let removal = host_entry(

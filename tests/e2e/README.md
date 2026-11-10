@@ -187,7 +187,9 @@ text; they still fail the strict vector fixture until explicitly authored.
   union; `McpRpcError.response` preserves the full refusal. Tool `isError`
   results remain their actual protocol bodies. No tool-mode auto-switch occurs.
 - `await engine.websocket(actor?)` opens the real `/ws`, sends binary hello
-  `[3,8]`, and uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
+  `[3,8]`, then binds the connection in band (`auth.bind` as request id 0, with
+  a fresh holder proof) and waits for its null reply, so app-tier calls are
+  admitted. It uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
   and returns both the decoded value and original chunk frames, including
   receipts. For subscription/multiplexing checks use `send(tag, envelope)` and
   `next(timeoutMs)`, assemble chunks before ACK, and retain binary cursors.
@@ -202,6 +204,8 @@ text; they still fail the strict vector fixture until explicitly authored.
   `claimUpsert`, `recall`, `receipts`; Python inputs are native snake_case.
   The Node driver also takes `{verb:"facade", path, input}`: any generated
   facade method by its dotted SDK path as the package spells it, no casing conversion.
+  Each Node result row also carries `receiptRef`: the handle's `lastReceiptRef()` right
+  after that operation, refusals included.
   Per-operation `{ok:false,error}` retains SDK errors; assert them explicitly.
   Broader SDK journeys may use an owned real process and the public package,
   never a private binding or Rust helper. `sdk.pair(link)` redeems through the

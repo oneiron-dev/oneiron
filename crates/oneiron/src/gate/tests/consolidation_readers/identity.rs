@@ -52,9 +52,7 @@ pub(super) fn edit_cost(
     subject: EntityId,
     reader: ConsolidationReader,
 ) -> Result<()> {
-    use crate::learning::{
-        Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation,
-    };
+    use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
     // The cell the attribution lane writes for this actor in this scope: an
     // actor is its own executor, and "outbound" keys verbatim.
     let cell = LearningCell::new(LearningPredicate::EditCost, subject)
