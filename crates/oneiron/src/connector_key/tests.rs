@@ -371,7 +371,13 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
         )))
     ));
     assert!(matches!(
-        vault.settle_connector_spend(&id, EffectorBudgetRowId::key(0), 10, 2_000, "x".repeat(129).as_str()),
+        vault.settle_connector_spend(
+            &id,
+            EffectorBudgetRowId::key(0),
+            10,
+            2_000,
+            "x".repeat(129).as_str()
+        ),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle event_ref too long"
         )))
@@ -393,8 +399,13 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     let mut expected_used = 0;
     for (declared, event_ref) in declared_times {
         expected_used += 100;
-        let read =
-            vault.settle_connector_spend(&id, EffectorBudgetRowId::key(0), 100, declared, event_ref)?;
+        let read = vault.settle_connector_spend(
+            &id,
+            EffectorBudgetRowId::key(0),
+            100,
+            declared,
+            event_ref,
+        )?;
         assert_eq!(read.used, expected_used, "{event_ref} accumulates");
         assert!(
             read.window_start >= live_bucket && read.window_start <= crate::unix_seconds_now(),
@@ -648,7 +659,13 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
 
     // Approve on a revoked key now errors (propose -> revoke -> approve).
     assert!(matches!(
-        vault.approve_connector_charter(&id, pending.text_hash, pending.compiled_hash, "owner", 1_003),
+        vault.approve_connector_charter(
+            &id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_003
+        ),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Discard on a revoked key errors too.

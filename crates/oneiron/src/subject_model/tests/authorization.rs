@@ -2,8 +2,7 @@ use super::*;
 use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
-    authority_entry_hash, authority_transcript,
-    genesis_vault_id,
+    authority_entry_hash, authority_transcript, genesis_vault_id,
 };
 use ed25519_dalek::{Signer, SigningKey};
 
