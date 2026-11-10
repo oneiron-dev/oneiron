@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
-use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
+use oneiron::claim::{FrozenReadLane, ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::graph_fs::GraphFsOptions;
@@ -35,6 +35,8 @@ struct Fixture {
     third_claim: EntityId,
     owner_key: ScopedReadActorKey,
     agent_key: ScopedReadActorKey,
+    issuer: HostSlipIssuer,
+    owner_proof: AuthenticatedOwner,
 }
 
 fn paired_agent_slip(
@@ -42,6 +44,7 @@ fn paired_agent_slip(
     issuer: &HostSlipIssuer,
     owner: &AuthenticatedOwner,
     agent: EntityId,
+    binding_seed: u8,
 ) -> VerifiedSlip {
     // Match token_pair: only the verbs axis narrows the pairing Scope. The
     // Grant, not the pairing request, must impose the agent's world ceiling.
@@ -64,7 +67,7 @@ fn paired_agent_slip(
             },
         )
         .expect("owner issues the agent's pairing link");
-    let signing_key = SigningKey::from_bytes(&[0x47; 32]);
+    let signing_key = SigningKey::from_bytes(&[binding_seed; 32]);
     let binding_key = signing_key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(
         &link.code,
@@ -186,23 +189,7 @@ fn fixture(grants: GrantWorlds) -> Fixture {
         "third-world claim",
     );
 
-    let agent = EntityId::now();
-    create_agent_definition_as(
-        &vault,
-        &owner_proof,
-        AgentDefinitionCreateRequest {
-            agent_def_ref: agent,
-            definition: serde_json::from_value(json!({
-                "agent_id": "grant_read_ceiling_agent",
-                "desc": "Graph filesystem grant reader",
-                "version": "1.0.0",
-                "ceiling": "auto",
-                "enabled": true,
-            }))
-            .expect("typed agent definition"),
-        },
-    )
-    .expect("owner creates an enabled, active agent definition");
+    let agent = create_enabled_agent(&vault, &owner_proof, "grant_read_ceiling_agent");
     for worlds in grants(other_world) {
         let mut authority_scope = Scope::top();
         authority_scope.worlds = ScopeAxis::Some(worlds.clone());
@@ -227,7 +214,7 @@ fn fixture(grants: GrantWorlds) -> Fixture {
             minted.grant.authority_scope.worlds, minted.grant.confers,
         );
     }
-    let slip = paired_agent_slip(&vault, &issuer, &owner_proof, agent);
+    let slip = paired_agent_slip(&vault, &issuer, &owner_proof, agent, 0x47);
     let agent_key = vault
         .credential_read_key(&slip)
         .expect("agent credential read key")
@@ -248,7 +235,35 @@ fn fixture(grants: GrantWorlds) -> Fixture {
         third_claim,
         owner_key,
         agent_key,
+        issuer,
+        owner_proof,
     }
+}
+
+/// An enabled, active agent definition the owner creates as `agent_id`.
+fn create_enabled_agent(
+    vault: &Vault,
+    owner_proof: &AuthenticatedOwner,
+    agent_id: &str,
+) -> EntityId {
+    let agent = EntityId::now();
+    create_agent_definition_as(
+        vault,
+        owner_proof,
+        AgentDefinitionCreateRequest {
+            agent_def_ref: agent,
+            definition: serde_json::from_value(json!({
+                "agent_id": agent_id,
+                "desc": "Graph filesystem grant reader",
+                "version": "1.0.0",
+                "ceiling": "auto",
+                "enabled": true,
+            }))
+            .expect("typed agent definition"),
+        },
+    )
+    .expect("owner creates an enabled, active agent definition");
+    agent
 }
 
 fn world_names(vault: &Vault, key: ScopedReadActorKey) -> BTreeSet<String> {
@@ -419,6 +434,106 @@ fn paired_agent_reads_each_grant_world_alone() {
             assert!(
                 agent_read.value.is_none(),
                 "actor=agent {:?}; expected name={path} withheld; seen {agent_read:?}",
+                fixture.agent,
+            );
+        }
+    }
+}
+
+/// Saved work (OF-506) reads as the key that saved it: a lane frozen under
+/// two Grants keeps each one alone, so its rebuild reads the world each
+/// names, never their meet, and no world neither names (REVIEW-7044 round 1
+/// P1). The rebuild narrows a second paired agent's key that no Grant binds,
+/// so the frozen lane alone withholds; the lane rides its stored MessagePack
+/// form, as a saved question's and a queued summary's do.
+#[test]
+fn saved_lane_reads_each_grant_world_alone() {
+    let fixture = fixture(base_and_second_grants);
+    let frozen = fixture
+        .vault
+        .scoped_read(fixture.agent_key.clone())
+        .freeze()
+        .expect("the agent's Grant-bound read lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+
+    let unbound = create_enabled_agent(
+        &fixture.vault,
+        &fixture.owner_proof,
+        "grant_read_ceiling_unbound_agent",
+    );
+    let slip = paired_agent_slip(
+        &fixture.vault,
+        &fixture.issuer,
+        &fixture.owner_proof,
+        unbound,
+        0x48,
+    );
+    let unbound_key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("unbound agent credential read key")
+        .expect("unbound agent credential grants read");
+    let rebuilt_key = frozen
+        .narrow(&fixture.vault, unbound_key.clone())
+        .expect("the frozen lane rebuilds over a live key");
+
+    let other_name = fixture.other_world.to_hex();
+    let third_name = fixture.third_world.to_hex();
+    let paths = [
+        format!("/worlds/base/claims/{}", fixture.base_claim.to_hex()),
+        format!(
+            "/worlds/{other_name}/claims/{}",
+            fixture.other_claim.to_hex()
+        ),
+        format!(
+            "/worlds/{third_name}/claims/{}",
+            fixture.third_claim.to_hex()
+        ),
+    ];
+    let owner_lane = fixture
+        .vault
+        .scoped_read(fixture.owner_key)
+        .recorded_lane()
+        .expect("owner record lane");
+    let owner_tree = owner_lane.graph_fs(GraphFsOptions::default());
+    let unbound_lane = fixture
+        .vault
+        .scoped_read(unbound_key)
+        .recorded_lane()
+        .expect("unbound agent record lane");
+    let unbound_tree = unbound_lane.graph_fs(GraphFsOptions::default());
+    let rebuilt_lane = fixture
+        .vault
+        .scoped_read(rebuilt_key)
+        .recorded_lane()
+        .expect("rebuilt saved lane");
+    let rebuilt_tree = rebuilt_lane.graph_fs(GraphFsOptions::default());
+    for (index, path) in paths.iter().enumerate() {
+        let owner_read = owner_tree.read_file(path).expect("owner claim read");
+        assert!(
+            owner_read.value.is_some(),
+            "actor=owner {:?}; expected readable name={path}; seen none",
+            fixture.owner,
+        );
+        let unbound_read = unbound_tree
+            .read_file(path)
+            .expect("unbound agent claim read");
+        assert_eq!(
+            unbound_read.value, owner_read.value,
+            "actor=unbound agent {unbound:?}; expected name={path} readable under its slip alone; seen {unbound_read:?}",
+        );
+        let rebuilt_read = rebuilt_tree.read_file(path).expect("saved lane claim read");
+        if index < 2 {
+            assert_eq!(
+                rebuilt_read.value, owner_read.value,
+                "actor=saved lane of agent {:?}; expected name={path} to read back the owner's row; seen {rebuilt_read:?}",
+                fixture.agent,
+            );
+        } else {
+            assert!(
+                rebuilt_read.value.is_none(),
+                "actor=saved lane of agent {:?}; expected name={path} withheld; seen {rebuilt_read:?}",
                 fixture.agent,
             );
         }
