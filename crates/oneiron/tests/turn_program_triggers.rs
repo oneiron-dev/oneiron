@@ -690,7 +690,11 @@ fn readable_diary_pair(vault: &Vault, fixture: &Fixture) -> (EntityId, EntityId,
         .expect("put the other diary author");
     let owner_diary = put_diary(vault, fixture.owner, "the owner's separate private thought");
     let other_diary = put_diary(vault, other_author, "the other author's private thought");
-    let consented_diary = put_diary(vault, fixture.owner, "the owner's consented private thought");
+    let consented_diary = put_diary(
+        vault,
+        fixture.owner,
+        "the owner's consented private thought",
+    );
     let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
     let other = vault.memory(other_author, EdgeActorClass::Human);
     owner
