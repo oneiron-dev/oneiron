@@ -299,6 +299,37 @@ pub fn keep_only_the_dreamer_ceiling(vault: &Vault) -> Result<()> {
     })
 }
 
+/// The shipped policy with one class-wide `system` Auto ceiling and the
+/// `Generated` permit bound to the Dreamer's id spelt in upper case, as the
+/// source-trust decode accepts it. The Dreamer's read row stays as shipped.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
+    use rmpv::Value;
+    let dreamer = dreamer(vault)?.to_hex().to_uppercase();
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, "actor_ceilings")? = Value::Array(vec![Value::Map(vec![
+            (Value::from("actor_class"), Value::from("system")),
+            (Value::from("ceiling"), Value::from("auto")),
+        ])]);
+        let Value::Map(sources) = policy_entry(entries, "source_trust")? else {
+            return Err(Error::InvalidConfig("source trust is not a map".into()));
+        };
+        *policy_entry(sources, "generated")? = Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(dreamer)),
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+        Ok(())
+    })
+}
+
 /// Revokes every live MACHINE binding of base agent `agent` with the host
 /// root's signed `RevokeActor`, as a host that withdraws the agent's
 /// delegation does. Its Steward grant stays as it stands. Returns how many
