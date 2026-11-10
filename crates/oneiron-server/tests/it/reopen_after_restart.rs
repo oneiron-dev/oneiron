@@ -18,7 +18,7 @@ const TEXT: &str = "The spare key to the Quillamere boathouse hangs behind the t
 
 /// A running `oneiron serve`. Dropping it kills the process, so a failed
 /// assertion never leaves a server holding the vault.
-pub(super) struct Server(Child);
+pub(super) struct Server(pub(super) Child);
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -52,8 +52,13 @@ pub(super) fn stdout(mut command: Command) -> String {
 /// Starts `oneiron serve` and waits until the facade router answers: an
 /// unauthenticated call must reach the auth extractor and be refused.
 pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
-    let port = port.to_string();
-    let mut command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], config);
+    let port_arg = port.to_string();
+    let command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port_arg], config);
+    serve_command(command, port, log)
+}
+
+/// Starts a caller-configured server with the same logged router-ready probe.
+pub(super) fn serve_command(mut command: Command, port: u16, log: &Path) -> Server {
     // The server logs to stdout; its log file takes both streams.
     let file = File::create(log).expect("server log file");
     command

@@ -299,7 +299,7 @@ async fn campaign_http_crud_matches_facade() {
         Value::String(principal.to_hex())
     );
     assert_eq!(over_http["body"]["definition"]["definition_version"], 1);
-    assert_eq!(over_http["body"]["definition"]["lifecycle"], "active");
+    assert_eq!(over_http["body"]["definition"]["lifecycle"], "draft");
 
     // READ of the SAME record over both transports must be byte-identical —
     // no normalization, because nothing volatile differs.
@@ -576,15 +576,39 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
     let token = owner_token(&vault, principal);
 
-    // The payload names another owner in every spelling the surface could
-    // plausibly have honored. None of them is read.
+    // Strict saved-query intake refuses the spoofed owner fields.
     let mut spoofed = saved_query_body();
     spoofed["owner_actor"] = Value::String(other.to_hex());
     spoofed["owner"] = Value::String(other.to_hex());
     spoofed["principal_ref"] = Value::String(other.to_hex());
     spoofed["definition"] = json!({ "owner_actor": other.to_hex() });
-    let (status, created) =
+    let (status, refused) =
         request(addr, "POST", "/saved-queries", Some(&token), Some(&spoofed)).await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(refused["code"], "BAD_REQUEST", "{refused}");
+    let in_process_refusal = call(
+        &vault,
+        principal,
+        "self.saved_query.create",
+        spoofed.clone(),
+    )
+    .expect_err("strict saved-query intake refuses the same spoof in-process");
+    assert_eq!(refused["message"], in_process_refusal.message, "{refused}");
+    assert!(
+        refused["message"].as_str().unwrap().starts_with(
+            "campaign surface saved-query body is not the verb's input: "
+        ),
+        "{refused}"
+    );
+
+    let (status, created) = request(
+        addr,
+        "POST",
+        "/saved-queries",
+        Some(&token),
+        Some(&saved_query_body()),
+    )
+    .await;
     assert_eq!(status, 200, "{created}");
     assert_eq!(
         created["body"]["definition"]["owner_actor"],
