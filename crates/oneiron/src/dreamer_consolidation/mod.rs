@@ -230,3 +230,27 @@ use std::collections::BTreeSet;
 
 pub(crate) mod tables;
 mod value_projection;
+
+/// The side doors' TURN read (gap scan, owner intent, retrieval shadow), for
+/// the integration regression doors (`test_doors::untangle_regressions`,
+/// X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_turn_text_for_test(
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<TurnText> {
+    turn_text::read_turn_text(vault, turn)
+}
+
+/// The writer's re-check of a side door's TURN record, read as the Dreamer in
+/// a fresh snapshot, for the integration regression doors (X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_recheck_for_test(
+    record: &TurnText,
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<()> {
+    let read = turn_text::dreamer_read(vault)?;
+    let txn = turn_text::snapshot(vault)?;
+    record.check_live_in(&read, &txn, turn)
+}
