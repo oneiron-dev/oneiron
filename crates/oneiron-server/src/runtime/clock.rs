@@ -40,11 +40,16 @@ pub enum RuntimeClock {
     Manual,
 }
 
-/// A clock whose time is the Unix milliseconds one file holds: decimal
-/// digits, surrounding whitespace allowed. Each read reads the file. A read
-/// that fails (the file is gone or holds something else) keeps the last time
-/// read, so the clock never jumps to zero; the server refuses to start on a
-/// file it cannot read ([`Self::read`]).
+/// A clock whose time is the Unix milliseconds one regular file holds:
+/// decimal digits, surrounding whitespace allowed. Each read reads the file.
+/// A read that fails (the file is gone, is not a regular file, or holds
+/// something else) keeps the last time read; a clock that has never read one
+/// reads zero, which every proof window refuses. It never falls back to the
+/// host's clock. Config validation refuses a file it cannot read before a
+/// server starts ([`Self::read`]).
+///
+/// The file belongs on a local filesystem, writable only by whoever may set
+/// the vault's time: the vault reads it inside its write transactions.
 #[derive(Debug)]
 pub struct ManualClockFile {
     path: PathBuf,
@@ -52,16 +57,17 @@ pub struct ManualClockFile {
 }
 
 impl ManualClockFile {
-    /// The clock `path` holds, read once now.
-    ///
-    /// # Errors
-    /// The file cannot be read or does not hold Unix milliseconds.
-    pub fn open(path: &Path) -> io::Result<Arc<Self>> {
-        let now = Self::read(path)?;
-        Ok(Arc::new(Self {
-            path: path.to_owned(),
+    /// The clock `path` holds, read once now. A file that cannot be read is
+    /// logged, and the clock reads zero until it can.
+    pub fn new(path: PathBuf) -> Arc<Self> {
+        let now = Self::read(&path).unwrap_or_else(|error| {
+            tracing::error!(%error, "the manual clock reads 0 until its file holds Unix milliseconds");
+            0
+        });
+        Arc::new(Self {
+            path,
             last_ms: AtomicU64::new(now),
-        }))
+        })
     }
 
     /// Sets the time the file at `path` holds to `unix_ms`. The new value
@@ -78,20 +84,25 @@ impl ManualClockFile {
         std::fs::rename(&staged, path)
     }
 
-    /// The Unix milliseconds the file at `path` holds.
+    /// The Unix milliseconds the regular file at `path` holds. A FIFO or a
+    /// device is refused before it is opened, so a read never waits on a
+    /// writer.
     ///
     /// # Errors
-    /// The file cannot be read or does not hold Unix milliseconds.
+    /// The file is missing, is not a regular file, or does not hold Unix
+    /// milliseconds. The error names the path, never the file's contents.
     pub fn read(path: &Path) -> io::Result<u64> {
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a regular file", path.display()),
+            ));
+        }
         let text = std::fs::read_to_string(path)?;
         text.trim().parse().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "{} must hold Unix milliseconds, not {:?}",
-                    path.display(),
-                    text.trim()
-                ),
+                format!("{} does not hold Unix milliseconds", path.display()),
             )
         })
     }
