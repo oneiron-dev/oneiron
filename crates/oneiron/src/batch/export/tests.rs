@@ -277,9 +277,9 @@ fn an_unsigned_owner_export_still_restores_on_the_review_path() -> Result<()> {
         3,
         b"owner row",
     )?;
-    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let export = source.export_whole_vault(false)?;
 
-    let receipt = target.import_whole_vault_json(export.bytes())?;
+    let receipt = target.import_whole_vault_archive(export.bytes())?;
 
     assert_eq!(
         receipt.authority.classification,
@@ -663,7 +663,13 @@ mod staged_content_gc {
 
     fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
         let data = crate::claim::encode_claim_body(body).expect("claim encode");
-        let blob = entity_record(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
+        let blob = entity_record(
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 5, end: 5 },
+            5,
+            0,
+            &data,
+        );
         let doc = LoroDoc::new();
         let _ = doc.get_map("entities");
         let _ = doc.get_map("edges");
@@ -746,7 +752,9 @@ mod staged_content_gc {
         );
 
         let confirmed = confirmed_receipt(&staged.receipt, test_entity_id(0x38), 1);
-        assert!(vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+        assert!(
+            vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed, None).unwrap()
+        );
 
         // After the winning CAS: terminal receipt, no retained payload. Both
         // effects land in the same write txn, so neither can be observed alone.
@@ -770,13 +778,17 @@ mod staged_content_gc {
         let actor = test_entity_id(0x3F);
         let confirmed = confirmed_receipt(&staged.receipt, actor, 7);
 
-        assert!(vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+        assert!(
+            vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed, None).unwrap()
+        );
         assert_eq!(vault_import_staged_content(&vault, &id).unwrap(), None);
 
         // A second identical-actor/time confirmation is not an error: the CAS
         // simply finds the receipt already terminal and changes nothing. It
         // must not resurrect (or require) the deleted content row.
-        assert!(!vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed).unwrap());
+        assert!(
+            !vault_import_confirm_if_pending(&vault, &staged.receipt, &confirmed, None).unwrap()
+        );
         let durable = vault_import_stage_receipt(&vault, &id).unwrap().unwrap();
         assert_eq!(durable.status, VaultImportStageStatus::Confirmed);
         assert_eq!(durable.confirmed_by, Some(actor));
@@ -886,6 +898,7 @@ mod staged_content_gc {
             &WindowKey::new("2026-01"),
             &update,
             FederationAdmissionRole::Guest,
+            None,
         )
         .expect_err("truncated entity metadata must not admit");
         assert!(
@@ -945,9 +958,10 @@ mod staged_content_gc {
             ENTITY_TYPE_CLAIM,
             occurred,
             5,
+            0,
             &crate::claim::encode_claim_body(claim).expect("claim encode"),
         );
-        let blob = entity_record(entity_type, occurred, 5, body);
+        let blob = entity_record(entity_type, occurred, 5, 0, body);
         let doc = LoroDoc::new();
         let _ = doc.get_map("entities");
         let _ = doc.get_map("edges");
@@ -1004,6 +1018,7 @@ mod staged_content_gc {
             &WindowKey::new("2026-01"),
             &invalid,
             FederationAdmissionRole::Guest,
+            None,
         )
         .expect_err("an invalid TASK body must not be admitted");
         assert!(
@@ -1221,7 +1236,7 @@ mod staged_content_gc {
             id,
             Arc::new(move |vault: &Vault| {
                 assert!(
-                    vault_import_confirm_if_pending(vault, &pending, &confirmed).unwrap(),
+                    vault_import_confirm_if_pending(vault, &pending, &confirmed, None).unwrap(),
                     "the racing confirmation must win the CAS"
                 );
                 assert_eq!(

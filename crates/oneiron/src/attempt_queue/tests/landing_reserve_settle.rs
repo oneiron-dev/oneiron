@@ -335,6 +335,7 @@ fn a_persisted_cancel_receipt_must_agree_with_its_own_kind() -> Result<()> {
     let mut draft_target = record.clone();
     let before = draft_target.cancel_state.receipts.len();
     let err = append_cancel_receipt(
+        &vault.store.limit_watch,
         &mut draft_target,
         AttemptCancelReceiptKind::SoftRejected,
         "worker-a".to_owned(),

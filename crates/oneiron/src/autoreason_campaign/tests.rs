@@ -25,6 +25,12 @@ use crate::extraction_eval::{
     Of360ExtractionScore, Of360GoldDataset, Of360GoldMatch, Of360SeededSubsetConfig,
     generate_of360_seeded_gold_subset,
 };
+use crate::learning::{LearningCell, LearningPredicate, TypeRef};
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder,
+    DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
+    ProviderPin,
+};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
@@ -135,11 +141,87 @@ fn cost_row(cost_usd: f64) -> CampaignCost {
     }
 }
 
-fn taste_row(score: f64) -> CampaignTasteJudgment {
-    CampaignTasteJudgment {
-        score,
-        useful: score > 0.5,
-        external_anchor_digest: EXTERNAL_ANCHOR_DIGEST.to_owned(),
+/// The taste pack's Local rung: it answers the score question with the fixture's
+/// score, and the usefulness question with whether that score is above one half.
+struct TasteGrade(f64);
+
+impl DecisionProvider for TasteGrade {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: "campaign-taste-fixture".into(),
+            version: "1".into(),
+        }
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let (answer, probability) = match call.question.contract {
+            AnswerContract::Score { .. } => (DecisionAnswer::Score(self.0), 0.9),
+            _ => {
+                let useful = self.0 > 0.5;
+                (DecisionAnswer::Noul(useful), if useful { 0.9 } else { 0.1 })
+            }
+        };
+        Ok(ProviderDecision {
+            answer,
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+
+struct NoPerson;
+
+impl HumanDecisionQueue for NoPerson {
+    fn queue(&self, _: HumanDecisionRequest) -> Result<()> {
+        Err(crate::error::Error::InvalidConfig(
+            "a campaign report queues no person ask".into(),
+        ))
+    }
+}
+
+/// The taste pack's decision path with `local` as its only model rung. The
+/// default bands are unlearned (shadow), so the first rung's answer stands.
+fn taste_decisions(local: &dyn DecisionProvider) -> CampaignTasteDecisions<'_> {
+    CampaignTasteDecisions {
+        ladder: DecisionLadder {
+            rule: None,
+            local: Some(local),
+            system_one: None,
+            escalation: None,
+            big: None,
+            human: &NoPerson,
+            human_pin: ProviderPin {
+                rung: DecisionRung::Human,
+                model: "test-queue".into(),
+                version: "1".into(),
+            },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
+        },
+        principal: EntityId::now(),
+        dial: CAMPAIGN_TASTE_DIAL,
+        bands: DecisionBandPolicy::default(),
+        wording: CampaignTasteWording {
+            score: "How well does the claim match the held-out gold, from 0 to 1?".to_owned(),
+            useful: "Is the claim useful against the held-out gold?".to_owned(),
+        },
+        budget: std::time::Duration::from_secs(3600),
+    }
+}
+
+/// The blind input the taste pack reads, anchored to the external held-out gold.
+fn blind_input(config: &CampaignConfig) -> BlindCampaignJudgeInput {
+    BlindCampaignJudgeInput {
+        claim: "Late caffeine tracks lighter sleep across the campaign corpus.".to_owned(),
+        evidence_refs: vec!["obs:campaign:1".to_owned(), "obs:campaign:2".to_owned()],
+        held_out_gold: held_out_anchor(config),
     }
 }
 
@@ -151,6 +233,8 @@ fn split_report(
     fixture: SplitFixture,
 ) -> CampaignSplitReport {
     let run = extraction_run(dataset, "run-autoreason-campaign-fixture");
+    let grade = TasteGrade(fixture.score);
+    let taste = taste_decisions(&grade);
     build_campaign_split_report(
         config,
         arm,
@@ -158,7 +242,8 @@ fn split_report(
         dataset,
         &run,
         cost_row(fixture.cost_usd),
-        taste_row(fixture.score),
+        &blind_input(config),
+        &taste,
         fixture.smoke,
     )
     .expect("campaign split report")
@@ -311,10 +396,17 @@ fn accept_branch(
     let mut critiques = Vec::new();
     for lens in of366_claim_authoring_lenses(catalog) {
         let provenance = CritiqueProvenance::new(
-            format!("critic:{}", lens.id),
+            WriteActor::new(EntityId::now(), EdgeActorClass::Agent),
             "campaign-fixture-model",
             Some("rev1".to_owned()),
         )?;
+        let calibration = LearningCell::new(LearningPredicate::Reliability, candidate.claim_id)
+            .executor(provenance.executor()?)
+            .type_ref(TypeRef {
+                node_id: "claim_authoring".to_owned(),
+                tree_version: 1,
+            })
+            .axis("quality");
         critiques.push(CritiqueArtifact::new(
             format!("{prefix}_{}", lens.id),
             "run-autoreason-campaign",
@@ -322,6 +414,7 @@ fn accept_branch(
             candidate.candidate_ref.clone(),
             lens,
             provenance,
+            calibration,
             CritiqueVerdict::Accept,
             CritiqueSeverity::Info,
             lens.hard_check.then_some(true),
