@@ -276,6 +276,75 @@ fn a_caller_resumes_its_own_pause_and_no_one_elses() {
     );
 }
 
+/// A pause keeps its pauser however many notes follow it (review 6974 P1).
+/// The row's event tail is bounded, and the pause's own event is the record
+/// of who placed it, so it stays in the tail while the row is paused: after
+/// more notes than the tail holds, another caller is still refused and the
+/// pauser still resumes its own pause.
+#[test]
+fn a_pause_keeps_its_pauser_past_the_event_tail() {
+    let (_dir, vault) = open();
+    let queue = AttemptQueue::new(&vault);
+    let now = unix_now();
+    let pauser = person(&vault, now).to_hex();
+    let other = person(&vault, now).to_hex();
+    let row = enqueued(
+        queue
+            .enqueue(EnqueueAttempt {
+                kind: KIND.to_owned(),
+                payload: b"run".to_vec(),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })
+            .expect("enqueue"),
+    );
+
+    assert_eq!(
+        as_caller(
+            &vault,
+            row.id,
+            AttemptInterventionKind::Pause,
+            &pauser,
+            now + 1
+        ),
+        Ok(AttemptInterventionEffect::Paused)
+    );
+    // The tail holds 256 events; 300 notes rotate every older one out.
+    for note in 0..300_u64 {
+        assert_eq!(
+            as_caller(
+                &vault,
+                row.id,
+                AttemptInterventionKind::Interrupt,
+                &other,
+                now + 2 + note
+            ),
+            Ok(AttemptInterventionEffect::Interrupted)
+        );
+    }
+    assert_eq!(
+        as_caller(
+            &vault,
+            row.id,
+            AttemptInterventionKind::Resume,
+            &other,
+            now + 400
+        ),
+        Err("awaits:pauser")
+    );
+    assert_eq!(
+        as_caller(
+            &vault,
+            row.id,
+            AttemptInterventionKind::Resume,
+            &pauser,
+            now + 401
+        ),
+        Ok(AttemptInterventionEffect::Resumed)
+    );
+}
+
 /// `vault.runs.resume` for a TASK's owner, through `Memory::runs_resume`:
 /// it resumes its own pause on its branch and is refused the budget hold,
 /// which the vault owner then overrides. The vault holds its writer lease,
