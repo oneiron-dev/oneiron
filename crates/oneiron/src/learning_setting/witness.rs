@@ -82,13 +82,14 @@ fn act_entries(scope: &SettingScope, row: &SettingRow) -> Vec<(Value, Value)> {
 /// witness is `Observed` and `Auto`. It is never the owner's own word
 /// (`UserStated`). The setting is the vault owner's, so the witness is about
 /// the owner and lives on the owner's substrate facet, as the owner's own
-/// PUT does; a holder such as the Coach is no PERSON and has no facet. Its
-/// value names the holder, and the engine-control receipt beside it names
-/// the holder, the class and the value.
+/// PUT does; a holder such as the Coach is no PERSON and has no facet. It
+/// names no holder (review of #6918, round 2): the claim is the owner's, on
+/// the owner's facet, so a hard erase of the holder would never reach an id
+/// written here. The setting row and the engine-control receipt beside it
+/// name the holder, and each has an actor scrub.
 pub(super) fn holder_put_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    holder: EntityId,
     scope: &SettingScope,
     row: &SettingRow,
 ) -> Result<EntityId> {
@@ -96,12 +97,10 @@ pub(super) fn holder_put_in_txn(
         .first()
         .copied()
         .ok_or_else(|| crate::error::Error::InvalidConfig("this vault has no owner".into()))?;
-    let mut value = act_entries(scope, row);
-    value.push((Value::from("holder"), Value::from(holder.to_hex())));
     let mut body = ClaimBody::new(
         PREDICATE,
         ClaimSubject::Entity(owner),
-        Value::Map(value),
+        act_value(scope, row),
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
