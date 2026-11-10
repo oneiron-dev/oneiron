@@ -10,7 +10,7 @@
 use super::ScopedRead;
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
+use crate::claim::{ClaimRecordScope, decode_claim_body};
 use crate::error::{Error, Result};
 use crate::federation::facet_read::facets_admit_in;
 use crate::federation::record_scope::{default_stamp, note_world, scope_for_blob};
