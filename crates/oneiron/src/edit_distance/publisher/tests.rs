@@ -196,7 +196,7 @@ fn send_door_refuses_an_unknown_signature_id() {
 fn interview_digest_rides_the_ed00_and_ed01_doors() {
     use crate::edge::EdgeActorClass;
     use crate::edit_distance::delta::delta_from_recorded_ops;
-    use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text};
+    use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text, retained_proposal};
 
     let clock = crate::ports::ManualClock::new(50);
     let (_tmp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig {
@@ -239,7 +239,7 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
 
     // The user edits the digest before it settles — through ED-00's door.
     digest
-        .edit_as(&reviewer, |text| {
+        .edit_as(&vault, &reviewer, |text| {
             text.insert(0, "actually, ")
                 .map_err(|_| Error::InvariantViolation("test digest edit"))
         })
@@ -259,8 +259,16 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
     let finalized = finalized_proposal_text(&vault, ProposalArtifactRef::new(settled))
         .expect("read finalized")
         .expect("finalize persisted the record");
-    assert_eq!(finalized.final_text, "actually, the agent's draft digest");
-    let delta = delta_from_recorded_ops(&finalized);
+    // 15021c26eee (#4114) keeps texts in the retained document behind refs:
+    // the same final digest through the retained read.
+    let retained = retained_proposal(&vault, finalized.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
+    assert_eq!(
+        retained.final_text().into_text().as_deref(),
+        Some("actually, the agent's draft digest")
+    );
+    let delta = delta_from_recorded_ops(&retained);
     assert!(
         delta.d_norm > 0.0,
         "the user's amendment must produce a measurable Δ"
