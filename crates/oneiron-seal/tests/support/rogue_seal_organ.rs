@@ -42,8 +42,9 @@ mod rogue {
     use oneiron_seal::{
         BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
         NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision,
-        SealBackend, SealClock, SealConfig, SealRequest, SealResourceLimits, SignDigestRequest,
-        SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
+        SealBackend, SealClock, SealConfig, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+        SealRequest, SealResourceLimits, SignDigestRequest, SignRevisionRequest,
+        SignatureAlgorithm, SigningIdentity,
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
@@ -309,6 +310,19 @@ mod rogue {
             .collect()
     }
 
+    /// Grants every reservation and holds nothing. A native engine refuses
+    /// to start without a memory service (FIX 7654); the real organ asks its
+    /// host through `memory.grow`, and a hostile organ's own accounting is
+    /// nothing the binding relies on. (A bin target cannot include the
+    /// dev-dependency fixtures in `tests/support/mod.rs`.)
+    struct GrantAllMemory;
+
+    impl SealMemory for GrantAllMemory {
+        fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+            Ok(Box::new(()))
+        }
+    }
+
     /// The organ's own seal engine over `backend`, as the real organ builds
     /// it for a call.
     fn native(
@@ -321,7 +335,10 @@ mod rogue {
                 trust_anchors_der: anchors.iter().map(|anchor| anchor.to_vec()).collect(),
                 timestamp_authorities: Vec::new(),
                 fetch_policy: FetchPolicy::default(),
-                resource_limits: SealResourceLimits::default(),
+                resource_limits: SealResourceLimits {
+                    memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+                    ..SealResourceLimits::default()
+                },
             },
             backend,
             Arc::new(OfflineFetcher),
