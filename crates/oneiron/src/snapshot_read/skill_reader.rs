@@ -3,58 +3,47 @@
 //! judgment, no new policy). The owner reads the whole library, as before.
 //! Any other caller reads a skill only while it is loadable (Active, Auto or
 //! Approved, shared, with a runtime package) and its own read admits the row,
-//! and sees the package without the owner's evidence.
+//! and sees the package without the owner's evidence. The view is built in
+//! the read transaction that admits the skill, so it shows the state that
+//! read admitted, never a later one (#6976 review round 2).
 
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::verbs::{
-    HubSkillReceipts, HubSkillRequest, SkillLibraryListRequest, SkillLibraryPage, SkillLibraryView,
-};
+use crate::verbs::{HubSkillRequest, SkillLibraryListRequest, SkillLibraryPage, SkillLibraryView};
 
-/// Whether the caller reads skill `entity` as a loadable package: its own
-/// read admits the row in this snapshot, and the skill is live, loadable,
-/// shared and has a runtime package. This is `Vault::site_skills_for`'s
-/// judgment: a package that does not read admits nothing.
-fn readable_loadable(
+/// The view of skill `entity` the caller reads, built on `txn`, the read
+/// that admits it. `None` unless the caller's own read admits the row in
+/// this snapshot and the skill is live, loadable, shared and has a runtime
+/// package: `Vault::site_skills_for`'s judgment, where a package that does
+/// not read admits nothing. The view is this snapshot's record and package,
+/// without the owner's evidence.
+fn admitted_view_in_txn(
     memory: &Memory<'_>,
     read: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
     entity: &EntityId,
-) -> MemoryResult<bool> {
+) -> MemoryResult<Option<SkillLibraryView>> {
     if !read.is_entity_readable_with_policy_in(txn, policy, entity)? {
-        return Ok(false);
+        return Ok(None);
     }
-    match memory.vault().loadable_skill_files_in_txn(txn, entity) {
-        Ok(found) => Ok(found.is_some()),
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::skill_read_hold::at_row_admitted();
+    match memory.vault().loadable_skill_package_in_txn(txn, entity) {
+        Ok(found) => Ok(found.map(|(record, package)| {
+            crate::verbs::skill_package_view(*entity, record, Some(package))
+        })),
         Err(error) => {
             tracing::warn!(
                 %error,
                 skill = %entity.to_hex(),
                 "a skill's stored package did not read; no reader is served it"
             );
-            Ok(false)
+            Ok(None)
         }
     }
-}
-
-/// The package a caller other than the owner sees: the owner's evidence
-/// (provenance, source messages, the stale note, fork lineage, scans and hub
-/// receipts) is left out.
-fn package_only(mut view: SkillLibraryView) -> SkillLibraryView {
-    view.provenance = serde_json::Value::Null;
-    view.source_messages = Vec::new();
-    view.stale = None;
-    view.lineage = Vec::new();
-    view.scans = Vec::new();
-    view.receipts = HubSkillReceipts {
-        sources: Vec::new(),
-        imports: Vec::new(),
-        admission: None,
-    };
-    view
 }
 
 fn not_found() -> MemoryError {
@@ -77,27 +66,19 @@ pub fn skill_library_get_as_reader(
 ) -> MemoryResult<SkillLibraryView> {
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.persist_grant_clock()?;
-    let admitted = {
-        let txn = memory
-            .vault()
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)?;
-        let policy = read.live_policy_manifest_in(&txn)?;
-        readable_loadable(memory, &read, &txn, &policy, &input.entity)?
-    };
-    if !admitted {
-        return Err(not_found());
-    }
-    Ok(package_only(crate::verbs::skill_library_view(
-        memory.vault(),
-        input,
-    )?))
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
+    let policy = read.live_policy_manifest_in(&txn)?;
+    admitted_view_in_txn(memory, &read, &txn, &policy, &input.entity)?.ok_or_else(not_found)
 }
 
 /// `vault.skills.list` for a caller other than the owner: a page of the
-/// loadable skills it reads, after `after` in the type index.
+/// loadable skills it reads, after `after` in the type index. The page, the
+/// admissions and the views read one snapshot.
 ///
 /// # Errors
 ///
@@ -110,27 +91,22 @@ pub fn skill_library_list_as_reader(
         return Err(MemoryError::bad_request("limit must be positive"));
     }
     let vault = memory.vault();
-    let ids = vault.entities_by_type_page(ENTITY_TYPE_SKILL, input.after.as_ref(), input.limit)?;
-    let next_after = ids.last().copied();
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.persist_grant_clock()?;
-    let admitted: Vec<EntityId> = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let policy = read.live_policy_manifest_in(&txn)?;
-        let mut admitted = Vec::new();
-        for entity in ids {
-            if readable_loadable(memory, &read, &txn, &policy, &entity)? {
-                admitted.push(entity);
-            }
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let ids = vault.entities_by_type_page_in_txn(
+        &txn,
+        ENTITY_TYPE_SKILL,
+        input.after.as_ref(),
+        input.limit,
+    )?;
+    let next_after = ids.last().copied();
+    let policy = read.live_policy_manifest_in(&txn)?;
+    let mut skills = Vec::new();
+    for entity in ids {
+        if let Some(view) = admitted_view_in_txn(memory, &read, &txn, &policy, &entity)? {
+            skills.push(view);
         }
-        admitted
-    };
-    let mut skills = Vec::with_capacity(admitted.len());
-    for entity in admitted {
-        skills.push(package_only(crate::verbs::skill_library_view(
-            vault,
-            &HubSkillRequest { entity },
-        )?));
     }
     Ok(SkillLibraryPage { skills, next_after })
 }
