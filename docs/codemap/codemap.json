@@ -3708,6 +3708,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/agent_principal.rs",
+     "purpose": "A named token agent's own-vault agent binding (PRIVACY-07)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentTier"
      ],
@@ -4914,7 +4924,7 @@
      "path": "src/authority/machine_enroll.rs",
      "purpose": "Host-landed MACHINE enrollment: one EnrollDevice and its BindActor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -16810,7 +16820,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 1
      }
     },
@@ -30017,7 +30027,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "mod": 5,
       "re-export": 25
      }
@@ -34005,9 +34015,9 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 6,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -34064,6 +34074,22 @@
       "crate-vis": 1,
       "fn": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParkReleaseView",
+      "ReleaseParkedAttemptRequest"
+     ],
+     "path": "src/dreamer_runner/park_release.rs",
+     "purpose": "The owner's release of a parked Dreamer attempt that no resumer frees (untangle slice 3, WAKE-D1; lead 14:3x…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -42612,7 +42638,7 @@
      "path": "src/gate/foreign_agent.rs",
      "purpose": "Owner-bound foreign introductions",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -90207,7 +90233,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 3
+      "mod": 5
      }
     },
     {
@@ -90218,6 +90244,33 @@
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimGateDecision",
+      "DreamerLandingRow",
+      "RevokeAnswer",
+      "SideDoorTurnText"
+     ],
+     "path": "src/test_doors/untangle_regressions.rs",
+     "purpose": "Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)…",
+     "surface": {
+      "enum": 1,
+      "fn": 25,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/wake_d1_park_release.rs",
+     "purpose": "Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -98902,6 +98955,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/key_value_credential_read.rs",
+     "purpose": "[E2E-KV-GET-PREFILTER]: the keyed store's own reader under a read credential",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/live_run_claim_put.rs",
      "purpose": "Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker…",
      "surface": {}
@@ -98912,6 +98973,14 @@
      "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_reverts_dreamer_claim.rs",
+     "purpose": "The owner takes back what the Dreamer landed (owner ruling 18 Oct: \"autoapply + revert rather than holdout\"…",
      "surface": {}
     },
     {
@@ -99069,6 +99138,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/untangle_regressions.rs",
+     "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878), X02…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99098,6 +99175,14 @@
      "notable": [],
      "path": "tests/voice_voxcpm2.rs",
      "purpose": "Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wake_d1_park_release.rs",
+     "purpose": "WAKE-D1 (#6877): a Cancelled park resumes on the next pass, and a run its owner cancelled never does; an…",
      "surface": {}
     },
     {
@@ -99189,7 +99274,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 278,
+     "files": 279,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99644,7 +99729,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100575,7 +100660,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100745,8 +100830,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7238,
-   "test_files": 903
+   "source_files": 7242,
+   "test_files": 907
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125045,7 +125130,7 @@
      "path": "src/api/facade/program_read_doors.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -129554,14 +129639,6 @@
      "notable": [],
      "path": "src/bin/oneiron-vm-init.rs",
      "purpose": "`oneiron-vm-init`: a vault VM's root bootstrap, run by the image's init before the engine…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/bin/oneiron-vm-outbox.rs",
-     "purpose": "`oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine…",
      "surface": {}
     },
     {
@@ -141421,6 +141498,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/token_agent_own_vault_agent.rs",
+     "purpose": "`oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -141993,8 +142078,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1826,
-   "test_files": 183
+   "source_files": 1825,
+   "test_files": 184
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -154225,6 +154310,31 @@
    "source_files": 58,
    "test_files": 1
   },
+  "oneiron-vm-outbox": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/main.rs",
+     "purpose": "`oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "main": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "`oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine…",
+   "source_files": 1,
+   "test_files": 0
+  },
   "oneiron-wake-contract": {
    "files": [
     {
@@ -154329,7 +154439,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ParkOwnerClass",
@@ -154341,7 +154451,7 @@
      "surface": {
       "const": 9,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -154750,7 +154860,7 @@
     "dreamer_runner": {
      "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -154797,7 +154907,7 @@
      "purpose": "—"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports…",
    "source_files": 39,
    "test_files": 0
