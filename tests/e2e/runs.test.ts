@@ -975,13 +975,31 @@ async function runs08Scenario(): Promise<Runs08Scenario> {
   if (!row) throw new Error("Missing RUNS-08 fixture scenario");
   return row as Runs08Scenario; // Fixture discriminant, not an invented wire DTO.
 }
-async function runs08Agent(client: PublicHttpClient, label: string): Promise<string> {
+async function runs08Agent(client: PublicHttpClient, label: string, ceiling?: "auto"): Promise<string> {
   const agent_def_ref = runs08InputId(label);
   const created = await client.call("vault.agents.create", {
-    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `RUNS-08 ${label}`, version: "1" },
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `RUNS-08 ${label}`, version: "1", ...(ceiling === undefined ? {} : { ceiling }) },
   });
   expect(created.agent_def_ref).toBe(agent_def_ref);
   return agent_def_ref;
+}
+/** One actor-bound Auto policy ceiling for the asking agent, read back after the put. */
+async function grantAgentAutoCeiling(owner: PublicHttpClient, agentRef: string): Promise<void> {
+  const policy: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
+  const manifest = policy.manifests.find(row => row.manifest_ref === policy.default_manifest_ref);
+  if (!manifest) throw new Error("RUNS-08 has no default policy manifest");
+  const row: FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number] = {
+    actor_class: "agent", actor_ref: agentRef, ceiling: "auto",
+  };
+  const input: FacadeInput<"vault.gate.policy.put"> = {
+    manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
+    manifest: { ...manifest.manifest, actor_ceilings: [...manifest.manifest.actor_ceilings, row] },
+  };
+  const put: FacadeResult<"vault.gate.policy.put"> = await owner.call("vault.gate.policy.put", input);
+  expect(put.receipt_ref.length).toBeGreaterThan(0);
+  const after: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
+  const listed = after.manifests.find(row => row.manifest_ref === after.default_manifest_ref)?.manifest.actor_ceilings;
+  expect(listed).toContainEqual(row);
 }
 /** A witnessed TURN the parent's ask cites: actually written, never a fabricated ref. */
 async function runs08Turn(client: PublicHttpClient, content: string): Promise<string> {
@@ -1131,8 +1149,9 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
   try {
     const owner = engine.client;
     const ownerRef = engine.pairedActor.principalRef;
-    const parentAgent = await runs08Agent(owner, "runs08-parent");
+    const parentAgent = await runs08Agent(owner, "runs08-parent", "auto");
     const childAgent = await runs08Agent(owner, "runs08-child");
+    await grantAgentAutoCeiling(owner, parentAgent);
     const question = await runs08Turn(owner, "Hold the survey batch parent until the owner answers.");
 
     // ---- The parent: a real TASK-bound agent run that parks on its own ask, keeping its lease. ----
