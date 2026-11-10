@@ -17,13 +17,7 @@ fn mint_outbound_grant_row(
 ) -> Result<(StandingOutboundGrant, crate::consent::ConsentGrantRow)> {
     let owner = crate::test_util::embedded_owner_proof(vault);
     let grant = vault.with_write_txn(|wtxn| {
-        vault.mint_standing_outbound_grant_in_txn(
-            wtxn,
-            &owner,
-            EntityId::now(),
-            "owner",
-            scope,
-        )
+        vault.mint_standing_outbound_grant_in_txn(wtxn, &owner, EntityId::now(), "owner", scope)
     })?;
     let row = vault.consent_grant(&grant.grant_ref())?.expect("grant row");
     Ok((grant, row))
@@ -46,8 +40,8 @@ fn consent_row_with_selectors(
 }
 
 fn consent_row_with_version(encoded: &[u8], version: Value) -> Vec<u8> {
-    let Value::Map(mut fields) = rmpv::decode::read_value(&mut Cursor::new(encoded))
-        .expect("decode consent grant fixture")
+    let Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut Cursor::new(encoded)).expect("decode consent grant fixture")
     else {
         panic!("consent grant row must be a map");
     };
@@ -74,8 +68,9 @@ fn artifact_publish_grant_codec_round_trips_without_broad_send_authority() -> Re
     )?;
     let row = vault.consent_grant(&grant.grant_ref())?.expect("grant row");
     let encoded = crate::consent::encode_consent_grant_row(&row)?;
-    let decoded = StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
-        .expect("outbound grant row");
+    let decoded =
+        StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+            .expect("outbound grant row");
     assert_eq!(decoded, grant);
     assert!(
         decoded
@@ -210,7 +205,9 @@ fn standing_outbound_grant_revoke_and_touch_validate_lifecycle() -> Result<()> {
     assert_eq!(touched.grants[0].last_used_at, Some(12));
     clock.set(20);
     vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
-    let revoked = vault.get_standing_outbound_grant(&grant.id)?.expect("grant");
+    let revoked = vault
+        .get_standing_outbound_grant(&grant.id)?
+        .expect("grant");
     let history = vault.standing_outbound_grants_lens(
         crate::receipt::StandingOutboundGrantsLensQuery::new(1, 10),
     )?;
@@ -344,17 +341,23 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         )
     );
 
-    let hyphen_row = vault.consent_grant(&hyphen.grant_ref())?.expect("grant row");
+    let hyphen_row = vault
+        .consent_grant(&hyphen.grant_ref())?
+        .expect("grant row");
     let encoded = crate::consent::encode_consent_grant_row(&hyphen_row)?;
-    let decoded = StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
-        .expect("outbound grant row");
+    let decoded =
+        StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+            .expect("outbound grant row");
     assert_eq!(decoded.principal_ref, hyphen.principal_ref);
     assert_eq!(decoded.scope, hyphen.scope);
     assert_eq!(decoded.status, hyphen.status);
     assert_eq!(decoded.policy_frontier, policy_frontier);
 
     let files_row = vault.consent_grant(&files.grant_ref())?.expect("grant row");
-    assert_eq!(StandingOutboundGrant::from_row(&files_row), Some(files.clone()));
+    assert_eq!(
+        StandingOutboundGrant::from_row(&files_row),
+        Some(files.clone())
+    );
 
     for unsafe_server in [
         "Files",
@@ -390,12 +393,13 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         );
     }
     for (server, expected) in [("my-server", &hyphen), ("my_server", &underscore)] {
-        let row = vault.consent_grant(&expected.grant_ref())?.expect("grant row");
+        let row = vault
+            .consent_grant(&expected.grant_ref())?
+            .expect("grant row");
         let encoded = crate::consent::encode_consent_grant_row(&row)?;
-        let decoded = StandingOutboundGrant::from_row(
-            &crate::consent::decode_consent_grant_row(&encoded)?,
-        )
-        .expect("outbound grant row");
+        let decoded =
+            StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+                .expect("outbound grant row");
         assert_eq!(
             decoded.scope,
             StandingOutboundGrantScope::ScopedMcp {

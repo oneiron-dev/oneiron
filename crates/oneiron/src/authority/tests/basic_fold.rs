@@ -151,7 +151,9 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
             Some(vault_id),
             1,
             vec![[0xDA; 32]],
-            AuthorityOp::SlipRevoke { slip_id: [0xDA; 32] },
+            AuthorityOp::SlipRevoke {
+                slip_id: [0xDA; 32],
+            },
             authority_key_from_ed(&owner),
             3,
         ),

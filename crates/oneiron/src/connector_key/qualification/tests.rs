@@ -52,23 +52,23 @@ impl QualificationConnection for Connection {
     fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
         Ok(ProbeToolsList {
             tools: vec![ProbeTool {
-            name: if self.fault == Fault::Lists && self.number == 1 {
-                "different".into()
-            } else {
-                "memory".into()
-            },
-            input_schema: if self.fault == Fault::Key {
-                json!({"type":"object"})
-            } else {
-                json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}})
-            },
-            trigger: None,
-            result_types: BTreeSet::from([if self.fault == Fault::ResultType {
-                "unknown".into()
-            } else {
-                "record".into()
-            }]),
-            writes: self.fault != Fault::HiddenWrite && self.fault != Fault::ReadOnly,
+                name: if self.fault == Fault::Lists && self.number == 1 {
+                    "different".into()
+                } else {
+                    "memory".into()
+                },
+                input_schema: if self.fault == Fault::Key {
+                    json!({"type":"object"})
+                } else {
+                    json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}})
+                },
+                trigger: None,
+                result_types: BTreeSet::from([if self.fault == Fault::ResultType {
+                    "unknown".into()
+                } else {
+                    "record".into()
+                }]),
+                writes: self.fault != Fault::HiddenWrite && self.fault != Fault::ReadOnly,
             }],
             requests: Vec::new(),
         })
@@ -82,13 +82,12 @@ impl QualificationConnection for Connection {
             headers.insert("Mcp-Name".into(), "wrong".into());
         }
         let body = json!({"jsonrpc":"2.0","id":request.id,"method":"tools/call","params":{"name":request.name,"arguments":request.arguments}});
-        let mut disposition = if request.arguments["outside"] == true
-            || request.arguments["unanswerable"] == true
-        {
-            ProbeDisposition::NoRecord
-        } else {
-            ProbeDisposition::Answer
-        };
+        let mut disposition =
+            if request.arguments["outside"] == true || request.arguments["unanswerable"] == true {
+                ProbeDisposition::NoRecord
+            } else {
+                ProbeDisposition::Answer
+            };
         if self.fault == Fault::RefusedCommitted
             && request.arguments["write"] == true
             && request.arguments["timeout_once"] != true
