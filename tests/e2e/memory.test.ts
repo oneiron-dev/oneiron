@@ -1883,7 +1883,9 @@ suite.test(test, "MUSE-DURA-02", "A hard delete is gone from recall and export b
     if (!refusalReceipt) throw new Error("Agent delete refusal call receipt is absent");
     expect(refusalReceipt.actor_class).toBe("agent");
     expect(refusalReceipt.actor_ref).toBe(agent.principalRef);
-    expect(refusalReceipt.outcome).toEqual({ refused: { code: agentDeleteRefusal.error?.code } });
+    const refusalCode = agentDeleteRefusal.error?.code;
+    if (typeof refusalCode !== "string") throw new Error("Agent delete refusal carries no error code");
+    expect(refusalReceipt.outcome).toEqual({ refused: { code: refusalCode } });
     museDura02NoSentinels(refusalReceipt, allSentinels);
     expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).not.toBeNull();
 
@@ -3742,7 +3744,9 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
       { label: "MUSE-DURA-08 agent erase refusal call receipt", timeoutMs: LIMITS.requestMs },
     );
     expect(refusalReceipt?.actor_ref).toBe(agent.principalRef);
-    expect(refusalReceipt?.outcome).toEqual({ refused: { code: new PublicHttpError(agentConfirmRefused).error?.code } });
+    const refusalCode = new PublicHttpError(agentConfirmRefused).error?.code;
+    if (typeof refusalCode !== "string") throw new Error("Agent erase refusal carries no error code");
+    expect(refusalReceipt?.outcome).toEqual({ refused: { code: refusalCode } });
 
     // The Owner's ordinary record erase remains available on the held
     // record. This deliberately does not use lift-and-erase.
