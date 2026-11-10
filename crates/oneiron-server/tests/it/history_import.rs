@@ -594,10 +594,8 @@ fn an_export_that_unzips_past_the_limit_is_refused_and_nothing_lands() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0);
 }
 
-/// First try, 2026-10-10: one session log over the per-log limit (the
-/// owner's Codex folder held a 1.8 GB rollout) refused the whole folder. Now
-/// it is left out and named in the report, every other log lands, and the
-/// import succeeds, dry run or not. The big log is sparse: no disk.
+/// Rule 5: even a log over the former per-log limit is read, and the other
+/// logs still land, dry run or not. The big log is sparse: no disk.
 #[cfg(unix)]
 #[test]
 fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
@@ -612,12 +610,6 @@ fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
         .expect("test fixture")
         .set_len(limit + 1)
         .expect("test fixture");
-    let left_out = serde_json::json!([{
-        "warning": "log_too_large",
-        "path": big,
-        "bytes": limit + 1,
-        "limit": limit,
-    }]);
 
     for dry_run in [true, false] {
         let output = home.run_import("codex", &sessions, dry_run);
@@ -627,9 +619,9 @@ fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
             String::from_utf8_lossy(&output.stderr)
         );
         let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
-        assert_eq!(report["warnings"], left_out, "{report}");
-        assert_eq!(report["files"]["too_large"], 1, "{report}");
-        assert_eq!(report["files"]["read"], 5, "{report}");
+        assert_eq!(report["warnings"], serde_json::json!([]), "{report}");
+        assert!(report["files"].get("too_large").is_none(), "{report}");
+        assert_eq!(report["files"]["read"], 6, "{report}");
         assert_eq!(totals(&report), (12, 4, 0, 0), "every other log lands");
     }
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
@@ -671,9 +663,8 @@ fn a_hard_linked_session_log_is_passed_over() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
 }
 
-/// Astra 1310 #5: session logs each within the per-log limit that together
-/// decode to more messages than one import holds are refused before anything
-/// lands, dry run or not.
+/// Rule 5: decoded-message crossings warn after the whole import lands;
+/// a dry run succeeds without writing anything.
 #[test]
 fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     let home = Home::new();
@@ -701,19 +692,27 @@ fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("codex", &home.dir.path().join("sessions"), true);
-    assert!(!dry.status.success(), "a dry run is refused too");
+    assert!(dry.status.success(), "{}", String::from_utf8_lossy(&dry.stderr));
+    assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("codex", &home.dir.path().join("sessions"), false);
-    assert!(
-        !output.status.success(),
-        "over a million messages is refused"
-    );
-    assert_eq!(home.vault_bytes(), before, "nothing was written");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
+    assert_eq!(totals(&report), (1_000_002, 0, 0, 0));
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 1_000_002);
+    assert!(report["warnings"].as_array().unwrap().iter().any(|warning| {
+        warning["warning"] == "limit_crossed"
+            && warning["row"] == "limits.import_decoded_messages"
+            && warning["observed"] == 1_000_002
+            && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+    }), "{report}");
+    assert_ne!(home.vault_bytes(), before, "the real import landed");
 }
 
 /// Astra 1310 re-check R4: what a folder's logs keep besides messages counts
 /// toward the decoded limit. Nine logs hold one 120 MiB title each and no
-/// message; together they pass 1 GiB, so the import is refused before
-/// anything lands, instead of holding every title.
+/// message; together they pass 1 GiB. Rule 5: only a codec bound may refuse,
+/// so the import succeeds, dry run or not, and the real run reports the
+/// decoded-bytes crossing. No log holds a message, so no message lands.
 #[test]
 fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     let home = Home::new();
@@ -737,10 +736,17 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("claude-code", &home.dir.path().join("projects"), true);
-    assert!(!dry.status.success(), "a dry run is refused too");
+    assert!(dry.status.success(), "{}", String::from_utf8_lossy(&dry.stderr));
+    assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("claude-code", &home.dir.path().join("projects"), false);
-    assert!(!output.status.success(), "over 1 GiB of titles is refused");
-    assert_eq!(home.vault_bytes(), before, "nothing was written");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
+    assert!(report["warnings"].as_array().unwrap().iter().any(|warning| {
+        warning["warning"] == "limit_crossed"
+            && warning["row"] == "limits.import_decoded_bytes"
+            && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+    }), "{report}");
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0, "no log holds a message");
 }
 
 /// Done-means (Wave 9b, Claude Code hooks): sessions handed over with

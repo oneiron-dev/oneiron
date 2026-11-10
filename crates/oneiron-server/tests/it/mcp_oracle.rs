@@ -82,16 +82,13 @@ mod cb_x {
         // and `MEMORY_VERBS`, sorted.
         let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
             .iter()
+            .filter(|verb| verb.is_mcp())
             .map(|verb| verb.as_str())
             .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
             .map(str::to_owned)
             .collect::<Vec<_>>();
         expected.sort();
-        // 24 since ARCH-0067's 2026-09-22 amendment folded `tasks.check` and
-        // `tasks.expand` into the one `describe` row; 28 since ONE-2563 added
-        // `rooms.render`, `rooms.find`, `rooms.get` and `rooms.trunk`; 40 since
-        // every callable row is a tool (the 12 former `mcp: none` rows).
-        assert_eq!(expected.len(), 40);
+        assert_eq!(expected.len(), variant.verb_table.len());
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

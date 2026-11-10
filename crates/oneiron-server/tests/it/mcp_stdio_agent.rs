@@ -628,9 +628,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     ] {
         seen.push_str(&std::fs::read_to_string(dir.path().join(log)).unwrap());
     }
-    let argv = std::fs::read_to_string(&argv_log).expect("curl ran through the wrapper");
-    assert!(argv.contains("--config -"), "{argv}");
-    seen.push_str(&argv);
+    assert!(!argv_log.exists(), "the bridge does not execute curl (OF-601)");
     seen.push_str(&minted.to_string());
     for secret in [slip_hex, seed] {
         assert!(!seen.contains(secret), "a credential leaked");
@@ -1014,11 +1012,8 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         fake_mcp_server(Arc::clone(&seen), json!([]), Some(false))
     );
     let env_log = dir.path().join("curl-env.log");
-    let curl_dir = recording_curl(
-        dir.path(),
-        &dir.path().join("curl-argv.log"),
-        Some(&env_log),
-    );
+    let argv_log = dir.path().join("curl-argv.log");
+    let curl_dir = recording_curl(dir.path(), &argv_log, Some(&env_log));
     let mut bridge = Bridge::spawn_with(
         &[
             "--url",
@@ -1031,6 +1026,8 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
             "4",
             "--idle-timeout-secs",
             "1",
+            "--transport",
+            "http",
         ],
         &[
             ("AGENT_SLIP", &token),
@@ -1041,18 +1038,20 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         &curl_dir,
         &dir.path().join("mcp.stderr"),
     );
-    // Headers and no body: the request's deadline ends it.
+    // Headers and no body: the pooled HTTP client's idle limit ends it.
     let (stalled, took) = ask(&mut bridge, 1, "stall/headers");
     assert_eq!(
         stalled["error"]["data"]["kind"],
         json!("server_unreachable"),
         "{stalled:#}"
     );
-    assert!(
-        stalled["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("within 4s"),
+    assert_eq!(
+        stalled["error"]["message"],
+        json!(format!(
+            "{origin}/mcp/tool-first's answer stalled for 1s (--idle-timeout-secs); \
+             start the vault with `oneiron serve --config <vault-config>` and check \
+             --url matches its host and port; MCP does not start a vault"
+        )),
         "{stalled:#}"
     );
     assert!(took < Duration::from_secs(15), "took {took:?}");
@@ -1129,8 +1128,12 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         "{last:#}"
     );
 
-    // curl inherited no variable the credential was in, under either name.
-    let env = std::fs::read_to_string(&env_log).expect("curl ran through the wrapper");
+    assert!(
+        !argv_log.exists() && !env_log.exists(),
+        "the bridge does not execute curl (OF-601)"
+    );
+    // Retain every nondisclosure check even though no curl environment exists.
+    let env = std::fs::read_to_string(&env_log).unwrap_or_default();
     for name in [
         "AGENT_SLIP=",
         "AGENT_SEED=",

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::reopen_after_restart::{oneiron, stdout};
 
-const ENGINE_SWEEPS: [&str; 10] = [
+const ENGINE_SWEEPS: [&str; 19] = [
     "secret_lease_expiry",
     "critical_confirm_expiry",
     "symbol_lease_expiry",
@@ -15,6 +15,15 @@ const ENGINE_SWEEPS: [&str; 10] = [
     "gate_decision_retention",
     "hard_erase_sweep",
     "ppr_cache_eviction",
+    "shared_act_maturity",
+    "secret_lift_history",
+    "claim_vad_debt",
+    "found_key_notices",
+    "body_line_index_rebuild",
+    "annotation_body_anchors",
+    "drafter_corpus_sweep",
+    "model_pack_retirement",
+    "oauth_expiry",
 ];
 
 fn outcomes(report: &Value) -> Vec<(String, String)> {
@@ -45,7 +54,11 @@ fn maintain_runs_every_sweep_and_the_named_repairs_on_a_healthy_vault() {
     )))
     .expect("one JSON report");
     let outcomes = outcomes(&report);
-    assert_eq!(outcomes.len(), 16, "{report:#}");
+    assert_eq!(
+        outcomes.len(),
+        oneiron::housekeeping::HousekeepingSweep::ALL.len(),
+        "{report:#}"
+    );
     for (sweep, outcome) in &outcomes {
         let expected = if ENGINE_SWEEPS.contains(&sweep.as_str()) {
             "ran"

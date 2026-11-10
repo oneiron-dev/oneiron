@@ -120,7 +120,7 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
             oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
-            b"person",
+            &rmp_serde::to_vec_named(&serde_json::json!({"name": "Oleksii"})).unwrap(),
         )
         .unwrap();
     let scope = DreamerConsolidationScope::Micro;
@@ -131,13 +131,33 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
     (turn, subject)
 }
 
-fn extraction(subject: EntityId, turn: EntityId) -> String {
+fn extraction(request: &serde_json::Value) -> String {
+    let input = request["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    let subject = input
+        .lines()
+        .find_map(|line| {
+            let (label, name) = line.strip_prefix("entity ")?.split_once(' ')?;
+            (serde_json::from_str::<serde_json::Value>(name).ok()
+                == Some(serde_json::json!("Oleksii")))
+                .then_some(label)
+        })
+        .expect("the call lists the seeded Oleksii subject");
+    let (turn, quote) = input
+        .lines()
+        .find_map(|line| {
+            let (head, quote) = line.strip_prefix('[')?.split_once("] ")?;
+            let label = head.split_whitespace().next()?;
+            (label.starts_with('T') && quote == "call me Oleksii").then_some((label, quote))
+        })
+        .expect("the call lists the captured turn");
     serde_json::json!({"candidates": [{
-        "subject": subject.to_hex(),
+        "subject": subject,
         "predicate": "profile.name",
         "value": "Oleksii",
         "confidence": 0.9,
-        "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 4]}],
+        "evidence_refs": [{"source": turn, "quote": quote}],
     }]})
     .to_string()
 }
@@ -176,21 +196,23 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
-    let (turn, subject) = seed(&vault_path);
+    let (_, subject) = seed(&vault_path);
     let fake = FakeLlm::start(
         vec![
+            // The killed call never sends a response; only its retry extracts.
             Reply::Hold {
-                text: extraction(subject, turn),
+                text: String::new(),
             },
-            Reply::text(extraction(subject, turn)),
+            Reply::Computed(std::sync::Arc::new(extraction)),
         ],
         None,
     )
     .await;
+    let port = free_port();
     let config = write_config(
         dir.path(),
         &vault_path,
-        free_port(),
+        port,
         &models_section(&fake.base_url),
     );
 
@@ -208,13 +230,24 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
         String::from_utf8_lossy(&granted.stderr)
     );
 
-    let mut first = serve(&config);
+    let log = dir.path().join("serve-1.log");
+    let command = oneiron(&config, &["serve"]);
+    let startup_log = log.clone();
+    let mut first = tokio::task::spawn_blocking(move || {
+        crate::reopen_after_restart::serve_command(command, port, &startup_log)
+    })
+    .await
+    .expect(&format!("the logged server startup completed; log {}", log.display()));
     tokio::time::timeout(Duration::from_secs(60), fake.wait_holding())
         .await
-        .expect("the first server's pass reached its model call");
+        .expect(&format!(
+            "the first server's pass reached its model call; log {}:\n{}",
+            log.display(),
+            std::fs::read_to_string(&log).unwrap_or_default()
+        ));
     // Killed mid-call: no graceful path, the attempt's lease is left behind.
-    first.kill().unwrap();
-    first.wait().unwrap();
+    first.0.kill().unwrap();
+    first.0.wait().unwrap();
 
     let second = serve(&config);
     assert!(
@@ -366,18 +399,22 @@ async fn serve_without_models_captures_finds_exports_and_reports_the_dreamer_idl
         "{found:#}"
     );
     let exported: serde_json::Value = root
-        .sign(client.post(format!("{base}/v1/core/facade/export")))
-        .json(&serde_json::json!({"format": "json"}))
+        .sign(client.post(format!("{base}/v1/core/facade/vault.export")))
+        .json(&serde_json::json!({"format": "archive"}))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert!(
-        exported["rendered"].as_str().unwrap().contains("saffron"),
-        "{exported:#}"
-    );
+    let answer: oneiron::memory::ExportAnswer = serde_json::from_value(exported.clone()).unwrap();
+    let oneiron::memory::ExportAnswer::Inline(export) = answer else {
+        panic!("an export with no delivery asked answers inline");
+    };
+    let reader = Vault::open_owned(&dir.path().join("archive-reader"), vault_config()).unwrap();
+    let document = serde_json::to_value(reader.read_whole_vault_archive(&export.archive).unwrap())
+        .unwrap();
+    assert!(document.to_string().contains("saffron"), "{exported:#}");
     // Chat says why it cannot answer; nothing that needs no model waited.
     let chat = root
         .sign(client.post(format!("{base}/v1/ai/chat")))
