@@ -9,6 +9,12 @@
         reason = "a test process starts its own subprocesses; the rule covers the server's crates"
     )
 )]
+// Since #7005 the lib unit tests use helpers behind `test-support`: name that
+// feature when a plain `cargo test -p oneiron` builds them.
+#[cfg(all(test, not(feature = "test-support")))]
+compile_error!(
+    "oneiron's lib unit tests need --features test-support (or --all-features); see #7005"
+);
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
