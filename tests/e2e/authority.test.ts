@@ -227,6 +227,9 @@ suite.test(test, "AUTHORITY-01", "Vault-bound slip and request proof should work
   const anonymous = new PublicHttpClient(engine.url, { artifacts: engine.artifacts });
   const admitted = await anonymous.raw<FacadeResult<"vault.kv.get">>("POST", "/v1/core/facade/vault.kv.get", address, replay);
   expect(admitted.status).toBe(200);
+  // RED since 2026-11-10 (run on main e79eb76df3e): engine defect [E2E-KV-GET-PREFILTER].
+  // The committed put reads back null, because vault.kv.get filters its head through a
+  // generic claim admission that always excludes core.memory.key_value.
   expect(admitted.body?.value).toEqual(seeded);
   expect(await refusal(anonymous, "vault.kv.get", address, replay)).toEqual(unauthorized);
   const replayedUpgrade = await anonymous.raw("GET", "/ws", undefined, { ...proof, ...upgradeHeaders() });
@@ -455,14 +458,14 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
   expect(reused.code).toBe(facts.unauthorizedCode);
 
   const client = new PublicHttpClient(engine.url, { credential: paired.credential, artifacts: engine.artifacts });
-  expect(Array.isArray(await client.call("vault.receipts", { limit: 1 }))).toBe(true);
+  expect(Array.isArray((await client.call("vault.receipts", { limit: 1 })).receipts)).toBe(true);
   const pythonRead = await engine.sdk.run("python", {
     mode: "remote", url: engine.url, credential: paired.credential,
   }, [{ verb: "receipts", limit: 1 }]);
   expect(pythonRead.results).toHaveLength(1);
   expect(pythonRead.results[0]?.ok).toBe(true);
   const socket = await WsClient.connect(engine.url, paired.credential);
-  try { expect(Array.isArray((await socket.call("vault.receipts", { limit: 1 })).value)).toBe(true) }
+  try { expect(Array.isArray((await socket.call("vault.receipts", { limit: 1 })).value.receipts)).toBe(true) }
   finally { socket.close() }
 
   const issued = mintedSlip(before, await auditRows(engine.client), engine.pairedActor.principalRef);
@@ -489,7 +492,7 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
   // Same principal, independent pairing: revoking the issued slip does not
   // revoke the original owner, nor confuse a dead server with an auth refusal.
   const control = await engine.websocket();
-  try { expect(Array.isArray((await control.call("vault.receipts", { limit: 1 })).value)).toBe(true) }
+  try { expect(Array.isArray((await control.call("vault.receipts", { limit: 1 })).value.receipts)).toBe(true) }
   finally { control.close() }
 });
 
@@ -642,11 +645,13 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
   const catalog = await loadFixtures();
   const facts = catalog.expected<{ namespace: string[]; key: string; value: string; requestId: string }>("authority-host-note");
   const address = { namespace: facts.namespace, key: facts.key };
+  // A keyed value is a JSON object, and the owner states it (an unsourced write waits on review).
+  const noted = { text: facts.value };
   const written = await engine.client.call("vault.kv.put", {
-    ...address, value: facts.value, request_id: facts.requestId,
+    ...address, value: noted, request_id: facts.requestId, source: "user_stated",
   });
-  expect(written.item.value).toBe(facts.value);
-  expect((await engine.client.call("vault.kv.get", address))?.value).toBe(facts.value);
+  expect(written.item.value).toEqual(noted);
+  expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(noted);
   const before = await auditRows(engine.client);
   const genesis = before.filter(row => row.source_op === "genesis");
   expect(genesis).toHaveLength(1);
@@ -664,13 +669,13 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
     expect(destination.report.retired_credentials.some(row => row.slip_id === mint.subject_ref)).toBe(true);
   }
   expect(destination.credential === engine.pairedActor.credential).toBe(false);
-  expect((await destination.client.call("vault.kv.get", address))?.value).toBe(facts.value);
+  expect((await destination.client.call("vault.kv.get", address))?.value).toEqual(noted);
   const oldRead = await engine.client.raw<{ error: { code: string } }>("POST", "/v1/core/facade/vault.kv.get", address);
   expect(oldRead.status).toBe(401);
   expect(oldRead.body.error.code).toBe("UNAUTHORIZED");
   await refusedUpgrade(engine.url, engine.pairedActor.credential);
   const newSocket = await WsClient.connect(engine.url, destination.credential);
-  try { expect((await newSocket.call("vault.kv.get", address)).value?.value).toBe(facts.value) }
+  try { expect((await newSocket.call("vault.kv.get", address)).value?.value).toEqual(noted) }
   finally { newSocket.close() }
 
   const after = await auditRows(destination.client);
