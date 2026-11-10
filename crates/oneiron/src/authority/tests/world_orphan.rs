@@ -46,13 +46,7 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
             );
         }
         host.vault
-            .set_machine_role(
-                &host.owner,
-                ActSurface::ThisInstall,
-                stolen,
-                role,
-                None,
-            )
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, stolen, role, None)
             .unwrap();
         if !seen {
             land(&host, std::slice::from_ref(&theft));

@@ -24,14 +24,12 @@ fn grant(vault: &Vault, classes: Vec<ToolGrantDataClass>) -> (EntityId, Standing
     let id = entity(0xB2);
     let mut scope = scoped_mcp_scope();
     if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
-        tool_data_classes,
-        ..
+        tool_data_classes, ..
     } = &mut scope
     {
         *tool_data_classes = classes;
     }
-    let grant =
-        mint_scoped_grant_as(vault, &owner, &id, owner.principal_ref(), scope).unwrap();
+    let grant = mint_scoped_grant_as(vault, &owner, &id, owner.principal_ref(), scope).unwrap();
     let key_id = register_active_scoped_connector_key_with_budget(vault, &id, "files", 100);
     // Header tests use one approved descriptor with the same resolved header
     // schema that their prepared calls freeze.
@@ -326,14 +324,11 @@ fn header_class_requires_owner_door_and_revocation_blocks_prepared_mutation() {
         ToolGrantDataClass::XMcpHeader,
     ];
     let probe_owner = owner(&vault);
-    let (_foreign_tmp, _foreign_vault, foreign) = crate::test_util::foreign_owner_proof(
-        probe_owner.actor(),
-        probe_owner.principal_ref(),
-    );
+    let (_foreign_tmp, _foreign_vault, foreign) =
+        crate::test_util::foreign_owner_proof(probe_owner.actor(), probe_owner.principal_ref());
     let mut scope = scoped_mcp_scope();
     if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
-        tool_data_classes,
-        ..
+        tool_data_classes, ..
     } = &mut scope
     {
         *tool_data_classes = classes.clone();
