@@ -64,7 +64,7 @@ afterAll(suite.flush);
 // Unproved: full door (act, second-door read-back, wrong-actor refusal with receipt, restart, revocation) waits on contained foreign execution with pinned image and isolating backend.
 suite.todo(test, "CODE-RUNTIME-01", "waits on contained foreign code execution with pinned guest image and isolating backend (Named verbs are the only write door should work)");
 
-// CODE-RUNTIME-02 — Forged console output is never accepted, a packaging failure runs nothing, and the repair record names the model (lead ruling B, 10 Nov 10:32). The repair-format checks moved to the T0 test crates/oneiron/tests/code_runtime02_healer.rs.
+// CODE-RUNTIME-02 — Forged console output is never accepted, a packaging failure runs nothing, and the repair record names the model (lead ruling B, 10 Nov 10:32). The repair-format checks moved to the T0 test crates/oneiron/tests/code_reply_healer.rs.
 interface CodeRuntime02ProviderReply {
   label: string;
   text: string;
