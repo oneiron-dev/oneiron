@@ -110,6 +110,42 @@ pub(crate) fn source_version_in_txn(
     Ok(Some((version, text)))
 }
 
+/// The projected text of TURN `turn` as `memory`'s bound reader reads it, and
+/// whether a lifted key was masked in it: for every reader but the owner,
+/// each lifted key the TURN's own body or a MESSAGE row its words come from
+/// holds reads as its handle (OF-067; review of #6964). `read` is the
+/// caller's own read, which served `text`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn served_turn_text_in_txn(
+    memory: &crate::memory::Memory<'_>,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    text: &TurnText,
+) -> crate::memory::MemoryResult<(Option<String>, bool)> {
+    let Some(words) = text.text() else {
+        return Ok((None, false));
+    };
+    if !memory.reads_lifted_keys_masked_in_txn(txn)? {
+        return Ok((Some(words.to_owned()), false));
+    }
+    let mut sources = vec![*turn];
+    sources.extend(text.spans(None)?.into_iter().map(|span| span.message));
+    sources.sort_unstable();
+    sources.dedup();
+    let bodies: Vec<Vec<u8>> = read
+        .get_entities_parts_in_txn(txn, &sources)?
+        .into_iter()
+        .flatten()
+        .map(|(_, _, body)| body)
+        .collect();
+    let (served, masked) = memory.lifted_projection_in_txn(txn, &bodies, words)?;
+    Ok((Some(served), masked))
+}
+
 /// `blake3:<hex>` for a 32-byte BLAKE3 digest.
 pub(super) fn blake3_ref(digest: &[u8; 32]) -> String {
     format!("blake3:{}", blake3::Hash::from(*digest).to_hex())
