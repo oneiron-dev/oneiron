@@ -262,6 +262,25 @@ fn names_actor(row: &Value, actor_ref: &str) -> bool {
     })
 }
 
+/// Whether `row` binds the actor `actor_ref` names, by its written
+/// `actor_ref` or by the id that decodes to: the source-trust decode reads an
+/// actor id whatever its hex case, so a permit spelt in upper case is the
+/// same actor's and goes out with the rest (review of #6913, round 2).
+fn binds_actor(row: &Value, actor_ref: &str) -> bool {
+    let actor = EntityId::from_hex(actor_ref).ok();
+    row.as_map().is_some_and(|fields| {
+        fields.iter().any(|(name, field)| {
+            name.as_str() == Some(ACTOR_REF_KEY)
+                && field.as_str().is_some_and(|written| {
+                    written == actor_ref
+                        || actor.is_some_and(|actor| {
+                            EntityId::from_hex(written).is_ok_and(|bound| bound == actor)
+                        })
+                })
+        })
+    })
+}
+
 /// Adds `row` to the list (a lone row becomes a one-row list) unless a row
 /// already names the Dreamer. Returns whether it added.
 fn push_unless_bound(list: &mut Value, actor_ref: &str, row: Value) -> Result<bool> {
@@ -365,8 +384,8 @@ fn encode_live(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Takes every row that names `actor_ref` out of one row list, a lone row
-/// included. Returns whether it took any. A row that is not a map binds no
+/// Takes every row that binds `actor_ref` ([`binds_actor`]) out of one row
+/// list, a lone row included. Returns whether it took any. A row that is not a map binds no
 /// actor (the source-trust shorthand: `false`, a band number or a band name),
 /// so it stays. An emptied list stays as an empty list when `keep_empty` (a
 /// pack must carry `actor_ceilings`); otherwise its entry is removed (a
@@ -386,9 +405,9 @@ fn strip_rows(
     let value = &mut entries[index].1;
     let stripped = if let Value::Array(rows) = value {
         let before = rows.len();
-        rows.retain(|row| !names_actor(row, actor_ref));
+        rows.retain(|row| !binds_actor(row, actor_ref));
         rows.len() != before
-    } else if names_actor(value, actor_ref) {
+    } else if binds_actor(value, actor_ref) {
         // A lone row that names the actor.
         *value = Value::Array(Vec::new());
         true
