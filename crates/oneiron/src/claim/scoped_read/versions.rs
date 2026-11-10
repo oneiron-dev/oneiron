@@ -466,6 +466,10 @@ impl ScopedRead<'_> {
         if !self.is_entity_raw_readable_held_in(txn, policy, id, &judged, filter, authority)? {
             return Ok(None);
         }
+        // The caller projects the admitted live NOTE core exactly once.
+        if mode == ReadMode::Live && judged.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+            return Ok(Some(judged));
+        }
         let Some(raw) = self.revision_raw_in(txn, id, mode)? else {
             return Ok(None);
         };
