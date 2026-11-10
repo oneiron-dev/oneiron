@@ -181,6 +181,21 @@ fn layout(bytes: &[u8]) -> Layout {
 }
 
 #[test]
+fn every_wrap_type_round_trips_under_both_aead_suites() {
+    let keys = keys();
+    for &suite in AEADS {
+        for &wrap in ALL_WRAPS {
+            let bytes = sealed(&keys, suite, wrap);
+            let opened = open_bytes(&bytes, open_key(&keys, wrap), &policy()).expect("opens");
+            assert_eq!(opened, PLAINTEXT, "{suite:?} {wrap:?}");
+            let env = Envelope::parse(&bytes).expect("parses");
+            assert_eq!(env.to_bytes(), bytes, "canonical re-encoding");
+            assert_eq!(env.header().wrap, wrap);
+        }
+    }
+}
+
+#[test]
 fn a_wrong_key_does_not_open_any_wrap_type() {
     let keys = keys();
     let wrong = Keys {

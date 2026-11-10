@@ -77,8 +77,17 @@ for row in MANIFEST['verbs']:
 CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + HOST_BOARD_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
-    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output, per-input outputs and run surface, and nothing else')
+    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface', 'grant_class'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output, per-input outputs, run surface and grant class, and nothing else')
+# A run row's `grant_class` names the authority rule its writer applies
+# (`vault.agents.put`: the author's slice, ARCH-0053:20). Code mode shows it
+# as the method's JSDoc. It describes the writer's own check; nothing reads it
+# as a second one.
+for row in RUN_ROWS:
+    if 'grant_class' not in row: continue
+    text = row['grant_class']
+    if not isinstance(text, str) or not re.fullmatch(r'[ -~]{1,120}', text) or text != text.strip() or any(s in text for s in ('\\', '"', '*/')):
+        raise ValueError(f'{row["name"]}: a grant class is one printable ASCII phrase, with no backslash, double quote or `*/`')
 # `outputs_by_input` maps an input field, by its wire name, to the reply code
 # mode answers when that field is present and not null (`describe({fold})`
 # answers the fold, `tasks.update({resultRef})` the reader's report). Each type

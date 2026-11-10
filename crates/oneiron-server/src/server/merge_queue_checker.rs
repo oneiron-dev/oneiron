@@ -257,8 +257,9 @@ impl SyncServer {
         let Some(work) = vault.claim_queue_check(key, QUEUE_CHECK_LEASE_OWNER, concurrency)? else {
             return Ok(None);
         };
-        let mut host = executor::QueueCheckExecutor::new(config.clone())
-            .with_guest_records(vault.queue_check_guest_dir()?);
+        let mut host =
+            executor::QueueCheckExecutor::new(config.clone(), vault.runtime().sandbox_backends())
+                .with_guest_records(vault.queue_check_guest_dir()?);
         let stop = || self.housekeeping_passes.stopping();
         Ok(Some(match vault.run_queue_check(&work, &mut host, &stop) {
             Ok(_) => true,
