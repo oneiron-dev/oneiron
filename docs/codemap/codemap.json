@@ -119215,6 +119215,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/analyzer/japanese/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DictLoadError",
@@ -119307,6 +119315,22 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/analyzer/script/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/analyzer/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnalyzerChannel",
@@ -119370,9 +119394,18 @@
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…",
      "surface": {
       "const": 2,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/fusion/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -119417,7 +119450,7 @@
    ],
    "modules": {
     "analyzer": {
-     "files": 14,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -119431,10 +119464,10 @@
      "purpose": "Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a…"
     },
     "fusion": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…"
     },
     "hnsw_entry_point": {
@@ -119455,7 +119488,7 @@
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 21,
-   "test_files": 1
+   "test_files": 5
   },
   "oneiron-run-budget": {
    "files": [
@@ -147483,6 +147516,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/overlay_db/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OwnRate",
@@ -149665,6 +149706,14 @@
       "fn": 4,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store_clock/tests.rs",
+     "purpose": "The store clock's reads, observed through what a caller gets back",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -152058,7 +152107,7 @@
      "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages"
     },
     "overlay_db": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -152597,7 +152646,7 @@
      "purpose": "The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack…"
     },
     "store_clock": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -152768,7 +152817,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 643,
-   "test_files": 2
+   "test_files": 4
   },
   "oneiron-uniffi": {
    "files": [
