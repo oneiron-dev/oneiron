@@ -635,8 +635,8 @@ fn lane_tags(
             let readable = match entities.get(&entity) {
                 Some(readable) => *readable,
                 None => {
-                    let readable = super::provisional::exists_in_txn(store, txn, &entity)?
-                        || reads(&entity)?;
+                    let readable =
+                        super::provisional::exists_in_txn(store, txn, &entity)? || reads(&entity)?;
                     entities.insert(entity, readable);
                     readable
                 }

@@ -68,7 +68,12 @@ fn person(vault: &Vault, name: &str) -> EntityId {
 
 /// A stated record about `person`, scoped to `relationship` when one is
 /// named.
-fn record(vault: &Vault, person: EntityId, words: &str, relationship: Option<EntityId>) -> EntityId {
+fn record(
+    vault: &Vault,
+    person: EntityId,
+    words: &str,
+    relationship: Option<EntityId>,
+) -> EntityId {
     let id = EntityId::now();
     let mut body = ClaimBody::new(
         "profile.name",
