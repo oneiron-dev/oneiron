@@ -1,8 +1,13 @@
-//! Owner-submitted durable model steps over the engine's existing step executor.
+//! Durable model steps a caller submits over the engine's existing step
+//! executor: the vault owner on their proof, or a live run's own actor on
+//! its lease (slice 6.5c, primitive D).
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, ResponseFormat,
+    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmRequest, LlmResponse,
+    ResponseFormat,
 };
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
@@ -11,17 +16,25 @@ use super::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapState, DurableStepContext, DurableStepError,
     StepOutcome, StepProgression,
 };
+use crate::agent_def::{AgentDefinition, ensure_listed};
+use crate::agent_dispatch::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, SpendScopeId, agent_dispatch_actor,
+    decode_agent_dispatch_input,
+};
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-    FailAttempt,
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    EnqueueAttempt, FailAttempt,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::{DreamerAttemptPayload, encode_dreamer_attempt_payload};
+use crate::dreamer_runner::{
+    DreamerAttemptPayload, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
+};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
+use crate::task_verb::HostBinding;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
 pub use super::media_step::media_step_key;
@@ -41,9 +54,41 @@ impl Default for ModelStepRetryPolicy {
     }
 }
 
+/// What `ai.steps.submit` takes: one step, and the live run a run's own
+/// actor submits it on. The vault owner names no run.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStepSubmitRequest {
+    /// The handle of the caller's attached live run. Absent: the call is
+    /// the vault owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_run: Option<String>,
+    pub step_key: String,
+    pub request: LlmRequest,
+    #[serde(default)]
+    pub retry: ModelStepRetryPolicy,
+}
+
+impl ModelStepSubmitRequest {
+    /// The live run the call names, and the step it freezes.
+    #[must_use]
+    pub fn into_parts(self) -> (Option<String>, ModelStepSubmit) {
+        let step = ModelStepSubmit {
+            step_key: self.step_key,
+            request: self.request,
+            retry: self.retry,
+        };
+        (self.live_run, step)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepReceiptRequest {
+    /// The handle of the caller's attached live run, for a step that run
+    /// submitted. Absent: the call is the vault owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_run: Option<String>,
     pub step_key: String,
 }
 
@@ -69,13 +114,7 @@ pub async fn submit_as_owner(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    submit(vault, owner, input, Some((backend, guard)))
-        .await?
-        .ok_or_else(|| {
-            MemoryError::from(Error::InvariantViolation(
-                "admitted model step returned no receipt".into(),
-            ))
-        })
+    admitted(submit(vault, Submitter::Owner(owner), input, Some((backend, guard))).await?)
 }
 
 /// Resume this owner's frozen saved work before provider admission. A new
@@ -88,33 +127,241 @@ pub async fn resume_saved_as_owner(
     owner: &AuthenticatedOwner,
     input: &ModelStepSubmit,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
-    if let Some(receipt) = saved_terminal_as_owner(vault, owner, input)? {
+    resume_saved(vault, Submitter::Owner(owner), input).await
+}
+
+/// A live run's own actor at the step doors (slice 6.5c, primitive D). The
+/// host that holds the run builds it from the run's registration: the agent
+/// the leased try was dispatched as, the lease the host sealed, and the
+/// definition the run entered with. Nothing in it comes from the request.
+#[derive(Clone, Copy)]
+pub struct RunStepCaller<'a> {
+    pub actor: WriteActor,
+    pub lease: &'a HostBinding,
+    pub definition: &'a AgentDefinition,
+}
+
+/// [`submit_as_owner`] for a live run's own actor. The step is kept under
+/// the agent and the first try of its run's retry lineage, so a retried try
+/// replays it and no other run of the agent shares its key. The lease and
+/// the actor are read before the identity, in the preparing writer and in
+/// the final writer. The definition's model list holds a fresh call.
+///
+/// A run that spends under a scope steps on that scope's own guard, and
+/// what the guard used is booked on the scope in the commit that saves the
+/// result, so a replay of a saved step books nothing. `unscoped_guard` is
+/// the host's line for a run with no scope.
+pub async fn submit_as_run_actor(
+    vault: &Vault,
+    caller: RunStepCaller<'_>,
+    input: ModelStepSubmit,
+    backend: &dyn LlmBackend,
+    unscoped_guard: &BudgetGuard,
+) -> MemoryResult<ModelStepReceipt> {
+    let execution = Some((backend, unscoped_guard));
+    admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
+}
+
+/// [`resume_saved_as_owner`] for a live run's own actor.
+pub async fn resume_saved_as_run_actor(
+    vault: &Vault,
+    caller: RunStepCaller<'_>,
+    input: &ModelStepSubmit,
+) -> MemoryResult<Option<ModelStepReceipt>> {
+    resume_saved(vault, Submitter::Run(caller), input).await
+}
+
+/// [`receipt_as_owner`] for a live run's own actor: the receipt of a step
+/// its own run submitted, and no other's.
+pub fn receipt_as_run_actor(
+    vault: &Vault,
+    caller: RunStepCaller<'_>,
+    input: &ModelStepReceiptRequest,
+) -> MemoryResult<ModelStepReceipt> {
+    receipt(vault, Submitter::Run(caller), input)
+}
+
+/// The scope a live run's step spends under, as [`submit_as_run_actor`]
+/// reads it: the leased try's own, or the try's it retries. `None` for an
+/// unmetered run. The host sizes the physical call's line by it.
+pub fn run_step_spend_scope(
+    vault: &Vault,
+    caller: RunStepCaller<'_>,
+) -> MemoryResult<Option<SpendScopeId>> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let record = run_lease_in_txn(vault, &txn, caller)?.ok_or_else(not_the_runs_actor)?;
+    Ok(AgentDispatcher::new(vault)
+        .attempt_spend_scope_in_txn(&txn, record.id)?
+        .map(|row| row.scope))
+}
+
+/// Who submits a step: the vault owner on their proof, or a live run's own
+/// actor on its lease.
+#[derive(Clone, Copy)]
+enum Submitter<'a> {
+    Owner(&'a AuthenticatedOwner),
+    Run(RunStepCaller<'a>),
+}
+
+/// What a submitter's check answers in one snapshot: the actor the step is
+/// kept under, the step's identity, and the scope a run's step spends
+/// under.
+struct Standing {
+    actor: WriteActor,
+    id: AttemptId,
+    scope: Option<SpendScopeId>,
+}
+
+impl Submitter<'_> {
+    /// [`Self::standing_in_txn`] in its own read transaction.
+    fn standing(&self, vault: &Vault, step_key: &str) -> MemoryResult<Standing> {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        self.standing_in_txn(vault, &txn, step_key)
+    }
+
+    /// The submitter's standing in `txn` for the step `step_key` names, or
+    /// its refusal: the owner's proof, or the run's lease under its own
+    /// actor.
+    fn standing_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        step_key: &str,
+    ) -> MemoryResult<Standing> {
+        match self {
+            Self::Owner(owner) => {
+                let actor = owner.revalidate_in_txn(vault, txn)?;
+                Ok(Standing {
+                    actor: WriteActor::new(actor, EdgeActorClass::Human),
+                    id: identity(actor, step_key)?,
+                    scope: None,
+                })
+            }
+            Self::Run(caller) => {
+                let record =
+                    run_lease_in_txn(vault, txn, *caller)?.ok_or_else(not_the_runs_actor)?;
+                let launch = first_try_in_txn(vault, txn, &record)?;
+                Ok(Standing {
+                    actor: caller.actor,
+                    id: run_identity(caller.actor.entity_ref(), launch, step_key)?,
+                    scope: AgentDispatcher::new(vault)
+                        .attempt_spend_scope_in_txn(txn, record.id)?
+                        .map(|row| row.scope),
+                })
+            }
+        }
+    }
+
+    /// Whether the submitter still stands in `txn`, the writer's own
+    /// snapshot.
+    fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        match self {
+            Self::Owner(owner) => owner.revalidate_in_txn(vault, txn).map(drop)?,
+            Self::Run(caller) => {
+                run_lease_in_txn(vault, txn, *caller)?.ok_or_else(not_the_runs_actor)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The try `caller`'s lease sealed, read in `txn`, while the lease holds
+/// and the try is `caller`'s own agent dispatch. `None` otherwise: one
+/// answer for a lapsed lease and for another actor's run.
+fn run_lease_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: RunStepCaller<'_>,
+) -> Result<Option<AttemptRecord>> {
+    Ok(caller
+        .lease
+        .leased_record_in_txn(vault, txn)?
+        .filter(|record| {
+            decode_dreamer_attempt_payload(&record.payload)
+                .ok()
+                .filter(|payload| payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
+                .and_then(|payload| decode_agent_dispatch_input(&payload.input).ok())
+                .and_then(|input| agent_dispatch_actor(&input).ok())
+                == Some(caller.actor)
+        }))
+}
+
+/// The first try of `record`'s retry lineage: the launch every retry of it
+/// stands for, as its spend scope does.
+fn first_try_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<AttemptId> {
+    let queue = AttemptQueue::new(vault);
+    let mut seen = HashSet::from([record.id]);
+    let (mut first, mut earlier) = (record.id, record.retry_of);
+    while let Some(previous) = earlier {
+        if !seen.insert(previous) {
+            return Err(Error::InvariantViolation(
+                "model step retry lineage cycle".into(),
+            ));
+        }
+        first = previous;
+        earlier = queue.get_in_txn(txn, previous)?.and_then(|row| row.retry_of);
+    }
+    Ok(first)
+}
+
+fn not_the_runs_actor() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "a run's model step needs the run's own actor on its live lease",
+        &["Submit from the agent run that still holds its try's lease."],
+    )
+}
+
+fn admitted(receipt: Option<ModelStepReceipt>) -> MemoryResult<ModelStepReceipt> {
+    receipt.ok_or_else(|| {
+        MemoryError::from(Error::InvariantViolation(
+            "admitted model step returned no receipt".into(),
+        ))
+    })
+}
+
+async fn resume_saved(
+    vault: &Vault,
+    submitter: Submitter<'_>,
+    input: &ModelStepSubmit,
+) -> MemoryResult<Option<ModelStepReceipt>> {
+    if let Some(receipt) = saved_terminal(vault, submitter, input)? {
         return Ok(Some(receipt));
     }
-    let actor = owner.revalidate(vault)?;
-    let id = identity(actor, &input.step_key)?;
+    let Standing { actor, id, .. } = submitter.standing(vault, &input.step_key)?;
     let frozen = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         SUBMISSIONS
             .get(&vault.store, &txn, &id)?
-            .filter(|row| row.actor == actor && same_frozen_request(&row.input, input))
+            .filter(|row| {
+                row.actor == actor.entity_ref() && same_frozen_request(&row.input, input)
+            })
             .map(|row| row.input)
     };
     let Some(frozen) = frozen else {
         return Ok(None);
     };
-    submit(vault, owner, frozen, None).await
+    submit(vault, submitter, frozen, None).await
 }
 
 async fn submit(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    submitter: Submitter<'_>,
     input: ModelStepSubmit,
     execution: Option<(&dyn LlmBackend, &BudgetGuard)>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
-    let actor = owner.revalidate(vault)?;
-    let id = identity(actor, &input.step_key)?;
+    let standing = submitter.standing(vault, &input.step_key)?;
+    // A fresh call is held to the run's model list. Saved work answers
+    // without it, as a model removed since does (FIX 8180).
+    if let (Submitter::Run(caller), Some(_)) = (&submitter, &execution) {
+        ensure_listed(caller.definition, &input.request.model)?;
+    }
+    let (actor, id) = (standing.actor.entity_ref(), standing.id);
     let digest = input
         .request
         .canonical_hash()
@@ -125,10 +372,11 @@ async fn submit(
     let _claim = match vault.claim_invocation(invocation, *blake3::hash(&call).as_bytes()) {
         InvocationEntry::Claimed(claim) => claim,
         InvocationEntry::Busy(_) => {
-            return receipt_as_owner(
+            return receipt(
                 vault,
-                owner,
+                submitter,
                 &ModelStepReceiptRequest {
+                    live_run: None,
                     step_key: input.step_key.clone(),
                 },
             )
@@ -141,7 +389,7 @@ async fn submit(
         }
     };
     let prepared = vault.try_with_write_txn(|txn| -> MemoryResult<_> {
-        owner.revalidate_in_txn(vault, txn)?;
+        submitter.revalidate_in_txn(vault, txn)?;
         let queue = AttemptQueue::new(vault);
         let mut row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
             Some(mut row) => {
@@ -245,16 +493,27 @@ async fn submit(
         vault,
         attempt_id: id,
         run_id: attempt.run_id.clone(),
-        envelope_actor: WriteActor::new(actor, EdgeActorClass::Human),
+        envelope_actor: standing.actor,
         subject: actor,
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
     };
-    let outcome = if let Some((backend, guard)) = execution {
+    // A run that spends under a scope steps on that scope's own guard, so
+    // what the guard used is this step's spend and nothing else's.
+    let scope_line = match (&standing.scope, execution.is_some()) {
+        (Some(scope), true) => Some((
+            scope,
+            AgentDispatcher::new(vault).guard_for_scope(scope)?,
+        )),
+        _ => None,
+    };
+    let outcome = if let Some((backend, unscoped_guard)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
-            guard,
+            scope_line
+                .as_ref()
+                .map_or(unscoped_guard, |(_, guard)| guard),
             row.input.request.clone(),
             &FallbackRegistry::standard(),
             usize::from(row.input.retry.max_attempts - 1),
@@ -268,57 +527,44 @@ async fn submit(
         })?;
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
-    row.result = Some(match outcome {
-        Ok(StepOutcome::Finished {
-            response, memoized, ..
-        }) => {
-            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
-                Error::InvalidClaimBody("finished model step has no terminal claim"),
-            )?;
-            let json = if matches!(
-                row.input.request.envelope.response_format,
-                ResponseFormat::Json { .. }
-            ) {
-                let text: String = response
-                    .message
-                    .content
-                    .iter()
-                    .filter_map(|part| match part {
-                        ContentPart::Text { text, .. } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                Some(
-                    serde_json::from_str(&text)
-                        .map_err(|error| MemoryError::bad_request(error.to_string()))?,
-                )
-            } else {
-                None
-            };
-            let fallback_source = FallbackRegistry::source_of(&response);
-            ModelStepResult::Finished {
-                response,
-                json,
-                memoized,
-                fallback_source,
-                claim_ref: claim.to_hex(),
+    let spent = scope_line
+        .as_ref()
+        .map(|(scope, guard)| (*scope, guard.read().used_units))
+        .filter(|(_, units)| *units > 0);
+    row.result = Some(match step_result(vault, id, &row, outcome) {
+        Ok(result) => result,
+        Err(error) => {
+            // No result is saved, so no commit below carries the spend: it
+            // is booked here, whole, before the fault is answered.
+            if let Some((scope, units)) = spent
+                && let Err(unbooked) = AgentDispatcher::new(vault).record_guard_spend(scope, units)
+            {
+                tracing::warn!(
+                    kind = ?unbooked.kind(),
+                    scope = scope.as_str(),
+                    units,
+                    "a run's model-step spend was not booked"
+                );
             }
+            return Err(error);
         }
-        Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied {
-            trap_ref: trap.trap_claim_id.to_hex(),
-        },
-        // Persistence faults leave the engine's recoverable payload intact;
-        // a later submission must be allowed to finish that write path.
-        Err(DurableStepError::Engine(error)) => return Err(error.into()),
-        Err(DurableStepError::Canonical(error)) => {
-            return Err(MemoryError::bad_request(error.to_string()));
-        }
-        Err(error) => ModelStepResult::Failed {
-            failure: failure(error),
-        },
     });
-    vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+    let lapsed = vault.try_with_write_txn(|txn| -> MemoryResult<_> {
+        let stands = submitter.revalidate_in_txn(vault, txn);
+        // The spend already happened, so it is booked whole on the run's
+        // scope in this commit whether or not the lease outlived the call.
+        // The saved result below is this booking's key: a later call of the
+        // step answers from it and reaches no model.
+        if let Some((scope, units)) = spent {
+            AgentDispatcher::new(vault).record_guard_spend_in_txn(txn, scope, units)?;
+        }
+        match (stands, submitter) {
+            (Ok(()), _) => {}
+            // A run whose lease lapsed during the call keeps its booking and
+            // saves no result under a lease it no longer holds.
+            (Err(refusal), Submitter::Run(_)) => return Ok(Some(refusal)),
+            (Err(refusal), Submitter::Owner(_)) => return Err(refusal),
+        }
         let queue = AttemptQueue::new(vault);
         let now = vault.now_recorded_at();
         match row.result.as_ref() {
@@ -350,9 +596,76 @@ async fn submit(
         // The attempt settles on the outcome; a terminal claim erased since it
         // logged keeps this copy erased too (FIX 9929).
         put_submission_in_txn(vault, txn, &id, &mut row)?;
-        Ok(())
+        Ok(None)
     })?;
+    if let Some(refusal) = lapsed {
+        return Err(refusal);
+    }
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
+}
+
+/// The result a step's outcome is saved as. A persistence fault is no
+/// result: it leaves the engine's recoverable payload intact, and a later
+/// submission must be allowed to finish that write path.
+fn step_result(
+    vault: &Vault,
+    id: AttemptId,
+    row: &Submission,
+    outcome: std::result::Result<StepOutcome, DurableStepError>,
+) -> MemoryResult<ModelStepResult> {
+    Ok(match outcome {
+        Ok(StepOutcome::Finished {
+            response, memoized, ..
+        }) => {
+            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
+                Error::InvalidClaimBody("finished model step has no terminal claim"),
+            )?;
+            let json = response_json(row, &response)?;
+            let fallback_source = FallbackRegistry::source_of(&response);
+            ModelStepResult::Finished {
+                response,
+                json,
+                memoized,
+                fallback_source,
+                claim_ref: claim.to_hex(),
+            }
+        }
+        Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied {
+            trap_ref: trap.trap_claim_id.to_hex(),
+        },
+        Err(DurableStepError::Engine(error)) => return Err(error.into()),
+        Err(DurableStepError::Canonical(error)) => {
+            return Err(MemoryError::bad_request(error.to_string()));
+        }
+        Err(error) => ModelStepResult::Failed {
+            failure: failure(error),
+        },
+    })
+}
+
+/// The parsed JSON of a response whose request asked for JSON.
+fn response_json(
+    row: &Submission,
+    response: &LlmResponse,
+) -> MemoryResult<Option<serde_json::Value>> {
+    if !matches!(
+        row.input.request.envelope.response_format,
+        ResponseFormat::Json { .. }
+    ) {
+        return Ok(None);
+    }
+    let text: String = response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))
 }
 
 /// The saved terminal of the caller's own step `input` names, read before
@@ -369,13 +682,20 @@ pub fn saved_terminal_as_owner(
     owner: &AuthenticatedOwner,
     input: &ModelStepSubmit,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
+    saved_terminal(vault, Submitter::Owner(owner), input)
+}
+
+fn saved_terminal(
+    vault: &Vault,
+    submitter: Submitter<'_>,
+    input: &ModelStepSubmit,
+) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(input)?;
-    let actor = owner.revalidate(vault)?;
-    let id = identity(actor, &input.step_key)?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let row = SUBMISSIONS
-        .get(&vault.store, &txn, &id)?
-        .filter(|row| row.actor == actor && terminal_result(vault, &txn, row));
+    let Standing { actor, id, .. } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
+    let row = SUBMISSIONS.get(&vault.store, &txn, &id)?.filter(|row| {
+        row.actor == actor.entity_ref() && terminal_result(vault, &txn, row)
+    });
     drop(txn);
     let Some(mut row) = row.filter(|row| erased(row) || same_frozen_request(&row.input, input))
     else {
@@ -433,15 +753,23 @@ pub fn receipt_as_owner(
     owner: &AuthenticatedOwner,
     input: &ModelStepReceiptRequest,
 ) -> MemoryResult<ModelStepReceipt> {
-    let actor = owner.revalidate(vault)?;
+    receipt(vault, Submitter::Owner(owner), input)
+}
+
+fn receipt(
+    vault: &Vault,
+    submitter: Submitter<'_>,
+    input: &ModelStepReceiptRequest,
+) -> MemoryResult<ModelStepReceipt> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // The submitter is checked before the key is judged, as before.
+    let Standing { actor, id, .. } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
     if input.step_key.trim().is_empty() {
         return Err(MemoryError::bad_request("step_key must not be empty"));
     }
-    let id = identity(actor, &input.step_key)?;
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let row = SUBMISSIONS
         .get(&vault.store, &txn, &id)?
-        .filter(|row| row.actor == actor)
+        .filter(|row| row.actor == actor.entity_ref())
         .ok_or(Error::EntityNotFound)?;
     drop(txn);
     view(vault, id, &row).map_err(MemoryError::from)
@@ -504,6 +832,21 @@ fn identity(actor: EntityId, key: &str) -> Result<AttemptId> {
     let mut id = [0; 16];
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     // Ordinary attempt ids never enter the owner-retained queue range.
+    id[0] &= 0x7f;
+    AttemptId::from_bytes(&id)
+}
+
+/// A run's step: the agent, the first try of its run's retry lineage and
+/// the key, under a domain of their own, so no owner step and no other
+/// run's step shares the id. The two ids are fixed-width, so the key's
+/// bytes begin at one place.
+fn run_identity(actor: EntityId, launch: AttemptId, key: &str) -> Result<AttemptId> {
+    let mut hash = blake3::Hasher::new_derive_key("oneiron run model step v1");
+    hash.update(actor.as_bytes());
+    hash.update(launch.as_bytes());
+    hash.update(key.as_bytes());
+    let mut id = [0; 16];
+    id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     id[0] &= 0x7f;
     AttemptId::from_bytes(&id)
 }

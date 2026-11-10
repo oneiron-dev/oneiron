@@ -44,6 +44,28 @@ impl Drop for ScopeBooking {
 }
 
 impl HeldLiveRun {
+    /// The definition the run entered with: what its own actor's model
+    /// calls are held to.
+    pub(crate) fn definition(&self) -> &oneiron::agent_def::AgentDefinition {
+        &self.entry.definition
+    }
+
+    /// Whether this exact attachment still stands for `credential`: the
+    /// entry's lease, the binding and the credential's read key.
+    pub(crate) fn attachment_stands(
+        &self,
+        server: &SyncServer,
+        credential: &VerifiedSlip,
+    ) -> oneiron::Result<bool> {
+        attachment_holds(
+            &server.live_runs,
+            server.vault(),
+            &self.entry,
+            &self.binding,
+            credential,
+        )
+    }
+
     /// The last request this exact credential attachment was actually served.
     /// A different issue, credential or leased generation never inherits it.
     pub(crate) fn repo_request(&self) -> Option<RepoRequestWitness> {
