@@ -181,6 +181,56 @@ impl TurnText {
         Ok(spans)
     }
 
+    /// This text as a reader reads it for whom `mask` reads a piece other
+    /// than as stored (`None`: as stored): the TURN's own words, or each
+    /// projected MESSAGE's words, through `mask`, with the `"\n"` joins as
+    /// they are. The layout moves with the pieces and the pins stay, so
+    /// [`Self::spans`] of the copy names slices of each MESSAGE's words as
+    /// that reader reads them. `None` when every piece reads as stored.
+    ///
+    /// # Errors
+    ///
+    /// A layout that does not cut the text in order.
+    pub(crate) fn masked_by(&self, mask: impl Fn(&str) -> Option<String>) -> Result<Option<Self>> {
+        let Some(text) = self.text.as_deref() else {
+            return Ok(None);
+        };
+        if self.messages.is_none() {
+            return Ok(mask(text).map(|shown| Self {
+                text: Some(shown),
+                messages: None,
+                layout: Vec::new(),
+            }));
+        }
+        let cut = |range: std::ops::Range<usize>| {
+            text.get(range)
+                .ok_or_else(|| invalid_consolidation("projected message layout is out of order"))
+        };
+        let mut shown = String::with_capacity(text.len());
+        let mut layout = Vec::with_capacity(self.layout.len());
+        let (mut at, mut changed) = (0, false);
+        for &(message, offset, len) in &self.layout {
+            shown.push_str(cut(at..offset)?);
+            let words = cut(offset..offset + len)?;
+            let piece = match mask(words) {
+                Some(masked) => {
+                    changed = true;
+                    masked
+                }
+                None => words.to_owned(),
+            };
+            layout.push((message, shown.len(), piece.len()));
+            shown.push_str(&piece);
+            at = offset + len;
+        }
+        shown.push_str(cut(at..text.len())?);
+        Ok(changed.then(|| Self {
+            text: Some(shown),
+            messages: self.messages.clone(),
+            layout,
+        }))
+    }
+
     pub(super) fn into_text(self) -> Option<String> {
         self.text
     }
