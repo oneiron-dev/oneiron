@@ -351,14 +351,15 @@ mod tests {
         let cades: &[u8] = b"ETSI.CAdES.detached";
         let rfc3161: &[u8] = b"ETSI.RFC3161";
         // The finding's shape: /Sig with /adbe.pkcs7.detached is NOT CAdES.
-        assert!(
-            collect_signatures(
-                &doc_with(Some(b"Sig"), Some(b"adbe.pkcs7.detached")),
-                &operation_limits()
-            )
-            .unwrap()
-            .is_empty()
-        );
+        // Rule D (e88c308ba84): it is collected as the unsupported adbe
+        // report, never as a CAdES candidate.
+        let found = collect_signatures(
+            &doc_with(Some(b"Sig"), Some(b"adbe.pkcs7.detached")),
+            &operation_limits(),
+        )
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].handler, SigHandler::UnsupportedAdbe);
         // Typed dicts with ABSENT SubFilter are skipped too.
         assert!(
             collect_signatures(&doc_with(Some(b"Sig"), None), &operation_limits())
@@ -397,18 +398,19 @@ mod tests {
         .unwrap();
         assert_eq!(found.len(), 1);
         assert!(found[0].handler == SigHandler::DocTs);
-        // Typeless interop: absent SubFilter tolerated, foreign one skipped.
+        // Typeless interop: absent SubFilter tolerated. Rule D
+        // (e88c308ba84): an adbe SubFilter is collected as the unsupported
+        // adbe report, never as a CAdES candidate.
         let found = collect_signatures(&doc_with(None, None), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].handler, SigHandler::Cades);
-        assert!(
-            collect_signatures(
-                &doc_with(None, Some(b"adbe.pkcs7.detached")),
-                &operation_limits()
-            )
-            .unwrap()
-            .is_empty()
-        );
+        let found = collect_signatures(
+            &doc_with(None, Some(b"adbe.pkcs7.detached")),
+            &operation_limits(),
+        )
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].handler, SigHandler::UnsupportedAdbe);
     }
 
     #[test]
