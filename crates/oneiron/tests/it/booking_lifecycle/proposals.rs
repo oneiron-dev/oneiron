@@ -12,11 +12,23 @@ use oneiron::{
 };
 use rmpv::Value;
 
+/// The stored FACET a writer stamps on a claim it files about the booking's
+/// EVENT: the vault default, as the engine's own booking claims take it
+/// (a1cc7db5259). A CLAIM is born into a stored FACET since #4389; the
+/// constructor's default is the EVENT's derived substrate id, which no FACET
+/// row holds.
+fn birth_facet(fixture: &Fixture) -> EntityId {
+    fixture
+        .vault
+        .default_facet()
+        .expect("the vault default facet")
+}
+
 /// Files a pending `status: cancelled` proposal on `booking`, dated
 /// `occurred_at`, under the highest id so it scans last, where an
 /// approval-blind reader lets it win.
 fn propose_cancelled(fixture: &Fixture, booking: EntityId, occurred_at: u64) {
-    let proposal = ClaimBody::new(
+    let mut proposal = ClaimBody::new(
         BOOKING_STATUS_PREDICATE,
         ClaimSubject::Entity(booking),
         Value::Map(vec![
@@ -28,6 +40,7 @@ fn propose_cancelled(fixture: &Fixture, booking: EntityId, occurred_at: u64) {
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    proposal.scope_facet = birth_facet(fixture);
     fixture
         .vault
         .put_claim(
@@ -95,7 +108,7 @@ fn a_future_dated_proposal_does_not_block_a_cancel() {
 /// now: it scans after the passport the confirm wrote and before any later
 /// revision's, where an approval-blind writer takes it as the head.
 fn propose_passport(fixture: &Fixture, booking: EntityId, uid: &str, last_sequence: u32) {
-    let proposal = ClaimBody::new(
+    let mut proposal = ClaimBody::new(
         PREDICATE_CALENDAR_PASSPORT,
         ClaimSubject::Entity(booking),
         Value::Map(vec![
@@ -112,6 +125,7 @@ fn propose_passport(fixture: &Fixture, booking: EntityId, uid: &str, last_sequen
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    proposal.scope_facet = birth_facet(fixture);
     let id = fixture.vault.new_entity_id().expect("claim id");
     fixture
         .vault

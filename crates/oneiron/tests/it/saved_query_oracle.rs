@@ -17,6 +17,9 @@ use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
     encode_campaign_member_value,
 };
+use oneiron::campaign::surface::{
+    CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, create_campaign, launch_campaign,
+};
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::error::RegistryError;
@@ -521,6 +524,35 @@ fn member_channel() -> CampaignMemberChannel {
     }
 }
 
+/// An Active campaign the vault's owner launched: a membership plan commits
+/// only into one (FIX 12542, campaign-send-safety = B, #4499).
+fn active_campaign(vault: &Vault) -> EntityId {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let campaign = create_campaign(
+        vault,
+        owner,
+        &CreateCampaignRequest {
+            schema_version: CAMPAIGN_SCHEMA_VERSION,
+            name: "saved query oracle campaign".to_owned(),
+            reply_snooze_policy: None,
+        },
+        1,
+    )
+    .unwrap();
+    launch_campaign(
+        vault,
+        owner,
+        EdgeActorClass::Human,
+        campaign.campaign_ref,
+        campaign.definition.definition_version,
+        1,
+    )
+    .unwrap();
+    campaign.campaign_ref
+}
+
 fn write_plan(
     query: EntityId,
     campaign: EntityId,
@@ -595,7 +627,8 @@ fn live_member_heads(vault: &Vault, subject: EntityId, query: EntityId) -> Vec<(
 #[test]
 fn membership_epoch_floor_survives_a_promoted_node_with_no_local_watermark() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (query, campaign, person) = (test_id(0xB3), test_id(0xB4), test_id(0xB5));
+    let (query, person) = (test_id(0xB3), test_id(0xB5));
+    let campaign = active_campaign(&vault);
     put_person(&vault, &person);
 
     // A replicated derived-membership claim arriving from a peer: the claim

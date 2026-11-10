@@ -81,7 +81,7 @@ fn snapshot_binding_value() -> Value {
     ])
 }
 
-/// Builds the custody body through the public codec shape, keyed by all 13
+/// Builds the custody body through the public codec shape, keyed by all 14
 /// `SECRET_CUSTODY_BODY_KEYS` in field order. `value_bytes` and `manifest_ref`
 /// are crate-private fields, so a struct literal is impossible out-of-crate:
 /// encoding the canonical key map and decoding it is the sanctioned
@@ -105,6 +105,9 @@ fn snapshot_custody_body() -> Vec<u8> {
         (key(10), Value::from("")),
         (key(11), Value::Array(vec![])),
         (key(12), default_floor_value()),
+        // Schema 3 requires the model-reveal policy (#5169); an ordinary
+        // registered credential carries `true`, only a private copy `false`.
+        (key(13), Value::from(true)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &body).expect("encode custody body");

@@ -102,6 +102,11 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let actor = test_id(ACTOR_SEED);
     vault
         .put_entity(
@@ -125,6 +130,11 @@ fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
 fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     // The pinned first-party Eiri connector actor, constructed directly rather
     // than through `test_id`: under the seeded manifest this exact id is the one
     // with an Auto actor ceiling, so it is the only actor whose send can be

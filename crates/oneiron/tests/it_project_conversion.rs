@@ -107,6 +107,16 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
         .bind_room_thread_task(host, room, thread, task)
         .expect("task binding");
     let project_id = EntityId::now();
+    // T0-F triage diagnostic (no assertion): the conversion refuses with the
+    // generic InvalidConfig, so the run prints which input it still reads.
+    eprintln!(
+        "conversion inputs: source project {:?}; owner's room turns {:?}",
+        vault.project(source_id).map(|project| project.is_some()),
+        vault
+            .memory(host, EdgeActorClass::Human)
+            .rooms_messages(room)
+            .map(|rows| rows.into_iter().map(|row| row.turn_id).collect::<Vec<_>>()),
+    );
     let project = vault
         .convert_thread_to_project(
             &owner, &signer, room, thread, message, project_id, None, None, 4,

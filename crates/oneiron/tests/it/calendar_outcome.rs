@@ -115,7 +115,7 @@ fn put_raw_claim(
     value: Value,
     approval: ClaimApprovalStatus,
 ) -> Result<(), Error> {
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         predicate,
         subject,
         value,
@@ -123,6 +123,11 @@ fn put_raw_claim(
         approval,
         ClaimLifecycleStatus::Active,
     )?;
+    // A CLAIM is born into a stored FACET since #4389: the writer stamps the
+    // vault default, as the engine's own calendar writers do when the EVENT
+    // names none. The constructor's default is the subject's derived
+    // substrate id, which no FACET row holds.
+    body.scope_facet = vault.default_facet()?;
     vault.put_claim(&claim_id, &body, at(EVENT_START), EVENT_START)
 }
 

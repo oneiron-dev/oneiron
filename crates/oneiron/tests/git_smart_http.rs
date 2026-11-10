@@ -119,6 +119,12 @@ impl TestOrigin {
     fn start(source: &Path, seam: DoorSeam) -> Self {
         let dir = tempfile::tempdir().expect("vault tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+        // The host installs this device's keystore after each open and loads
+        // the install's signing keys from it (`install_default_keystore`, P6c).
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        vault
+            .prepare_install_signing()
+            .expect("load this install's signing keys");
         // An in-process serve admits a push from the vault's owner and no one
         // else (FIX 6867, G1-PUSH), so the shim pushes as that owner.
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -248,6 +254,9 @@ fn serve_connection(
     match served {
         Ok(report) => reports.lock().expect("reports lock").push(report),
         Err(error) => {
+            // git prints no body of a 500, so the refusal goes to the test's
+            // own output as well.
+            eprintln!("smart_http::serve {} failed: {error:?}", head.repo);
             if !sink.began {
                 let message = error.to_string();
                 let _ = sink.stream.write_all(
