@@ -28,12 +28,13 @@ pub struct DerivationStamp {
 }
 
 /// A row a derivation item names: one already stored, or one an earlier item
-/// of the same batch lands.
+/// of the same batch creates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemRef {
     /// A stored row, by id.
     Stored(EntityId),
-    /// The row an earlier item of the batch lands, by that item's local name.
+    /// The row an earlier item of the batch creates, by that item's local
+    /// name.
     Local(String),
 }
 
@@ -243,6 +244,20 @@ impl DerivationItem {
         }
     }
 
+    /// Whether the item's first landed row is one the item itself creates:
+    /// a claim, a settlement's answer, a link's status claim, a topology
+    /// event. Only such an item can be named by a later item. Every other
+    /// kind lands on a row that stood before it (a supersession's
+    /// replacement, an archived claim, a PERSON) or may replay one (an
+    /// evidence record, a profile at its address), and a name for such a row
+    /// would cite it with no version and no read of its own.
+    pub(super) const fn creates_row(&self) -> bool {
+        matches!(
+            self,
+            Self::Claim(_) | Self::Settle(_) | Self::SameAs(_) | Self::Topology(_)
+        )
+    }
+
     /// The rows the item cites as its sources: a claim's evidence and an
     /// evidence item's sources. A stored one needs its version in the batch.
     fn cited(&self) -> &[ItemRef] {
@@ -294,8 +309,10 @@ pub const MAX_BATCH_ITEMS: usize = 256;
 
 impl DerivationBatch {
     /// Checks the batch's shape: at least one item and no more than
-    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, and every
-    /// local reference naming an earlier item.
+    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
+    /// local reference naming an earlier item that creates a row
+    /// ([`DerivationItem::creates_row`]), at most one `about` item for a
+    /// person, and a version for every stored source cited.
     ///
     /// # Errors
     ///
@@ -308,6 +325,8 @@ impl DerivationBatch {
             return Err(malformed("a derivation batch holds at most 256 items"));
         }
         let mut earlier: BTreeSet<&str> = BTreeSet::new();
+        let mut nameable: BTreeSet<&str> = BTreeSet::new();
+        let mut about_persons: Vec<&ItemRef> = Vec::new();
         for item in &self.items {
             let local = item.local();
             if local.trim().is_empty() {
@@ -315,10 +334,10 @@ impl DerivationBatch {
             }
             for named in item.refs() {
                 if let ItemRef::Local(name) = named
-                    && !earlier.contains(name.as_str())
+                    && !nameable.contains(name.as_str())
                 {
                     return Err(malformed(
-                        "a derivation item names only rows of items before it",
+                        "a derivation item names only rows that items before it create",
                     ));
                 }
             }
@@ -326,6 +345,20 @@ impl DerivationBatch {
                 return Err(malformed(
                     "each derivation item's local name is unique in its batch",
                 ));
+            }
+            if item.creates_row() {
+                nameable.insert(local);
+            }
+            // A person's `about` row keeps one before-image, so a second
+            // `about` item for the same person would leave a revert of the
+            // batch at the first item's lines, not at the lines before it.
+            if let DerivationItem::PersonAbout(about) = item {
+                if about_persons.contains(&&about.person) {
+                    return Err(malformed(
+                        "a derivation batch holds one about item for a person",
+                    ));
+                }
+                about_persons.push(&about.person);
             }
             for cited in item.cited() {
                 if let ItemRef::Stored(id) = cited

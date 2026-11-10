@@ -418,8 +418,10 @@ pub(crate) struct AssertedEvidence {
     pub(crate) original: crate::claim::ClaimBody,
     /// The answers a replay reads back.
     pub(crate) answers: Vec<ResolvedConflictOutput>,
-    /// Each support's provenance record, one per source: what a revert
-    /// retracts.
+    /// The provenance record of each support this assertion wrote, one per
+    /// source it had not asserted before: what a revert retracts. A support
+    /// an earlier assertion wrote is replayed, stays that assertion's, and
+    /// is not listed.
     pub(crate) records: Vec<EntityId>,
 }
 
@@ -496,7 +498,7 @@ pub(crate) fn assert_evidence_in_txn(
     let mut records = Vec::new();
     for source_id in sources {
         let cited = evidence.for_source(*source_id);
-        let (record, kept) = attach_ref(
+        let (record, written, kept) = attach_ref(
             vault,
             txn,
             (actor, now_ms),
@@ -505,7 +507,9 @@ pub(crate) fn assert_evidence_in_txn(
             answers,
             auto_write_rate,
         )?;
-        records.push(record);
+        if written {
+            records.push(record);
+        }
         answers_kept.extend(kept);
     }
     crate::dreamer_consolidation::strength::record_verified_in_txn(
@@ -519,9 +523,10 @@ pub(crate) fn assert_evidence_in_txn(
 }
 
 /// One support assertion of `source` for `head`, carrying the `answers` the
-/// head gives (FIX 7381). Returns the answers the assertion already keeps
-/// when this attempt wrote it before: a replay compares everything else
-/// exactly, and reads its binding back.
+/// head gives (FIX 7381). Returns the assertion's provenance record, whether
+/// this call wrote it, and the answers the assertion already keeps when an
+/// earlier call wrote it: a replay compares everything else exactly, and
+/// reads its binding back.
 fn attach_ref(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -530,7 +535,7 @@ fn attach_ref(
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
     auto_write_rate: crate::store::own_rate_record::OwnRate,
-) -> Result<(EntityId, Vec<ResolvedConflictOutput>)> {
+) -> Result<(EntityId, bool, Vec<ResolvedConflictOutput>)> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
     if locators.is_empty()
@@ -665,7 +670,7 @@ fn attach_ref(
             actor.actor_class(),
             &policy,
         )?;
-        return Ok((id, stored_answers));
+        return Ok((id, false, stored_answers));
     }
     let at = now_ms / 1_000;
     if vault
@@ -711,5 +716,5 @@ fn attach_ref(
     #[cfg(test)]
     crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
     evidence.record_message_dependencies_in_txn(vault, txn, &id)?;
-    Ok((id, Vec::new()))
+    Ok((id, true, Vec::new()))
 }

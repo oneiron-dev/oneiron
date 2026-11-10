@@ -59,7 +59,9 @@ pub use revert::{
 };
 pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use sources::{SOURCE_MOVED, SOURCE_WITHHELD};
-pub use supersede::{SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE};
+pub use supersede::{
+    SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+};
 pub use wire::{
     DeriveAboutLineInput, DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput,
     DeriveCommitView, DeriveEvidenceInput, DeriveItemInput, DeriveItemView, DeriveLeftItemView,

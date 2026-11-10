@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::batch::{DerivationBatch, DerivationItem, DerivationStamp, ItemRef};
-use super::record::{DerivationBatchRecord, ItemRecord, put_batch_in_txn};
+use super::record::{AppliedEdge, DerivationBatchRecord, ItemRecord, put_batch_in_txn};
 use crate::claim::ClaimApprovalStatus;
 use crate::error::Result;
 use crate::store::{GateDecisionContext, GateDecisionId, GateDecisionRecord};
@@ -58,12 +58,12 @@ pub(super) struct ItemContext<'s> {
     pub(super) stamp: &'s DerivationStamp,
     /// The write's recorded clock, Unix seconds.
     pub(super) now: u64,
-    /// The row each landed item of the batch so far landed, by local name.
+    /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
 }
 
 impl ItemContext<'_> {
-    /// The row `named` is: a stored row, or the row an earlier item landed.
+    /// The row `named` is: a stored row, or the row an earlier item created.
     /// [`DerivationBatch::validate`] checked that a local name is an earlier
     /// item's, and the commit refuses an item naming a refused one before it
     /// stages.
@@ -108,11 +108,13 @@ impl Vault {
         };
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let mut items = Vec::with_capacity(batch.items.len());
+        let mut applied_edges = Vec::with_capacity(batch.items.len());
         for item in &batch.items {
             let names_refused = item
                 .refs()
                 .into_iter()
                 .any(|named| matches!(named, ItemRef::Local(name) if refused.contains(name)));
+            let mut applied_edge = None;
             let outcome = if names_refused {
                 let reasons = vec![super::DEPENDENCY_REFUSED.to_owned()];
                 let receipt = refusal_receipt_in_txn(self, txn, &context, None, &reasons)?;
@@ -132,7 +134,25 @@ impl Vault {
                         super::settle::stage_in_txn(self, txn, &context, settle)?
                     }
                     DerivationItem::SameAs(same_as) => {
-                        super::link::stage_same_as_in_txn(self, txn, &context, same_as)?
+                        // The item owns the edge only when it created it: an
+                        // edge that stood before is another writer's.
+                        let source = context.resolve(&same_as.source)?;
+                        let target = context.resolve(&same_as.target)?;
+                        let stood =
+                            super::revert::same_as_edge_revision_in(self, txn, source, target)?
+                                .is_some();
+                        let outcome =
+                            super::link::stage_same_as_in_txn(self, txn, &context, same_as)?;
+                        if !stood && matches!(outcome, ItemOutcome::Landed { .. }) {
+                            applied_edge =
+                                super::revert::same_as_edge_revision_in(self, txn, source, target)?
+                                    .map(|revision| AppliedEdge {
+                                        source,
+                                        target,
+                                        revision,
+                                    });
+                        }
+                        outcome
                     }
                     DerivationItem::Topology(topology) => {
                         super::link::stage_topology_in_txn(self, txn, &context, topology)?
@@ -150,7 +170,10 @@ impl Vault {
             };
             match &outcome {
                 ItemOutcome::Landed { rows, .. } => {
-                    if let Some(row) = rows.first() {
+                    // A name stands only for a row its item created.
+                    if item.creates_row()
+                        && let Some(row) = rows.first()
+                    {
                         context.landed.insert(item.local().to_owned(), *row);
                     }
                 }
@@ -158,6 +181,7 @@ impl Vault {
                     refused.insert(item.local().to_owned());
                 }
             }
+            applied_edges.push(applied_edge);
             items.push(ItemReceipt {
                 local: item.local().to_owned(),
                 kind: item.kind(),
@@ -179,7 +203,7 @@ impl Vault {
             self,
             txn,
             context.batch,
-            &batch_record(stamp, context.now, &items, revisions),
+            &batch_record(stamp, context.now, &items, revisions, applied_edges),
         )?;
         Ok(DerivationReceipt {
             batch: context.batch,
@@ -278,6 +302,7 @@ fn batch_record(
     committed_at: u64,
     items: &[ItemReceipt],
     revisions: Vec<Vec<[u8; 32]>>,
+    applied_edges: Vec<Option<AppliedEdge>>,
 ) -> DerivationBatchRecord {
     DerivationBatchRecord {
         actor: stamp.actor.entity_ref(),
@@ -287,7 +312,8 @@ fn batch_record(
         items: items
             .iter()
             .zip(revisions)
-            .map(|(item, revisions)| match &item.outcome {
+            .zip(applied_edges)
+            .map(|((item, revisions), applied_edge)| match &item.outcome {
                 ItemOutcome::Landed {
                     rows,
                     approval,
@@ -301,6 +327,7 @@ fn batch_record(
                     reasons: Vec::new(),
                     receipt: receipt.map(GateDecisionId::as_bytes),
                     revisions,
+                    applied_edge,
                 },
                 ItemOutcome::Refused { reasons, receipt } => ItemRecord {
                     local: item.local.clone(),
@@ -311,6 +338,7 @@ fn batch_record(
                     reasons: reasons.clone(),
                     receipt: Some(receipt.as_bytes()),
                     revisions,
+                    applied_edge,
                 },
             })
             .collect(),

@@ -14,8 +14,8 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, Supersede, claim_lifecycle, commit, commit_claims, revert,
-    revert_as_owner,
+    Claim, Derived, Named, SameAs, Supersede, claim_lifecycle, commit, commit_claims,
+    mint_nightly_links, revert, revert_as_owner, same_as_edge,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -180,4 +180,71 @@ fn another_agent_may_not_revert_the_batch() {
         Err(vec!["gate.deny.derive.revert_not_yours".to_owned()])
     );
     assert!(active(&fixture, fixture.tea));
+}
+
+#[test]
+fn reverting_a_repeated_same_as_leaves_the_edge_the_first_batch_applied() {
+    let fixture = fixture();
+    mint_nightly_links(&fixture.vault).expect("the owner's grant");
+    let alike = |local, value: &str| Claim {
+        local,
+        predicate: "preference.snack",
+        subject: Named::Stored(fixture.person),
+        value: json!(value),
+        evidence: vec![Named::Stored(fixture.turn)],
+    };
+    let claims = commit_claims(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-alike",
+        &[
+            alike("one", "a rice cracker"),
+            alike("other", "rice crackers"),
+        ],
+    )
+    .expect("the claims commit");
+    assert!(
+        claims.items.iter().all(|item| item.landed),
+        "{:?}",
+        claims.items
+    );
+    let (one, other) = (claims.items[0].rows[0], claims.items[1].rows[0]);
+    let link_as = |run: &str, local: &'static str| {
+        commit(
+            &fixture.vault,
+            fixture.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::SameAs(SameAs {
+                local,
+                source: Named::Stored(one),
+                target: Named::Stored(other),
+            })],
+        )
+        .expect("commit")
+    };
+    let first = link_as("run-link-first", "first");
+    assert!(first.items[0].landed, "{:?}", first.items);
+    assert!(
+        same_as_edge(&fixture.vault, one, other).expect("read"),
+        "the first batch applies the edge under the owner's grant"
+    );
+    let repeated = link_as("run-link-repeated", "repeated");
+    assert!(repeated.items[0].landed, "{:?}", repeated.items);
+
+    let (reverted, left) = revert(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        repeated.batch,
+    )
+    .expect("revert")
+    .expect("the Dreamer may revert its own batch");
+    assert_eq!(reverted, vec!["repeated".to_owned()]);
+    assert!(left.is_empty(), "{left:?}");
+    assert!(
+        same_as_edge(&fixture.vault, one, other).expect("read"),
+        "the edge the first batch applied still stands"
+    );
 }
