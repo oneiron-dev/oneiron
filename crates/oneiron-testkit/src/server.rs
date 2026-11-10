@@ -27,6 +27,28 @@ pub const STARTUP_LIMIT: Duration = Duration::from_secs(120);
 const LIVENESS_CHECK: Duration = Duration::from_millis(250);
 /// The descriptor socket activation passes the listener at.
 const LISTEN_FD: i32 = 3;
+/// The notify socket's file name inside its temporary directory.
+const NOTIFY_SOCKET_NAME: &str = "notify.sock";
+/// The longest notify socket path this kit binds. A Unix socket path must fit
+/// `sun_path`: 108 bytes on Linux and 104 on macOS, the closing NUL included.
+const NOTIFY_PATH_LIMIT: usize = 100;
+/// Where the notify directory goes when the temporary directory's own path is
+/// too long for a socket (a CI job's `TMPDIR` under a deep work directory).
+const SHORT_TEMP_ROOT: &str = "/tmp";
+
+/// A fresh directory for the notify socket: under the temporary directory, or
+/// under [`SHORT_TEMP_ROOT`] when the socket path there would not fit
+/// [`NOTIFY_PATH_LIMIT`].
+fn notify_dir() -> io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("oneiron-testkit-notify-");
+    let dir = builder.tempdir()?;
+    if dir.path().join(NOTIFY_SOCKET_NAME).as_os_str().len() <= NOTIFY_PATH_LIMIT {
+        return Ok(dir);
+    }
+    drop(dir);
+    builder.tempdir_in(SHORT_TEMP_ROOT)
+}
 
 /// What to start: a program, its arguments and environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,9 +131,7 @@ impl ServerProcess {
     pub fn spawn(spec: ServerSpec) -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let addr = listener.local_addr()?;
-        let notify_dir = tempfile::Builder::new()
-            .prefix("oneiron-testkit-notify-")
-            .tempdir()?;
+        let notify_dir = notify_dir()?;
         let mut server = Self {
             spec,
             listener,
@@ -125,7 +145,7 @@ impl ServerProcess {
     }
 
     fn start(&mut self) -> io::Result<()> {
-        let notify_path = self.notify_dir.path().join("notify.sock");
+        let notify_path = self.notify_dir.path().join(NOTIFY_SOCKET_NAME);
         let _ = std::fs::remove_file(&notify_path);
         let notify = UnixDatagram::bind(&notify_path)?;
         notify.set_read_timeout(Some(LIVENESS_CHECK))?;
