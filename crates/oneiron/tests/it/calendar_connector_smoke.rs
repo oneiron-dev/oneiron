@@ -230,6 +230,11 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open_unseeded_for_test(dir.path(), cfg).expect("open vault");
+    // The host installs this device's keystore after each open; the delete
+    // door loads this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
@@ -242,6 +247,11 @@ fn temp_vault_seeded() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
+    // The host installs this device's keystore after each open; the delete
+    // door loads this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
@@ -935,7 +945,12 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
         ),
     ]);
     let record_body = Value::Map(vec![
-        (Value::from("schema_version"), Value::from(1_u64)),
+        (
+            Value::from("schema_version"),
+            Value::from(u64::from(
+                oneiron::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+            )),
+        ),
         (Value::from("name"), Value::from(name)),
         (Value::from("class"), Value::from("custody-portable")),
         (Value::from("device_only"), Value::from(false)),
@@ -951,6 +966,9 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
         (Value::from("manifest_ref"), Value::from("")),
         (Value::from("declared_paths"), Value::Array(vec![])),
         (Value::from("policy_floor_snapshot"), floor),
+        // An ordinary registration's model-access flag (#5169): stored
+        // explicitly, as the custody doors register it.
+        (Value::from("model_reveal_allowed"), Value::from(true)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &record_body).expect("encode custody body");

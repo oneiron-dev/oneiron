@@ -2127,10 +2127,17 @@ mod cb_x {
         let resumed = project_agent_run_status_with_park(node.status, is_parked);
         assert!(resumed.is_live_presence(), "working child presence");
         let resumed_to_working_after_input = usize::from(resumed == AgentRunStatus::Working);
-        let completed_record = AttemptQueue::new(&vault)
-            .get(attempt_id)
-            .expect("read completion attempt")
-            .expect("completion attempt");
+        // The un-park returns the attempt to the queue; its worker leases it
+        // again before it completes.
+        let oneiron::attempt_queue::ClaimOutcome::Claimed(completed_record) = queue
+            .claim(oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "agent-worker".to_owned(),
+                now: 3,
+            })
+            .expect("claim resumed attempt")
+        else {
+            panic!("the resumed attempt is claimable");
+        };
         AttemptQueue::new(&vault)
             .complete(oneiron::attempt_queue::CompleteAttempt {
                 id: attempt_id,

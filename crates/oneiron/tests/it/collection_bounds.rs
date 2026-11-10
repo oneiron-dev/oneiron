@@ -57,9 +57,10 @@ fn branch_open(id: &str) -> String {
 
 #[test]
 fn a_lens_tree_past_its_shared_entry_budget_is_refused_at_the_first_excess_entry() {
-    // Two branches whose child arrays are each under the per-array cap but
-    // together pass the 4096-entry tree budget: 2 + 2048 + 2047 entries fit,
-    // the next one does not.
+    // Rule 5 (FIX 9900, c14f8dc51b2 #4088): a lens tree validates whole; the
+    // 4,096-item budget is gone at every caller. Two branches that together
+    // pass the old budget (2 + 2048 + 2100 entries) meet no count refusal:
+    // the decoder reads on into the tail.
     let over = format!(
         "{root}{a}{a_leaves}]}},{b}{b_leaves},",
         root = branch_open("root"),
@@ -69,12 +70,24 @@ fn a_lens_tree_past_its_shared_entry_budget_is_refused_at_the_first_excess_entry
         b_leaves = leaves("b", 2100),
     );
     let error = decode_prefix::<LensNode>(&over);
-    assert!(!error.is_io(), "decoder read past the budget: {error}");
     assert!(
-        error
-            .to_string()
-            .contains("generated lens collections must contain at most 4096 total items"),
-        "{error}"
+        error.is_io(),
+        "a count refusal stopped the decoder before the tail: {error}"
+    );
+    // The same tree, closed, decodes whole.
+    let over_closed = format!(
+        "{root}{a}{a_leaves}]}},{b}{b_leaves}]}}]}}",
+        root = branch_open("root"),
+        a = branch_open("a"),
+        a_leaves = leaves("a", 2048),
+        b = branch_open("b"),
+        b_leaves = leaves("b", 2100),
+    );
+    let tree: LensNode =
+        serde_json::from_str(&over_closed).expect("a tree past the old budget decodes");
+    assert_eq!(
+        tree.children[0].children.len() + tree.children[1].children.len(),
+        4148
     );
 
     // Control: the largest tree validation admits (4096 nodes, 4095 entries)

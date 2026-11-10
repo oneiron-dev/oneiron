@@ -45,6 +45,11 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
     let dir = tempfile::tempdir()?;
     let token = ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
     let turn = format!("user: the token is {token}");
+    // A second token of the same shape for the scan-on write: custody masks
+    // a value it already holds in every later write, scan on or off, so the
+    // scan-off write below must carry a token custody never took.
+    let on_token = ["gh", "p_", "zyxwvutsrqponmlkjihgfedcba9876543210"].concat();
+    let on_turn = format!("user: the token is {on_token}");
     let masked = EntityId::now();
     let id = EntityId::now();
     {
@@ -57,10 +62,10 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
             TURN,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
-            turn.as_bytes(),
+            on_turn.as_bytes(),
         )?;
         let stored = String::from_utf8(vault.get(&masked)?.expect("the masked TURN"))?;
-        assert!(!stored.contains(&token), "the token landed: {stored}");
+        assert!(!stored.contains(&on_token), "the token landed: {stored}");
         assert!(
             stored.starts_with("user: the token is [secret sc") && stored.ends_with(']'),
             "the token's custody handle is not in its place: {stored}"

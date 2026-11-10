@@ -241,25 +241,25 @@ impl HumanDecisionQueue for NoPerson {
     }
 }
 fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
+    use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
     use oneiron::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-        EnqueueOutcome, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+        ManifestKind,
     };
     let queue = AttemptQueue::new(vault);
+    let dispatcher = AgentDispatcher::new(vault);
     for index in 0..200 {
         let now = 100 + index * 10;
-        let EnqueueOutcome::Enqueued(attempt) = queue
-            .enqueue(EnqueueAttempt {
-                kind: "hub.fixture".to_owned(),
-                payload: vec![],
-                dedupe_key: None,
-                run_id: None,
-                now,
-            })
-            .expect("enqueue")
+        // An agent dispatch, not a bare queue row: a skill outcome cites a
+        // receipt that carries its task typeRef (OF-184, #1610), and only a
+        // dispatch's terminal receipt is stamped with one (OF-543).
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, now)
+            .expect("dispatch")
         else {
             panic!("fresh attempt");
         };
+        let attempt = status.attempt;
         queue
             .append_manifest_entry(
                 attempt.id,

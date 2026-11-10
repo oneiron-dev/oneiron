@@ -6,9 +6,11 @@
 
 fn forge(value: Vec<u8>) -> oneiron::secret_custody::SecretCustodyRecord {
     oneiron::secret_custody::SecretCustodyRecord {
+        schema_version: 1,
         name: "api-key".to_owned(),
         class: oneiron::secret_custody::CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: value,
         status: oneiron::secret_custody::SecretCustodyStatus::Active,
         registered_at: 0,

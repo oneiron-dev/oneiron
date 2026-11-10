@@ -45,6 +45,15 @@ fn test_config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open and loads the
+    // install's signing keys from it (P6c): a topology op's seal is signed
+    // with the install's machine key.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
     seam::reset_fan_out_oracle();
     (dir, vault)
 }

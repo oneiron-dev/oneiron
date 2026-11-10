@@ -58,7 +58,10 @@ fn malformed_world_claim_domain_is_rejected_before_canonical_rebuild() {
         .iter_mut()
         .find(|row| row.id == *claim.as_bytes())
         .unwrap();
-    let mut fields: rmpv::Value = rmpv::decode::read_value(&mut &carrier.blob[25..]).unwrap();
+    // The row's metadata header is 33 bytes since the CLAIM row version
+    // joined it (29ac7734ec8, #5684); the msgpack body starts after it.
+    let body_at = oneiron_contracts::record_layout::ENTITY_BODY_OFFSET;
+    let mut fields: rmpv::Value = rmpv::decode::read_value(&mut &carrier.blob[body_at..]).unwrap();
     let rmpv::Value::Map(entries) = &mut fields else {
         panic!("CLAIM body is a map")
     };
@@ -70,7 +73,7 @@ fn malformed_world_claim_domain_is_rejected_before_canonical_rebuild() {
             *value = rmpv::Value::from("junk");
         }
     }
-    carrier.blob.truncate(25);
+    carrier.blob.truncate(body_at);
     rmpv::encode::write_value(&mut carrier.blob, &fields).unwrap();
     assert!(snapshot.validate().is_err());
     assert!(snapshot.encode().is_err());

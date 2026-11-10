@@ -548,7 +548,12 @@ fn register_canary_secret(vault: &Vault, name: &str) {
         ),
     ]);
     let body = Value::Map(vec![
-        (Value::from("schema_version"), Value::from(1_u64)),
+        (
+            Value::from("schema_version"),
+            Value::from(u64::from(
+                oneiron::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+            )),
+        ),
         (Value::from("name"), Value::from(name)),
         (Value::from("class"), Value::from("custody-portable")),
         (Value::from("device_only"), Value::from(false)),
@@ -564,6 +569,9 @@ fn register_canary_secret(vault: &Vault, name: &str) {
         (Value::from("manifest_ref"), Value::from("")),
         (Value::from("declared_paths"), Value::Array(vec![])),
         (Value::from("policy_floor_snapshot"), floor),
+        // An ordinary registration's model-access flag (#5169): stored
+        // explicitly, as the custody doors register it.
+        (Value::from("model_reveal_allowed"), Value::from(true)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &body).expect("encode custody body");
