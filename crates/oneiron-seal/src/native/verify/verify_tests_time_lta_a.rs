@@ -445,9 +445,9 @@ pub(crate) mod tests {
         // Attack: an UNSIGNED /DSS incremental revision appended after every
         // signature, carrying evidence fresh at the old DocTimeStamp genTime
         // but stale at the verify clock. No DocTimeStamp covers this
-        // revision, so its genTime must not feed freshness: the stale
-        // evidence fails ValidationMaterial and the profile drops below
-        // B-LT/LTA.
+        // revision, so its genTime must not feed freshness, and the profile
+        // drops below B-LT/LTA. (Under Engine call Q-C the stale CRL here is
+        // about trust anchors only and claims nothing; see below.)
         let fx = lta_multisig();
         let attacked = append_dss_revision(
             &fx.bytes,

@@ -133,7 +133,8 @@ pub(crate) mod tests {
         // every evaluated evidence byte but stop before its own revision's
         // xref/trailer. That is insufficient for archival profile credit:
         // the timestamp must cover its entire structural revision. The
-        // first signer retains only its independently verified B-T rung.
+        // first signer retains only the rung its own signature timestamp and
+        // the material give it, never an archival one.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
