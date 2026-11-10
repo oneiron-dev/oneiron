@@ -111,7 +111,9 @@ impl Vault {
         for byte in 0..=u8::MAX {
             let mut after: Option<EntityId> = None;
             loop {
-                let page = self.entities_by_type_page(byte, after.as_ref(), PAGE)?;
+                // The census pages through its own snapshot: a second read
+                // transaction on this thread is MDB_BAD_RSLOT while `txn` lives.
+                let page = self.entities_by_type_page_in_txn(&txn, byte, after.as_ref(), PAGE)?;
                 let full = page.len() == PAGE;
                 after = page.last().copied();
                 for id in page {
