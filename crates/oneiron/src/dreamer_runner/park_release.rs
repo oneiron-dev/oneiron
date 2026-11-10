@@ -16,6 +16,12 @@
 //! force-cancel, clears its park and resolves its notices, in one write, for any park of the Dreamer server's own
 //! pass. A program hold has its own Stop (`vault.runs.program_hold.release`), and the other owners' parks keep their
 //! own doors.
+//!
+//! The server's pass runs every kind of Dreamer try, so the stop gives the try it ends the settlement any ended try
+//! gets, in the same write (`DreamerRunnerStore::settle_stopped_in_txn`): a free-time item takes its Cancelled
+//! receipt, the budget the try still holds settles, its paid-step receipts go, and a Coach Issues run's owed
+//! successor is queued. A stopped try sends nothing more: its Pending sends are abandoned as a held program's Stop
+//! abandons them (FIX 7188), which matters for a turn program's try parked at a checkpoint under the server's pass.
 
 use serde::{Deserialize, Serialize};
 
@@ -182,7 +188,8 @@ pub(crate) fn raise_park_release_notice_in_txn(
 ///   a settled try is never reopened. The owner's intervention is recorded on the queue row, and the park resumes
 ///   as the same try under its own owner token.
 /// - Stop: the park must be one of the Dreamer server's own pass, of any cause. The queue's owner force-cancel ends
-///   the try, its receipt naming the owner, and the park is cleared; a try already settled only loses its park.
+///   the try, its receipt naming the owner; the try it ends is settled as any ended try is; the park is cleared and
+///   the try's Pending sends are abandoned. A try already settled only loses its park and its Pending sends.
 ///
 /// Either way the park's notices are resolved for every owner, in the same write. After the commit a stopped try's
 /// running step stops, and admission is woken.
@@ -298,8 +305,10 @@ fn resume_in_txn(
     Ok(())
 }
 
-/// Ends `attempt` on the owner's grounds through the queue's owner force-cancel, unless it already settled, and
-/// clears its park and the park's indexes. Returns the try's lease generation and whether this stop ended it.
+/// Ends `attempt` on the owner's grounds through the queue's owner force-cancel, unless it already settled; gives
+/// the try it ends the settlement of an ended try; clears its park and the park's indexes; and abandons its Pending
+/// sends, an abandon the ledger refuses being owed rather than refusing the Stop (FIX 7188). Returns the try's lease
+/// generation and whether this stop ended it.
 fn stop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -323,11 +332,17 @@ fn stop_in_txn(
         ForceCancelOutcome::AlreadyCancelled(record)
         | ForceCancelOutcome::AlreadySettled(record) => (record, false),
     };
+    if stopped {
+        // The try ended in this write, so its settlement is this write's too. A try that settled before was
+        // settled by the door that ended it.
+        DreamerRunnerStore::new(vault).settle_stopped_in_txn(wtxn, &record, now)?;
+    }
     if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
         super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::program::unindex_program_hold_in_txn(vault, wtxn, &park)?;
     }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
+    super::program::abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);
     Ok((record.attempt_count, stopped))
 }
 
