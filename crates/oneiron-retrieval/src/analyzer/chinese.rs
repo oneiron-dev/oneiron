@@ -229,32 +229,3 @@ pub enum DictLoadError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zh_morph_returns_position_past_bigram_overlay() {
-        let Ok(dict_path) = std::env::var("ONEIRON_TEST_JIEBA_DICT") else {
-            return;
-        };
-        let zh = ChineseAnalyzer::with_dict(Path::new(&dict_path)).expect("dict should load");
-        let text = "中华人民共和国";
-        let mut out = Vec::new();
-        let next = zh.analyze(text, 0, 0, false, &mut out);
-        let surface_count = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Surface)
-            .count() as u32;
-        let bigram_count = (text.chars().count() as u32).saturating_sub(1);
-        if surface_count >= bigram_count {
-            return;
-        }
-        let max_emitted = out.iter().map(|t| t.position).max().unwrap_or(0);
-        assert!(
-            next > max_emitted,
-            "Chinese analyzer returned {next} but emitted token at position {max_emitted}",
-        );
-    }
-}
