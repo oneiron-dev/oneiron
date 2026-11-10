@@ -329,3 +329,83 @@ pub fn attempt_budget_reservation_count(
         .filter(|(key, _)| key.ends_with(attempt.as_bytes()))
         .count())
 }
+
+/// The state a failed settlement leaves for one paid call of a parked try (FIX 8728). A supplied backend runs
+/// one step through the production step writer; the owed row a paid send writes before it goes names
+/// `budget_id`; the try's budget is reserved on that line; and the step's measured usage is retained through the
+/// production failed-settlement writer. The step is not pinned paid. Returns the measured units.
+///
+/// # Errors
+/// The model-step, owed-call, reservation or owed-charge writer's validation or storage errors.
+#[doc(hidden)]
+pub async fn retain_owed_call_charge(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    backend: &dyn crate::llm::LlmBackend,
+    request: crate::llm::LlmRequest,
+    budget_id: &str,
+    now: u64,
+) -> Result<u64> {
+    let owner = embedded_owner(vault);
+    let ctx = crate::llm::DurableStepContext {
+        vault,
+        attempt_id: attempt,
+        run_id: None,
+        envelope_actor: crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        subject: owner,
+        deadline: None,
+        now_ms: now * 1_000,
+    };
+    let guard = crate::llm::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        crate::llm::BudgetExhaustionPolicy::Suspend,
+    );
+    let outcome = crate::llm::call_as_step(&ctx, backend, &guard, request)
+        .await
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    let crate::llm::StepOutcome::Finished {
+        binding, response, ..
+    } = outcome
+    else {
+        return Err(crate::Error::InvalidConfig(
+            "the scripted step did not finish".into(),
+        ));
+    };
+    let units = crate::dreamer_consolidation::step_charge::usage_units(&response.usage);
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    assert!(matches!(
+        store.reserve_budget(crate::dreamer_runner::ReserveDreamerBudget {
+            budget_id: budget_id.to_owned(),
+            child_attempt: attempt,
+            budget_total_units: 1_000,
+            reserve_units: 100,
+            now,
+        })?,
+        crate::dreamer_runner::DreamerBudgetReserveOutcome::Reserved(_)
+    ));
+    let owed = crate::dreamer_wake::owed::WakeOwedCall {
+        boot: vault.active_wakes.boot(),
+        line: budget_id.to_owned(),
+        lease: "park-stop-lease".to_owned(),
+        reserved_units: 100,
+        at: now,
+    };
+    vault.with_write_txn_grouped(|wtxn| {
+        crate::dreamer_wake::owed::put_owed_call_in_txn(
+            vault,
+            wtxn,
+            attempt,
+            &binding.step_hash,
+            &owed,
+        )
+    })?;
+    store.owe_unsettled_charge(&crate::dreamer_runner::SettleDreamerBudget {
+        budget_id: budget_id.to_owned(),
+        child_attempt: attempt,
+        actual_units: units,
+        now,
+    })?;
+    Ok(units)
+}
