@@ -54,8 +54,9 @@ pub enum PolicyPreflightRef {
         /// The source-audience policies the caller's read of the row meets,
         /// along the lineage that read judges: those carried to it and the
         /// one binding it, and those of every row its words came from (of a
-        /// CLAIM's supports, each one the caller reads). A row derived from
-        /// it reads under them too. Empty for a row no source policy reaches.
+        /// CLAIM's supports, each one the caller reads; of a witnessed TURN,
+        /// each MESSAGE row its text was read from). A row derived from it
+        /// reads under them too. Empty for a row no source policy reaches.
         audience: Vec<EntityId>,
     },
     /// The caller does not read the row, or no such row is live. Nothing
@@ -118,12 +119,19 @@ pub fn policy_preflight(
         |txn, _rows| -> MemoryResult<PolicyPreflight> {
             let mut refs = Vec::with_capacity(input.refs.len());
             for entity in &input.refs {
-                let Some((version, _)) = source_version_in_txn(&read, txn, entity)? else {
+                let Some((version, text)) = source_version_in_txn(&read, txn, entity)? else {
                     refs.push(PolicyPreflightRef::Withheld { entity: *entity });
                     continue;
                 };
+                // A witnessed TURN's words are its MESSAGE rows', each read
+                // through the caller's read; their lineage is the TURN's
+                // audience too (review of #6985, round 2).
+                let mut roots = vec![*entity];
+                if let Some(text) = &text {
+                    roots.extend(text.message_ids());
+                }
                 let audience =
-                    crate::source_audience::read_audience_in(vault, &dbs, txn, entity, &viewers)?;
+                    crate::source_audience::read_audience_in(vault, &dbs, txn, &roots, &viewers)?;
                 refs.push(PolicyPreflightRef::Readable {
                     entity: *entity,
                     version,
