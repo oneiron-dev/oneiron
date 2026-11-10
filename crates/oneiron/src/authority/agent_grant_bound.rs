@@ -11,11 +11,15 @@
 //! alone: Grants are never unioned (authority/principal_standing.rs,
 //! federation/repo_access.rs, FIX 7462). The verbs stay the slip's.
 //!
-//! - No Grant row names the holder: the slip reads as its Scope allows, as
-//!   before (ruling Q2 = B: `oneiron token agent`, `token read` and
-//!   `token pair` pair agents with no Grant). A revoke removes the Grant's
-//!   row, so revoking an agent's last Grant gives it back its slip's Scope:
-//!   FIX AGENT-REVOKE-WIDENS.
+//! - No Grant has ever named the holder: the slip reads as its Scope
+//!   allows, as before. That is an ordinary person, which no Grant can name
+//!   (Engine RULING PAIR-GRANT-DESIGN Q1 = A), or an agent paired before the
+//!   upgrade or without the owner's proof; the owner narrows it by minting a
+//!   Grant. Pairing a named agent mints its default read Grant (Q3/Q4).
+//! - A Grant has named the holder, but no Grant row names it now (each was
+//!   revoked): it reads nothing (Q2 = A), so revoking an agent's last Grant
+//!   never gives it back its slip's Scope (closes FIX AGENT-REVOKE-WIDENS).
+//!   The signed mints say who was named: `agent_grant_ever_named_in_txn`.
 //! - A Grant row names the holder, but none stands for `read` now (expired,
 //!   no `read`, its owner gone, its pact lapsed): it reads nothing, so an
 //!   expiry never widens it.
@@ -51,7 +55,7 @@ pub(crate) struct AgentGrantReadBound {
 impl Vault {
     /// The bound the owner-agent Grants that name `holder` in `txn` put on a
     /// read under a credential of Scope `slip` that `holder` holds (module
-    /// docs); `None` when no Grant row names `holder`.
+    /// docs); `None` when no Grant has ever named `holder`.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -77,7 +81,13 @@ impl Vault {
             );
         }
         if naming.is_empty() {
-            return Ok(None);
+            // Every Grant that named it is revoked: no alternative stands.
+            return Ok(self
+                .agent_grant_ever_named_in_txn(txn, holder)?
+                .then(|| AgentGrantReadBound {
+                    envelope: disclosure_axes(&Scope::default()),
+                    alternatives: Vec::new(),
+                }));
         }
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;

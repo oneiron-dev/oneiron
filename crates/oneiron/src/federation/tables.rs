@@ -36,6 +36,17 @@ crate::side_table::side_tables! {
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Every agent a signed owner-agent Grant mint of the authority log has ever named, revoked
+    /// Grants included (Engine RULING PAIR-GRANT-DESIGN Q2 = A): written as each authority-log
+    /// row is staged, never removed, rebuilt from the log at open and after a restore. Value: the
+    /// mint's entry hash (32 bytes), so a reader counts only a mint the authority fold counts.
+    /// Key: id16 (member) + id16 (grant).
+    FEDERATION_AGENT_GRANT_MEMBER: VaultMeta b"federation:agent-grant-member:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Schema-version byte gating the agent Grant member index's rebuild from the authority log.
+    /// Key: ().
+    FEDERATION_AGENT_GRANT_MEMBER_SCHEMA_VERSION: VaultMeta b"federation:agent-grant-member-schema-version" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
     /// and record it names, the text update as sent until the owner decides, then the decision.
     /// Never a vault write. Key: id16(grant) + id16(proposal).
