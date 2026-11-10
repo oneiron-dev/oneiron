@@ -112,8 +112,6 @@ mod write_target;
 
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;
-// Named, so they stay pub: source_trust's claim_body glob also re-exports them pub(crate).
-pub use core_types::{ClaimBody, ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef};
 pub use decay::*;
 pub(crate) use deferred::claim_has_deferred_action_in_txn;
 pub(crate) use evidence_support::has_live_support_in_txn;
