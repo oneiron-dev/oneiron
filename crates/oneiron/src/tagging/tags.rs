@@ -570,26 +570,45 @@ pub(super) fn next_ref_in_txn(
     Ok(next.and_then(|((named, turn), ())| (named == *entity).then_some(turn)))
 }
 
-/// Every MESSAGE a saved mention naming `entity` is in, across every turn
-/// whose tag set names it.
+/// Every MESSAGE whose words name `entity` by its name: a saved mention
+/// that links it and whose span's text keys to `digest`, the name's identity
+/// hint digest, across every turn whose tag set names it. A pronoun or
+/// another name that only corefers with it does not count: its words do not
+/// say the name.
 pub(super) fn naming_messages_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
+    digest: &[u8; 32],
 ) -> Result<BTreeSet<EntityId>> {
     let mut messages = BTreeSet::new();
     let mut after = None;
-    while let Some(turn) = next_ref_in_txn(store, txn, entity, after.as_ref())? {
+    while let Some(turn) = next_ref_in_txn(&vault.store, txn, entity, after.as_ref())? {
         after = Some(turn);
-        let Some(tags) = TAG_SET.get(store, txn, &turn)? else {
+        let Some(tags) = TAG_SET.get(&vault.store, txn, &turn)? else {
             continue;
         };
-        messages.extend(
-            tags.mentions
+        let TurnInput::Ready { input, .. } = turn_text_in_txn(vault, txn, &turn)? else {
+            continue;
+        };
+        for mention in &tags.mentions {
+            if !mention.link.entities().contains(entity) {
+                continue;
+            }
+            let message = mention.message.to_hex();
+            let names = input
+                .messages
                 .iter()
-                .filter(|mention| mention.link.entities().contains(entity))
-                .map(|mention| mention.message),
-        );
+                .find(|each| each.id == message)
+                .and_then(|each| each.text.get(mention.start..mention.end))
+                .map(str::trim)
+                .is_some_and(|text| {
+                    !text.is_empty() && crate::ingest::identity_hint_digest(text) == *digest
+                });
+            if names {
+                messages.insert(mention.message);
+            }
+        }
     }
     Ok(messages)
 }

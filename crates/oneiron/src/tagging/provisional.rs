@@ -361,7 +361,7 @@ pub(crate) fn confirm_in_txn(
     // Born under the audience of the words that name it (OPUS-LEAKS): a name
     // read only in a relationship's or a private MESSAGE is read only where
     // one of those MESSAGEs is.
-    if let Some(audience) = naming_audience_in_txn(vault, txn, id)? {
+    if let Some(audience) = naming_audience_in_txn(vault, txn, id, &entity.name)? {
         fields.push((
             crate::claim::IDENTITY_SOURCE_AUDIENCE_KEY.into(),
             audience,
@@ -394,19 +394,22 @@ pub(crate) fn confirm_in_txn(
     Ok(true)
 }
 
-/// Who may read the words that name the provisional entity `id`, as the
-/// source audience its confirmed row carries: `None` when an open MESSAGE
-/// names it, so the row is read as any entity row is. Otherwise a map of the
-/// relationships whose members read one of the naming MESSAGEs (`rel`, the
-/// union of their sets) and whether every naming MESSAGE is private
-/// (`private`). A MESSAGE whose audience does not resolve counts as private.
+/// Who may read the words that name the provisional entity `id` by `name`
+/// (its own name, not a pronoun or a coreferent), as the source audience its
+/// confirmed row carries. `None` when an open MESSAGE names it, so the row
+/// is read as any entity row is. Otherwise a map of the relationships whose
+/// members read one of the naming MESSAGEs (`rel`, the union of their sets)
+/// and whether every naming MESSAGE is private (`private`). A MESSAGE whose
+/// audience does not resolve counts as private.
 fn naming_audience_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
+    name: &str,
 ) -> Result<Option<rmpv::Value>> {
     use crate::claim::RelationshipRead;
-    let messages = tags::naming_messages_in_txn(&vault.store, txn, id)?;
+    let digest = crate::ingest::identity_hint_digest(name);
+    let messages = tags::naming_messages_in_txn(vault, txn, id, &digest)?;
     if messages.is_empty() {
         return Ok(None);
     }
