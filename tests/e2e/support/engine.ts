@@ -253,7 +253,7 @@ export class EngineFixture {
       if(issued.exitCode!==0) throw new CliError(issued,"device-pair-link");
       const link=issued.stdout.trim();redactor.add(link);
       if(new URL(link).hash.slice(1).split(".").length!==4) throw new Error("Machine pairing link carries no checkpoint pin");
-      const enrolled=await local.run(["device","enrol",peer.vault,"--config",peer.config],`${link}\n`,LIMITS.readyMs,true);
+      const enrolled=await local.run(["device","enrol",peer.vault,"--config",peer.config],`${link}\n`,LIMITS.readyMs,true,true);
       if(enrolled.exitCode!==0) throw new CliError(enrolled,"device-enrol");
       peer.enrolment=JSON.parse(enrolled.stdout) as DeviceEnrolment;
       if(peer.enrolment.checkpoint_pinned!==true) throw new Error("Device enrolment did not adopt the pinned checkpoint");
