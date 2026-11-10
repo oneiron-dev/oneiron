@@ -18,6 +18,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::gate_rejection_pends;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
@@ -141,14 +142,4 @@ fn annotation_slot_free_in(
         ));
     }
     Ok(())
-}
-
-/// Whether `error` is a Gate write rejection whose outcome is Pending.
-fn gate_rejection_pends(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
-            if crate::error::GateDenialOutcome::parse(outcome)
-                == Some(crate::error::GateDenialOutcome::Pending)
-    )
 }
