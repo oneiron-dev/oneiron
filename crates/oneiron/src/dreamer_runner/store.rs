@@ -1242,6 +1242,35 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(Some(status))
     }
 
+    /// The settlement of an attempt its owner stopped, in the writer whose
+    /// force-cancel ended it: what [`Self::fail`] gives a try that ends under
+    /// its own lease, and the budget the try still holds. A Coach Issues
+    /// run's successor is queued when a wake landed under its lease (FIX
+    /// 1554), so no report waits on a stopped run; the reservations the try
+    /// retained settle, with any charge still owed on them; a free-time item
+    /// with no receipt ends Cancelled, after its charge, and its cycle
+    /// closes when it was the last open item; its paid-step receipts, pinned
+    /// listing and narrowed hold go last, because the budget settlement
+    /// reads them. Each part is a no-op for a try that holds none of it.
+    /// `record` is the try's queue row.
+    pub(crate) fn settle_stopped_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        now: u64,
+    ) -> Result<()> {
+        self.redrive_coach_issues_in_txn(wtxn, record, now)?;
+        self.settle_ended_budget_in_txn(wtxn, record.id, now)?;
+        super::free_time::end_free_time_item_in_txn(
+            self.vault,
+            wtxn,
+            record,
+            super::FreeTimeItemOutcome::Cancelled,
+            now,
+        )?;
+        self.cleanup_step_receipts_in_txn(wtxn, record.id)
+    }
+
     /// Reads a private parked-attempt row.
     pub fn parked_attempt(
         &self,

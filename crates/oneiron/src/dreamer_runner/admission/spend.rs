@@ -104,8 +104,17 @@ impl DreamerRunnerStore<'_> {
 
     /// Keeps a measured charge whose settlement failed owed on its child's
     /// reservation (FIX 8728), never refunded: the reservation's next
-    /// settlement or abort charges it.
-    pub(crate) fn owe_unsettled_charge(&self, input: &SettleDreamerBudget) -> Result<()> {
+    /// settlement or abort charges it. `covered` names the terminal steps
+    /// the charge covers. Their owed-call rows go in the same write, as a
+    /// settlement's go with its charge: the charge is kept on the
+    /// reservation now, so a later replay of the attempt's owed calls
+    /// (`dreamer_wake::owed`) must not charge those calls again. A call the
+    /// charge does not cover keeps its row.
+    pub(crate) fn owe_unsettled_charge(
+        &self,
+        input: &SettleDreamerBudget,
+        covered: &[crate::model_step_context::StepEffectBinding],
+    ) -> Result<()> {
         validate_budget_id(&input.budget_id)?;
         self.vault.with_write_txn(|wtxn| {
             let mut budget = self.owing_budget_in_txn(wtxn, &input.budget_id)?;
@@ -115,6 +124,12 @@ impl DreamerRunnerStore<'_> {
                 input.child_attempt,
                 input.actual_units,
                 input.now,
+            )?;
+            crate::dreamer_wake::owed::delete_covered_owed_calls_in_txn(
+                self.vault,
+                wtxn,
+                input.child_attempt,
+                covered,
             )
         })
     }
