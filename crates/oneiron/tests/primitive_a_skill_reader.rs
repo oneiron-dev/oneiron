@@ -6,7 +6,9 @@
 //! without the owner's provenance or admission receipts. An agent reads
 //! through the owner's grant of SKILL reads; with none it reads no skill. On
 //! main an agent's read is refused as the owner's door; the owner's read is
-//! unchanged.
+//! unchanged. A reader is served the state its admitting read saw: an owner
+//! archive that commits while the read is held right after it admitted the
+//! row does not reach the view (#6976 review round 2).
 //!
 //! Public paths only: the generated engine fns in `oneiron::verbs`.
 
@@ -16,7 +18,9 @@ use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use oneiron::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 use oneiron::memory::MEMORY_CODE_NOT_FOUND;
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
-use oneiron::verbs::{AgentGrantMintRequest, HubSkillRequest, SkillLibraryListRequest};
+use oneiron::verbs::{
+    AgentGrantMintRequest, HubSkillRequest, SkillLibraryLifecycle, SkillLibraryListRequest,
+};
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
@@ -30,6 +34,16 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
     config.dimensions = 4;
     config.embedding_model = None;
     let vault = Vault::open_owned(dir.path(), config)?;
+    // The owner's agent Grant act needs this install profiled in the
+    // vault's roster to carry it: a fresh local-origin vault is rooted and
+    // profiled here, as a device open with a host root secret does.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    assert_eq!(
+        vault.profile_local_open(Some(b"primitive-a-skill-reader"), true)?,
+        oneiron::authority::LocalOpenProfile::RootedAndProfiled,
+    );
     Ok((dir, vault))
 }
 
@@ -66,31 +80,23 @@ fn page() -> SkillLibraryListRequest {
     }
 }
 
-#[test]
-fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResult {
-    let (_dir, vault) = open_vault()?;
-    let candidate = put_candidate(&vault)?;
+/// The agent definition a fresh default-base dispatch spawns.
+fn dispatched_agent(vault: &Vault) -> Result<EntityId, Box<dyn std::error::Error>> {
     let AgentDispatchOutcome::Dispatched(status) =
-        AgentDispatcher::new(&vault).dispatch_default_base(None, None, None, 1)?
+        AgentDispatcher::new(vault).dispatch_default_base(None, None, None, 1)?
     else {
         return Err("expected one fresh spawn".into());
     };
-    let agent = status.input.target.agent_definition_ref()?;
-    let reader = vault.memory(agent, EdgeActorClass::Agent);
-    let owner_actor = vault.ensure_embedded_owner_actor()?;
-    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+    Ok(status.input.target.agent_definition_ref()?)
+}
 
-    // An agent reads the library through its own read: with no grant it
-    // reads no skill at all.
-    assert!(
-        oneiron::verbs::vault_skills_list(&reader, page())?
-            .skills
-            .is_empty(),
-        "an agent with no read grant reads no skill"
-    );
-    // The owner grants it reads of SKILL rows, and no other kind.
-    let _grant = oneiron::verbs::vault_agents_grants_mint(
-        &owner,
+/// The owner grants `agent` reads of SKILL rows, and no other kind.
+fn grant_skill_reads(
+    owner: &oneiron::memory::Memory<'_>,
+    agent: EntityId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    oneiron::verbs::vault_agents_grants_mint(
+        owner,
         AgentGrantMintRequest {
             agent,
             authority_scope: Scope {
@@ -107,6 +113,73 @@ fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResu
             wallet_ref: None,
         },
     )?;
+    Ok(())
+}
+
+/// How long the test waits for the held read to reach its hold point.
+const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Runs `read` as `agent` on its own thread, held at the point its own read
+/// admits a skill row (`test_doors::skill_read_hold`); the owner archives
+/// `skill` in that gap, then the read resumes. Returns what the read served.
+fn archive_in_admission_gap<T: Send>(
+    vault: &Vault,
+    owner: &oneiron::memory::Memory<'_>,
+    agent: EntityId,
+    skill: EntityId,
+    read: impl FnOnce(&oneiron::memory::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let (admitted_tx, admitted_rx) = std::sync::mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::scope(|scope| {
+        let reading = scope.spawn(move || {
+            oneiron::test_doors::skill_read_hold::hold_next_read(admitted_tx, resume_rx);
+            read(&vault.memory(agent, EdgeActorClass::Agent))
+        });
+        admitted_rx.recv_timeout(HOLD_WAIT)?;
+        oneiron::verbs::vault_skills_archive(owner, HubSkillRequest { entity: skill })?;
+        resume_tx.send(())?;
+        Ok(reading.join().map_err(|_| "the held read panicked")??)
+    })
+}
+
+/// A vault whose agent holds the owner's SKILL-band read grant, with the
+/// owner's handle and the first loadable skill the agent reads.
+fn granted_reader_fixture(
+    vault: &Vault,
+) -> Result<(EntityId, EntityId, EntityId), Box<dyn std::error::Error>> {
+    let agent = dispatched_agent(vault)?;
+    let owner_actor = vault.ensure_embedded_owner_actor()?;
+    grant_skill_reads(&vault.memory(owner_actor, EdgeActorClass::Human), agent)?;
+    let listed =
+        oneiron::verbs::vault_skills_list(&vault.memory(agent, EdgeActorClass::Agent), page())?;
+    let skill = listed
+        .skills
+        .first()
+        .map(|skill| skill.entity)
+        .ok_or("the seeded skills are loadable")?;
+    Ok((agent, owner_actor, skill))
+}
+
+#[test]
+fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let candidate = put_candidate(&vault)?;
+    let agent = dispatched_agent(&vault)?;
+    let reader = vault.memory(agent, EdgeActorClass::Agent);
+    let owner_actor = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+
+    // An agent reads the library through its own read: with no grant it
+    // reads no skill at all.
+    assert!(
+        oneiron::verbs::vault_skills_list(&reader, page())?
+            .skills
+            .is_empty(),
+        "an agent with no read grant reads no skill"
+    );
+    // The owner grants it reads of SKILL rows, and no other kind.
+    grant_skill_reads(&owner, agent)?;
 
     // The owner's library holds every skill, the candidate among them.
     let owned = oneiron::verbs::vault_skills_list(&owner, page())?;
@@ -143,5 +216,83 @@ fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResu
     // The owner reads the candidate, as before.
     let own = oneiron::verbs::vault_skills_get(&owner, HubSkillRequest { entity: candidate })?;
     assert_eq!(own.entity, candidate);
+    Ok(())
+}
+
+/// `vault.skills.get` serves the skill as the read that admitted it saw it:
+/// the owner archives the skill after the reader's read admitted its row
+/// and before the view is read, and the view is still the loadable package
+/// the read admitted. Once the read ends, the archive is in force: the next
+/// read finds no such skill.
+#[test]
+fn a_skill_get_serves_the_state_its_admitting_read_saw() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let (agent, owner_actor, skill) = granted_reader_fixture(&vault)?;
+    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+    let reader = vault.memory(agent, EdgeActorClass::Agent);
+    let before = oneiron::verbs::vault_skills_get(&reader, HubSkillRequest { entity: skill })?;
+    assert!(before.loadable);
+
+    let held = archive_in_admission_gap(&vault, &owner, agent, skill, |reader| {
+        oneiron::verbs::vault_skills_get(reader, HubSkillRequest { entity: skill })
+    })?;
+    assert_eq!(held.entity, skill);
+    assert_eq!(
+        held.lifecycle, before.lifecycle,
+        "the view shows the lifecycle the admitting read saw, not the archive after it"
+    );
+    assert!(
+        held.loadable,
+        "the view is the loadable skill the read admitted"
+    );
+    assert_eq!(held.version, before.version);
+    assert!(held.files.is_some());
+
+    let own = oneiron::verbs::vault_skills_get(&owner, HubSkillRequest { entity: skill })?;
+    assert_eq!(own.lifecycle, SkillLibraryLifecycle::Archived);
+    let Err(gone) = oneiron::verbs::vault_skills_get(&reader, HubSkillRequest { entity: skill })
+    else {
+        return Err("an archived skill is not loadable".into());
+    };
+    assert_eq!(gone.code, MEMORY_CODE_NOT_FOUND);
+    Ok(())
+}
+
+/// `vault.skills.list` serves each skill as the page's one read saw it: the
+/// owner archives a listed skill after the page's read admitted a row, and
+/// the page still lists that skill as the loadable package it was. The next
+/// page leaves it out.
+#[test]
+fn a_skill_list_serves_the_state_its_admitting_read_saw() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let (agent, owner_actor, skill) = granted_reader_fixture(&vault)?;
+    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+    let reader = vault.memory(agent, EdgeActorClass::Agent);
+    let before = oneiron::verbs::vault_skills_list(&reader, page())?;
+
+    let held = archive_in_admission_gap(&vault, &owner, agent, skill, |reader| {
+        oneiron::verbs::vault_skills_list(reader, page())
+    })?;
+    assert_eq!(
+        held.skills
+            .iter()
+            .map(|listed| listed.entity)
+            .collect::<Vec<_>>(),
+        before
+            .skills
+            .iter()
+            .map(|listed| listed.entity)
+            .collect::<Vec<_>>(),
+        "the page lists the skills its read admitted"
+    );
+    for listed in &held.skills {
+        assert!(
+            listed.loadable && listed.lifecycle != SkillLibraryLifecycle::Archived,
+            "every listed view is the loadable state the page's read admitted"
+        );
+    }
+
+    let after = oneiron::verbs::vault_skills_list(&reader, page())?;
+    assert!(after.skills.iter().all(|listed| listed.entity != skill));
     Ok(())
 }
