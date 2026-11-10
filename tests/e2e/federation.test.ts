@@ -612,6 +612,18 @@ async function fed03Status(engine: EngineFixture, pact: string, status: "Active"
   const read = await engine.client.call("vault.federation.status", {});
   expect(read.pacts.find(row => row.pact === pact)).toEqual({ pact, status, epoch, inactive_reason: null });
 }
+async function fed03ConnectSuccess<T>(label: string, act: () => Promise<T>): Promise<T> {
+  try {
+    return await act();
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    const detail = error.error;
+    throw new Error(
+      `FEDERATION-03 Connect success failed; ${label}: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"} body=${String(JSON.stringify(error.reply.body) ?? "").slice(0, 400)}`,
+      { cause: error },
+    );
+  }
+}
 /** Every authenticated refusal has its real facade call receipt, read as owner. */
 async function fed03Refusal(engine: EngineFixture, attempt: Promise<unknown>, status: number, code: string,
   actor: string, verb: string): Promise<PublicHttpError> {
@@ -662,13 +674,13 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
   });
   // A sensitivity-stamped claim requests Proposed (memory/support/wire.rs:59-71); it still syncs.
   expect(written.approval).toBe("proposed");
-  const delivery = await source.client.call("vault.federation.connect.export", {
+  const delivery = await fed03ConnectSuccess("source vault.federation.connect.export", () => source.client.call("vault.federation.connect.export", {
     pact, window_key: `2026-10@${world}`, world_ref: world,
-  });
+  }));
   expect(delivery.body).toMatchObject({ pact, epoch: 1, source_vault: sourceVault, recipient_vault: recipientVault, world_ref: world });
   expect(delivery.signature.length).toBeGreaterThan(0);
   expect(delivery.body.update.length).toBeGreaterThan(0);
-  const joined = await recipient.client.call("vault.federation.connect.rejoin", delivery);
+  const joined = await fed03ConnectSuccess("recipient vault.federation.connect.rejoin", () => recipient.client.call("vault.federation.connect.rejoin", delivery));
   expect(joined).toMatchObject({ pact, epoch: 1, status: "imported" });
   expect(joined.world_ref).not.toBe(world);
   const page = await awaitPublic(
@@ -1332,6 +1344,18 @@ function fed07Direction(world: string): Fed07Direction {
 function fed07WindowKey(learnedAt: number, world: string): string {
   return `${new Date(learnedAt * 1000).toISOString().slice(0, 7)}@${world}`;
 }
+async function fed07ConnectSuccess<T>(label: string, act: () => Promise<T>): Promise<T> {
+  try {
+    return await act();
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    const detail = error.error;
+    throw new Error(
+      `FEDERATION-07 Connect success failed; ${label}: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"} body=${String(JSON.stringify(error.reply.body) ?? "").slice(0, 400)}`,
+      { cause: error },
+    );
+  }
+}
 async function fed07Refusal(attempt: Promise<unknown>, engine: EngineFixture): Promise<PublicHttpError> {
   try {
     await attempt;
@@ -1516,11 +1540,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     });
     // Explicit sensitivity requests Proposed; the peer burst route is asserted by allowReceipt below.
     expect(allowUpsert.approval).toBe("proposed");
-    const allowDelivery = await engine.client.call("vault.federation.connect.export", {
+    const allowDelivery = await fed07ConnectSuccess("allow vault.federation.connect.export", () => engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: allowWindow,
       world_ref: pact.sharerWorld,
-    });
+    }));
     expect(allowDelivery.body.pact).toBe(pact.pact);
     expect(allowDelivery.body.epoch).toBe(1);
     expect(allowDelivery.body.source_vault).toBe(pact.sharerVault);
@@ -1572,11 +1596,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       occurred_at: FED07_ISOLATE_TS,
       learned_at: FED07_ISOLATE_TS,
     });
-    const isolateDelivery = await engine.client.call("vault.federation.connect.export", {
+    const isolateDelivery = await fed07ConnectSuccess("isolate vault.federation.connect.export", () => engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: isolateWindow,
       world_ref: pact.sharerWorld,
-    });
+    }));
     expect(isolateDelivery.body.pact).toBe(pact.pact);
     expect(isolateDelivery.body.epoch).toBe(1);
     expect(isolateDelivery.body.source_vault).toBe(pact.sharerVault);
@@ -1666,11 +1690,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       occurred_at: FED07_DEFER_TS,
       learned_at: FED07_DEFER_TS,
     });
-    const deferDelivery = await engine.client.call("vault.federation.connect.export", {
+    const deferDelivery = await fed07ConnectSuccess("defer vault.federation.connect.export", () => engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: deferWindow,
       world_ref: pact.sharerWorld,
-    });
+    }));
     expect(deferDelivery.body.pact).toBe(pact.pact);
     expect(deferDelivery.body.epoch).toBe(1);
     expect(deferDelivery.body.source_vault).toBe(pact.sharerVault);
