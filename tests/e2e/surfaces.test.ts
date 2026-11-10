@@ -145,6 +145,13 @@ function surfaces03Contains(value: unknown, forbidden: readonly string[]): boole
   const bytes = Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
   return forbidden.some(text => bytes.includes(Buffer.from(text)));
 }
+function surfaces03NoteMarkdown(
+  label: string, note: FacadeResult<"vault.notes.read">, expectedMarkdown: string,
+): void {
+  const check = `SURFACES-03 ${label}: notes.read markdown read-back`;
+  expect({ check, valueIsNull: note.value === null, markdownMatches: note.value?.markdown === expectedMarkdown })
+    .toEqual({ check, valueIsNull: false, markdownMatches: true });
+}
 // Local diagnostic wrappers: a refusal names its door. The MCP refusal keeps
 // McpRpcError identity and its inspectable `.response`, so expected-refusal
 // branches below keep reading the JSON-RPC code, data and receipt ref.
@@ -408,8 +415,13 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const ownerVersions = await surfaces03Versions(owner);
     const source = await surfaces03Call(engine.client, "vault.notes.create", { kind: "research", markdown: spec.loadBearingSentence });
     const unrelated = await surfaces03Call(engine.client, "vault.notes.create", { kind: "research", markdown: unrelatedText });
-    for (const [noteRef, text] of [[source.id_hex, spec.loadBearingSentence], [unrelated.id_hex, unrelatedText]] as const)
-      expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: noteRef })).value?.markdown).toBe(text);
+    for (const [label, noteRef, text] of [
+      ["source note", source.id_hex, spec.loadBearingSentence],
+      ["unrelated note", unrelated.id_hex, unrelatedText],
+    ] as const) {
+      const note = await surfaces03Call(engine.client, "vault.notes.read", { note_ref: noteRef });
+      surfaces03NoteMarkdown(label, note, text);
+    }
     const scope = await ownerBaseClaimScope(new surfaces03ScopeClient(engine.client), owner.principalRef);
     const claim = await surfaces03Call(engine.client, "vault.claims.upsert", {
       scope, subject_ref: source.id_hex, predicate: "identity.name", value: spec.sourceClaimValue,
@@ -436,7 +448,7 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     }));
     for (const input of authorInputs) redactor.add(input.markdown, Buffer.from(input.markdown).toString("base64"));
     const canonicalBrief = await surfaces03Call(engine.client, "vault.notes.author_brief", authorInput);
-    expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex })).value?.markdown).toBe(spec.briefMarkdown);
+    surfaces03NoteMarkdown("canonical brief", await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex }), spec.briefMarkdown);
     const kind = await surfaces03Call(engine.client, "vault.notes.defaults", { note_ref: canonicalBrief.id_hex });
     expect({ extraction: kind.defaults.extraction, context: kind.defaults.context, retention: kind.defaults.retention })
       .toEqual({ extraction: stamp.extraction, context: stamp.context, retention: stamp.retention });
@@ -478,11 +490,11 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     };
     const positiveControl = async () => {
       const note = await surfaces03Call(agent.client, "vault.notes.read", { note_ref: unrelated.id_hex });
-      expect(note.value?.markdown).toBe(unrelatedText);
+      surfaces03NoteMarkdown("unrelated positive-control note", note, unrelatedText);
       expect({ check: "unrelated control note carries no source bytes", ok: surfaces03Contains(note, forbidden) }).toEqual({ check: "unrelated control note carries no source bytes", ok: false });
     };
     await setGrants([ownerShare, noteRead]);
-    expect((await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex })).value?.markdown).toBe(spec.loadBearingSentence);
+    surfaces03NoteMarkdown("agent source note", await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex }), spec.loadBearingSentence);
     const createInput = {
       recipient: agent.principalRef, brief_ref: canonicalBrief.id_hex,
       world_refs: [scope.world_id], facet_refs: [scope.scope_facet_id], include_unscoped: true,
@@ -560,7 +572,9 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
         expect(brief.record.id).toBe(brief.id_hex);
         expect(brief.record.kind).toBe("NOTE");
       }
-      expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: brief.id_hex })).value?.markdown).toBe(authorInputs[index]?.markdown);
+      const expectedInput = authorInputs[index];
+      if (!expectedInput) throw new Error("SURFACES-03 authored brief has no matching surface input");
+      surfaces03NoteMarkdown(`authored brief ${index + 1}`, await surfaces03Call(engine.client, "vault.notes.read", { note_ref: brief.id_hex }), expectedInput.markdown);
       // Reading text alone cannot prove each surface captured its citation pins.
       const witnessShare = await surfaces03Call(engine.client, "vault.shares.create", { ...createInput, brief_ref: brief.id_hex });
       const witnessed = await surfaces03Call(agent.client, "vault.shares.view", { share_ref: witnessShare.share_id });
@@ -667,12 +681,15 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const restartedFollows = surfaces03Values(restarted, 1, "vault.notes.follow_citation");
     surfaces03Equal(restartedViews); surfaces03Equal(restartedFollows);
     for (const value of [...restartedViews, ...restartedFollows])
-      expect(value.value !== null).toBe(spec.expected.shareRevoked.resolvesContent);
+      expect({ check: "saved share or citation resolves after restart", ok: value.value !== null })
+        .toEqual({ check: "saved share or citation resolves after restart", ok: spec.expected.shareRevoked.resolvesContent });
     expect(await readRefusalReceipt(wrongActorReceipt)).toEqual(savedReceipt);
     expect((await surfaces03Call(engine.client, "vault.get", { entity_ref: claimRef })).value).toBeNull();
     expect((await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex })).value).toBeNull();
     expect((await surfaces03Call(engine.client, "vault.notes.defaults", { note_ref: source.id_hex })).overrides.context).toBe("owner_only");
-    expect({ check: "canonical brief persists after restart", ok: (await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex })).value !== null }).toEqual({ check: "canonical brief persists after restart", ok: true });
+    const restartedBrief = await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex });
+    expect({ check: "SURFACES-03 canonical brief persists after restart", valueIsNull: restartedBrief.value === null })
+      .toEqual({ check: "SURFACES-03 canonical brief persists after restart", valueIsNull: false });
     const restartedPolicy = await surfaces03Call(engine.client, "vault.gate.policy.get", { manifest_ref: narrowedPolicy.manifest_ref });
     const persisted = restartedPolicy.manifests.find(row => row.manifest_ref === narrowedPolicy.manifest_ref);
     expect(persisted?.body_hash).toBe(narrowedPolicy.body_hash);
@@ -1341,8 +1358,20 @@ async function surfaces07RefusalReceipt(
     row => row !== null, { label: "SURFACES-07 refusal receipt" },
   );
   if (receipt === null) throw new Error("SURFACES-07 refusal receipt did not persist");
-  expect(receipt).toMatchObject({ receipt_ref: ref, verb: transport === "http_facade" ? `v1/core/facade/${verb}` : verb,
-    actor_ref: actorRef, actor_class: "agent", transport, outcome: { refused: { code } } });
+  // The facade nest strips its prefix before the receipt layer runs, so the
+  // stored verb is the bare dotted verb on every transport (see triage).
+  const surfaces07ReceiptVerb = `refusal receipt for ${verb} over ${transport} names its verb`;
+  expect({ check: surfaces07ReceiptVerb, verb: receipt.verb }).toEqual({ check: surfaces07ReceiptVerb, verb });
+  const surfaces07ReceiptClass = `refusal receipt for ${verb} over ${transport} names its actor class`;
+  expect({ check: surfaces07ReceiptClass, actor_class: receipt.actor_class }).toEqual({ check: surfaces07ReceiptClass, actor_class: "agent" });
+  const surfaces07ReceiptActor = `refusal receipt for ${verb} over ${transport} names its actor`;
+  expect({ check: surfaces07ReceiptActor, actor_ref: receipt.actor_ref }).toEqual({ check: surfaces07ReceiptActor, actor_ref: actorRef });
+  const surfaces07ReceiptTransport = `refusal receipt for ${verb} over ${transport} names its transport`;
+  expect({ check: surfaces07ReceiptTransport, transport: receipt.transport }).toEqual({ check: surfaces07ReceiptTransport, transport });
+  const surfaces07ReceiptRef = `refusal receipt for ${verb} over ${transport} keeps its ref`;
+  expect({ check: surfaces07ReceiptRef, receipt_ref: receipt.receipt_ref }).toEqual({ check: surfaces07ReceiptRef, receipt_ref: ref });
+  const surfaces07ReceiptOutcome = `refusal receipt for ${verb} over ${transport} refuses with ${code}`;
+  expect({ check: surfaces07ReceiptOutcome, outcome: receipt.outcome }).toEqual({ check: surfaces07ReceiptOutcome, outcome: { refused: { code } } });
   return receipt;
 }
 async function surfaces07Refuse(
@@ -1911,6 +1940,8 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
  * Public doors: real init/pair, structural PERSON/PLACE, claims.upsert,
  * weave report/correction reads, owner HTTP report, CLI, MCP tool-first, SDK.
  * Partial: uses the actual init-created root project, not a fabricated PROJECT.
+ * The project leg is a root-project-scoped claim about the board-member
+ * owner: the engine admits no generic claim about the hub itself.
  * Does not prove a new private project, grouped inbox delivery, completed weave,
  * scheduled digest or generated lens. No model, private queue or clock is used.
  */
@@ -1993,13 +2024,19 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
         .toEqual({ ref: actor.principalRef, actorClass: actor.actorClass });
     }
     const scope = await surfaces08Scope(engine.client, readerA.principalRef);
+    // The engine admits no generic claim ABOUT the project hub: only the
+    // project rule claim (or an admitted goal claim) may link a CLAIM to a
+    // PROJECT. The project leg is therefore scoped to the root project with
+    // a member entity inside it (the board-member owner) as its subject.
+    const projectScope = { ...scope, scope_project_id: projectRef };
     const authored: { ref: string; subject: string; value: string }[] = [];
     for (const [name, subject, value] of [["owner", readerA.principalRef, ownerText],
       ["other-person", readerB.principalRef, otherText],
-      ["project", projectRef, projectText],
+      ["project", readerA.principalRef, projectText],
       ["agent", agent.principalRef, agentText]] as const) {
+      const legScope = name === "project" ? projectScope : scope;
       const written = await surfaces08Call(engine.client, "vault.claims.upsert", {
-        scope, subject_ref: subject, predicate, value, confidence: 1, source: "user_stated", occurred_at: at,
+        scope: legScope, subject_ref: subject, predicate, value, confidence: 1, source: "user_stated", occurred_at: at,
       }, `claim write ${name}`);
       const ref = written.claim?.id;
       if (ref === undefined) throw new Error("SURFACES-08 claim write returned no record reference");
@@ -2014,13 +2051,13 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
       { kind: "links", edge_kinds: [surfaces08EdgeKind] }, { kind: "budgets" }] } satisfies FacadeInput<"vault.weave.report">;
     const reportA = await surfaces08ReportRead(readerA, personRecipe, [otherText, agentText], "reader-a person report");
     const reportB = await surfaces08ReportRead(readerB, personRecipe, [ownerText, projectText, agentText], "reader-b person report");
-    const reportAgent = await surfaces08ReportRead(agent, agentRecipe, [ownerText, otherText], "agent digest report");
+    const reportAgent = await surfaces08ReportRead(agent, agentRecipe, [ownerText, otherText, projectText], "agent digest report");
     expect(reportA.sections.map(section => section.kind)).toEqual(["changes", "projects", "links"]);
     expect(reportB.sections.map(section => section.kind)).toEqual(["changes", "projects", "links"]);
     expect(reportAgent.sections.map(section => section.kind)).toEqual(["digest"]);
-    expect(surfaces08Claims(reportA)).toEqual(surfaces08ExpectedClaims([readerA.principalRef, projectRef]));
+    expect(surfaces08Claims(reportA)).toEqual(surfaces08ExpectedClaims([readerA.principalRef]));
     expect(surfaces08Claims(reportB)).toEqual(surfaces08ExpectedClaims([readerB.principalRef]));
-    expect(surfaces08Claims(reportAgent)).toEqual(surfaces08ExpectedClaims([agent.principalRef, projectRef]));
+    expect(surfaces08Claims(reportAgent)).toEqual(surfaces08ExpectedClaims([agent.principalRef]));
     expect(surfaces08Projects(reportA)).toEqual([projectRef]);
     expect(surfaces08Projects(reportB)).toEqual([]);
     const sharedLink = `${readerB.principalRef}/${surfaces08EdgeKind}/${readerA.principalRef}`;
@@ -2060,7 +2097,7 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
     ], [ownerText, projectText, agentText], "reader-b");
     const receipts = await surfaces08Parity(engine, agent, [
       { verb: "vault.weave.report", input: agentRecipe, expected: reportAgent },
-    ], [ownerText, otherText], "agent", [
+    ], [ownerText, otherText, projectText], "agent", [
       { verb: "vault.weave.link.wrong", input: link, status: 403, code: "FORBIDDEN", rpcCode: -32020 },
       { verb: "vault.weave.report", input: { sections: [{ kind: "conflicts", predicates: [predicate] }] },
         status: 400, code: "BAD_REQUEST", rpcCode: -32602 },
@@ -2072,7 +2109,7 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
     for (const [name, actor, recipe, expected, hidden] of [
       ["reader-a", readerA, personRecipe, reportA, [otherText, agentText]],
       ["reader-b", readerB, personRecipe, reportB, [ownerText, projectText, agentText]],
-      ["agent", agent, agentRecipe, reportAgent, [ownerText, otherText]],
+      ["agent", agent, agentRecipe, reportAgent, [ownerText, otherText, projectText]],
     ] as const) {
       const persisted = await surfaces08ReportRead(actor, recipe, hidden, `persisted ${name} report`);
       expect(persisted).toEqual(expected);
@@ -2125,6 +2162,15 @@ function surfaces09String(value: unknown): string {
   if (typeof value !== "string" || value.length === 0)
     throw new Error("SURFACES-09 expected a public string");
   return value;
+}
+// The refused remember leg's code and message, redacted, so a red names why.
+function surfaces09RememberedError(remembered: unknown): string {
+  if (remembered === null || typeof remembered !== "object" || Array.isArray(remembered)) return "remembered is not an object";
+  const error = (remembered as Record<string, unknown>).error;
+  if (error === null || typeof error !== "object" || Array.isArray(error)) return "no error field";
+  const { code, message } = error as Record<string, unknown>;
+  return `error code ${typeof code === "string" ? redactor.text(code) : "none"}, message ${
+    typeof message === "string" ? redactor.text(message).slice(0, 300) : "none"}`;
 }
 class surfaces09ScopeClient extends PublicHttpClient {
   constructor(readonly source: PublicHttpClient) { super(source.url.href, source.options); }
@@ -2563,7 +2609,7 @@ enabled = false
         expect({ check: `agent ${carrier} chat created is an integer`, ok: Number.isInteger(reply.created) })
           .toEqual({ check: `agent ${carrier} chat created is an integer`, ok: true });
         const remembered = reply.oneiron.remembered;
-        if (!("claim" in remembered)) throw new Error("SURFACES-09 proxy did not save its exchange");
+        if (!("claim" in remembered)) throw new Error(`SURFACES-09 proxy did not save its exchange; remembered keys: ${Object.keys(remembered).sort().join(",")}; ${surfaces09RememberedError(remembered)}`);
         expect(remembered.approval).toBe(data.expected.approval);
         const semantic = { ...reply, id: "<chat-id>", created: 0,
           oneiron: { ...reply.oneiron, remembered: { ...remembered, claim: "<claim-ref>" } } };
