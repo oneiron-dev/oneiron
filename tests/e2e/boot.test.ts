@@ -479,6 +479,12 @@ suite.test(test, "BOOT-06", "MCP execute-mode session should work", async () => 
   expect(providers.seenFixtureCalls).toHaveLength(0);
 
   // 1. The read-only agent's program reads the authored preference.
+  // DEFECT (2026-11-10, FIX EXEC-RUN-ANSWER-CEILING): this first run fails -32603 code_run_failed
+  // "gate write rejected: outcome=pending, reasons=[gate.pending.actor_ceiling]". execute_code admits
+  // every tier at Read and the dispatcher judges own-run speech as Reads, but the host then witnesses the
+  // run's final answer as a canonical companion MESSAGE through the actor's own witness door
+  // (code_run/storage/speech_identity.rs), which takes the per-MESSAGE actor ceiling. BOOT-06 stays red
+  // here until a read-only or propose-only run can return its answer without that write.
   scriptProgram(providers, "boot06-read", "reader recalls the authored preference",
     `const answer = await vault.recall(${JSON.stringify(design.readInput)});\nfinish("recalled");`);
   const read = await executeCode(readerMcp, tools, "boot-reader", "Read cobalt-execute-preference using vault.recall at light effort.");
