@@ -648,10 +648,17 @@ impl ClaimCandidate {
                         .as_str()
                         .and_then(|value| EntityId::from_hex(value).ok()),
                 };
+                // An explicit stamp is the copied record's canonical facet or
+                // project, the one its read is judged by; a selector in the
+                // opaque map never overrides it (review round 2 of #6972).
                 if let Some(id) = id {
                     match key.as_str() {
-                        Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId") => body.scope_project = id,
+                        Some("facet" | "facet_ref" | "facetRef") if self.facet_stamp.is_none() => {
+                            body.scope_facet = id;
+                        }
+                        Some("scopeProjectId") if self.project_stamp.is_none() => {
+                            body.scope_project = id;
+                        }
                         _ => {}
                     }
                 }
