@@ -55,7 +55,10 @@ fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_windo
         .local_addr()
         .unwrap()
         .port();
-    let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap();
     let read = |proof: &Value| {
         client
             .get(format!("http://127.0.0.1:{port}/v1/core/conversations"))
@@ -192,7 +195,10 @@ fn a_managed_settings_file_that_sets_the_vaults_clock_is_refused() {
         );
         assert!(output.stdout.is_empty(), "no ready byte before refusal");
         for name in ["data", "http.sock", "ctl.sock", "supervisor.sock"] {
-            assert!(!dir.path().join(name).exists(), "refused boot created {name}");
+            assert!(
+                !dir.path().join(name).exists(),
+                "refused boot created {name}"
+            );
         }
     }
 }
@@ -271,32 +277,58 @@ fn serve(config: &Path, port: u16, log: &Path) -> Server {
         .stdout(file.try_clone().expect("server log file"))
         .stderr(file);
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
-    let probe = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let probe = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    // A registered verb, so a missing credential is answered 401. A path
+    // that names no verb (the unrooted `receipts`) gets the facade's
+    // unknown-verb 400 or 404 on every poll and never reads as ready.
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
+    let mut last = String::from("no answer yet");
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {
             panic!(
-                "oneiron serve exited during startup ({status}): {}",
-                std::fs::read_to_string(log).unwrap_or_default()
+                "oneiron serve exited during startup ({status}); last probe: {last}; log tail:\n{}",
+                log_tail(log)
             );
         }
-        let answered = probe
+        match probe
             .post(&url)
             .header("content-type", "application/json")
             .body("{}")
             .send()
-            .map(|response| response.status().as_u16());
-        if matches!(answered, Ok(401 | 403)) {
-            return server;
+        {
+            Ok(response) if matches!(response.status().as_u16(), 401 | 403) => return server,
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let body: String = response
+                    .text()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(400)
+                    .collect();
+                last = format!("HTTP {status}: {body}");
+            }
+            Err(error) => last = format!("no answer: {error}"),
         }
         assert!(
             Instant::now() < deadline,
-            "oneiron serve never became ready: {}",
-            std::fs::read_to_string(log).unwrap_or_default()
+            "oneiron serve never became ready; last probe: {last}; log tail:\n{}",
+            log_tail(log)
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// The last 60 lines of a server log, so a startup failure keeps its cause
+/// inside the panic message.
+fn log_tail(log: &Path) -> String {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(60)..].join("\n")
 }
 
 fn sigterm(mut server: Server) {
