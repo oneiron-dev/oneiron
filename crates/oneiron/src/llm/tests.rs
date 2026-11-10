@@ -291,3 +291,104 @@ fn sample_envelope() -> CallEnvelope {
         host_paid: false,
     }
 }
+
+/// The auto check reads the candidate the write gate saw: its predicate, source, actor class,
+/// value preview and burst inputs. Rewritten from `besteffort_rejected_stale_canon` (rule D with
+/// a successor): 16a66ff161c (#2496) removed the auto-check request builder, and the typed
+/// `AutoCheckDecisions` (4c541a578f5, #1608) hands the candidate to its provider as the decision
+/// call's state. The request-envelope checks (call class, JSON schema, purpose tier, model id)
+/// have no successor and are not carried.
+#[test]
+fn the_auto_checker_reads_the_candidate_the_gate_saw() {
+    use crate::llm::decision::{
+        DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
+        DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+    };
+    use std::sync::{Arc, Mutex};
+
+    /// Records the state of the one call it answers, and allows.
+    struct Capture(Mutex<Option<serde_json::Value>>);
+    impl DecisionProvider for Capture {
+        fn pin(&self) -> ProviderPin {
+            ProviderPin {
+                rung: DecisionRung::Big,
+                model: "test-auto-checker".into(),
+                version: "1".into(),
+            }
+        }
+        fn decide(&self, call: &DecisionCall<'_>) -> crate::Result<ProviderDecision> {
+            *self.0.lock().unwrap() = Some(call.state.clone());
+            Ok(ProviderDecision {
+                answer: DecisionAnswer::Choice("allow".into()),
+                probability: Some(1.0),
+                paired: None,
+                person: None,
+                served: None,
+                cost_per_thousand: None,
+            })
+        }
+    }
+    struct NoNotes;
+    impl AutoCheckNotes for NoNotes {
+        fn hold_reasons(
+            &self,
+            _: &AutoCheckCandidate<'_>,
+            _: std::time::Instant,
+        ) -> crate::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+    }
+
+    let capture = Arc::new(Capture(Mutex::new(None)));
+    let mut ladder = HeldLadder::unstaffed();
+    ladder.big = Some(Arc::clone(&capture) as Arc<dyn DecisionProvider>);
+    let checker = BoundedAutoChecker::new(AutoCheckDecisions {
+        ladder,
+        principal: crate::test_util::entity(0x5e),
+        dial: DecisionDial {
+            first: DecisionRung::Big,
+            ceiling: DecisionRung::Big,
+            band: DecisionBand::default(),
+        },
+        bands: DecisionBandPolicy::default(),
+        wording: "May this write approve itself?".into(),
+        notes: Arc::new(NoNotes),
+        calibrated: None,
+    });
+    let candidate = AutoCheckCandidateOwned {
+        signals: crate::llm::AutoCheckSignals::default(),
+        predicate: "profile.name".to_owned(),
+        value_preview: "Ada".to_owned(),
+        source: ClaimSource::Generated,
+        lineage: Some(SourceLineage::of(ClaimSource::Generated)),
+        actor_class: "agent".to_owned(),
+        sensitivity_band: Some(0),
+        burst: Some(NormalizedBurstInputs {
+            rate_ratio: 2.5,
+            streak: 3,
+        }),
+    };
+    checker.check(&candidate.borrowed());
+    let state = capture
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the auto check asked its provider");
+
+    // The candidate the gate saw is what the request describes.
+    let rendered = serde_json::to_string_pretty(&state).unwrap();
+    for expected in [
+        "profile.name",
+        "generated",
+        "agent",
+        "Ada",
+        "\"rate_ratio\": 2.5",
+        "\"streak\": 3",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "the auto-check request must describe {expected}"
+        );
+    }
+}
