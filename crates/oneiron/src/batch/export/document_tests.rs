@@ -155,21 +155,34 @@ fn owner_whole_vault_keeps_credentials_and_encoded_payloads_that_scoped_and_cont
     let export = vault.export_whole_vault(true)?;
     export.manifest().validate()?;
     assert!(export.manifest().secrets_included);
-    assert!(
-        export.manifest().records.iter().any(|member| {
-            member.kind == ArchiveRecordKind::DerivationEnvelope
-                && member.path == "records/derivation_envelope.jsonl"
-        }),
-        "the archive names its derivation-envelopes section"
+    // The archive carries the derivation-envelopes and agent-packs sections.
+    // Its writer lists a kind's member only once the kind holds a row, and its
+    // reader reads an absent kind as an empty section, so each section read
+    // back must hold exactly the rows the manifest lists, at the documented path.
+    let manifest_rows = |kind: ArchiveRecordKind, path: &str| -> u64 {
+        let mut rows = 0;
+        for member in export.manifest().records.iter().filter(|m| m.kind == kind) {
+            assert_eq!(member.path, path, "{kind:?} member path");
+            rows += member.rows;
+        }
+        rows
+    };
+    let envelope_rows = manifest_rows(
+        ArchiveRecordKind::DerivationEnvelope,
+        "records/derivation_envelope.jsonl",
     );
-    assert!(
-        export.manifest().records.iter().any(|member| {
-            member.kind == ArchiveRecordKind::AgentPack
-                && member.path == "records/agent_pack.jsonl"
-        }),
-        "the archive names its agent-packs section"
-    );
+    let agent_pack_rows = manifest_rows(ArchiveRecordKind::AgentPack, "records/agent_pack.jsonl");
     let document = vault.read_whole_vault_archive(export.bytes())?;
+    assert_eq!(
+        document.derivation_envelopes.len() as u64,
+        envelope_rows,
+        "the derivation-envelopes section holds the manifest's rows"
+    );
+    assert_eq!(
+        document.agent_packs.len() as u64,
+        agent_pack_rows,
+        "the agent-packs section holds the manifest's rows"
+    );
     let row = document
         .evidence_ledger
         .entities
