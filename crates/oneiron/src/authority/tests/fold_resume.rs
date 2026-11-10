@@ -260,7 +260,11 @@ impl Chain {
                 self.live.push(claims.slip_id);
                 self.row(
                     parent,
-                    AuthorityOp::SlipMint(SlipMintAction { claims, renews: None, minting_member: None }),
+                    AuthorityOp::SlipMint(SlipMintAction {
+                        claims,
+                        renews: None,
+                        minting_member: None,
+                    }),
                     None,
                 )
             }

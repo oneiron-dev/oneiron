@@ -29,7 +29,11 @@ fn transfer(source: &Vault, target: &Vault, oid: LfsOid) -> (usize, usize) {
         }
         let reply = serve_owner_chunk_request(source, &request).unwrap();
         if let ChunkSyncResponse::Chunks(page) = decode(&reply).unwrap() {
-            transferred += page.chunks.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+            transferred += page
+                .chunks
+                .iter()
+                .map(|(_, bytes)| bytes.len())
+                .sum::<usize>();
         }
         match download.accept(target, &reply, time().start).unwrap() {
             Some(next) => request = next,

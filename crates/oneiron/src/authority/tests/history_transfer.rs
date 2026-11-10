@@ -49,9 +49,7 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     corrupt[0][last] ^= 1;
     assert!(c.import_signed_authority_history(&corrupt).is_err());
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
-    let other =
-        encode_authority_log_entry_body(&genesis_entry(112, 1))
-            .unwrap();
+    let other = encode_authority_log_entry_body(&genesis_entry(112, 1)).unwrap();
     assert!(c.import_signed_authority_history(&[other]).is_err());
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
 }

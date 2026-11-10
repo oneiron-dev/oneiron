@@ -270,7 +270,13 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
         vec![],
         vec![ENTITY_TYPE_PERSON],
         entity_record(ENTITY_TYPE_FACET, time(1), 1, 0, b"human"),
-        entity_record(crate::registry::ENTITY_TYPE_MACHINE, time(1), 1, 0, b"human"),
+        entity_record(
+            crate::registry::ENTITY_TYPE_MACHINE,
+            time(1),
+            1,
+            0,
+            b"human",
+        ),
     ] {
         vault.with_write_txn(|txn| {
             vault
