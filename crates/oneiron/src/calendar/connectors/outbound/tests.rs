@@ -7,6 +7,7 @@ use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::test_support::{
     CalendarEventFixture, open_calendar_vault_with_machine_identity as open_calendar_vault,
 };
+use crate::calendar::{index_passport_uid, live_passport_for, live_passports_for_event};
 use std::cell::RefCell;
 
 const NOW: u64 = 1_800_000_000;

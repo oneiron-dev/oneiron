@@ -150,8 +150,7 @@ pub(crate) use self::verdict::{
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use self::index::{
-    CONTENT_HASH_INDEX, CONTENT_HASH_INDEX_SCHEMA_VERSION, MAX_HUB_SKILL_SCAN_ENTRIES,
-    SCHEMA_VERSION, same_hub_alias,
+    CONTENT_HASH_INDEX, CONTENT_HASH_INDEX_SCHEMA_VERSION, SCHEMA_VERSION, same_hub_alias,
 };
 #[cfg(test)]
 use self::support::{map_text, map_value};
