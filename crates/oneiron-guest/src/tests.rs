@@ -3,6 +3,7 @@ use crate::{
     filesystem::Workspace,
     protocol::{MAX_COMPONENT, MAX_FILE, MAX_FRAME, MAX_SOURCE, Session, Snapshot},
 };
+use oneiron_sandbox_contract::GUEST_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -30,8 +31,24 @@ fn get(channel: &mut impl Read) -> Value {
     serde_json::from_slice(&bytes).expect("guest JSON")
 }
 
+/// The guest's next frame that is not streamed output. A program's output
+/// (its finish value, console and store writes) streams to the host as
+/// output frames while it runs (#5998); the host takes each with a receipt.
+fn next_after_output(host: &mut UnixStream) -> Value {
+    loop {
+        let frame = get(host);
+        if !matches!(
+            frame["type"].as_str(),
+            Some("output_text" | "output_bytes" | "store_bytes")
+        ) {
+            return frame;
+        }
+        put(host, json!({"type":"receipt", "accepted":true}));
+    }
+}
+
 fn start(length: usize) -> Value {
-    json!({"type":"start", "version":1, "vm_id":"localtest-1", "tier":"foreign",
+    json!({"type":"start", "version":GUEST_PROTOCOL_VERSION, "vm_id":"localtest-1", "tier":"foreign",
         "pids":2, "component_bytes":length, "source":""})
 }
 
@@ -127,11 +144,30 @@ fn typed_fixture_refuses_first_party_import_and_unknown_credential_args() {
     }
 }
 
+/// The conformance fixture's stream of `result.txt` (open, one chunk, close).
+const STREAM_RESULT_TXT: &str = "      (call $open (i32.const 4128) (i32.const 25) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (local.set $file (i64.load (i32.const 1608)))
+      (if (local.get $length)
+        (then (call $chunk (local.get $file) (local.get $source) (local.get $length) (i32.const 1600)))
+        (else (call $chunk (local.get $file) (i32.const 4192) (i32.const 28) (i32.const 1600))))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (call $close (local.get $file) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))";
+
 #[test]
 fn typed_component_claim_proposal_refuses_the_whole_step() {
-    let fixture = conformance::WAT.replace(
-        "(i32.store (i32.const 2048) (i32.const 0))",
-        "(i32.store (i32.const 2048) (i32.const 1))",
+    // The fixture streams result.txt and returns no proposal (#2664, FIX 367):
+    // drop the stream and return one claim candidate (case 0, zeroed payload).
+    let fixture = conformance::WAT
+        .replace(
+            "(i32.store (i32.const 1040) (i32.const 0))",
+            "(i32.store (i32.const 1040) (i32.const 1)) (i32.store (i32.const 2048) (i32.const 0))",
+        )
+        .replace(STREAM_RESULT_TXT, "");
+    assert!(
+        !fixture.contains("(call $open"),
+        "the stream calls are gone"
     );
     let (_temp, root) = scratch();
     let mut bytes = Vec::new();
@@ -175,33 +211,47 @@ fn start_refuses_authority_version_and_resource_escalation() {
         let mut bytes = Vec::new();
         put(&mut bytes, frame);
         let (transport, _) = channel(bytes);
-        assert!(Session::new(transport).receive().is_err());
+        let (_temp, root) = scratch();
+        let workspace = Workspace::open(&root).expect("workspace");
+        assert!(Session::new(transport).receive(&workspace).is_err());
     }
 }
 
 #[test]
 fn source_order_duplicates_paths_and_budgets_fail_closed() {
     let component = json!({"type":"component", "offset":0, "bytes":[0]});
-    let file = json!({"type":"file", "path":"/mnt/workspace/file", "bytes":[1]});
+    // A source file streams as file_open, its chunks, then file_close (#5006).
+    let file_frames = |path: &str, bytes: Vec<u8>| {
+        let mut frames = vec![json!({"type":"file_open", "path":path, "len":bytes.len()})];
+        if !bytes.is_empty() {
+            frames.push(json!({"type":"file_chunk", "bytes":bytes}));
+        }
+        frames.push(json!({"type":"file_close"}));
+        frames
+    };
+    let file = file_frames("/mnt/workspace/file", vec![1]);
     let cases = vec![
         vec![json!({"type":"ready"})],
-        vec![file.clone()],
+        file.clone(),
         vec![json!({"type":"component", "offset":1, "bytes":[0]})],
         vec![json!({"type":"component", "offset":0, "bytes":[]})],
         vec![component.clone(), component.clone()],
-        vec![component.clone(), file.clone(), file],
-        vec![
-            component.clone(),
-            json!({"type":"file", "path":"/mnt/workspace/../escape", "bytes":[]}),
-        ],
-        vec![
-            component.clone(),
-            json!({"type":"file", "path":"/mnt/uploads/file", "bytes":[]}),
-        ],
-        vec![
-            component,
-            json!({"type":"file", "path":"/mnt/workspace/file", "bytes":vec![0; MAX_FILE + 1]}),
-        ],
+        [vec![component.clone()], file.clone(), file].concat(),
+        [
+            vec![component.clone()],
+            file_frames("/mnt/workspace/../escape", vec![]),
+        ]
+        .concat(),
+        [
+            vec![component.clone()],
+            file_frames("/mnt/uploads/file", vec![]),
+        ]
+        .concat(),
+        [
+            vec![component],
+            file_frames("/mnt/workspace/file", vec![0; MAX_FILE + 1]),
+        ]
+        .concat(),
     ];
     for frames in cases {
         let mut bytes = Vec::new();
@@ -211,7 +261,9 @@ fn source_order_duplicates_paths_and_budgets_fail_closed() {
         }
         put(&mut bytes, json!({"type":"ready"}));
         let (transport, _) = channel(bytes);
-        assert!(Session::new(transport).receive().is_err());
+        let (_temp, root) = scratch();
+        let workspace = Workspace::open(&root).expect("workspace");
+        assert!(Session::new(transport).receive(&workspace).is_err());
     }
 }
 
@@ -223,8 +275,13 @@ fn descriptor_workspace_refuses_symlinks_hardlinks_and_special_files() {
     symlink(&outside, root.join("escape")).expect("symlink fixture");
     let workspace = Workspace::open(&root).expect("workspace");
     assert!(workspace.read("/mnt/workspace/escape/secret").is_err());
-    let proposal = Snapshot::from([("/mnt/workspace/escape/secret".into(), b"changed".to_vec())]);
-    assert!(workspace.apply(&proposal).is_err());
+    // A write lands only by create_seed since #5006 (16349c2258d): it cannot
+    // follow the planted symlink out of the workspace either.
+    assert!(
+        workspace
+            .create_seed("/mnt/workspace/escape/secret")
+            .is_err()
+    );
     assert!(workspace.snapshot().is_err());
     fs::remove_file(root.join("escape")).expect("remove symlink");
     fs::hard_link(outside.join("secret"), root.join("linked")).expect("hardlink fixture");
@@ -250,12 +307,19 @@ fn descriptor_walk_refuses_symlink_ancestors_and_conflicting_tree() {
     symlink(root.join("real"), root.join("alias")).expect("alias");
     assert!(Workspace::open(&root.join("alias")).is_err());
     let workspace = Workspace::open(&root.join("real")).expect("workspace");
-    let files = Snapshot::from([
-        ("/mnt/workspace/a".into(), vec![]),
-        ("/mnt/workspace/a/b".into(), vec![]),
-    ]);
-    assert!(workspace.seed(&files).is_err());
-    assert!(workspace.snapshot().expect("empty").is_empty());
+    // Seeding streams one file at a time since #5006 (16349c2258d): the file
+    // `a` lands, and the conflicting `a/b` is refused at the descriptor walk
+    // and writes nothing.
+    drop(
+        workspace
+            .create_seed("/mnt/workspace/a")
+            .expect("the first file"),
+    );
+    assert!(workspace.create_seed("/mnt/workspace/a/b").is_err());
+    assert_eq!(
+        workspace.snapshot().expect("the first file only"),
+        Snapshot::from([("/mnt/workspace/a".to_owned(), 0)])
+    );
 }
 
 fn real_foreign_component() -> Vec<u8> {
@@ -278,7 +342,10 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
         .expect("deadline");
     let path = root.clone();
     let worker = std::thread::spawn(move || serve_localtest(guest, &path));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"hello", "version":GUEST_PROTOCOL_VERSION})
+    );
     let component = real_foreign_component();
     let mut start = start(component.len());
     start["source"] = "propose.delete('/mnt/workspace/removed'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/destination'); finish('ok');".into();
@@ -289,17 +356,21 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
             json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
         );
     }
-    put(
-        &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/removed", "bytes":b"old"}),
-    );
-    put(
-        &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/moved", "bytes":b"identity"}),
-    );
+    // Each seeded file streams as file_open, a chunk, then file_close (#5006).
+    for (path, bytes) in [
+        ("/mnt/workspace/removed", &b"old"[..]),
+        ("/mnt/workspace/moved", &b"identity"[..]),
+    ] {
+        put(
+            &mut host,
+            json!({"type":"file_open", "path":path, "len":bytes.len()}),
+        );
+        put(&mut host, json!({"type":"file_chunk", "bytes":bytes}));
+        put(&mut host, json!({"type":"file_close"}));
+    }
     put(&mut host, json!({"type":"ready"}));
     assert_eq!(
-        get(&mut host),
+        next_after_output(&mut host),
         json!({"type":"delete", "path":"/mnt/workspace/removed"})
     );
     put(&mut host, json!({"type":"receipt", "accepted":true}));
@@ -308,6 +379,8 @@ fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
         json!({"type":"rename", "from":"/mnt/workspace/moved", "to":"/mnt/workspace/destination"})
     );
     put(&mut host, json!({"type":"receipt", "accepted":true}));
+    // The step's result frame (#1670) comes before the finish.
+    assert_eq!(get(&mut host)["type"], "step_result");
     assert_eq!(get(&mut host), json!({"type":"finish", "status":0}));
     worker.join().expect("guest thread").expect("guest success");
     assert_eq!(fs::read(root.join("removed")).expect("seeded file"), b"old");
@@ -326,7 +399,10 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
         .expect("deadline");
     let path = root.clone();
     let worker = std::thread::spawn(move || serve_localtest(guest, &path));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"hello", "version":GUEST_PROTOCOL_VERSION})
+    );
     let component = real_foreign_component();
     let mut start = start(component.len());
     start["source"] =
@@ -338,12 +414,18 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
             json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
         );
     }
+    // The seeded file streams as file_open, a chunk, then file_close (#5006).
     put(
         &mut host,
-        json!({"type":"file", "path":"/mnt/workspace/old", "bytes":b"old"}),
+        json!({"type":"file_open", "path":"/mnt/workspace/old", "len":3}),
     );
+    put(&mut host, json!({"type":"file_chunk", "bytes":b"old"}));
+    put(&mut host, json!({"type":"file_close"}));
     put(&mut host, json!({"type":"ready"}));
-    assert_eq!(get(&mut host), json!({"type":"finish", "status":1}));
+    assert_eq!(
+        next_after_output(&mut host),
+        json!({"type":"finish", "status":1})
+    );
     assert!(worker.join().expect("guest thread").is_err());
     assert_eq!(fs::read(root.join("old")).expect("seeded file"), b"old");
 }
