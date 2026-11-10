@@ -2894,6 +2894,17 @@ function museRecall02ExpectBoolean(
   }
 }
 
+function museRecall02ExpectClampedPack(label: string, pack: MuseRecall02Pack): void {
+  try {
+    expect(pack.retrieval_meta.limit_clamped).toBe(true);
+  } catch (error) {
+    throw new Error(
+      `MUSE-RECALL-02 SPEC UNCLEAR 2026-11-11: P-RECALL-007 (ARCH-0044:134) says limit=1001 is served at 1000 and flagged, FIX 56 task-cap row 5 outcome (b) says the whole requested limit is served with no clamp; ${label}; retrieval_meta.limit_clamped=${String(pack.retrieval_meta.limit_clamped)} itemCount=${pack.items.length} meta=${redactor.text(JSON.stringify(pack.retrieval_meta) ?? "<missing>")}; ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProviders): Promise<void> {
   const occurred = 1769947200;
   // Generated sentinels only. The query carries queryToken alone, so a
@@ -3049,8 +3060,7 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   const clampedPack = await engine.client.call("vault.recall", {
     query: queryToken, effort: "light", limit: 1001,
   });
-  museRecall02ExpectBoolean("HTTP limit=1001 reports limit_clamped",
-    clampedPack.retrieval_meta.limit_clamped, true);
+  museRecall02ExpectClampedPack("HTTP vault.recall", clampedPack);
   expect(clampedPack.items.length).toBeLessThanOrEqual(1000);
   museRecall02ExpectBoolean("HTTP clamped pack contains witnessed query token",
     museRecall02Contains(clampedPack, queryToken), true);
@@ -3059,8 +3069,7 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
     const clampedOverWs = (await socket.call("vault.recall", {
       query: queryToken, effort: "light", limit: 1001,
     })).value;
-    museRecall02ExpectBoolean("WS limit=1001 reports limit_clamped",
-      clampedOverWs.retrieval_meta.limit_clamped, true);
+    museRecall02ExpectClampedPack("WS vault.recall", clampedOverWs);
     museRecall02ExpectBoolean("WS clamped pack contains witnessed query token",
       museRecall02Contains(clampedOverWs, queryToken), true);
   } finally { socket.close() }
@@ -3197,8 +3206,7 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   const clampedAfterRestart = await engine.client.call("vault.recall", {
     query: queryToken, effort: "light", limit: 1001,
   });
-  museRecall02ExpectBoolean("HTTP limit=1001 after restart reports limit_clamped",
-    clampedAfterRestart.retrieval_meta.limit_clamped, true);
+  museRecall02ExpectClampedPack("HTTP vault.recall after restart", clampedAfterRestart);
   expect(providers.seenFixtureCalls.length).toBe(callsBeforeRestartLight);
   const stillRevokedReply = await reader.client.raw("POST", "/v1/core/facade/vault.recall", {
     query: queryToken, effort: "light", limit: 10,
@@ -4192,7 +4200,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
             ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
             : errorText(error);
           throw new Error(
-            `MUSE-RECALL-05 SPEC UNCLEAR 2026-11-11: actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
+            `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
             { cause: error },
           );
         }
@@ -4288,7 +4296,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     } catch (error) {
       const extraNames = afterWiden.names.filter((name) => !readerBaseline.names.includes(name));
       throw new Error(
-        `MUSE-RECALL-05 SPEC UNCLEAR 2026-11-11: actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
+        `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
         { cause: error },
       );
     }
@@ -5152,6 +5160,21 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       engine, "Muse Recall 07 Retired Person", occurredAt,
     );
     const retiredShortId = museRecall07RequirePersonShortId(retiredPerson);
+    const expectRetiredRow = (
+      batch: MuseRecall07BatchReply,
+      index: number,
+      stage: string,
+    ): void => {
+      const row = batch.results[index];
+      try {
+        expect(row?.outcome).toBe("deleted");
+      } catch (error) {
+        throw new Error(
+          `MUSE-RECALL-07 SPEC UNCLEAR 2026-11-11: hard-deleted PERSON ref=${retiredPerson.shortRef} expected=deleted outcome=${row?.outcome ?? "<missing>"} result_status=${row?.result?.status ?? "<missing>"} row=${redactor.text(JSON.stringify(row) ?? "<missing>")}; ${stage}; HYD retirement versus ARCH-0038 hard purge; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+    };
     const retiredHydrated = await museRecall07Hydrate(engine.client, [retiredPerson.shortRef]);
     expect(retiredHydrated.value).toHaveLength(1);
     expect(retiredHydrated.value[0]?.id_hex).toBe(retiredPerson.view.id_hex);
@@ -5182,12 +5205,12 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
         entity_ref: retiredPerson.shortRef,
       } satisfies FacadeInput<"vault.get">),
       (read) => read.value === null,
-      { label: "MUSE-RECALL-07 hard-deleted PERSON reads absent through vault.get" },
+      { label: `MUSE-RECALL-07 hard-deleted PERSON ref=${retiredPerson.shortRef} reads absent through vault.get` },
     );
     expect(retiredRead.value).toBeNull();
     await engine.requireHttpDoor("/v1/core/batch/shortId/hydrate", "POST");
     const retiredBatch = await museRecall07BatchHydrate(engine.client, [retiredPerson.shortRef]);
-    expect(retiredBatch.results[0]?.outcome).toBe("deleted");
+    expectRetiredRow(retiredBatch, 0, "owner batch hydrate after hard delete");
 
     const replacementPersons: MuseRecall07Person[] = [];
     for (const name of [
@@ -5222,7 +5245,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(batch.results[0]?.result?.id).toBe(liveView.id_hex);
     expect(batch.results[1]?.outcome).toBe("live");
     expect(batch.results[1]?.result?.id).toBe(firstReplacement.view.id_hex);
-    expect(batch.results[2]?.outcome).toBe("deleted");
+    expectRetiredRow(batch, 2, "owner mixed 50-ref batch hydrate");
     for (const row of batch.results.slice(3)) {
       expect(row.outcome).toBe("not_found");
       expect(row.error?.kind).toBe("not_found");
@@ -5246,7 +5269,14 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     const hydratedAfterRestart = await museRecall07BatchHydrate(engine.client, [
       liveShortId, retiredPerson.shortRef, "ms999999:00",
     ]);
-    expect(hydratedAfterRestart.results.map(row => row.outcome)).toEqual(["live", "deleted", "not_found"]);
+    try {
+      expect(hydratedAfterRestart.results.map(row => row.outcome)).toEqual(["live", "deleted", "not_found"]);
+    } catch (error) {
+      throw new Error(
+        `MUSE-RECALL-07 batch outcomes after restart: retired_ref=${retiredPerson.shortRef} expected=live,deleted,not_found rows=${redactor.text(JSON.stringify(hydratedAfterRestart.results) ?? "<missing>")}; ${errorText(error)}`,
+        { cause: error },
+      );
+    }
     expect(hydratedAfterRestart.results[0]?.result?.id).toBe(liveView.id_hex);
     const retiredAfterRestart = await engine.client.call("vault.get", {
       entity_ref: retiredPerson.shortRef,
