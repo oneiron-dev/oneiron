@@ -609,6 +609,7 @@ fn parent_delete_redacts_lexical_hint_claim_decisions_and_bundle_refs() -> Resul
         grant_ref: None,
         diff_handle: vec![0xAA],
         read_frontier_hash: [0; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     let bundle = crate::store::GateDecisionRecord {
