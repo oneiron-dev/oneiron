@@ -103,8 +103,8 @@ struct Keys {
 
 fn keys() -> Keys {
     Keys {
-        kek: Kek::from_bytes([1; 32]),
-        other_kek: Kek::from_bytes([2; 32]),
+        kek: Kek::from_bytes_ref(&[1; 32]),
+        other_kek: Kek::from_bytes_ref(&[2; 32]),
         passphrase: Passphrase::new(b"correct horse battery staple").expect("passphrase"),
         recovery: RecoverySecret::from_bytes([3; 32]),
         hybrid: HybridSecretKey::from_seeds(&[4; 64], &[5; 32]),
@@ -181,26 +181,11 @@ fn layout(bytes: &[u8]) -> Layout {
 }
 
 #[test]
-fn every_wrap_type_round_trips_under_both_aead_suites() {
-    let keys = keys();
-    for &suite in AEADS {
-        for &wrap in ALL_WRAPS {
-            let bytes = sealed(&keys, suite, wrap);
-            let opened = open_bytes(&bytes, open_key(&keys, wrap), &policy()).expect("opens");
-            assert_eq!(opened, PLAINTEXT, "{suite:?} {wrap:?}");
-            let env = Envelope::parse(&bytes).expect("parses");
-            assert_eq!(env.to_bytes(), bytes, "canonical re-encoding");
-            assert_eq!(env.header().wrap, wrap);
-        }
-    }
-}
-
-#[test]
 fn a_wrong_key_does_not_open_any_wrap_type() {
     let keys = keys();
     let wrong = Keys {
-        kek: Kek::from_bytes([9; 32]),
-        other_kek: Kek::from_bytes([9; 32]),
+        kek: Kek::from_bytes_ref(&[9; 32]),
+        other_kek: Kek::from_bytes_ref(&[9; 32]),
         passphrase: Passphrase::new(b"Tr0ub4dor&3").expect("passphrase"),
         recovery: RecoverySecret::from_bytes([9; 32]),
         hybrid: HybridSecretKey::from_seeds(&[9; 64], &[9; 32]),

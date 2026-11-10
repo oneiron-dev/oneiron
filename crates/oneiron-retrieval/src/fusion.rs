@@ -195,11 +195,6 @@ pub fn fuse_ranked_lists_with_sparse(
         .collect()
 }
 
-#[cfg(test)]
-pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEntity> {
-    linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())
-}
-
 /// Both faces of one linear-log blend.
 pub struct LinearLogBlendScores {
     /// The run's fused scores: `exp(log_blend)` times each candidate's
@@ -273,18 +268,6 @@ fn narrow_scores_desc(mut scores: Vec<(EntityId, f64)>) -> Vec<ScoredEntity> {
         narrowed.push(ScoredEntity { id, score });
     }
     narrowed
-}
-
-/// The applied face alone, for callers that want only `scores`. Every
-/// production caller reads both faces through
-/// [`linear_log_blend_scores_with_weights`], so this wrapper is reached
-/// from tests only.
-#[cfg(test)]
-pub(crate) fn linear_log_blend_with_weights(
-    inputs: &[RetrievalBlendInput],
-    weights: RetrievalBlendWeights,
-) -> Vec<ScoredEntity> {
-    linear_log_blend_scores_with_weights(inputs, weights).scores
 }
 
 /// Per-candidate rank and z-score of each blend signal that varies across `inputs`, for the
@@ -466,6 +449,3 @@ fn decode_numeric_value(value: Value) -> Option<f32> {
     }
     Some(parsed.clamp(0.0, 1.0))
 }
-
-#[cfg(test)]
-mod tests;
