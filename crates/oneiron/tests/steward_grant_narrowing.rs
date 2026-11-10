@@ -212,10 +212,16 @@ fn every_narrowing_stays_in_the_record_when_several_share_a_second() {
         steps.len() - 1,
         "one record for each narrowing: {records:?}"
     );
-    for (index, (_, record)) in records.iter().enumerate() {
-        assert_eq!(record.before, steps[index], "narrowing {index}, before");
-        assert_eq!(record.after, steps[index + 1], "narrowing {index}, after");
-    }
+    // Each step is there once, whatever order one second's records come in.
+    let kept: BTreeSet<_> = records
+        .iter()
+        .map(|(_, record)| (record.before.clone(), record.after.clone()))
+        .collect();
+    let applied: BTreeSet<_> = steps
+        .windows(2)
+        .map(|step| (step[0].clone(), step[1].clone()))
+        .collect();
+    assert_eq!(kept, applied, "the verbs before and after each narrowing");
     assert!(
         records.windows(2).all(|pair| pair[0].0 <= pair[1].0),
         "oldest first: {records:?}"
