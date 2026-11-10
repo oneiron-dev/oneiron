@@ -552,6 +552,21 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     };
     const agent = await secrets03Pair("SECRETS-03 custody agent");
     const noConnectorGrant = await secrets03Pair("SECRETS-03 unconsented agent");
+    // ARCH-0040 mcp-actor-ceilings: a paired agent's MCP credential resolves only
+    // with a manifest ceiling row for (agent, principal); without one, initialize
+    // answers JSON-RPC -32001 mcp_actor_ceiling_missing (actor_dispatch/auth.rs:300).
+    // Install before connector consent: actor ceilings enter the policy frontier,
+    // and a standing connector grant is valid only under the frontier that minted it.
+    // "proposed" preserves the agent's default Gate posture; read it back after restart.
+    const secrets03CeilingRow: secrets03Ceiling = { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "proposed" };
+    const secrets03CeilingBefore = await secrets03Facade(owner, "vault.gate.policy.get", {});
+    const secrets03CeilingCurrent = secrets03CeilingBefore.manifests.find(row => row.manifest_ref === secrets03CeilingBefore.default_manifest_ref);
+    if (!secrets03CeilingCurrent) throw new Error("SECRETS-03 default policy is absent");
+    await secrets03Facade(owner, "vault.gate.policy.put", {
+      manifest_ref: secrets03CeilingCurrent.manifest_ref, expected_body_hash: secrets03CeilingCurrent.body_hash,
+      manifest: { ...secrets03CeilingCurrent.manifest,
+        actor_ceilings: [...secrets03CeilingCurrent.manifest.actor_ceilings, secrets03CeilingRow] },
+    });
     const registeredConnector = await secrets03OwnerRequest<secrets03RegisteredConnector>("POST", "/v1/owner/connectors/register", {
       connector: "secrets_probe", summary: "SECRETS-03 public custody check",
       tools: { check: { data_class: "public", spends: false } },
@@ -640,9 +655,20 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const secrets03UseResult = async (value: unknown, generation: number, surface: "REST" | "MCP") => {
       const answer = secrets03Object(value, `${surface} self.use answer`);
       // MCP completion describes the carrier, not the operation's delivery.
-      expect({ check: `SECRETS-03 ${surface} self.use answers the operation`,
+      const secrets03FailedResult = answer.result !== null && typeof answer.result === "object" && !Array.isArray(answer.result)
+        ? answer.result as Record<string, unknown> : {};
+      // This DTO has failure, not a typed code/reason/stage; report absent fields
+      // explicitly, plus the connector outcome and reason codes, never its body.
+      const secrets03FailureFields = answer.status === "answered" ? {} : {
+        code: secrets03SafeText(answer.code), reason: secrets03SafeText(answer.reason), stage: secrets03SafeText(answer.stage),
+        failure: secrets03SafeText(answer.failure), "result.outcome": secrets03SafeText(secrets03FailedResult.outcome),
+        "result.reasons": Array.isArray(secrets03FailedResult.reasons)
+          ? secrets03FailedResult.reasons.map((reason: unknown) => secrets03SafeText(reason))
+          : secrets03JsonType(secrets03FailedResult.reasons),
+      };
+      expect({ check: `SECRETS-03 ${surface} self.use answers the operation`, ...secrets03FailureFields,
         status: secrets03SafeText(answer.status), ok: answer.status === "answered" }).toEqual({
-        check: `SECRETS-03 ${surface} self.use answers the operation`, status: "answered", ok: true });
+        check: `SECRETS-03 ${surface} self.use answers the operation`, ...secrets03FailureFields, status: "answered", ok: true });
       const result = secrets03Object(answer.result, `${surface} self.use answer.result`);
       expect({ check: `SECRETS-03 ${surface} self.use delivers the connector reply`,
         outcome: secrets03SafeText(result.outcome), ok: result.outcome === "delivered" }).toEqual({
@@ -703,20 +729,6 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       reveal: secrets03SafeText(restartedCard.reveal), ok: restartedCard.handle === handle && restartedCard.status === "active"
         && restartedCard.reveal === "refused" }).toEqual({ check: "SECRETS-03 restarted handle stays active and reveal-refused",
       status: "active", reveal: "refused", ok: true });
-    // ARCH-0040 mcp-actor-ceilings: a paired agent's MCP credential resolves only
-    // with a manifest ceiling row for (agent, principal); without one, initialize
-    // answers JSON-RPC -32001 mcp_actor_ceiling_missing (actor_dispatch/auth.rs:300).
-    // The owner writes the row through the public policy door; "proposed" keeps the
-    // agent's Gate posture exactly as the no-row default its REST uses above had.
-    const secrets03CeilingRow: secrets03Ceiling = { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "proposed" };
-    const secrets03CeilingBefore = await secrets03Facade(owner, "vault.gate.policy.get", {});
-    const secrets03CeilingCurrent = secrets03CeilingBefore.manifests.find(row => row.manifest_ref === secrets03CeilingBefore.default_manifest_ref);
-    if (!secrets03CeilingCurrent) throw new Error("SECRETS-03 default policy is absent");
-    await secrets03Facade(owner, "vault.gate.policy.put", {
-      manifest_ref: secrets03CeilingCurrent.manifest_ref, expected_body_hash: secrets03CeilingCurrent.body_hash,
-      manifest: { ...secrets03CeilingCurrent.manifest,
-        actor_ceilings: [...secrets03CeilingCurrent.manifest.actor_ceilings, secrets03CeilingRow] },
-    });
     const secrets03CeilingAfter = await secrets03Facade(owner, "vault.gate.policy.get", { manifest_ref: secrets03CeilingCurrent.manifest_ref });
     const secrets03CeilingSaved = secrets03CeilingAfter.manifests.find(row => row.manifest_ref === secrets03CeilingCurrent.manifest_ref);
     expect({ check: "SECRETS-03 agent MCP ceiling reads back trusted", ok: secrets03CeilingSaved?.trusted }).toEqual({
