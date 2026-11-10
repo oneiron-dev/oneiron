@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, PairingPrincipal, format_pairing_link};
+use oneiron::authority::{CapabilitySlip, PairingPrincipal, format_pairing_link};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{MemoryError, RecallScope, ScopedClaimInput, WitnessTurn};
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -36,6 +36,11 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
         let person = vault.ensure_embedded_owner_actor().unwrap().to_hex();
+        // FIX-LIST 3018 (0bd0f4225f5): the server draws its host issuer seed
+        // from this install's keystore, not the configured secret. Install
+        // before SyncServer::new so bootstrap roots and caches the issuer;
+        // links below re-load that same issuer from the vault.
+        oneiron_server::config::KeystoreConfig::default().install_on(&vault, dir.path());
         let config = SyncServerConfig {
             auth_secret: Some(SECRET.to_owned()),
             ..Default::default()
@@ -56,7 +61,7 @@ impl Fixture {
 
     /// A link the owner created on the shared vault, and its expiry.
     fn link(&self, verbs: &[&str], holder: &str, class: Option<&str>) -> (String, u64) {
-        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let issuer = self.vault.load_host_slip_issuer().unwrap();
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
         let link = self
@@ -85,7 +90,7 @@ impl Fixture {
     }
 
     fn full_vault_link(&self) -> String {
-        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let issuer = self.vault.load_host_slip_issuer().unwrap();
         let link = self
             .vault
             .issue_pairing_link_for_principal(
@@ -475,7 +480,7 @@ async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
         let client = OneironClient::connect(&url, &credential).unwrap();
         client.vault_receipts(10, &[], None).unwrap();
         let slip = CapabilitySlip::from_token(&bare_slip(&credential)).unwrap();
-        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let issuer = vault.load_host_slip_issuer().unwrap();
         vault
             .revoke_capability_slip(&issuer, slip.claims.slip_id)
             .unwrap();

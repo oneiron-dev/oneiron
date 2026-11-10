@@ -61,7 +61,7 @@ pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
         .stderr(file);
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
     let probe = reqwest::blocking::Client::new();
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {

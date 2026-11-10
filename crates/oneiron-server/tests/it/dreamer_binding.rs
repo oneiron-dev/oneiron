@@ -104,35 +104,54 @@ fn follows_the_prompt(case: &Case) -> Reply {
             return json!({"resolution": "supersede", "value": second}).to_string();
         }
         let input = text(messages.last().unwrap());
-        let turn = input
-            .lines()
-            .rev()
-            .find_map(|line| line.strip_prefix('['))
-            .and_then(|line| line.split_whitespace().next())
-            .unwrap()
-            .to_owned();
+        // The call-local labels (FIX 7506 P1): turns read `[T<n> speaker]
+        // text`, entities `entity P<n> ...`, claims `claim C<n> <predicate>
+        // = ...`. The quote is the shown turn text whole, so it binds the
+        // one occurrence that text holds.
+        let mut turn = None;
+        for line in input.lines() {
+            let Some(rest) = line.strip_prefix('[') else {
+                continue;
+            };
+            let Some((head, words)) = rest.split_once("] ") else {
+                continue;
+            };
+            let label = head.split_whitespace().next().unwrap_or_default();
+            if label.len() > 1
+                && label.starts_with('T')
+                && label[1..].bytes().all(|byte| byte.is_ascii_digit())
+            {
+                turn = Some((label.to_owned(), words.to_owned()));
+            }
+        }
+        let (turn_label, quote) = turn.unwrap();
         let mut subject = None;
         let mut listed = None;
         for line in input.lines() {
             let mut words = line.split_whitespace();
             match (words.next(), words.next(), words.next()) {
-                (Some("entity"), Some(id), _) => subject = Some(id.to_owned()),
-                (Some("claim"), Some(id), Some(named)) if named == predicate => {
+                (Some("entity"), Some(id), _) if id.starts_with('P') => {
+                    subject = Some(id.to_owned());
+                }
+                (Some("claim"), Some(id), Some(named))
+                    if named == predicate && id.starts_with('C') =>
+                {
                     listed = subject.clone().map(|subject| (subject, id.to_owned()));
                 }
                 _ => {}
             }
         }
-        let evidence = json!([{"source_id": turn, "byte_range": [0, 4]}]);
+        let evidence = json!([{"source": turn_label.clone(), "quote": quote}]);
         match listed {
             Some((subject, claim)) => json!({"candidates": [{
                 "subject": subject, "predicate": predicate, "value": second,
                 "corrects": claim, "confidence": 0.9, "evidence_refs": evidence,
             }]}),
             None => json!({
-                "persons": [{"id": PERSON, "name": "Owen", "evidence_turn_refs": [turn]}],
+                "persons": [{"id": "new:P1", "name": "Owen",
+                    "evidence_turn_refs": [turn_label]}],
                 "candidates": [{
-                    "subject": PERSON, "predicate": met, "value": first,
+                    "subject": "new:P1", "predicate": met, "value": first,
                     "confidence": 0.9, "evidence_refs": evidence,
                 }],
             }),
@@ -458,7 +477,20 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
             assert_eq!(body["reasoning_budget_tokens"], 4_096, "{body}");
         }
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        let person = EntityId::from_hex(PERSON).unwrap();
+        // The engine mints the person the pass met (FIX 7506 P1): its id is
+        // the landed claim's subject. With no claim (the refused arms) any
+        // id without claims reads the same empty set.
+        let person = vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .iter()
+            .filter_map(|id| vault.get_claim(id).ok().flatten())
+            .find(|claim| claim.predicate == "residence.city")
+            .and_then(|claim| match claim.subject {
+                oneiron::ClaimSubject::Entity(id) => Some(id),
+                _ => None,
+            })
+            .unwrap_or(EntityId::from_hex(PERSON).unwrap());
         assert_eq!(
             claims_on(&vault, person, "residence.city").len(),
             usize::from(!stray),

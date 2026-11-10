@@ -109,6 +109,11 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
 
     let vault =
         Arc::new(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
+    // The shipped commands rooted this vault with this install's host issuer
+    // seed; install this install's keystore as `oneiron serve` does, so the
+    // in-process server loads that same issuer instead of serving rootless
+    // (pairing redeem is unauthorized without it).
+    oneiron_server::config::KeystoreConfig::default().install_on(&vault, &vault_path);
     let server = Arc::new(
         SyncServer::new(
             vault,
