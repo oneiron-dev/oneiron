@@ -156,6 +156,17 @@ fn named(named: &Named) -> ItemRef {
     }
 }
 
+/// Writes the shipped policy with a `core:read` grant for `reader`, as an
+/// owner's policy lets a member read: the sources `reader` cites then read
+/// back to it, and the commit's source recheck finds them served.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_core_read(vault: &Vault, reader: EntityId) -> Result<()> {
+    super::consolidation::shipped_policy_with_reader(vault, &reader.to_hex())
+}
+
 /// The version of `id` as `actor` of `class` reads it now, as a caller's
 /// read serves a source it cites; `None` when the actor does not read it.
 ///
