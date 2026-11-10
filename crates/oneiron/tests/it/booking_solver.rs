@@ -17,21 +17,16 @@
 //!    field to travel in.
 
 use crate::common::entity as test_id;
-use oneiron::booking::config::BOOKING_EVENT_TYPE_PREDICATE;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
-    WriteProvenance, booking::ActiveHoldSource, booking::BOOKING_EVENT_TYPE_META_PREFIX,
-    booking::BOOKING_EVENT_TYPE_SCHEMA_VERSION, booking::BookingError,
-    booking::BookingEventTypeClaimValue, booking::BookingSolver, booking::ConstraintObject,
-    booking::DEFAULT_INTRO_DURATION_MIN, booking::DisclosureRung, booking::EventDetailsRow,
-    booking::EventRow, booking::EventTypeConfig, booking::EventTypeKey,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    booking::ActiveHoldSource, booking::BookingError, booking::BookingSolver,
+    booking::ConstraintObject, booking::DEFAULT_INTRO_DURATION_MIN, booking::DisclosureRung,
+    booking::EventDetailsRow, booking::EventRow, booking::EventTypeConfig, booking::EventTypeKey,
     booking::HostAvailabilityConfig, booking::NoActiveHolds, booking::RoutingMode,
     booking::RungProjection, booking::SlotOracle, booking::SolveRequest, booking::SolveResult,
-    booking::SurfaceClass, booking::WeeklyWallWindow, booking::encode_event_type_claim_value,
-    booking::event_type_index_key, booking::is_booking_claim_predicate, booking::project_at_rung,
-    booking::slot_mask,
+    booking::SurfaceClass, booking::WeeklyWallWindow, booking::project_at_rung, booking::slot_mask,
 };
 use rmpv::Value;
 
@@ -184,62 +179,6 @@ fn store_event(
     }
 }
 
-/// One `booking.event_type` configuration claim, written through the same
-/// ordinary claim-candidate door a page editor would use.
-fn store_event_type_claim(
-    vault: &Vault,
-    actor: EntityId,
-    page: EntityId,
-    index: u8,
-    config: EventTypeConfig,
-) {
-    store_event_type_claim_at(
-        vault,
-        actor,
-        page,
-        index,
-        config,
-        ClaimApprovalStatus::Approved,
-    );
-}
-
-/// The same door at an explicit approval status, for the read-admission oracle.
-fn store_event_type_claim_at(
-    vault: &Vault,
-    actor: EntityId,
-    page: EntityId,
-    index: u8,
-    config: EventTypeConfig,
-    approval: ClaimApprovalStatus,
-) {
-    let value = BookingEventTypeClaimValue {
-        schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-        page_ref: page,
-        config,
-    };
-    vault
-        .batch()
-        .claim_candidate(
-            &claim_id(PAGE_SEED, index),
-            ClaimCandidate::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(page),
-                encode_event_type_claim_value(&value).expect("encode configuration"),
-                1.0,
-            ),
-            &WriteEnvelope::new(
-                WriteActor::new(actor, EdgeActorClass::Human),
-                ClaimSource::UserStated,
-                WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
-                approval,
-            ),
-            at(1),
-            1,
-        )
-        .commit()
-        .expect("the booking claim family passes the write door");
-}
-
 fn window(weekday: u8, start_hour: u16, end_hour: u16) -> WeeklyWallWindow {
     WeeklyWallWindow {
         weekday,
@@ -321,11 +260,9 @@ fn slot_hours(result: &SolveResult) -> Vec<u64> {
         .collect()
 }
 
-const SURVIVOR_MORNING: u64 = 9 * 60 + 30;
 const HOLD_WITNESS: u64 = 10 * 60;
 const BUSY_WITNESS: u64 = 11 * 60;
 const CONSTRAINT_WITNESS: u64 = 12 * 60;
-const SURVIVOR_AFTERNOON: u64 = 12 * 60 + 30;
 
 /// The busy-hour fixture the oracle removes candidates around.
 fn seed_busy_hour(vault: &Vault, actor: EntityId) {

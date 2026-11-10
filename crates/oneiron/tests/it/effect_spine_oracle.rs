@@ -1403,12 +1403,6 @@ mod one1891 {
             .expect("write provider prior")
     }
 
-    pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
-        oneiron::provider_confidence::effective_confidence(vault, claim)
-            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
-            .expect("effective")
-    }
-
     pub(super) fn decide(
         vault: &Vault,
         candidates: &[EntityResolutionCandidate],
@@ -1416,10 +1410,6 @@ mod one1891 {
     ) -> EntityResolutionWaterfallDecision {
         oneiron::evaluate_entity_resolution_waterfall(vault, candidates, high_collision)
             .expect("waterfall")
-    }
-
-    pub(super) fn close(actual: f32, expected: f32) -> bool {
-        (actual - expected).abs() < 1e-6
     }
 
     /// `(PERSON entities, CLAIM entities)` — the two counts a read must never
@@ -1445,10 +1435,6 @@ mod one1891 {
             vault, provider, evidence,
         )
         .expect("evidence-carrying prior count")
-    }
-
-    pub(super) fn clear_indexes(vault: &Vault, provider: &str) {
-        oneiron::clear_provider_confidence_indexes(vault, provider).expect("clear indexes");
     }
 
     pub(super) fn set_indexes(

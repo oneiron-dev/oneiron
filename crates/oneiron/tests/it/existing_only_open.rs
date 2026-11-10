@@ -12,7 +12,7 @@
 //! The module is registered under the same target gate in `main.rs`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -30,18 +30,6 @@ fn existing_only_config() -> VaultConfig {
 
 fn entry_count(path: &Path) -> usize {
     std::fs::read_dir(path).expect("readable directory").count()
-}
-
-/// A trusted dictionary root: the Chinese analyzer probes
-/// `<root>/zh/jieba.dict.utf8`, so these bytes are hashed into the vault's
-/// persisted analyzer manifest and naming the root is the only way to reopen a
-/// vault built over it.
-fn trusted_dict_root(dir: &Path) -> PathBuf {
-    let root = dir.join("trusted-dicts");
-    std::fs::create_dir_all(root.join("zh")).expect("dict dir");
-    let dict = root.join("zh").join("jieba.dict.utf8");
-    std::fs::write(dict, "研究 100 n\n東京 90 n\n").expect("dict bytes");
-    root
 }
 
 /// Creates the fixture vault and leaves one text-indexed entity behind, closed.

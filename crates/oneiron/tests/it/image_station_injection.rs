@@ -1,23 +1,4 @@
-use oneiron::{
-    ingest::IMAGE_SOURCE_ID, ingest::INGEST_SOURCE_REGISTRY, ingest::ImageTextRecognizer,
-    ingest::IngestResult, ingest::LocalityRung, ingest::RecognizedText,
-    ingest::register_image_text_recognizer,
-};
-
-struct CannedHostLocal;
-impl ImageTextRecognizer for CannedHostLocal {
-    fn locality(&self) -> LocalityRung {
-        LocalityRung::HostLocal
-    }
-    fn recognize(&self, _bytes: &[u8]) -> IngestResult<RecognizedText> {
-        Ok(RecognizedText {
-            text: "injected receipt text".to_owned(),
-        })
-    }
-}
-
-static RECOGNIZER: CannedHostLocal = CannedHostLocal;
-const RECEIPT: &[u8] = include_bytes!("../fixtures/image_receipt.jpg");
+use oneiron::{ingest::IMAGE_SOURCE_ID, ingest::INGEST_SOURCE_REGISTRY};
 
 #[test]
 fn public_registry_rejects_corrupt_signed_vectors() {

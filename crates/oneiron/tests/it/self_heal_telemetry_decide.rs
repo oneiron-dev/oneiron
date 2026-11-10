@@ -10,7 +10,7 @@ use oneiron::llm::decision::{
     ProviderPin,
 };
 use oneiron::self_heal::DiagnosticEventClass;
-use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
+use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy};
 use oneiron::store::RetrievalRunRecord;
 use oneiron::{EntityId, Error, HnswConfig, Result, Vault, VaultConfig};
 

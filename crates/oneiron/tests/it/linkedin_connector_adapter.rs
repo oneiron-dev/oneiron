@@ -1,18 +1,14 @@
 use crate::common::entity;
-use std::collections::BTreeMap;
 
 use oneiron::{
-    EntityId, InboundSurfaceRouteOutcome, Result, Vault, VaultConfig,
-    attempt_queue::EnqueueOutcome, channel_identity::ChannelIdentityBinding,
-    channel_identity::ChannelIdentityState, channel_identity::SelfHeldShape,
-    linkedin_connector::LINKEDIN_CHANNEL, linkedin_connector::LINKEDIN_CONNECT_REQUEST_VERB,
-    linkedin_connector::LINKEDIN_SEND_DM_VERB, linkedin_connector::LinkedInInboxSyncConfig,
-    linkedin_connector::LinkedInInboxSyncRunner, linkedin_connector::LinkedInMcpConnectorAdapter,
-    linkedin_connector::LinkedInMcpInboxSyncTransport, linkedin_connector::LinkedInPasswordCustody,
+    InboundSurfaceRouteOutcome, Result, Vault, VaultConfig,
+    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityState,
+    channel_identity::SelfHeldShape, linkedin_connector::LINKEDIN_CHANNEL,
+    linkedin_connector::LINKEDIN_CONNECT_REQUEST_VERB, linkedin_connector::LINKEDIN_SEND_DM_VERB,
+    linkedin_connector::LinkedInMcpConnectorAdapter, linkedin_connector::LinkedInPasswordCustody,
     linkedin_connector::LinkedInSandboxHostConfig, linkedin_connector::LinkedInSandboxHostHarness,
     linkedin_connector::LinkedInSandboxRuntime, linkedin_connector::LinkedInSeatDispatchState,
     linkedin_connector::LinkedInSeatPolicyAction, linkedin_connector::LinkedInSeatSandboxPolicy,
-    linkedin_connector::linkedin_inbox_sync_provenance_rows,
     linkedin_connector::run_linkedin_kill_switch,
 };
 use serde_json::{Value, json};
@@ -66,61 +62,6 @@ fn sandbox_host() -> Result<LinkedInSandboxHostConfig> {
         "browser-profile:linkedin:Yuki",
         "vault-secret:linkedin:Yuki:session-cookie",
     )
-}
-
-#[derive(Clone)]
-struct ScriptedInboxTransport {
-    inbox: Value,
-    conversations: BTreeMap<String, Value>,
-}
-
-impl ScriptedInboxTransport {
-    fn new(inbox: Value, conversations: impl IntoIterator<Item = (String, Value)>) -> Self {
-        Self {
-            inbox,
-            conversations: conversations.into_iter().collect(),
-        }
-    }
-}
-
-impl LinkedInMcpInboxSyncTransport for ScriptedInboxTransport {
-    fn get_inbox(&mut self) -> std::result::Result<Value, String> {
-        Ok(self.inbox.clone())
-    }
-
-    fn get_conversation(&mut self, thread_id: &str) -> std::result::Result<Value, String> {
-        self.conversations
-            .get(thread_id)
-            .cloned()
-            .ok_or_else(|| format!("missing conversation {thread_id}"))
-    }
-}
-
-fn active_linkedin_identity(
-    vault: &Vault,
-    adapter: &LinkedInMcpConnectorAdapter,
-) -> Result<(EntityId, EntityId)> {
-    active_linkedin_identity_with_seeds(vault, adapter, 0x51, 0x53)
-}
-
-fn active_linkedin_identity_with_seeds(
-    vault: &Vault,
-    adapter: &LinkedInMcpConnectorAdapter,
-    identity_seed: u8,
-    agent_seed: u8,
-) -> Result<(EntityId, EntityId)> {
-    let identity_id = entity(identity_seed);
-    let agent_ref = entity(agent_seed);
-    let identity = crate::common::self_held_identity_in_state(
-        LINKEDIN_CHANNEL,
-        adapter.receiving_address_or_handle(),
-        SelfHeldShape::DedicatedHandle,
-        ChannelIdentityBinding::agent(agent_ref),
-        ChannelIdentityState::Active,
-        1_800_000_000,
-    );
-    vault.create_channel_identity(&identity_id, &identity)?;
-    Ok((identity_id, agent_ref))
 }
 
 #[test]

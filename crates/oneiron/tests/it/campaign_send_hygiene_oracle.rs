@@ -21,8 +21,8 @@ use crate::common::entity as test_id;
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_CAMPAIGN_MEMBER,
-    PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, decode_campaign_member_value,
-    encode_campaign_member_value, encode_do_not_contact_value,
+    PREDICATE_COMM_DO_NOT_CONTACT, decode_campaign_member_value, encode_campaign_member_value,
+    encode_do_not_contact_value,
 };
 use oneiron::campaign::send_hygiene::{
     LIST_UNSUBSCRIBE, ListUnsubscribeTarget, SuppressionCause, SuppressionInput, apply_suppression,
