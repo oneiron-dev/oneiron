@@ -480,14 +480,15 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
 
 #[test]
 fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
-    // A 64 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
-    // kept outcomes hold 60 MiB, so a sixth call cannot be admitted until
+    // A 72 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
+    // kept outcomes hold 60 MiB and their decoded replies' room (booked since
+    // e1383fe4188, FIX 6195/7890), so a sixth call cannot be admitted until
     // they are dropped.
     let (_dir, vault) = vault();
     let host = OrganHost::new(HostConfig {
         budget: BudgetConfig {
             threads: 4,
-            memory_bytes: 64 * 1024 * 1024,
+            memory_bytes: 72 * 1024 * 1024,
             max_inflight: 8,
         },
         ..HostConfig::default()
