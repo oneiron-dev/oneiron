@@ -3,10 +3,13 @@ import { inflateRawSync } from "node:zlib";
 import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
-import { PublicHttpClient } from "./support/clients.ts";
+import { PublicHttpClient, PublicHttpError, McpRpcError, CliError, type WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile, redactor } from "./support/run.ts";
-import { ScriptedProviders, openaiText, type ProviderStep } from "./support/providers.ts";
+import type { Json, ProviderStep } from "./support/providers.ts";
+import { randomBytes } from "node:crypto";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { decode } from "@msgpack/msgpack";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -328,8 +331,6 @@ suite.test(test, "SECRETS-01", "Mask-on-write and reveal should work", async () 
 // substitute vault.research.record_benchmark (which authors archive metadata).
 // Full request order and independent facts: secrets-blocked-scenarios.
 suite.todo(test, "SECRETS-02", "waits on typed benchmark result/report read with secret-scan mode metadata");
-
-// No additional imports; the merged test file already imports every dependency.
 
 interface secrets03Scenario {
   "SECRETS-03": {
@@ -1488,8 +1489,6 @@ enabled = false
  */
 suite.todo(test, "SECRETS-08", "waits on owner-revocable agent Grant admission for vault.trusted_contacts.concern.propose, vault.trusted_contacts.concern.asks and vault.trusted_contacts.list");
 
-// No additional imports; all dependencies are already imported by secrets.test.ts.
-
 interface secrets09Fixture {
   "SECRETS-09": {
     action: { operation: string; text: string };
@@ -1600,7 +1599,7 @@ async function secrets09GateRows(client: PublicHttpClient, needles: readonly str
   const rows: FacadeResult<"vault.receipts">["receipts"] = [];
   let after: string | null = null;
   do {
-    const page = await secrets09Call(client, "vault.receipts", {
+    const page: FacadeResult<"vault.receipts"> = await secrets09Call(client, "vault.receipts", {
       kinds: ["gate"], limit: 100, ...(after === null ? {} : { after }),
     }, needles);
     expect(page.undecodable).toBe(0);
