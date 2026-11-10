@@ -30,6 +30,16 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
     config.dimensions = 4;
     config.embedding_model = None;
     let vault = Vault::open_owned(dir.path(), config)?;
+    // The owner's agent Grant act needs this install profiled in the
+    // vault's roster to carry it: a fresh local-origin vault is rooted and
+    // profiled here, as a device open with a host root secret does.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    assert_eq!(
+        vault.profile_local_open(Some(b"primitive-a-skill-reader"), true)?,
+        oneiron::authority::LocalOpenProfile::RootedAndProfiled,
+    );
     Ok((dir, vault))
 }
 
