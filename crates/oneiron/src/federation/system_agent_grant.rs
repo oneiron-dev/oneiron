@@ -42,6 +42,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{TimeRange, Vault};
 
 mod narrowing;
+pub(crate) use narrowing::erase_narrowing_actor_in_txn;
 pub use narrowing::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
     SystemFunction,

@@ -57,9 +57,11 @@ crate::side_table::side_tables! {
     /// Each narrowing the owner applied to a base agent's Steward grant (untangle 6.3c): the
     /// owner, the grant revoked, the narrower grant minted (none for a whole revoke), the verbs
     /// before and after, and the breaks he confirmed. The record that he chose it. Key: id16 (the
-    /// agent) + u64 (recording time).
+    /// agent) + u64 (recording time) + id16 (the grant revoked). A hard erase of the owner takes
+    /// his records out.
     FEDERATION_SYSTEM_AGENT_NARROWING: VaultMeta b"federation:system_agent_narrowing:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::federation::erase_narrowing_actor_in_txn;
     /// The vault functions each system-critical grant keeps running (untangle 6.3c): narrowing
     /// one shows the one system-agent warning and waits for the owner's confirm. Key: id16 (the
     /// grant).
