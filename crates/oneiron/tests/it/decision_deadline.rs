@@ -477,6 +477,8 @@ fn a_stronger_rung_starts_only_for_a_cause_and_on_the_same_clock() {
         probability: None,
         paired: None,
         person: None,
+        served: None,
+        cost_per_thousand: None,
     };
     let ladder = Ladder::new(
         Rung::new(DecisionRung::SystemOne, ms(200), Some(abstains)),

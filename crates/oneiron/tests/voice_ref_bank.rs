@@ -37,7 +37,14 @@ fn designed_captured_and_generated_packs_belong_to_a_vault_identity() -> Result<
             vendor: "design-tool".into(),
         },
     );
-    let captured = pack("capture", "voice-2", owner, VoiceRefOrigin::Captured);
+    let captured = pack(
+        "capture",
+        "voice-2",
+        owner,
+        VoiceRefOrigin::Captured {
+            consent_event_ref: Default::default(),
+        },
+    );
     let generated = pack("generated", "voice-1", owner, VoiceRefOrigin::Generated);
     assert!(vault.store_voice_ref_pack(&generated).is_err());
     assert!(vault.voice_identity("voice-1")?.is_none());

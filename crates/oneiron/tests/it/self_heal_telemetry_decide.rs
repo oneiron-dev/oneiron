@@ -128,7 +128,8 @@ fn telemetry_detector_asks_the_ladder_and_keeps_the_receipt() -> Result<()> {
     let (_dir, vault, run) = vault_with_run()?;
     let principal = EntityId::now();
     let head = HostHead::new(DecisionAnswer::Noul(true));
-    let host = decisions(Some(&head), principal);
+    let state = serde_json::json!({});
+    let host = decisions(Some(&head), principal, &state);
     let policy = policy();
 
     let proposed = vault

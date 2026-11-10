@@ -6,7 +6,10 @@
 
 use std::io::{self, Read};
 
-use oneiron::lens::{GENERATED_UI_WIRE_VERSION, GeneratedUiRender, GeneratedUiSegment, LensNode};
+use oneiron::lens::{
+    GENERATED_UI_WIRE_VERSION, GeneratedUiActionEvent, GeneratedUiRender, GeneratedUiSegment,
+    LensNode,
+};
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
     decode_psych_profile_body, encode_psych_profile_body,

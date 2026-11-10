@@ -22,11 +22,12 @@ use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent,
     CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate,
-    CampaignProgram, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft,
-    DetectEnrollment, EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
+    CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment,
+    EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
     campaign_enrollment_event, campaign_home_node_designation, create_campaign_program,
     derive_enrollment_outbound_request, elect_campaign_home_node_designation,
     encode_enrollment_attempt_payload, enrollment_dedupe_key, require_campaign_home_node,
+    update_campaign_program,
 };
 use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{
@@ -854,7 +855,19 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
     assert_ne!(request.attempt_id, record.id);
 
     // Move the PERSISTED program step; the derived request moves with it.
-    put_step(&vault, fixture.program, fixture.step, 9);
+    update_campaign_program(
+        &vault,
+        fixture.owner,
+        fixture.campaign,
+        fixture.program,
+        1,
+        &CampaignProgramDraft {
+            name: "enrollment oracle program".to_owned(),
+            steps: vec![step_draft(fixture.step, 9)],
+            audience: None,
+        },
+        101,
+    )?;
     assert_eq!(
         derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
             .expect("the step declares an outward leg")
@@ -864,15 +877,31 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
 
     // A program belonging to another campaign is not usable just because the
     // payload points at it.
-    let foreign = test_id(0x3B);
-    put_campaign_program(
+    let foreign_campaign = create_campaign(
         &vault,
-        &CampaignProgram {
-            schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-            program_ref: foreign,
-            campaign_ref: test_id(0x3C),
+        fixture.owner,
+        &CreateCampaignRequest {
+            schema_version: CAMPAIGN_SCHEMA_VERSION,
+            name: "enrollment oracle foreign campaign".to_owned(),
+            reply_snooze_policy: None,
         },
-    )?;
+        102,
+    )?
+    .campaign_ref;
+    let foreign = create_campaign_program(
+        &vault,
+        fixture.owner,
+        foreign_campaign,
+        CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+        &CampaignProgramDraft {
+            name: "enrollment oracle foreign program".to_owned(),
+            steps: vec![step_draft(test_id(0x3B), 7)],
+            audience: None,
+        },
+        102,
+    )?
+    .program
+    .program_ref;
     assert!(matches!(
         derive_enrollment_outbound_request(
             &vault,
