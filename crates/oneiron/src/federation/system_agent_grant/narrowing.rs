@@ -30,8 +30,10 @@ use crate::side_table::{self, Named, SideTable};
 const SYSTEM_CRITICAL_GRANT: SideTable<EntityId, BTreeSet<SystemFunction>, Named> =
     SideTable::new(&side_table::FEDERATION_SYSTEM_CRITICAL_GRANT);
 
-/// Each narrowing the owner applied, by the agent and the recording time.
-const SYSTEM_AGENT_NARROWING: SideTable<(EntityId, u64), SystemAgentNarrowing, Named> =
+/// Each narrowing the owner applied, by the agent, the recording second and
+/// the grant it revoked. The second orders the history; the revoked grant
+/// keeps two narrowings of one second apart, since each revokes its own.
+const SYSTEM_AGENT_NARROWING: SideTable<(EntityId, u64, EntityId), SystemAgentNarrowing, Named> =
     SideTable::new(&side_table::FEDERATION_SYSTEM_AGENT_NARROWING);
 
 /// The domain of the confirm token a narrowing hands back.
@@ -61,8 +63,11 @@ impl SystemFunction {
                 grant_scope::STEWARD_READ_VERB,
                 grant_scope::STEWARD_DERIVE_VERB,
             ],
+            // The archive takes back what the Dreamer landed, so it is judged
+            // by the landing verdict: without `derive` it archives nothing.
             Self::RecallUpkeep => &[
                 grant_scope::STEWARD_READ_VERB,
+                grant_scope::STEWARD_DERIVE_VERB,
                 grant_scope::STEWARD_ARCHIVE_VERB,
             ],
             Self::CoachChecks | Self::EngineControlsJobs => &[grant_scope::STEWARD_READ_VERB],
@@ -159,7 +164,8 @@ fn confirm_token(grant: EntityId, keep: &BTreeSet<String>, breaks: &[SystemFunct
 
 impl Vault {
     /// Every narrowing the owner applied to base agent `agent`'s grant,
-    /// oldest first, with when it was recorded.
+    /// oldest first, with when it was recorded. Narrowings of one second
+    /// come in the order of the grants they revoked.
     ///
     /// # Errors
     ///
@@ -172,8 +178,8 @@ impl Vault {
         Ok(SYSTEM_AGENT_NARROWING
             .scan(&self.store, &txn)?
             .into_iter()
-            .filter(|((recorded_for, _), _)| *recorded_for == agent)
-            .map(|((_, at), narrowing)| (at, narrowing))
+            .filter(|((recorded_for, _, _), _)| *recorded_for == agent)
+            .map(|((_, at, _), narrowing)| (at, narrowing))
             .collect())
     }
 
@@ -301,7 +307,7 @@ impl Vault {
             SYSTEM_AGENT_NARROWING.put(
                 &self.store,
                 txn,
-                &(agent, at),
+                &(agent, at, grant),
                 &SystemAgentNarrowing {
                     owner: owner_ref,
                     revoked: grant,
