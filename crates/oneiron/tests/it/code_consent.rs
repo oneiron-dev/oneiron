@@ -1,9 +1,15 @@
 //! Integration coverage for host-bound code-emission consent at the real write door.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use oneiron::authority::HostSlipIssuer;
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::consent::{CodeEmissionContext, CodeSourceTrust, ReviewContext};
 use oneiron::code_run::{
-    HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
-    SelfMemorySupersedeClaimCall,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
+    RunCall, SelfAgentVerbCall, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemorySupersedeClaimCall,
 };
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_symbol::{
@@ -35,6 +41,9 @@ fn embedding_test_config() -> VaultConfig {
 fn vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
+    // The host installs this device's keystore after each open; the delete
+    // door loads this install's keys from it.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     (dir, vault)
 }
 
@@ -160,6 +169,58 @@ fn review(run: &str, graph: CodeSymbolGraph, artifacts: Vec<EntityId>) -> Review
         .expect("review context")
 }
 
+/// The host's door a run's own calls are admitted through, on one key's
+/// lane. Since FIX 1214 (#6389) a run's claim and edge writes name only
+/// records the key its door admitted it with reads, so the run is admitted on
+/// its writer's credential, as a host admits it.
+struct LaneDoor(ScopedReadActorKey);
+
+impl AgentVerbDoor for LaneDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &oneiron::memory::HostWriteOrigin,
+        _: oneiron::runtime_hooks::InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
+            code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
+        }))
+    }
+
+    fn admit_run_call(&self, _: RunCall) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+/// `holder`'s agent read credential over the whole vault, minted under the
+/// vault's host root as a host mints its caller's. Each mint takes its own
+/// slip id: the authority log refuses a second slip under one id.
+fn agent_reader(vault: &Vault, holder: EntityId) -> ScopedReadActorKey {
+    static MINTED: AtomicU8 = AtomicU8::new(0);
+    let tag = b"code-consent run door";
+    let issuer = HostSlipIssuer::from_secret(tag).expect("host issuer");
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip")
+        .claims;
+    let mut slip_id = [0u8; 32];
+    slip_id[..16].copy_from_slice(holder.as_bytes());
+    slip_id[16] = MINTED.fetch_add(1, Ordering::Relaxed);
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some("agent".into());
+    let slip = vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("agent slip");
+    let binding = issuer.binding_proof(&slip, tag).expect("holder binding");
+    let proof = vault
+        .verify_capability_slip(&issuer.public_key(), &slip, tag, &binding)
+        .expect("verified agent slip");
+    ScopedReadActorKey::from_verified_slip(&proof).expect("a read credential")
+}
+
 fn dispatcher<'a>(
     vault: &'a Vault,
     actor: EntityId,
@@ -174,6 +235,7 @@ fn dispatcher<'a>(
         review,
     )
     .expect("dispatcher")
+    .with_agent_verb_door(Arc::new(LaneDoor(agent_reader(vault, actor))))
 }
 
 fn evidence_value<'a>(value: &'a Value, key: &str) -> &'a Value {
@@ -611,6 +673,10 @@ fn free_lane_reuse_refuses_divergent_occupant() {
 fn review_lane_rejects_non_candidate_operations() {
     let (_dir, vault) = vault();
     let actor = seed_person(&vault, 0x91);
+    // The two records the operations name: a run's write names only records
+    // its writer reads (FIX 1214), so the review lane's own refusal answers.
+    seed_person(&vault, 0x92);
+    seed_person(&vault, 0x93);
     let rows = vault.gate_decisions(100).unwrap();
     let pending = vault.pending_gate_consents(10).unwrap();
     let dispatch = dispatcher(
