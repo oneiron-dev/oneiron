@@ -7,8 +7,9 @@
 //! Each case witnesses one owner turn, runs the queued question on a ladder
 //! whose one rung counts its calls and answers "no", and reads the outcome:
 //! a question that reached the ladder settles `NotAProject`, one whose source
-//! the house may not read settles `Unread` with no call. No `cfg` is needed:
-//! every door used here is on main, so the file builds there for the red run.
+//! the house may not read settles `Unread` with no call. No `cfg` is needed.
+//! The bound-house case names the role the house runs its org at, which the
+//! bind takes since HOUSE-BIND = A; the other two cases use doors on main.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,14 +17,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::agent_dispatch::{AgentDispatcher, ProjectDetection, ProjectDetectionRun};
 use oneiron::edge::EdgeActorClass;
+use oneiron::federation::FederationGrantRole;
 use oneiron::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial, DecisionProvider,
     DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::{EntityId, Result, Vault, VaultConfig};
+use oneiron::registry::ENTITY_TYPE_ORG;
+use oneiron::store::GateDecisionId;
+use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
+use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
 
 const LEASE_OWNER: &str = "house-source-read-test";
+const WORKSPACE: &str = "house-source-read-workspace";
 
 /// The host's Big rung: it answers every question "no", sure of it, and
 /// counts each call.
@@ -166,6 +172,83 @@ fn a_relationship_scoped_message_stays_withheld_from_the_house() -> Result<()> {
         decider.calls(),
         0,
         "a withheld source is never sent to the ladder"
+    );
+    Ok(())
+}
+
+#[test]
+fn after_a_workspace_finish_the_bound_house_reads_the_owners_unscoped_message() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    // A host start: the vault is rooted under the host, the owner bound, and
+    // the root takes its first signature (`oneiron-server` `sign_root_project`).
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let owner_proof =
+        vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let signer = vault.owner_project_signer(&issuer)?;
+    let root = vault.root_project()?;
+    vault.sign_owner_project(&owner_proof, &signer, root)?;
+
+    // The owner's finish of a workspace whose house is a seeded AGENT_DEF
+    // other than the root's seeded leader.
+    let (house, _) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")?
+        .expect("sys.default is seeded on open");
+    let org = EntityId::from_bytes([0xB2; 16])?;
+    vault.put_entity(
+        &org,
+        ENTITY_TYPE_ORG,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"house source read org",
+    )?;
+    let preset = WorkspaceRosterPreset {
+        workspace_ref: WORKSPACE.to_owned(),
+        workspace_vault_id: 41,
+        org_ref: org,
+        venture_name: "Garden Works".to_owned(),
+        house_display_name: None,
+        house_actor_ref: house,
+        house_identity_ref: None,
+    };
+    vault.establish_workspace_preset(&preset, WorkCompanionPolicy::Choose, &owner_proof)?;
+    vault.bind_workspace_house_leader(
+        WORKSPACE,
+        FederationGrantRole::Member,
+        &owner_proof,
+        &signer,
+    )?;
+    assert_eq!(
+        vault.project(root)?.map(|project| project.leader),
+        Some(house.to_hex()),
+        "the workspace's house leads the root"
+    );
+
+    let decider = CountingDecider::new();
+    owner_turn(&vault, owner, serde_json::json!({}));
+    assert_eq!(
+        ask(&vault, &decider),
+        ProjectDetectionRun::NotAProject,
+        "the bound house reads the owner's unscoped MESSAGE, so the question reaches the ladder"
+    );
+    assert_eq!(decider.calls(), 1, "the ladder's one rung was asked once");
+
+    // The row is part of the vault's seeded default: the seeded upgrade at
+    // the next open keeps it while that house leads.
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    owner_turn(&vault, owner, serde_json::json!({}));
+    assert_eq!(
+        ask(&vault, &decider),
+        ProjectDetectionRun::NotAProject,
+        "after a reopen the bound house still reads the owner's unscoped MESSAGE"
+    );
+    assert_eq!(
+        decider.calls(),
+        2,
+        "the second question reached the ladder too"
     );
     Ok(())
 }
