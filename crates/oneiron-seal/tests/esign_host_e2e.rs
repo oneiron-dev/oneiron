@@ -254,6 +254,9 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir, config)?;
+    // The host installs this install's keystore after each open (P6c); the
+    // owner's credential registration below stores through it.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let at = TimeRange {
         start: now,
         end: now,
