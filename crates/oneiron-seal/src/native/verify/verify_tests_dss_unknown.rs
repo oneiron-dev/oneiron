@@ -273,6 +273,20 @@ mod tests {
             &[fresh_then_stale],
             &[leaf_unknown],
         );
+        // Row 3: the anchor's genuine CRL is fresh at both times and lists
+        // the leaf; the TSA chain's root is still no anchor. The revocation
+        // persists at the provisional time (review round 1 of #6944, P1a).
+        let revoking = dss_doc(
+            &[leaf_der.clone(), tsa_der.clone(), tsa_root.cert_der.clone()],
+            &[build_crl(
+                &anchor,
+                THIS_UPDATE,
+                NEXT_UPDATE,
+                None,
+                vec![leaf.tbs_certificate.serial_number.clone()],
+            )],
+            &[],
+        );
         let rows = [
             (
                 "genuine CRL about the leaf stale at both times",
@@ -292,6 +306,16 @@ mod tests {
                 (
                     VerifyCheckStatus::NotRun,
                     Some(VerifyFindingCode::RevocationStatusUnknown),
+                ),
+            ),
+            (
+                "fresh anchor CRL revokes the leaf while the TSA root is missing",
+                revoking,
+                vec![leaf_der.clone(), tsa_der.clone(), tsa_root.cert_der.clone()],
+                AT_UNIX,
+                (
+                    VerifyCheckStatus::Fail,
+                    Some(VerifyFindingCode::ValidationMaterialInvalid),
                 ),
             ),
         ];
