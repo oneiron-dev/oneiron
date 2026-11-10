@@ -47,7 +47,7 @@ pub const DERIVE_SURFACE: &str = "vault.derive";
 pub const DERIVE_BATCH_KEY: &str = "batch";
 
 /// The refusal token of an item that names a refused item of its batch.
-pub const DEPENDENCY_REFUSED: &str = "derive.dependency_refused";
+pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
 
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.
