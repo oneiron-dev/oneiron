@@ -33,6 +33,8 @@
  * without this fetch client.
  */
 
+import { createPrivateKey, randomBytes, sign } from "node:crypto";
+import { blake3 } from "@noble/hashes/blake3";
 import { facadeTree } from "./facade.js";
 import type { FacadeErrorEnvelope, FacadeInput, FacadePending, FacadeVerb } from "./facade.js";
 import type * as Facade from "./facade-types.js";
@@ -53,6 +55,37 @@ export type {
   FacadeVerbMeta,
 } from "./facade.js";
 export type * as Facade from "./facade-types.js";
+
+/**
+ * A fetch transport that signs each request with a paired `v2.cred.*`
+ * credential. Reuses the holder transcript from tests/e2e/support/clients.ts;
+ * origin pinning and redirect handling stay in HttpBaseClient.
+ */
+export function createSignedFetch(credential: string): typeof globalThis.fetch {
+  const match = /^v2\.cred\.([a-f0-9]+)\.([a-f0-9]{64})$/.exec(credential);
+  if (!match) throw new TypeError("Expected paired v2 credential (value withheld)");
+  const bearer = `v2.slip.${match[1]!}`;
+  const seed = match[2]!;
+  const key = createPrivateKey({key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),Buffer.from(seed,"hex")]),format:"der",type:"pkcs8"});
+  const tokenHash = Buffer.from(blake3(Buffer.from(bearer.slice(8), "hex")));
+  const transport = globalThis.fetch.bind(globalThis);
+  return Object.assign(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    const authorization = request.headers.get("authorization");
+    if (authorization !== null && authorization !== `Bearer ${bearer}`) {
+      throw new TypeError("refusing to replace the paired credential with another Authorization header");
+    }
+    const timestamp = Math.floor(Date.now()/1000);
+    const nonce = randomBytes(16).toString("hex");
+    const challenge = Buffer.from(`oneiron-request:${timestamp}:${nonce}`);
+    const length = Buffer.alloc(8); length.writeBigUInt64BE(BigInt(challenge.length));
+    const transcript = Buffer.concat([Buffer.from("oneiron/slip-binding/v2\0"),tokenHash,length,challenge]);
+    const proof = JSON.stringify({timestamp,nonce,signature:sign(null,transcript,key).toString("hex")});
+    request.headers.set("authorization", `Bearer ${bearer}`);
+    request.headers.set("x-oneiron-binding", proof);
+    return transport(request);
+  }, { preconnect: globalThis.fetch.preconnect });
+}
 
 export interface HttpBaseClientOptions {
   /** Origin of an existing Oneiron server, e.g. `http://127.0.0.1:9090`. */
