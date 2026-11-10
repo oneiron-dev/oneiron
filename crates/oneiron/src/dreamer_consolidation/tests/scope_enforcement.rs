@@ -156,6 +156,8 @@ impl LlmBackend for ScopeBackend {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         self.inner.stream(request, lease)
     }
+}
+impl crate::llm::SingleRouteBackend for ScopeBackend {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.inner.preflight(request, stream)
     }
