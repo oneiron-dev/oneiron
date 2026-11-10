@@ -18,8 +18,11 @@
 //! house's place has no row of its own yet: that row comes with the house
 //! bind's fix (HOUSE-BIND-ANCHOR), as an engine default.
 //!
-//! The owner narrows or removes the row like any policy row.
+//! The unchanged shipped row supplies only an uncredentialed read floor;
+//! reads carrying an explicit Scope leave it out. An owner edit makes it an
+//! ordinary policy row that also caps those reads.
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 use rmpv::Value;
 
@@ -27,6 +30,7 @@ use super::constants::{
     ACTOR_CLASS_KEY, ACTOR_REF_KEY, GRANT_EFFECTOR_KEY, GRANT_RECEIPT_REQUIRED_KEY,
     GRANT_SCOPE_KEY, POLICY_SCOPED_GRANTS_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
 };
+use super::grants::PolicyScopedGrant;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_MESSAGE;
@@ -59,6 +63,19 @@ fn house_read_row(actor_ref: &str) -> Result<Value> {
             Value::Boolean(false),
         ),
     ]))
+}
+
+/// Whether this is the unchanged shipped row, compared after Scope decoding.
+pub(crate) fn is_shipped_house_read_row(grant: &PolicyScopedGrant) -> bool {
+    static SHIPPED_HOUSE_READ_ROW: OnceLock<Option<PolicyScopedGrant>> = OnceLock::new();
+    SHIPPED_HOUSE_READ_ROW
+        .get_or_init(|| {
+            let house = crate::workspace_roster::seeded_house_agent().ok()??;
+            let row = house_read_row(&house.to_hex()).ok()?;
+            super::decode::decode_scoped_grant_table(&Value::Array(vec![row]))?.pop()
+        })
+        .as_ref()
+        .is_some_and(|expected| grant == expected)
 }
 
 /// `manifest` with the house read row for `actor_ref` joined to its one
