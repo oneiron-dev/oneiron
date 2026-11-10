@@ -285,22 +285,34 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
 /// the rows [`with_dreamer_rows`] writes, so a grant with both verbs reads
 /// exactly as the three rows did. `None` when nothing moved.
 ///
+/// Taking the rows out never fails on a shape the policy decode accepts, so
+/// a pack that decodes is never read as it was written (review of #6913).
+///
 /// # Errors
 ///
-/// A live policy that is not a map, or rows that are not lists.
+/// A live policy that is not a map.
 pub(crate) fn body_with_steward_rows(
     live: &[u8],
     actor_ref: &str,
     verbs: &std::collections::BTreeSet<String>,
 ) -> Result<Option<Vec<u8>>> {
     let mut entries = decode_live(live)?;
-    let mut changed = strip_actor_rows(&mut entries, actor_ref)?;
-    changed |= push_dreamer_rows(
+    let stripped = strip_actor_rows(&mut entries, actor_ref);
+    let changed = match push_dreamer_rows(
         &mut entries,
         actor_ref,
         verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB),
         verbs.contains(crate::federation::grant_scope::STEWARD_DERIVE_VERB),
-    )?;
+    ) {
+        Ok(pushed) => stripped | pushed,
+        // A list that will not take the grant's rows leaves the pack with
+        // the agent's written rows out, never as it was written: the written
+        // rows are not the grant's.
+        Err(_) => {
+            entries = decode_live(live)?;
+            strip_actor_rows(&mut entries, actor_ref)
+        }
+    };
     if !changed {
         return Ok(None);
     }
@@ -336,59 +348,61 @@ fn encode_live(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
 }
 
 /// Takes every row that names `actor_ref` out of one row list, a lone row
-/// included. Returns whether it took any; an emptied entry is removed.
-fn strip_rows(entries: &mut Vec<(Value, Value)>, key: &str, actor_ref: &str) -> Result<bool> {
+/// included. Returns whether it took any. A row that is not a map binds no
+/// actor (the source-trust shorthand: `false`, a band number or a band name),
+/// so it stays. An emptied list stays as an empty list when `keep_empty` (a
+/// pack must carry `actor_ceilings`); otherwise its entry is removed (a
+/// source with no row does not decode).
+fn strip_rows(
+    entries: &mut Vec<(Value, Value)>,
+    key: &str,
+    actor_ref: &str,
+    keep_empty: bool,
+) -> bool {
     let Some(index) = entries
         .iter()
         .position(|(name, _)| name.as_str() == Some(key))
     else {
-        return Ok(false);
+        return false;
     };
-    let stripped = match &mut entries[index].1 {
-        Value::Nil => false,
-        Value::Array(rows) => {
-            let before = rows.len();
-            rows.retain(|row| !names_actor(row, actor_ref));
-            rows.len() != before
-        }
-        single @ Value::Map(_) => names_actor(single, actor_ref),
-        _ => return Err(invalid("policy rows are not a list")),
+    let value = &mut entries[index].1;
+    let stripped = if let Value::Array(rows) = value {
+        let before = rows.len();
+        rows.retain(|row| !names_actor(row, actor_ref));
+        rows.len() != before
+    } else if names_actor(value, actor_ref) {
+        // A lone row that names the actor.
+        *value = Value::Array(Vec::new());
+        true
+    } else {
+        false
     };
-    if stripped
-        && match &entries[index].1 {
-            Value::Array(rows) => rows.is_empty(),
-            _ => true,
-        }
+    if stripped && !keep_empty && matches!(&entries[index].1, Value::Array(rows) if rows.is_empty())
     {
         entries.remove(index);
     }
-    Ok(stripped)
+    stripped
 }
 
 /// Takes `actor_ref`'s rows out of `actor_ceilings`, `scoped_grants` and
-/// every `source_trust` source. Returns whether any moved.
-fn strip_actor_rows(entries: &mut Vec<(Value, Value)>, actor_ref: &str) -> Result<bool> {
-    let mut changed = strip_rows(entries, POLICY_ACTOR_CEILINGS_KEY, actor_ref)?;
-    changed |= strip_rows(entries, POLICY_SCOPED_GRANTS_KEY, actor_ref)?;
-    if let Some((_, sources)) = entries
+/// every `source_trust` source. Returns whether any moved. A source trust
+/// that is not a map holds no row to take and keeps its own decode verdict.
+fn strip_actor_rows(entries: &mut Vec<(Value, Value)>, actor_ref: &str) -> bool {
+    let mut changed = strip_rows(entries, POLICY_ACTOR_CEILINGS_KEY, actor_ref, true);
+    changed |= strip_rows(entries, POLICY_SCOPED_GRANTS_KEY, actor_ref, false);
+    if let Some((_, Value::Map(sources))) = entries
         .iter_mut()
         .find(|(name, _)| name.as_str() == Some(POLICY_SOURCE_TRUST_KEY))
     {
-        match sources {
-            Value::Nil => {}
-            Value::Map(sources) => {
-                let names: Vec<String> = sources
-                    .iter()
-                    .filter_map(|(name, _)| name.as_str().map(str::to_owned))
-                    .collect();
-                for name in names {
-                    changed |= strip_rows(sources, &name, actor_ref)?;
-                }
-            }
-            _ => return Err(invalid("live source trust is not a map")),
+        let names: Vec<String> = sources
+            .iter()
+            .filter_map(|(name, _)| name.as_str().map(str::to_owned))
+            .collect();
+        for name in names {
+            changed |= strip_rows(sources, &name, actor_ref, false);
         }
     }
-    Ok(changed)
+    changed
 }
 
 /// Adds the Dreamer's read row (`read`) and its two landing rows (`derive`)

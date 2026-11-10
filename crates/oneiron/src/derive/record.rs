@@ -45,6 +45,21 @@ pub struct ItemRecord {
     /// (untangle 6.7c).
     #[serde(default)]
     pub revisions: Vec<[u8; 32]>,
+    /// The SameAs edge a `same_as` item applied, when the item created it:
+    /// a revert removes only that edge, and only while it stands unchanged.
+    /// `None` for every other kind, for a link that stayed a proposal, and
+    /// for an edge that stood before the item (untangle 6.7c).
+    #[serde(default)]
+    pub(crate) applied_edge: Option<AppliedEdge>,
+}
+
+/// The SameAs edge one `same_as` item created: its endpoints, and a digest
+/// of the edge as the commit left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AppliedEdge {
+    pub(crate) source: EntityId,
+    pub(crate) target: EntityId,
+    pub(crate) revision: [u8; 32],
 }
 
 const BATCHES: SideTable<[u8; 16], DerivationBatchRecord, Named> =

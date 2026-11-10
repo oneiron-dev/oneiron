@@ -17,7 +17,7 @@ use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
     Claim, Named, batch_items, batches_of, commit_claims, derive_verdict, grant_core_read,
-    refusal_receipt, refusal_tokens,
+    grant_core_read_of_kinds, refusal_receipt, refusal_tokens,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, mark_steward_opt_out,
@@ -29,6 +29,7 @@ use serde_json::json;
 const READER: &str = "reader";
 const NO_EVIDENCE: &str = "gate.deny.dreamer_precommit.no_evidence";
 const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
+const UNRESOLVED_REFERENCE: &str = "gate.deny.unresolved_record_reference";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
     let id = EntityId::now();
@@ -139,10 +140,58 @@ fn an_ordinary_agents_batch_meets_the_same_floors() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let agent = define_agent(&vault).expect("an agent");
-    // The agent cites a TURN, so it reads it: a batch that cites a source
-    // its actor does not read is aborted by the source recheck.
+    // The agent names a PERSON and cites a TURN, so it reads them: the gate
+    // judges a derived claim's rows under its actor's own read.
     grant_core_read(&vault, agent).expect("the agent's read grant");
     assert_kept_refused_dependent(&vault, agent, EdgeActorClass::Agent);
+}
+
+#[test]
+fn a_claim_about_a_row_its_actor_does_not_read_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
+    let agent = define_agent(&vault).expect("an agent");
+    // The agent reads TURNs, so the TURN it cites reads back to it; a PERSON
+    // is outside its read.
+    grant_core_read_of_kinds(&vault, agent, &[ENTITY_TYPE_TURN]).expect("a read of TURNs alone");
+    let person = put(&vault, ENTITY_TYPE_PERSON, b"someone");
+    let turn = turn(&vault);
+
+    let committed = commit_claims(
+        &vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-unread-subject",
+        &[Claim {
+            local: "about_unread",
+            predicate: "preference.coffee",
+            subject: Named::Stored(person),
+            value: json!("an oat milk flat white"),
+            evidence: vec![Named::Stored(turn)],
+        }],
+    )
+    .expect("the batch commits");
+    let [about_unread] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !about_unread.landed,
+        "a claim about a row its actor does not read is refused: {about_unread:?}"
+    );
+    assert!(
+        about_unread
+            .reasons
+            .iter()
+            .any(|code| code == UNRESOLVED_REFERENCE),
+        "the gate's reference check refuses it: {about_unread:?}"
+    );
+    let receipt = refusal_receipt(&vault, committed.batch, "about_unread")
+        .expect("read")
+        .expect("its refusal is receipted");
+    assert!(
+        receipt.iter().any(|code| code == UNRESOLVED_REFERENCE),
+        "{receipt:?}"
+    );
 }
 
 #[test]
