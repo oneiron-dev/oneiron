@@ -220,3 +220,103 @@ fn cli_with_io(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_hash_matches_sha256_across_chunk_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.safetensors");
+        let bytes = vec![0x61_u8; 65_537];
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(
+            sha256(&path).unwrap(),
+            "008ffc88d3c96a9f307524eb361e47c5222a887fc45fa0c1fb8d429c5c23b430"
+        );
+    }
+
+    // This checks the harness, not model quality. The separate ignored test
+    // below requires the actual trained checkpoint and runtime.
+    #[cfg(unix)]
+    #[test]
+    fn fixture_shadow_compares_mentions_and_preserves_vault_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("model")).unwrap();
+        std::fs::write(repo.join("model/head_runtime.py"), "").unwrap();
+        let checkpoint = dir.path().join("checkpoint.safetensors");
+        std::fs::write(&checkpoint, b"harness fixture; not a trained model").unwrap();
+        let shim = dir.path().join("span-shim");
+        std::fs::write(
+            &shim,
+            "#!/usr/bin/env python3\nimport json, sys\nassert json.load(sys.stdin)['text'] == 'Ada works here'\nprint(json.dumps([{'start': 0, 'end': 3, 'type': 'PERSON', 'score': 0.9}]))\n",
+        ).unwrap();
+        let mut permissions = std::fs::metadata(&shim).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&shim, permissions).unwrap();
+        let proof = run(&shim, &repo, &checkpoint, &sha256(&checkpoint).unwrap()).unwrap();
+        let person = EntityId::from_bytes([31; 16]).unwrap();
+        let turn = EntityId::from_bytes([32; 16]).unwrap();
+        assert_eq!(proof.report.tags.mentions[0].entity, person);
+        assert_eq!(proof.report.common, vec![person]);
+        assert!(proof.report.tag_only.is_empty());
+        assert_eq!(proof.report.live_only, vec![turn]);
+        assert!(proof.live_ids.contains(&person.to_hex()));
+        assert!(proof.live_ids.contains(&turn.to_hex()));
+        assert_eq!(proof.vault_writes, 0);
+
+        // Pin the observable CLI output. Keep user-visible text on the
+        // injected writer rather than adding print macros to the ratchet.
+        let args = vec![
+            shim.to_string_lossy().into_owned(),
+            repo.to_string_lossy().into_owned(),
+            checkpoint.to_string_lossy().into_owned(),
+            sha256(&checkpoint).unwrap(),
+        ];
+        let (mut output, mut errors) = (Vec::new(), Vec::new());
+        assert_eq!(
+            cli_with_io(&args, &mut output, &mut errors),
+            std::process::ExitCode::SUCCESS
+        );
+        assert!(errors.is_empty());
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["vault_writes"], 0);
+        let report: ShadowTagReport = serde_json::from_value(json["report"].clone()).unwrap();
+        assert_eq!(report.common, vec![person]);
+    }
+
+    /// Run with ONEIRON_NER_PYTHON, ONEIRON_NER_REPO,
+    /// ONEIRON_NER_CHECKPOINT and ONEIRON_NER_SHA256 set to the model-of-record
+    /// checkpoint. This is a real checkpoint-backed fixture, never a stub.
+    #[test]
+    #[ignore = "requires an external trained NER checkpoint and Python model runtime"]
+    fn real_checkpoint_shadow_emits_report_and_writes_zero_vault_bytes() {
+        let var = |name| std::env::var(name).expect("real checkpoint test requires this variable");
+        let proof = run(
+            Path::new(&var("ONEIRON_NER_PYTHON")),
+            Path::new(&var("ONEIRON_NER_REPO")),
+            Path::new(&var("ONEIRON_NER_CHECKPOINT")),
+            &var("ONEIRON_NER_SHA256"),
+        )
+        .unwrap();
+        assert_eq!(proof.vault_writes, 0);
+        assert!(
+            !proof.report.tags.mentions.is_empty(),
+            "trained NER must find Ada"
+        );
+        assert_eq!(
+            proof.report.tags.mentions[0].entity,
+            EntityId::from_bytes([31; 16]).unwrap()
+        );
+        assert_eq!(
+            proof.report.live_only,
+            vec![EntityId::from_bytes([32; 16]).unwrap()]
+        );
+        assert_eq!(
+            proof.report.common,
+            vec![EntityId::from_bytes([31; 16]).unwrap()]
+        );
+    }
+}

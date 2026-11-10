@@ -136,6 +136,36 @@ fn workload_rows(case: &MaterializerCase, rounds: u64) -> BTreeMap<String, Vec<u
     rows
 }
 
+#[test]
+fn materializer_mutex_requires_complete_current_materialization() {
+    let case = fixture_case(2);
+    for rounds in [2, KEY_SLOTS as u64, KEY_SLOTS as u64 + 2] {
+        let rows = workload_rows(&case, rounds);
+        let found = validate_workload_rows(&case, rounds, |id| Ok(rows.get(&id.to_hex()).cloned()))
+            .expect("every visited slot has its latest blob");
+        assert_eq!(found, rows.len());
+
+        let missing_id = bench_entity_id(1, 1, 3).to_hex();
+        let mut incomplete = rows;
+        incomplete.remove(&missing_id);
+        let error = validate_workload_rows(&case, rounds, |id| {
+            Ok(incomplete.get(&id.to_hex()).cloned())
+        })
+        .expect_err("one missing row must invalidate the whole workload");
+        assert!(error.contains("missing materialized entity"), "{error}");
+        assert!(error.contains(&missing_id), "{error}");
+    }
+
+    // All slots still exist after warmup, but they cannot stand in for the
+    // newer measured writes. This defeated a presence-only row census.
+    let stale = workload_rows(&case, KEY_SLOTS as u64);
+    let error = validate_workload_rows(&case, KEY_SLOTS as u64 + 2, |id| {
+        Ok(stale.get(&id.to_hex()).cloned())
+    })
+    .expect_err("warmup rows must not mask failed measured writes");
+    assert!(error.contains("does not match round"), "{error}");
+}
+
 struct EmptyObserverFactory;
 
 impl ObserverFactory for EmptyObserverFactory {

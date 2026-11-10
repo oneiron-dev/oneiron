@@ -320,3 +320,5 @@ fn overflowing_sum(left: u8, right: u8) -> u8 {
     std::hint::black_box(std::hint::black_box(left) + std::hint::black_box(right))
 }
 
+#[cfg(test)]
+mod tests;

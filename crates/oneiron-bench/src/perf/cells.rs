@@ -195,3 +195,18 @@ pub(crate) fn measured_speedup(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_speedup_without_a_measured_baseline_is_omitted() {
+        assert!(measured_speedup("candidate", Some(4.0), "baseline", None).is_none());
+        assert!(measured_speedup("candidate", None, "baseline", Some(4.0)).is_none());
+        assert!(measured_speedup("candidate", Some(4.0), "baseline", Some(0.0)).is_none());
+        let ratio = measured_speedup("candidate", Some(4.0), "baseline", Some(2.0))
+            .expect("both sides measured");
+        assert!((ratio.value - 2.0).abs() < f64::EPSILON);
+        assert_eq!(ratio.baseline_kind, MEASURED_WALL_CLOCK_BASELINE);
+    }
+}

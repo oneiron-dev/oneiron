@@ -255,3 +255,72 @@ fn session_worker(
     outcome
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// Runs `workers` deliberately STAGGERED arrivals and reports, for each
+    /// worker, how many peers had arrived by the time it started working.
+    ///
+    /// Worker 0 arrives immediately; worker `n` sleeps `n * stagger` first. A
+    /// run that does not hold the cohort therefore lets worker 0 start while
+    /// the others are still sleeping, and it observes almost no peers.
+    fn staggered_arrivals(workers: usize, stagger: Duration, gated: bool) -> Vec<usize> {
+        let arrived = AtomicUsize::new(0);
+        let gate = ReleaseGate::new();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for index in 0..workers {
+                let arrived = &arrived;
+                let gate = &gate;
+                handles.push(scope.spawn(move || {
+                    std::thread::sleep(stagger * u32::try_from(index).unwrap_or(0));
+                    arrived.fetch_add(1, Ordering::SeqCst);
+                    if gated {
+                        gate.arrive_and_wait();
+                    }
+                    arrived.load(Ordering::SeqCst)
+                }));
+            }
+            if gated {
+                gate.release_all(workers, RENDEZVOUS_TIMEOUT);
+            }
+            let mut observed = Vec::with_capacity(workers);
+            for handle in handles {
+                observed.push(handle.join().unwrap_or(0));
+            }
+            observed
+        })
+    }
+
+    /// The gate — and only the gate — is what makes every worker start with
+    /// the whole cohort present. The ungated control is the shape the session
+    /// curve had before: early workers run while later ones are still coming
+    /// up, so a curve point does not measure the concurrency it advertises.
+    #[test]
+    fn workers_start_together_only_when_the_gate_releases_them() {
+        let workers = 6;
+        let stagger = Duration::from_millis(40);
+
+        let ungated = staggered_arrivals(workers, stagger, false);
+        assert_eq!(ungated.len(), workers);
+        assert!(
+            ungated[0] < workers,
+            "without a gate the first worker starts while its peers are still arriving, but it \
+             observed {} of {workers} present",
+            ungated[0]
+        );
+
+        let gated = staggered_arrivals(workers, stagger, true);
+        assert_eq!(gated.len(), workers);
+        for (index, observed) in gated.iter().enumerate() {
+            assert_eq!(
+                *observed, workers,
+                "worker {index} was released before the whole cohort arrived: it saw {observed} \
+                 of {workers}"
+            );
+        }
+    }
+}

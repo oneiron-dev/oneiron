@@ -125,6 +125,50 @@ impl AskHandler for Slow {
 }
 
 #[test]
+fn a_granted_ask_is_answered_through_a_region_and_receipted() {
+    let (_dir, vault) = vault();
+    let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
+    // Over 64 KiB, so the answer crosses as a region the host sealed.
+    let handler = bytes(200 * 1024);
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    let outcome = host
+        .call_with(
+            &vault,
+            ask_call(ANSWER, "hi".into(), 2, Duration::from_secs(10)),
+            Vec::new(),
+            &asks,
+        )
+        .expect("call");
+    let seen = lines(&outcome.report);
+    assert_eq!(seen.len(), 2);
+    for line in &seen {
+        assert_eq!(
+            field(line, "answered").and_then(rmpv::Value::as_str),
+            Some("hi")
+        );
+        assert_eq!(
+            field(line, "len").and_then(rmpv::Value::as_u64),
+            Some(200 * 1024)
+        );
+        assert_eq!(
+            field(line, "fold").and_then(rmpv::Value::as_u64),
+            Some(touch_fold(&handler.bytes))
+        );
+    }
+    assert_eq!(handler.runs.load(Ordering::SeqCst), 2);
+    let receipt = outcome.receipt;
+    assert_eq!(receipt.protocol, PROTOCOL);
+    assert_eq!(receipt.asks.len(), 2);
+    for (n, line) in receipt.asks.iter().enumerate() {
+        assert_eq!(line.id as usize, n + 1);
+        assert_eq!(line.verb, ANSWER);
+        assert_eq!(line.refused, None);
+        assert_eq!(line.data_hash, Some(Hash32::of(&handler.bytes)));
+        assert_eq!(line.data_len, 200 * 1024);
+    }
+}
+
+#[test]
 fn an_ungranted_ask_is_refused_and_the_call_goes_on() {
     let (_dir, vault) = vault();
     let handler = bytes(8);
@@ -395,6 +439,29 @@ impl AskHandler for Nested<'_> {
         *self.seen.lock().expect("seen") = Some(format!("{inner:?}"));
         Err(AskRefusal::new(AskCode::Failed, "nested"))
     }
+}
+
+#[test]
+fn a_handler_may_not_call_an_organ() {
+    let (_dir, vault) = vault();
+    let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
+    let nested = Nested {
+        host: &host,
+        vault: &vault,
+        seen: Mutex::new(None),
+    };
+    let asks = AskHandlers::none().with(ANSWER, &nested);
+    let outcome = host
+        .call_with(
+            &vault,
+            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            Vec::new(),
+            &asks,
+        )
+        .expect("the organ goes on");
+    assert_eq!(refused(&lines(&outcome.report)[0]), Some("failed"));
+    let seen = nested.seen.lock().expect("seen").clone().expect("ran");
+    assert!(seen.contains("Reentrant"), "{seen}");
 }
 
 /// A one-thread HTTP server on loopback: `/hop` redirects to `to`, `/drip`

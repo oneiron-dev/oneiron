@@ -103,6 +103,106 @@ fn code(result: Result<Answer, OrganError>) -> ErrorCode {
 }
 
 #[test]
+fn crop_and_nearest_resize_land_on_the_analytic_pixels() {
+    let (w, h) = (7, 5);
+    let source = || {
+        [InputBytes::inline(
+            "image/png",
+            png(w, h, &pixels(w, h, coded), Extra::default()),
+        )]
+    };
+    let organ = ImageOrgan::default();
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &source()).expect("open"));
+    assert_eq!(parsed(&opened).canvas.w, 7);
+
+    // Up 2x after a crop: each kept pixel becomes a 2x2 block.
+    let cropped =
+        body(&call(&organ, VERB_CROP, crop(1, 2, 5, 3), Some(&opened), &[]).expect("crop"));
+    let up = body(
+        &call(
+            &organ,
+            VERB_RESIZE,
+            resize(10, 6, "nearest"),
+            Some(&cropped),
+            &[],
+        )
+        .expect("resize"),
+    );
+    // A fresh organ has no decoded cache: export decodes the input again.
+    let (_, image) = export_png(&ImageOrgan::default(), &up, &source());
+    assert_eq!(image.dimensions(), (10, 6));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, coded(1 + x / 2, 2 + y / 2), "pixel {x},{y}");
+    }
+
+    // Down to 3x2: centre-aligned nearest reads floor((i + 0.5) * from / to).
+    let down = body(
+        &call(
+            &organ,
+            VERB_RESIZE,
+            resize(3, 2, "nearest"),
+            Some(&opened),
+            &[],
+        )
+        .expect("resize"),
+    );
+    let (_, image) = export_png(&organ, &down, &source());
+    let columns = [1, 3, 5];
+    let rows = [1, 3];
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(
+            pixel.0,
+            coded(columns[x as usize], rows[y as usize]),
+            "pixel {x},{y}"
+        );
+    }
+}
+
+#[test]
+fn exif_orientation_turns_the_canvas_before_any_coordinate() {
+    // Orientation 6 means "rotate 90 degrees clockwise to display".
+    let (w, h) = (3, 2);
+    let extra = Extra {
+        exif: Some(fixtures::exif_orientation(6)),
+        icc: None,
+    };
+    let inputs = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), extra),
+    )];
+    let organ = ImageOrgan::default();
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &inputs).expect("open"));
+    let source = parsed(&opened).source;
+    assert_eq!((source.width, source.height, source.orientation), (2, 3, 6));
+    let (_, image) = export_png(&organ, &opened, &inputs);
+    assert_eq!(image.dimensions(), (2, 3));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, coded(y, h - 1 - x), "pixel {x},{y}");
+    }
+
+    // JPEG carries orientation too (8: rotate 90 degrees counter-clockwise).
+    let jpeg = fixtures::jpeg_flat(4, 2, [200, 40, 90], Some(fixtures::exif_orientation(8)));
+    let inputs = [InputBytes::inline("image/jpeg", jpeg)];
+    let report = call(&organ, VERB_INSPECT, Value::Nil, None, &inputs)
+        .expect("inspect")
+        .report;
+    assert_eq!(field(&report, "width").as_u64(), Some(2));
+    assert_eq!(field(&report, "height").as_u64(), Some(4));
+    assert_eq!(field(&report, "orientation").as_u64(), Some(8));
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &inputs).expect("open jpeg"));
+    let (_, image) = export_png(&organ, &opened, &inputs);
+    assert_eq!(image.dimensions(), (2, 4));
+    for pixel in image.pixels() {
+        let near = pixel
+            .0
+            .iter()
+            .zip([200u8, 40, 90])
+            .all(|(a, b)| a.abs_diff(b) <= 4);
+        assert!(near, "a flat JPEG stays flat: {:?}", pixel.0);
+    }
+}
+
+#[test]
 fn corrupt_or_truncated_input_is_refused_never_half_read() {
     let organ = ImageOrgan::default();
     let whole = png(64, 64, &pixels(64, 64, coded), Extra::default());
