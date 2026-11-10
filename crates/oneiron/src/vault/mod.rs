@@ -60,9 +60,9 @@ pub(crate) use self::edges::{
     filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
-/// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
-/// and that census has only in-crate test callers today.
-#[cfg(test)]
+/// The composed session census and a reader's skill list
+/// (`snapshot_read::skill_reader`) bound themselves exactly like
+/// [`Vault::entities_by_type`].
 pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
