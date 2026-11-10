@@ -702,8 +702,8 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
 
 // ---- MUSE identity cases (Muse Wonder Full, from the ratified promise register and canon;
 // merged by OPUS-E2E-2 at the Engine's 08:53 task, on OPUS-E2E-1's Muse harness).
-// MUSE-IDENT-03 waits on a mint shape the harness does not have; its written body is kept in
-// lanes/post-untangle/muse/7-e2e-cases/identity/legs/MUSE-IDENT-03/ until then. ----
+// One harness adaptation: MUSE-IDENT-03's three mints call engine.tryMintAgentToken, the
+// harness name for the {ok, actor} | {ok:false, exitCode, error} mint it was written against. ----
 
 // MUSE-IDENT-01 — an agent token acts as an agent, never as the owner.
 // Promises: P-IDENT-001 (agent token = agent principal, never owner-grade),
@@ -1520,7 +1520,319 @@ suite.test(test, "MUSE-IDENT-02", "A mismatched MCP actor block is refused and a
   expect(typeof museIdent02HttpError(proposerAfterRevoke.body)?.code).toBe("string");
 });
 
-suite.todo(test, "MUSE-IDENT-03", "waits on harness: a mintAgentToken that reports a failed mint (ok, exitCode) and takes an authSecret — Re-mint replaces the old slip, a failed mint does not upgrade, and revoke stops the new slip at once");
+// MUSE-IDENT-03 — P-IDENT-004, P-IDENT-005 and P-IDENT-015.
+// Doors: the stopped-vault `oneiron token agent` mint (through the proposed
+// EngineFixture.mintAgentToken harness wrapper in the report), owner
+// `vault.authority.audit` and `vault.receipts` read-backs, agent `self.actor`,
+// `vault.kv.put` / `vault.kv.get` tier probes, MCP initialize and tools/call,
+// the running slip-revoke route used by AUTHORITY-05, a refused WS upgrade,
+// and `engine.restart()`.
+// Unproved here: a mint failing after its replacement step has begun, the
+// literal `token revoke` CLI spelling, and the authority/recording-clock split.
+
+type MuseIdent03AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+interface MuseIdent03ReceiptActor {
+  readonly actorRef: string | null | undefined;
+  readonly actorClass: string;
+}
+
+async function museIdent03AuditRows(client: PublicHttpClient): Promise<MuseIdent03AuditRow[]> {
+  const rows: MuseIdent03AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = { limit: 500, ...(after ? { after } : {}) };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    expect(page.cold_attested ?? []).toHaveLength(0);
+    if (!page.next_after) return rows;
+    expect(cursors.has(page.next_after)).toBe(false);
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function museIdent03OnlyNewMint(
+  before: readonly MuseIdent03AuditRow[],
+  after: readonly MuseIdent03AuditRow[],
+): MuseIdent03AuditRow {
+  const existing = new Set(before.map(row => row.entry_hash));
+  const minted = after.filter(row => !existing.has(row.entry_hash) && row.source_op === "slip_mint");
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  expect(row.fold_valid).toBe(true);
+  expect(row.subject_ref).toMatch(/^[a-f0-9]{64}$/);
+  expect(typeof row.holder_ref).toBe("string");
+  expect(row.holder_ref!.length).toBeGreaterThan(0);
+  return row;
+}
+
+function museIdent03Object(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} was not a public JSON object (body withheld)`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function museIdent03ErrorEnvelope(body: unknown): { code: string; message: string } {
+  const top = museIdent03Object(body, "refusal body");
+  const error = museIdent03Object(top.error !== undefined ? top.error : top, "refusal error");
+  expect(typeof error.code).toBe("string");
+  expect(typeof error.message).toBe("string");
+  return { code: String(error.code), message: String(error.message) };
+}
+
+async function museIdent03ExpectDeadSlip(client: PublicHttpClient): Promise<void> {
+  const denied = await client.raw("POST", "/v1/core/facade/vault.receipts", {
+    limit: 1,
+  } satisfies FacadeInput<"vault.receipts">);
+  expect(denied.status).toBe(401);
+  expect(museIdent03ErrorEnvelope(denied.body).code).toBe("UNAUTHORIZED");
+}
+
+async function museIdent03ExpectKvWriteRefused(
+  client: PublicHttpClient,
+  address: FacadeInput<"vault.kv.get">,
+  sentinel: string,
+): Promise<void> {
+  const denied = await client.raw("POST", "/v1/core/facade/vault.kv.put", {
+    ...address,
+    value: sentinel,
+    request_id: `muse-ident-03-${secretHex(8)}`,
+  } satisfies FacadeInput<"vault.kv.put">);
+  expect([401, 403]).toContain(denied.status);
+  const error = museIdent03ErrorEnvelope(denied.body);
+  expect(error.code.length).toBeGreaterThan(0);
+  expect(error.message.length).toBeGreaterThan(0);
+  expect(await client.call("vault.kv.get", address)).toBeNull();
+}
+
+async function museIdent03RefusedUpgrade(url: string, credential: string): Promise<void> {
+  const reply = await new PublicHttpClient(url, { credential }).raw("GET", "/ws", undefined, {
+    connection: "Upgrade",
+    upgrade: "websocket",
+    "sec-websocket-version": "13",
+    "sec-websocket-key": Buffer.from(secretHex(16), "hex").toString("base64"),
+  });
+  expect(reply.status).toBe(401);
+}
+
+async function museIdent03McpArguments(
+  actor: PairedActor,
+  toolName: string,
+  input: unknown,
+): Promise<unknown> {
+  const listed = museIdent03Object(await actor.mcp.listTools(), "MCP tools/list result");
+  const tools = listed.tools;
+  if (!Array.isArray(tools)) throw new Error("MCP tools/list returned no tools array (body withheld)");
+  let found = false;
+  let usesSpec = false;
+  for (const candidate of tools as readonly unknown[]) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const tool = candidate as Record<string, unknown>;
+    if (tool.name !== toolName) continue;
+    found = true;
+    const schema = tool.inputSchema;
+    if (schema && typeof schema === "object" && !Array.isArray(schema)) {
+      const properties = (schema as Record<string, unknown>).properties;
+      if (properties && typeof properties === "object" && !Array.isArray(properties)) {
+        usesSpec = "spec" in (properties as Record<string, unknown>);
+      }
+    }
+  }
+  expect(found).toBe(true);
+  return usesSpec ? { spec: input } : input;
+}
+
+async function museIdent03ExpectMcpToolRefused(actor: PairedActor, kvGetArguments: unknown): Promise<void> {
+  let caught: unknown;
+  let returned: unknown;
+  try {
+    returned = await actor.mcp.callTool("vault.kv.get", kvGetArguments);
+  } catch (error) {
+    caught = error;
+  }
+  if (caught === undefined) {
+    expect(museIdent03Object(returned, "refused MCP tools/call result").isError).toBe(true);
+    return;
+  }
+  expect(caught instanceof PublicHttpError || caught instanceof McpRpcError).toBe(true);
+  if (caught instanceof PublicHttpError) expect([401, 403]).toContain(caught.reply.status);
+  if (caught instanceof McpRpcError) expect("error" in caught.response).toBe(true);
+}
+
+async function museIdent03ReceiptActor(
+  client: PublicHttpClient,
+  receiptRef: string,
+): Promise<MuseIdent03ReceiptActor> {
+  if (receiptRef.startsWith("call:")) {
+    const call = await awaitPublic(
+      () => client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+      value => value !== null,
+      { label: "MUSE-IDENT-03 call receipt", timeoutMs: LIMITS.requestMs },
+    );
+    if (!call) throw new Error("Call receipt was not readable by the live owner");
+    return { actorRef: call.actor_ref, actorClass: call.actor_class };
+  }
+  const page = await awaitPublic(
+    () => client.call("vault.receipts", { limit: 1000 }),
+    value => value.receipts.some(row => row.receipt_ref === receiptRef),
+    { label: "MUSE-IDENT-03 governance receipt", timeoutMs: LIMITS.requestMs },
+  );
+  const row = page.receipts.find(candidate => candidate.receipt_ref === receiptRef);
+  if (!row) throw new Error("Governance receipt was not readable by the live owner");
+  return { actorRef: row.actor_ref, actorClass: row.actor_class };
+}
+
+suite.test(test, "MUSE-IDENT-03", "Re-mint replaces the old slip, a failed mint does not upgrade, and revoke stops the new slip at once", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-IDENT-03", profile });
+  const agentName = "muse-ident-03-agent";
+  const sentinel = `muse-ident-03-sentinel-${secretHex(8)}`;
+  redactor.add(sentinel);
+  const address: FacadeInput<"vault.kv.get"> = {
+    namespace: ["muse-ident-03", agentName],
+    key: "tier-probe",
+  };
+  const ownerSelf = await engine.client.call("self.actor", {});
+  const baselineAudit = await museIdent03AuditRows(engine.client);
+
+  // Identity first, then the read-only tier as minted.
+  const firstMint = await engine.tryMintAgentToken({ name: agentName, tier: "read-only" });
+  expect(firstMint.ok).toBe(true);
+  if (!firstMint.ok) throw new Error(`read-only agent mint failed with exit ${firstMint.exitCode}`);
+  const agentV1 = firstMint.actor;
+  redactor.add(agentV1.credential);
+  const v1Self = await agentV1.client.call("self.actor", {});
+  expect(v1Self.actor_class).toBe("agent");
+  expect(v1Self.actor_ref === ownerSelf.actor_ref).toBe(false);
+  await agentV1.mcp.initialize();
+  const v1Receipts = await agentV1.client.call("vault.receipts", { limit: 1 });
+  expect(Array.isArray(v1Receipts.receipts)).toBe(true);
+  const afterFirstAudit = await museIdent03AuditRows(engine.client);
+  const firstMintRow = museIdent03OnlyNewMint(baselineAudit, afterFirstAudit);
+  const agentHolder = firstMintRow.holder_ref!;
+  const firstSlipId = firstMintRow.subject_ref!;
+  await museIdent03ExpectKvWriteRefused(agentV1.client, address, sentinel);
+
+  // The wrong actor kind for the owner's authority audit changes nothing.
+  const wrongAudit = await agentV1.client.raw("POST", "/v1/core/facade/vault.authority.audit", {
+    limit: 1,
+  } satisfies FacadeInput<"vault.authority.audit">);
+  expect([401, 403]).toContain(wrongAudit.status);
+  const wrongAuditError = museIdent03ErrorEnvelope(wrongAudit.body);
+  expect(wrongAuditError.code.length).toBeGreaterThan(0);
+  expect(wrongAuditError.message.length).toBeGreaterThan(0);
+  const afterWrongAudit = await museIdent03AuditRows(engine.client);
+  expect(afterWrongAudit.map(row => row.entry_hash))
+    .toEqual(afterFirstAudit.map(row => row.entry_hash));
+  expect((await agentV1.client.call("self.actor", {})).actor_ref).toBe(v1Self.actor_ref);
+
+  // P-IDENT-005: an upgrade attempt under the wrong host secret mints
+  // nothing. The old credential may be untouched, still at read-only, or
+  // dead; the one outcome the promise excludes is full-access authority.
+  const wrongSecret = secretHex();
+  redactor.add(wrongSecret);
+  const failedMint = await engine.tryMintAgentToken({
+    name: agentName,
+    tier: "full-access",
+    authSecret: wrongSecret,
+  });
+  expect(failedMint.ok).toBe(false);
+  if (failedMint.ok) throw new Error("wrong-host-secret mint unexpectedly succeeded");
+  expect(failedMint.exitCode).not.toBe(0);
+  const afterFailedAudit = await museIdent03AuditRows(engine.client);
+  const beforeFailedHashes = new Set(afterWrongAudit.map(row => row.entry_hash));
+  expect(afterFailedAudit.filter(row => !beforeFailedHashes.has(row.entry_hash)
+    && row.source_op === "slip_mint")).toHaveLength(0);
+  const oldStillReads = await agentV1.client.raw("POST", "/v1/core/facade/vault.receipts", {
+    limit: 1,
+  } satisfies FacadeInput<"vault.receipts">);
+  if (oldStillReads.status === 401) {
+    expect(museIdent03ErrorEnvelope(oldStillReads.body).code).toBe("UNAUTHORIZED");
+  } else if (oldStillReads.status === 200) {
+    expect((await agentV1.client.call("self.actor", {})).actor_ref).toBe(v1Self.actor_ref);
+    await museIdent03ExpectKvWriteRefused(agentV1.client, address, sentinel);
+  } else {
+    throw new Error(`failed mint left the old credential in unexpected HTTP state ${oldStillReads.status}`);
+  }
+
+  // P-IDENT-004: re-minting the same name keeps the one principal, changes
+  // the credential and slip, and replaces the earlier slip at once.
+  const secondMint = await engine.tryMintAgentToken({ name: agentName, tier: "full-access" });
+  expect(secondMint.ok).toBe(true);
+  if (!secondMint.ok) throw new Error(`full-access re-mint failed with exit ${secondMint.exitCode}`);
+  const agentV2 = secondMint.actor;
+  redactor.add(agentV2.credential);
+  expect(agentV2.credential === agentV1.credential).toBe(false);
+  const v2Self = await agentV2.client.call("self.actor", {});
+  expect(v2Self.actor_class).toBe("agent");
+  expect(v2Self.actor_ref).toBe(v1Self.actor_ref);
+  const v2Receipts = await agentV2.client.call("vault.receipts", { limit: 1 });
+  expect(Array.isArray(v2Receipts.receipts)).toBe(true);
+  const afterSecondAudit = await museIdent03AuditRows(engine.client);
+  const secondMintRow = museIdent03OnlyNewMint(afterFailedAudit, afterSecondAudit);
+  expect(secondMintRow.holder_ref).toBe(agentHolder);
+  const secondSlipId = secondMintRow.subject_ref!;
+  expect(secondSlipId === firstSlipId).toBe(false);
+
+  const written = await agentV2.client.call("vault.kv.put", {
+    ...address,
+    value: sentinel,
+    request_id: `muse-ident-03-${secretHex(8)}`,
+  });
+  expect(written.item.value).toBe(sentinel);
+  expect(written.receipt_ref.length).toBeGreaterThan(0);
+  expect((await agentV2.client.call("vault.kv.get", address))?.value).toBe(sentinel);
+  const kvGetArguments = await museIdent03McpArguments(agentV2, "vault.kv.get", address);
+  const mcpRead = await agentV2.mcp.callTool("vault.kv.get", kvGetArguments);
+  expect(museIdent03Object(mcpRead, "MCP vault.kv.get result").isError ?? false).toBe(false);
+  expect((JSON.stringify(mcpRead) ?? "").includes(sentinel)).toBe(true);
+  const receiptActor = await museIdent03ReceiptActor(engine.client, written.receipt_ref);
+  expect(receiptActor.actorClass).toBe("agent");
+  expect([v2Self.actor_ref, agentHolder]).toContain(receiptActor.actorRef);
+
+  // The replaced credential never works again on any surface tried here.
+  await museIdent03ExpectDeadSlip(agentV1.client);
+  await museIdent03ExpectMcpToolRefused(agentV1, kvGetArguments);
+  await museIdent03RefusedUpgrade(engine.url, agentV1.credential);
+
+  // P-IDENT-015: the owner revokes the live slip on the running server;
+  // the next calls on that same server are already refused.
+  const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+    slip_id: Array.from(Buffer.from(secondSlipId, "hex")),
+  });
+  expect(revoked.status).toBe(200);
+  expect(revoked.body.revoked).toBe(true);
+  await museIdent03ExpectDeadSlip(agentV2.client);
+  await museIdent03ExpectMcpToolRefused(agentV2, kvGetArguments);
+  await museIdent03RefusedUpgrade(engine.url, agentV2.credential);
+  expect(Array.isArray((await engine.client.call("vault.receipts", { limit: 1 })).receipts)).toBe(true);
+  const afterRevokeAudit = await museIdent03AuditRows(engine.client);
+  const revokeRow = afterRevokeAudit.find(row => row.source_op === "slip_revoke"
+    && row.subject_ref === secondSlipId);
+  expect(revokeRow?.fold_valid).toBe(true);
+  if (!revokeRow) throw new Error("Owner authority audit has no revoke row for the revoked slip");
+
+  // Neither replacement nor revocation is undone by a restart.
+  await engine.restart();
+  await museIdent03ExpectDeadSlip(agentV1.client);
+  await museIdent03ExpectDeadSlip(agentV2.client);
+  expect(Array.isArray((await engine.client.call("vault.receipts", { limit: 1 })).receipts)).toBe(true);
+  const afterRestartAudit = await museIdent03AuditRows(engine.client);
+  expect(afterRestartAudit.find(row => row.entry_ref === firstMintRow.entry_ref)?.entry_hash)
+    .toBe(firstMintRow.entry_hash);
+  expect(afterRestartAudit.find(row => row.entry_ref === secondMintRow.entry_ref)?.entry_hash)
+    .toBe(secondMintRow.entry_hash);
+  expect(afterRestartAudit.find(row => row.entry_ref === revokeRow.entry_ref)?.entry_hash)
+    .toBe(revokeRow.entry_hash);
+  await engine.artifacts.json("muse-ident-03.json", {
+    agentName,
+    agentHolder,
+    firstSlipId,
+    secondSlipId,
+    writeReceiptRef: written.receipt_ref,
+  });
+});
 
 // MUSE-IDENT-04 — a facet-narrowed credential sees only its facets, and the owner cannot be narrowed.
 // Promises, stated precisely:
