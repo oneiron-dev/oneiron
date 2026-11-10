@@ -1406,6 +1406,7 @@ function museDura01ExpectErrorEnvelope(body: unknown): void {
 
 suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and restarts and reads back equal", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-01", profile });
+  let stage = "public setup";
   try {
     // Public setup input only, the same fixed instant the sibling memory and
     // gate flows author with. It never moves an engine clock.
@@ -1423,14 +1424,20 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     const conversation = await engine.client.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
     } satisfies FacadeInput<"vault.conversations.create">);
+    stage = 'identity witness and read-back';
     const witnessed = await engine.client.call("vault.witness", {
       conversation_ref: conversation.id, occurred_at: occurred,
       messages: [{ author: "user", message_type: "text",
         content: `This distinct person is ${personName}.`, is_visible: true, order: 0 }],
     } satisfies FacadeInput<"vault.witness">);
-    await engine.awaitReceipt(witnessed.receipt_ref);
+    expect(witnessed.message_short_ids).toHaveLength(1);
+    const identityMessage = await museDura01Entity(engine.client, witnessed.message_short_ids[0]!);
+    expect(identityMessage.kind).toBe("MESSAGE");
+    expect(JSON.stringify(identityMessage.body).includes(`This distinct person is ${personName}.`)).toBe(true);
     const turn = await museDura01Entity(engine.client, witnessed.turn_short_id);
     expect(turn.kind).toBe("TURN");
+    expect(turn.id_hex).toBe(witnessed.turn_id);
+    stage = 'person creation and read-back';
     const created = await engine.client.call("vault.people.create", {
       identity: { name: personName }, identity_evidence_refs: [turn.id_hex], occurred_at: occurred,
     } satisfies FacadeInput<"vault.people.create">);
@@ -1447,6 +1454,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
       confidence: 1, source: "user_stated", scope,
       occurred_at: occurred, learned_at: occurred,
     };
+    stage = 'durable claim commit and receipt';
     const committed = await engine.client.call("vault.claims.upsert", claimInput);
     expect(committed.claim_short_id.length).toBeGreaterThan(0);
     expect(committed.receipt_ref.length).toBeGreaterThan(0);
@@ -1454,6 +1462,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     // entity read is inserted between this receipt and the kill, so the kill
     // lands as close to the receipted write as public doors allow.
     await engine.awaitReceipt(committed.receipt_ref);
+    stage = 'kill and restart';
     await engine.kill();
     await engine.restart();
 
@@ -1462,6 +1471,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     // (vault.claims.list). Every value below is the authored input above,
     // never a value copied out of an acting response alone.
     await engine.awaitReceipt(committed.receipt_ref);
+    stage = 'post-kill claim, person and turn read-back';
     const claimEntityAfterKill = await museDura01Entity(engine.client, committed.claim_short_id);
     expect(claimEntityAfterKill.kind).toBe("CLAIM");
     const claimAfterKill = await museDura01OnlyClaim(engine.client, created.person.id_hex, predicate);
@@ -1475,6 +1485,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     // Wrong actor for the write door: an agent whose slip carries core:read
     // and not core:write. Its own identity first reads back, so a later 403
     // is a scope refusal of a working credential, not a broken pairing.
+    stage = 'read-only agent setup and refusal';
     const agentRecord = await engine.client.call("vault.structural.put", {
       kind: "PERSON", body: { name: agentName }, occurred_at: occurred,
     } satisfies FacadeInput<"vault.structural.put">);
@@ -1510,6 +1521,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     // The same agent loses its slip through the owner's public revoke door,
     // is refused at its next use, and the revoke is read back in the
     // owner's authority audit. The owner's durable write is untouched.
+    stage = 'agent slip revoke and read-back';
     const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
       slip_id: Array.from(Buffer.from(slipId, "hex")),
     });
@@ -1527,6 +1539,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     // A further graceful restart: write, receipt, person, turn and the slip
     // revoke all survive it, and the claim still reads back equal over a
     // different route (the app WebSocket) as well as over HTTP.
+    stage = "final restart and durable read-back";
     await engine.restart();
     await engine.awaitReceipt(committed.receipt_ref);
     expect(await museDura01Entity(engine.client, committed.claim_short_id))
@@ -1544,6 +1557,7 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
     const revokedAfterRestart = await agent.client.raw("POST", "/v1/core/facade/vault.get", claimGet);
     expect(revokedAfterRestart.status).toBe(401);
     museDura01ExpectErrorEnvelope(revokedAfterRestart.body);
+    stage = 'owner WebSocket read-back';
     const socket = await engine.websocket();
     try {
       const viaSocket = await socket.call("vault.get", claimGet);
@@ -1554,6 +1568,14 @@ suite.test(test, "MUSE-DURA-01", "A receipted durable write survives a kill and 
       committed, claimEntityAfterKill, claimAfterKill, claimAfterRefusal, finalClaim,
       personBefore, turn,
     });
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-01 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-01 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -1671,9 +1693,24 @@ async function museDura02AuditRows(engine: EngineFixture): Promise<museDura02Aud
   }
 }
 
-async function museDura02ReceiptRefs(engine: EngineFixture): Promise<ReadonlySet<string>> {
+async function museDura02ReadDeleteReceipt(engine: EngineFixture, receiptRef: string): Promise<unknown> {
+  const match = /^redaction:([a-f0-9]{32})$/.exec(receiptRef);
+  if (!match) throw new Error(`Deletion returned an unexpected receipt reference: ${receiptRef}`);
+  const row = await engine.client.call("vault.get", { entity_ref: match[1]! });
+  if (!row.value || row.value.body == null) {
+    throw new Error(`Deletion audit receipt ${receiptRef} is absent or has no readable body; last public observation: ${JSON.stringify(row)}`);
+  }
+  expect(row.value.id_hex).toBe(match[1]!);
+  const sweep = await museDura02Sweep(engine, receiptRef);
+  const decisionRef = `gate:${sweep.request_id.replace(/-/g, "")}`;
   const page = await engine.client.call("vault.receipts", { limit: 1000 });
-  return new Set(page.receipts.map(row => row.receipt_ref));
+  const decision = page.receipts.find(value => value.receipt_ref === decisionRef);
+  if (!decision) {
+    throw new Error(`Deletion decision ${decisionRef} is absent; last public observation: ${JSON.stringify(page)}`);
+  }
+  expect(decision.content_kind).toBe("deletion");
+  expect(decision.outcome).toBe("allow");
+  return { audit: row.value, decision };
 }
 
 async function museDura02Sweep(
@@ -1720,206 +1757,235 @@ async function museDura02ExpectDeadAgentDelete(
 
 suite.test(test, "MUSE-DURA-02", "A hard delete is gone from recall and export before its content-free receipt returns, owner maintain completes its queued sweep, and it stays gone after restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-02", profile });
-  const occurred = 1769947200;
-  const tag = secretHex(6);
-  const nameSentinel = `Dura02Name${tag}`;
-  const quoteSentinel = `Dura02Quote${tag}`;
-  const claimValueSentinel = `Dura02ClaimValue${tag}`;
-  const predicateSentinel = `dura02.note_${tag}`;
-  const messageSentinels = [nameSentinel, quoteSentinel];
-  const claimSentinels = [predicateSentinel, claimValueSentinel];
-  const allSentinels = [...messageSentinels, ...claimSentinels];
-  redactor.add(...allSentinels);
-  const content = `${nameSentinel} said ${quoteSentinel} at the observatory.`;
-  redactor.add(content);
-
-  // A paired agent with ordinary read/write scope, but no delete Grant and
-  // the wrong actor kind for a human-only delete. Its minted slip is read
-  // back through the authority audit so the owner can revoke it later.
-  const auditBeforeAgent = await museDura02AuditRows(engine);
-  const agentRecord = await engine.client.call("vault.structural.put", {
-    kind: "PERSON", body: { name: "Dura02 Agent" }, occurred_at: occurred,
-  } satisfies FacadeInput<"vault.structural.put">);
-  const agent = await engine.pairActor({
-    principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
-  });
-  const auditAfterAgent = await museDura02AuditRows(engine);
-  const auditBeforeHashes = new Set(auditBeforeAgent.map(row => row.entry_hash));
-  const agentMints = auditAfterAgent.filter(row => !auditBeforeHashes.has(row.entry_hash)
-    && row.source_op === "slip_mint" && row.holder_ref === agent.principalRef);
-  expect(agentMints).toHaveLength(1);
-  const agentSlipId = agentMints[0]?.subject_ref;
-  if (!agentSlipId || !/^[a-f0-9]{64}$/.test(agentSlipId)) {
-    throw new Error("Paired agent has no audited slip id to revoke");
-  }
-
-  // Write one witnessed message and one claim, then read both back through
-  // doors other than the ones that wrote them.
-  const conversation = await engine.client.call("vault.conversations.create", {
-    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
-  } satisfies FacadeInput<"vault.conversations.create">);
-  expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value).not.toBeNull();
-  const witnessed = await engine.client.call("vault.witness", {
-    conversation_ref: conversation.id,
-    occurred_at: occurred,
-    messages: [{
-      author: "user", message_type: "text", content, is_visible: true, order: 0,
-    }],
-  } satisfies FacadeInput<"vault.witness">);
-  await engine.awaitReceipt(witnessed.receipt_ref);
-  expect(witnessed.message_short_ids).toHaveLength(1);
-  const messageRef = witnessed.message_short_ids[0];
-  if (!messageRef) throw new Error("Witness returned no message reference");
-
-  const claimScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-  const claimReceipt = await engine.client.call("vault.claims.upsert", {
-    scope: claimScope,
-    predicate: predicateSentinel,
-    subject_ref: conversation.id,
-    value: claimValueSentinel,
-    source: "user_stated",
-    confidence: 1,
-    occurred_at: occurred,
-  } satisfies FacadeInput<"vault.claims.upsert">);
-  await engine.awaitReceipt(claimReceipt.receipt_ref);
-  expect(claimReceipt.claim_short_id.length).toBeGreaterThan(0);
-
-  const savedMessage = await engine.client.call("vault.get", { entity_ref: messageRef });
-  if (!savedMessage.value) throw new Error("Witnessed message is not publicly readable");
-  expect((JSON.stringify(savedMessage.value.body) ?? "").includes(quoteSentinel)).toBe(true);
-  const preClaims = await engine.client.call("vault.claims.list", {
-    subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
-  } satisfies FacadeInput<"vault.claims.list">);
-  expect(preClaims.value).toHaveLength(1);
-  const claimRow = preClaims.value[0];
-  if (!claimRow) throw new Error("Written claim is not publicly readable");
-  expect(claimRow.predicate).toBe(predicateSentinel);
-  expect(claimRow.value).toBe(claimValueSentinel);
-  const claimRef = claimRow.claim_ref;
-  expect(claimRef.length).toBeGreaterThan(0);
-  expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).not.toBeNull();
-
-  const preRecall = await awaitPublic(
-    () => museDura02Recall(engine, quoteSentinel),
-    pack => museDura02ItemsContain(pack.items, [quoteSentinel]),
-    { label: "pre-delete recall finds the witnessed message", timeoutMs: LIMITS.requestMs },
-  );
-  expect(museDura02ItemsContain(preRecall.items, [nameSentinel])).toBe(true);
-  const preExport = await museDura02ExportedText(engine);
-  expect(allSentinels.every(sentinel => preExport.includes(sentinel))).toBe(true);
-
-  // Wrong actor kind: the same typed delete, from the paired agent, is
-  // refused, leaves a readable receipt, and changes nothing.
-  const receiptRefsBeforeRefusal = await museDura02ReceiptRefs(engine);
-  const deleteMessageInput: FacadeInput<"vault.delete"> = {
-    entity_ref: messageRef, reason: "user_hard_delete",
-  };
-  let agentDeleteRefusal: unknown = undefined;
+  let stage = "public setup";
   try {
-    await agent.client.call("vault.delete", deleteMessageInput);
+    const occurred = 1769947200;
+    const tag = secretHex(6);
+    const nameSentinel = `Dura02Name${tag}`;
+    const quoteSentinel = `Dura02Quote${tag}`;
+    const claimValueSentinel = `Dura02ClaimValue${tag}`;
+    const predicateSentinel = `dura02.note_${tag}`;
+    const messageSentinels = [nameSentinel, quoteSentinel];
+    const claimSentinels = [predicateSentinel, claimValueSentinel];
+    const allSentinels = [...messageSentinels, ...claimSentinels];
+    redactor.add(...allSentinels);
+    const content = `${nameSentinel} said ${quoteSentinel} at the observatory.`;
+    redactor.add(content);
+
+    // A paired agent with ordinary read/write scope, but no delete Grant and
+    // the wrong actor kind for a human-only delete. Its minted slip is read
+    // back through the authority audit so the owner can revoke it later.
+    stage = 'agent setup and slip audit';
+    const auditBeforeAgent = await museDura02AuditRows(engine);
+    const agentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "Dura02 Agent" }, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const agent = await engine.pairActor({
+      principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+    const auditAfterAgent = await museDura02AuditRows(engine);
+    const auditBeforeHashes = new Set(auditBeforeAgent.map(row => row.entry_hash));
+    const agentMints = auditAfterAgent.filter(row => !auditBeforeHashes.has(row.entry_hash)
+      && row.source_op === "slip_mint" && row.holder_ref === agent.principalRef);
+    expect(agentMints).toHaveLength(1);
+    const agentSlipId = agentMints[0]?.subject_ref;
+    if (!agentSlipId || !/^[a-f0-9]{64}$/.test(agentSlipId)) {
+      throw new Error("Paired agent has no audited slip id to revoke");
+    }
+
+    // Write one witnessed message and one claim, then read both back through
+    // doors other than the ones that wrote them.
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value).not.toBeNull();
+    stage = 'witness TURN/MESSAGE read-back';
+    const witnessed = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: occurred,
+      messages: [{
+        author: "user", message_type: "text", content, is_visible: true, order: 0,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    const witnessedTurn = await engine.client.call("vault.get", { entity_ref: witnessed.turn_id });
+    expect(witnessedTurn.value?.id_hex).toBe(witnessed.turn_id);
+    expect(witnessedTurn.value?.kind).toBe("TURN");
+    expect(witnessed.message_short_ids).toHaveLength(1);
+    const messageRef = witnessed.message_short_ids[0];
+    if (!messageRef) throw new Error("Witness returned no message reference");
+
+    const claimScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    stage = 'claim commit and gate receipt';
+    const claimReceipt = await engine.client.call("vault.claims.upsert", {
+      scope: claimScope,
+      predicate: predicateSentinel,
+      subject_ref: conversation.id,
+      value: claimValueSentinel,
+      source: "user_stated",
+      confidence: 1,
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(claimReceipt.receipt_ref);
+    expect(claimReceipt.claim_short_id.length).toBeGreaterThan(0);
+
+    const savedMessage = await engine.client.call("vault.get", { entity_ref: messageRef });
+    if (!savedMessage.value) throw new Error("Witnessed message is not publicly readable");
+    expect((JSON.stringify(savedMessage.value.body) ?? "").includes(quoteSentinel)).toBe(true);
+    const preClaims = await engine.client.call("vault.claims.list", {
+      subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
+    } satisfies FacadeInput<"vault.claims.list">);
+    expect(preClaims.value).toHaveLength(1);
+    const claimRow = preClaims.value[0];
+    if (!claimRow) throw new Error("Written claim is not publicly readable");
+    expect(claimRow.predicate).toBe(predicateSentinel);
+    expect(claimRow.value).toBe(claimValueSentinel);
+    const claimRef = claimRow.claim_ref;
+    expect(claimRef.length).toBeGreaterThan(0);
+    expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).not.toBeNull();
+
+    stage = 'pre-delete recall and export';
+    const preRecall = await awaitPublic(
+      () => museDura02Recall(engine, quoteSentinel),
+      pack => museDura02ItemsContain(pack.items, [quoteSentinel]),
+      { label: "pre-delete recall finds the witnessed message", timeoutMs: LIMITS.requestMs },
+    );
+    expect(museDura02ItemsContain(preRecall.items, [nameSentinel])).toBe(true);
+    const preExport = await museDura02ExportedText(engine);
+    expect(allSentinels.every(sentinel => preExport.includes(sentinel))).toBe(true);
+
+    // Wrong actor kind: the same typed delete, from the paired agent, is
+    // refused, leaves a readable receipt, and changes nothing.
+    stage = 'agent delete refusal and call receipt';
+    const deleteMessageInput: FacadeInput<"vault.delete"> = {
+      entity_ref: messageRef, reason: "user_hard_delete",
+    };
+    let agentDeleteRefusal: unknown = undefined;
+    try {
+      await agent.client.call("vault.delete", deleteMessageInput);
+    } catch (error) {
+      agentDeleteRefusal = error;
+    }
+    expect(agentDeleteRefusal instanceof PublicHttpError).toBe(true);
+    if (!(agentDeleteRefusal instanceof PublicHttpError)) {
+      throw new Error("Agent hard delete was not refused with the public HTTP envelope");
+    }
+    expect(agentDeleteRefusal.reply.status).toBe(403);
+    expect(typeof agentDeleteRefusal.error?.code).toBe("string");
+    expect(typeof agentDeleteRefusal.error?.message).toBe("string");
+    museDura02NoSentinels(agentDeleteRefusal.reply.body, allSentinels);
+    const refusalRef = agentDeleteRefusal.error?.receiptRef;
+    if (typeof refusalRef !== "string") throw new Error("Agent delete refusal carries no call receipt ref");
+    const refusalReceipt = await awaitPublic(
+      () => engine.client.call("vault.receipts.get", { receipt_ref: refusalRef }),
+      value => value !== null,
+      { label: "MUSE-DURA-02 agent delete refusal call receipt", timeoutMs: LIMITS.requestMs },
+    );
+    if (!refusalReceipt) throw new Error("Agent delete refusal call receipt is absent");
+    expect(refusalReceipt.actor_class).toBe("agent");
+    expect(refusalReceipt.actor_ref).toBe(agent.principalRef);
+    expect(refusalReceipt.outcome).toEqual({ refused: { code: agentDeleteRefusal.error?.code } });
+    museDura02NoSentinels(refusalReceipt, allSentinels);
+    expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).not.toBeNull();
+
+    // Owner hard delete of the message. The first reads after the receipt
+    // returns already find nothing: no wait, no maintain, no restart.
+    stage = 'message delete, live absence and deletion receipts';
+    const messageDeleteReceipt = await engine.client.call("vault.delete", deleteMessageInput);
+    const messageReceiptRef = museDura02DeleteReceiptRef(messageDeleteReceipt, allSentinels);
+    expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).toBeNull();
+    const exportAfterMessageDelete = await museDura02ExportedText(engine);
+    expect(messageSentinels.every(sentinel => !exportAfterMessageDelete.includes(sentinel))).toBe(true);
+    expect(claimSentinels.every(sentinel => exportAfterMessageDelete.includes(sentinel))).toBe(true);
+    const recallAfterMessageDelete = await museDura02Recall(engine, quoteSentinel);
+    expect(museDura02ItemsContain(recallAfterMessageDelete.items, messageSentinels)).toBe(false);
+    museDura02NoSentinels(await museDura02ReadDeleteReceipt(engine, messageReceiptRef), allSentinels);
+    await museDura02ExpectQueuedSweep(engine, messageReceiptRef, allSentinels);
+
+    // Owner hard delete of the claim, whose receipt must also stay free of
+    // the erased predicate and value.
+    const deleteClaimInput: FacadeInput<"vault.delete"> = {
+      entity_ref: claimRef, reason: "user_hard_delete",
+    };
+    stage = 'claim delete, live absence and deletion receipts';
+    const claimDeleteReceipt = await engine.client.call("vault.delete", deleteClaimInput);
+    const claimReceiptRef = museDura02DeleteReceiptRef(claimDeleteReceipt, allSentinels);
+    expect((await engine.client.call("vault.claims.list", {
+      subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
+    })).value).toHaveLength(0);
+    expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).toBeNull();
+    museDura02NoSentinels(await museDura02ReadDeleteReceipt(engine, claimReceiptRef), allSentinels);
+    await museDura02ExpectQueuedSweep(engine, claimReceiptRef, allSentinels);
+
+    // Only the owner can force the queued sweep: the agent is refused and the
+    // sweep stays incomplete; the owner's maintain completes it.
+    stage = 'agent maintain refusal; owner forced historical sweep';
+    await engine.requireHttpDoor("/v1/owner/maintain", "POST");
+    const agentMaintain = await agent.client.raw<museDura02ErrorBody>("POST", "/v1/owner/maintain", {});
+    expect(agentMaintain.status).toBe(403);
+    museDura02NoSentinels(agentMaintain.body, allSentinels);
+    expect((await museDura02Sweep(engine, messageReceiptRef)).sweep_complete_at ?? null).toBeNull();
+    const maintained = await engine.client.raw("POST", "/v1/owner/maintain", {});
+    expect(maintained.status >= 200 && maintained.status < 300).toBe(true);
+    museDura02NoSentinels(maintained.body, allSentinels);
+    const sweepAfterMaintain = await awaitPublic(
+      () => museDura02Sweep(engine, messageReceiptRef),
+      sweep => sweep.sweep_complete_at != null,
+      { label: "owner maintain completes the message sweep", timeoutMs: LIMITS.requestMs },
+    );
+    expect((sweepAfterMaintain.sweep_complete_at ?? 0)
+      >= (sweepAfterMaintain.sweep_queued_at ?? 0)).toBe(true);
+    expect((await museDura02Sweep(engine, claimReceiptRef)).sweep_complete_at != null).toBe(true);
+
+    // The owner revokes the agent's paired slip; its next delete is refused
+    // as unauthenticated, its target survives, and the audit shows the revoke.
+    const deleteConversationInput: FacadeInput<"vault.delete"> = {
+      entity_ref: conversation.id, reason: "user_hard_delete",
+    };
+    stage = 'agent revoke and immediate refusal';
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST", "/v1/core/slips/revoke", { slip_id: Array.from(Buffer.from(agentSlipId, "hex")) },
+    );
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.revoked).toBe(true);
+    await museDura02ExpectDeadAgentDelete(agent, deleteConversationInput);
+    expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value).not.toBeNull();
+    const auditAfterRevoke = await museDura02AuditRows(engine);
+
+    // Restart: the deleted records stay gone, the receipts and the completed
+    // sweep state persist, and the revoked agent credential stays dead.
+    stage = 'restart, deleted-record absence and receipt durability';
+    await engine.restart();
+    await museDura02ExpectDeadAgentDelete(agent, deleteConversationInput);
+    expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).toBeNull();
+    expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).toBeNull();
+    expect((await engine.client.call("vault.claims.list", {
+      subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
+    })).value).toHaveLength(0);
+    const recallAfterRestart = await museDura02Recall(engine, quoteSentinel);
+    expect(museDura02ItemsContain(recallAfterRestart.items, messageSentinels)).toBe(false);
+    const exportAfterRestart = await museDura02ExportedText(engine);
+    expect(allSentinels.every(sentinel => !exportAfterRestart.includes(sentinel))).toBe(true);
+    museDura02NoSentinels(await museDura02ReadDeleteReceipt(engine, messageReceiptRef), allSentinels);
+    museDura02NoSentinels(await museDura02ReadDeleteReceipt(engine, claimReceiptRef), allSentinels);
+    const sweepAfterRestart = await museDura02Sweep(engine, messageReceiptRef);
+    expect(sweepAfterRestart.sweep_complete_at != null).toBe(true);
+    museDura02NoSentinels(sweepAfterRestart, allSentinels);
+    await engine.artifacts.json("muse-dura02.json", {
+      messageReceiptRef,
+      claimReceiptRef,
+      messageSweepCompleteAt: sweepAfterRestart.sweep_complete_at ?? null,
+    });
   } catch (error) {
-    agentDeleteRefusal = error;
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-02 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-02 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  } finally {
+    await engine.close();
   }
-  expect(agentDeleteRefusal instanceof PublicHttpError).toBe(true);
-  if (!(agentDeleteRefusal instanceof PublicHttpError)) {
-    throw new Error("Agent hard delete was not refused with the public HTTP envelope");
-  }
-  expect(agentDeleteRefusal.reply.status).toBe(403);
-  expect(typeof agentDeleteRefusal.error?.code).toBe("string");
-  expect(typeof agentDeleteRefusal.error?.message).toBe("string");
-  museDura02NoSentinels(agentDeleteRefusal.reply.body, allSentinels);
-  const receiptsAfterRefusal = await engine.client.call("vault.receipts", { limit: 1000 });
-  const refusalReceipts = receiptsAfterRefusal.receipts.filter(
-    row => !receiptRefsBeforeRefusal.has(row.receipt_ref),
-  );
-  expect(refusalReceipts.some(row => row.actor_class === "agent"
-    || row.actor_ref === agent.principalRef)).toBe(true);
-  museDura02NoSentinels(refusalReceipts, allSentinels);
-  expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).not.toBeNull();
-
-  // Owner hard delete of the message. The first reads after the receipt
-  // returns already find nothing: no wait, no maintain, no restart.
-  const messageDeleteReceipt = await engine.client.call("vault.delete", deleteMessageInput);
-  const messageReceiptRef = museDura02DeleteReceiptRef(messageDeleteReceipt, allSentinels);
-  expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).toBeNull();
-  const exportAfterMessageDelete = await museDura02ExportedText(engine);
-  expect(messageSentinels.every(sentinel => !exportAfterMessageDelete.includes(sentinel))).toBe(true);
-  expect(claimSentinels.every(sentinel => exportAfterMessageDelete.includes(sentinel))).toBe(true);
-  const recallAfterMessageDelete = await museDura02Recall(engine, quoteSentinel);
-  expect(museDura02ItemsContain(recallAfterMessageDelete.items, messageSentinels)).toBe(false);
-  museDura02NoSentinels(await engine.awaitReceipt(messageReceiptRef), allSentinels);
-  await museDura02ExpectQueuedSweep(engine, messageReceiptRef, allSentinels);
-
-  // Owner hard delete of the claim, whose receipt must also stay free of
-  // the erased predicate and value.
-  const deleteClaimInput: FacadeInput<"vault.delete"> = {
-    entity_ref: claimRef, reason: "user_hard_delete",
-  };
-  const claimDeleteReceipt = await engine.client.call("vault.delete", deleteClaimInput);
-  const claimReceiptRef = museDura02DeleteReceiptRef(claimDeleteReceipt, allSentinels);
-  expect((await engine.client.call("vault.claims.list", {
-    subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
-  })).value).toHaveLength(0);
-  expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).toBeNull();
-  museDura02NoSentinels(await engine.awaitReceipt(claimReceiptRef), allSentinels);
-  await museDura02ExpectQueuedSweep(engine, claimReceiptRef, allSentinels);
-
-  // Only the owner can force the queued sweep: the agent is refused and the
-  // sweep stays incomplete; the owner's maintain completes it.
-  await engine.requireHttpDoor("/v1/owner/maintain", "POST");
-  const agentMaintain = await agent.client.raw<museDura02ErrorBody>("POST", "/v1/owner/maintain", {});
-  expect(agentMaintain.status).toBe(403);
-  museDura02NoSentinels(agentMaintain.body, allSentinels);
-  expect((await museDura02Sweep(engine, messageReceiptRef)).sweep_complete_at ?? null).toBeNull();
-  const maintained = await engine.client.raw("POST", "/v1/owner/maintain", {});
-  expect(maintained.status >= 200 && maintained.status < 300).toBe(true);
-  museDura02NoSentinels(maintained.body, allSentinels);
-  const sweepAfterMaintain = await awaitPublic(
-    () => museDura02Sweep(engine, messageReceiptRef),
-    sweep => sweep.sweep_complete_at != null,
-    { label: "owner maintain completes the message sweep", timeoutMs: LIMITS.requestMs },
-  );
-  expect((sweepAfterMaintain.sweep_complete_at ?? 0)
-    >= (sweepAfterMaintain.sweep_queued_at ?? 0)).toBe(true);
-  expect((await museDura02Sweep(engine, claimReceiptRef)).sweep_complete_at != null).toBe(true);
-
-  // The owner revokes the agent's paired slip; its next delete is refused
-  // as unauthenticated, its target survives, and the audit shows the revoke.
-  const deleteConversationInput: FacadeInput<"vault.delete"> = {
-    entity_ref: conversation.id, reason: "user_hard_delete",
-  };
-  const revoked = await engine.client.request<{ revoked: boolean }>(
-    "POST", "/v1/core/slips/revoke", { slip_id: Array.from(Buffer.from(agentSlipId, "hex")) },
-  );
-  expect(revoked.status).toBe(200);
-  expect(revoked.body.revoked).toBe(true);
-  await museDura02ExpectDeadAgentDelete(agent, deleteConversationInput);
-  expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value).not.toBeNull();
-  const auditAfterRevoke = await museDura02AuditRows(engine);
-
-  // Restart: the deleted records stay gone, the receipts and the completed
-  // sweep state persist, and the revoked agent credential stays dead.
-  await engine.restart();
-  await museDura02ExpectDeadAgentDelete(agent, deleteConversationInput);
-  expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).toBeNull();
-  expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).toBeNull();
-  expect((await engine.client.call("vault.claims.list", {
-    subject_ref: conversation.id, predicate: predicateSentinel, limit: 10,
-  })).value).toHaveLength(0);
-  const recallAfterRestart = await museDura02Recall(engine, quoteSentinel);
-  expect(museDura02ItemsContain(recallAfterRestart.items, messageSentinels)).toBe(false);
-  const exportAfterRestart = await museDura02ExportedText(engine);
-  expect(allSentinels.every(sentinel => !exportAfterRestart.includes(sentinel))).toBe(true);
-  museDura02NoSentinels(await engine.awaitReceipt(messageReceiptRef), allSentinels);
-  museDura02NoSentinels(await engine.awaitReceipt(claimReceiptRef), allSentinels);
-  const sweepAfterRestart = await museDura02Sweep(engine, messageReceiptRef);
-  expect(sweepAfterRestart.sweep_complete_at != null).toBe(true);
-  museDura02NoSentinels(sweepAfterRestart, allSentinels);
-  await engine.artifacts.json("muse-dura02.json", {
-    messageReceiptRef,
-    claimReceiptRef,
-    messageSweepCompleteAt: sweepAfterRestart.sweep_complete_at ?? null,
-  });
 });
 
 type museDura03ClaimRow = FacadeResult<"vault.claims.list">["value"][number];
@@ -1986,11 +2052,11 @@ async function museDura03MarkerRows(
 }
 
 async function museDura03RecalledValues(
-  client: PublicHttpClient, personRef: string, name: string, predicate: string,
+  client: PublicHttpClient, query: string, predicate: string,
 ): Promise<string[]> {
   const pack = await client.call("vault.recall", {
-    query: name, effort: "light", limit: 100, token_budget: 8192, format: "md",
-    scope: { person_ref: personRef, kinds: ["semantic"], worlds: { kind: "all" } },
+    query, effort: "light", limit: 100, token_budget: 8192, format: "md",
+    scope: { kinds: ["CLAIM"], worlds: { kind: "all" } },
   });
   return pack.items.filter((item) => item.predicate === predicate)
     .map((item) => item.value_text).sort();
@@ -2000,7 +2066,7 @@ async function museDura03ExpectClaimLive(
   client: PublicHttpClient, personRef: string, name: string, predicate: string, marker: string,
 ): Promise<void> {
   expect(await museDura03MarkerRows(client, personRef, predicate, marker)).toHaveLength(1);
-  expect(await museDura03RecalledValues(client, personRef, name, predicate)).toEqual([marker]);
+  expect(await museDura03RecalledValues(client, marker, predicate)).toEqual([marker]);
 }
 
 async function museDura03ExpectClaimGone(
@@ -2013,7 +2079,7 @@ async function museDura03ExpectClaimGone(
   });
   expect(page.value.filter((row) => row.lifecycle === "active")).toHaveLength(0);
   expect(page.value.some((row) => row.value === marker)).toBe(false);
-  expect(await museDura03RecalledValues(client, personRef, name, predicate)).toEqual([]);
+  expect(await museDura03RecalledValues(client, marker, predicate)).toEqual([]);
 }
 
 // MUSE-DURA-03 (PARTIAL). Promises attempted: P-DURA-010 in full (no Grant
@@ -2038,6 +2104,7 @@ async function museDura03ExpectClaimGone(
 // the candidate doors once an archived record can be made in public).
 suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant attempt; the owner erases by hand and the record stays gone after restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-03", profile });
+  let stage = "public setup";
   try {
     const occurred = 1769947200; // Public setup input, never an engine clock override.
     const predicate = "profile.description";
@@ -2050,6 +2117,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
     const conversation = await engine.client.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
     });
+    stage = 'identity witness and read-back';
     const witnessed = await engine.client.call("vault.witness", {
       conversation_ref: conversation.id, occurred_at: occurred,
       messages: [{
@@ -2057,11 +2125,17 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
         is_visible: true, order: 0,
       }],
     });
-    await engine.awaitReceipt(witnessed.receipt_ref);
+    expect(witnessed.message_short_ids).toHaveLength(1);
+    const identityMessage = await engine.client.call("vault.get", {
+      entity_ref: witnessed.message_short_ids[0]!,
+    });
+    expect(identityMessage.value?.kind).toBe("MESSAGE");
+    expect(JSON.stringify(identityMessage.value?.body).includes(`This distinct person is ${personName}.`)).toBe(true);
     const turn = (await engine.client.call("vault.get", {
       entity_ref: witnessed.turn_short_id,
     })).value;
     if (!turn || turn.kind !== "TURN") throw new Error("Witnessed turn is not readable as a TURN");
+    stage = 'person creation and read-back';
     const personRecord = await engine.client.call("vault.people.create", {
       identity: { name: personName }, identity_evidence_refs: [turn.id_hex],
       occurred_at: occurred,
@@ -2072,6 +2146,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
     })).value?.kind).toBe("PERSON");
 
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    stage = 'claim commit, read-back and recall';
     const claimReceipt = await engine.client.call("vault.claims.upsert", {
       predicate, subject_ref: personRef, value: marker, confidence: 1,
       source: "user_stated", scope, occurred_at: occurred, learned_at: occurred,
@@ -2095,6 +2170,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
 
     // The wrong actor kind: a real paired agent, verified as an agent.
     const agentDefRef = museDura03Id(sentinel, "agent");
+    stage = 'agent creation, pairing and read-back';
     const agentDefinition = await engine.client.call("vault.agents.create", {
       agent_def_ref: agentDefRef,
       definition: {
@@ -2115,12 +2191,14 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
 
     // P-DURA-015 (supporting): the standing cleanup pass archives at most;
     // it destroys no live record here.
+    stage = 'cleanup preserves the live claim';
     const cleanup = await engine.client.call("vault.cleanup.run", {});
     await museDura03ExpectClaimLive(engine.client, personRef, personName, predicate, marker);
 
     // P-DURA-009 (negative half): with no delete Grant the agent does not
     // delete. A refused envelope, or a 202 owner ask that lands nothing,
     // are the two promised shapes; the record must survive either way.
+    stage = 'agent delete without grant';
     const deleteReply = await agent.client.raw("POST", "/v1/core/facade/vault.delete", {
       entity_ref: claimShortId, reason: "user_delete",
     } satisfies FacadeInput<"vault.delete">);
@@ -2134,6 +2212,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
 
     // P-DURA-010: with no Grant at all, the agent's erase preview is
     // refused and leaves a read-back refusal receipt; nothing is erased.
+    stage = 'agent erase preview refusal and admission receipt';
     const noGrantPreviewRefusal = await museDura03RefusedFacadeCall(
       agent.client, "vault.records.erase_preview", { record: claimIdHex },
     );
@@ -2153,6 +2232,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
         sensitivity: { kind: "all" },
       },
     };
+    stage = 'erase grant mint attempt';
     const mintReply = await engine.client.raw(
       "POST", "/v1/core/facade/vault.agents.grants.mint", mintInput,
     );
@@ -2180,6 +2260,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
     await museDura03ExpectClaimLive(engine.client, personRef, personName, predicate, marker);
 
     // The agent may not spend the Owner's preview, grant attempt or not.
+    stage = 'agent cannot spend owner preview';
     const confirmRefusal = await museDura03RefusedFacadeCall(
       agent.client, "vault.records.erase_confirm",
       { record: claimIdHex, preview_digest: ownerPreview.preview_digest },
@@ -2190,6 +2271,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
     // revokes it through the public door, and the agent's next erase use
     // is still refused, with its own refusal receipt.
     if (eraseGrantRef) {
+      stage = 'erase grant revoke and next-use refusal';
       const revoked = await engine.client.call("vault.agents.grants.revoke", {
         grant_ref: eraseGrantRef,
       });
@@ -2205,6 +2287,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
     ownerPreview = await engine.client.call("vault.records.erase_preview", {
       record: claimIdHex,
     });
+    stage = 'owner manual erase and live absence';
     const erased = await engine.client.call("vault.records.erase_confirm", {
       record: claimIdHex, preview_digest: ownerPreview.preview_digest,
     });
@@ -2228,6 +2311,7 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
       engine.client, personRef, personName, predicate, marker, claimShortId,
     );
 
+    stage = 'restart, erased claim absent and refusal receipt durable';
     await engine.restart();
 
     // Still gone after restart; the subject and both receipts still read.
@@ -2261,6 +2345,14 @@ suite.test(test, "MUSE-DURA-03", "An agent never erases, with or without a grant
       noGrantPreviewRefusal, confirmRefusal,
       eraseReceiptRef, sweepRequestId: sweep.request_id,
     });
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-03 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-03 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2342,9 +2434,19 @@ async function museDura04CreateHolder(
 }
 
 async function museDura04ReadText(engine: EngineFixture, holder: museDura04Holder): Promise<string | null> {
-  const read = await engine.client.call("vault.artifacts.read", {
-    artifact_ref: holder.artifactRef, version: holder.version,
-  } satisfies FacadeInput<"vault.artifacts.read">);
+  const reply = await engine.client.raw<FacadeResult<"vault.artifacts.read">>(
+    "POST", "/v1/core/facade/vault.artifacts.read", {
+      artifact_ref: holder.artifactRef, version: holder.version,
+    } satisfies FacadeInput<"vault.artifacts.read">,
+  );
+  if (reply.status === 404) {
+    const error = new PublicHttpError(reply);
+    expect(error.error?.code).toBe("NOT_FOUND");
+    expect(typeof error.error?.message).toBe("string");
+    return null;
+  }
+  if (reply.status < 200 || reply.status >= 300) throw new PublicHttpError(reply);
+  const read = reply.body;
   return read === null ? null : Buffer.from(read.content_base64, "base64").toString("utf8");
 }
 
@@ -2396,11 +2498,13 @@ async function museDura04ExpectSweepReceipt(
 
 suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once over HTTP and CLI, spares a live same-bytes holder unless also_same_bytes is chosen, and stays erased after restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-04", profile });
+  let stage = "public setup";
   try {
     const payloadOne = museDura04MakePayload("one");
     const payloadTwo = museDura04MakePayload("two");
 
     // Two distinct records, one shared blob: same bytes appended to two artifacts.
+    stage = 'create same-bytes holders A and B';
     const a = await museDura04CreateHolder(engine, "MUSE-DURA-04 holder A", payloadOne);
     const b = await museDura04CreateHolder(engine, "MUSE-DURA-04 holder B", payloadOne);
     expect(a.recordId === b.recordId).toBe(false);
@@ -2437,6 +2541,7 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
 
     // The owner's preview names its record, the other holder of the same bytes
     // and the digest a confirm must hand back. The CLI answers the same preview.
+    stage = 'preview A and default-off same-bytes scope';
     const previewA = await engine.client.call("vault.records.erase_preview", {
       record: a.recordId,
     } satisfies FacadeInput<"vault.records.erase_preview">);
@@ -2468,6 +2573,7 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
       record: a.recordId,
     } satisfies FacadeInput<"vault.records.erase_preview">);
     expect(museDura04Identifies(previewAConfirm.same_bytes, b.ids)).toBe(true);
+    stage = 'CLI erase A; A gone and B readable';
     const outcomeA = museDura04EraseOutcome(await engine.cli.call("vault.records.erase_confirm", {
       record: a.recordId, preview_digest: previewAConfirm.preview_digest,
     } satisfies FacadeInput<"vault.records.erase_confirm">));
@@ -2485,6 +2591,7 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
     expect(await museDura04ReadText(engine, b) === payloadOne.text).toBe(true);
 
     // A fresh same-bytes pair, this time with the explicit opt-in: both go.
+    stage = 'create same-bytes holders C and D';
     const c = await museDura04CreateHolder(engine, "MUSE-DURA-04 holder C", payloadTwo);
     const d = await museDura04CreateHolder(engine, "MUSE-DURA-04 holder D", payloadTwo);
     expect(c.contentHash === d.contentHash).toBe(true);
@@ -2492,6 +2599,7 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
       record: c.recordId,
     } satisfies FacadeInput<"vault.records.erase_preview">);
     expect(museDura04Identifies(previewC.same_bytes, d.ids)).toBe(true);
+    stage = 'HTTP erase C with also_same_bytes; C/D gone and B readable';
     const outcomeC = museDura04EraseOutcome(await engine.client.call("vault.records.erase_confirm", {
       record: c.recordId, preview_digest: previewC.preview_digest, also_same_bytes: true,
     } satisfies FacadeInput<"vault.records.erase_confirm">));
@@ -2517,6 +2625,7 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
 
     // Survive a restart: the erased records stay gone, the spared holder keeps
     // its bytes, and the first erase receipt is still readable.
+    stage = 'restart, erased A/C/D absent and B still readable';
     await engine.restart();
     expect(await museDura04ReadText(engine, a)).toBeNull();
     expect(await museDura04ReadText(engine, c)).toBeNull();
@@ -2532,6 +2641,14 @@ suite.test(test, "MUSE-DURA-04", "Owner previewed erase takes effect at once ove
     const sweepAfterRestart = await engine.client.call("vault.records.erase_sweep", {
       receipt_ref: sweepRefA,
     } satisfies FacadeInput<"vault.records.erase_sweep">);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-04 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-04 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2655,6 +2772,7 @@ function museDura05ArchiveText(encoded: string): string {
 
 suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record while the live vault loses it", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-05", profile });
+  let stage = "public setup";
   try {
     const occurred = 1769947200;
     const aHex = secretHex(6);
@@ -2677,6 +2795,7 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
     const museDura05Witness = async (
       phrase: string,
     ): Promise<{ shortId: string; idHex: string }> => {
+      stage = 'witness TURN and MESSAGE read-back';
       const witnessed = await engine.client.call("vault.witness", {
         conversation_ref: conversation.id,
         occurred_at: occurred,
@@ -2685,7 +2804,9 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
           content: `Please remember the phrase ${phrase} for the picnic list.`,
         }],
       } satisfies FacadeInput<"vault.witness">);
-      await engine.awaitReceipt(witnessed.receipt_ref);
+      const turn = await engine.client.call("vault.get", { entity_ref: witnessed.turn_id });
+      expect(turn.value?.id_hex).toBe(witnessed.turn_id);
+      expect(turn.value?.kind).toBe("TURN");
       expect(witnessed.message_short_ids).toHaveLength(1);
       const shortId = witnessed.message_short_ids[0];
       if (!shortId) throw new Error("Witness returned no message reference");
@@ -2711,18 +2832,22 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
       return museDura05RequireInlineExport(exported);
     };
 
+    stage = 'main and spare witness setup';
     const main = await museDura05Witness(aPhrase);
     const spare = await museDura05Witness(bPhrase);
+    stage = 'pre-erase recall control';
     expect(await museDura05RecallHas(aPhrase)).toBe(true);
     const agentSparePeek = await agent.client.call("vault.get", { entity_ref: spare.shortId });
     expect(agentSparePeek.value !== null).toBe(true);
 
+    stage = 'prior owner export and held bytes';
     const prior = await museDura05Export();
     expect(Buffer.from(blake3(Buffer.from(prior.archive, "base64"))).toString("hex")).toBe(prior.digest);
     const priorText = museDura05ArchiveText(prior.archive);
     expect(priorText.includes(aPhrase)).toBe(true);
     expect(priorText.includes(bPhrase)).toBe(true);
 
+    stage = 'agent erase refusal and admission read-back';
     const sparePreview = await engine.client.call("vault.records.erase_preview", {
       record: spare.idHex,
     } satisfies FacadeInput<"vault.records.erase_preview">);
@@ -2764,6 +2889,7 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
     expect(spareAfterRefusal.value !== null).toBe(true);
     expect(museDura05TextHas(spareAfterRefusal.value?.body, bPhrase)).toBe(true);
 
+    stage = 'owner main erase and sweep read-back';
     const mainPreview = await engine.client.call("vault.records.erase_preview", {
       record: main.idHex,
     } satisfies FacadeInput<"vault.records.erase_preview">);
@@ -2782,11 +2908,13 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
       { timeoutMs: 5_000, label: "erase sweep receipt read" },
     );
 
+    stage = 'live get and recall after erase';
     const mainAfterErase = await engine.client.call("vault.get", { entity_ref: main.shortId });
     expect(mainAfterErase.value).toBeNull();
     expect(await museDura05RecallHas(aPhrase)).toBe(false);
     const spareAfterErase = await engine.client.call("vault.get", { entity_ref: spare.shortId });
 
+    stage = 'fresh export excludes erased phrase; prior export retains it';
     const fresh = await museDura05Export();
     expect(Buffer.from(blake3(Buffer.from(fresh.archive, "base64"))).toString("hex")).toBe(fresh.digest);
     expect(fresh.digest === prior.digest).toBe(false);
@@ -2795,6 +2923,7 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
     expect(Buffer.from(blake3(Buffer.from(prior.archive, "base64"))).toString("hex")).toBe(prior.digest);
     expect(museDura05ArchiveText(prior.archive).includes(aPhrase)).toBe(true);
 
+    stage = 'restart and live versus held-export read-back';
     await engine.restart();
     const mainAfterRestart = await engine.client.call("vault.get", { entity_ref: main.shortId });
     expect(mainAfterRestart.value).toBeNull();
@@ -2811,6 +2940,14 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
       sweepRequestId: sweep?.request_id,
       refusalReceipt: refusalReceipt.receipt_ref,
     });
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-05 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-05 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -3015,6 +3152,7 @@ async function museDura07VaultRowsText(
  */
 suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or restart, a holder save lands every kept turn, whole-vault export skips the live room, copy notices name the actor, and a propose-only agent cannot save", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-07", profile });
+  let stage = "public setup";
   try {
     const occurredAt = 1769947200;
     const ownerRef = engine.pairedActor.principalRef;
@@ -3052,6 +3190,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     // A second person in the room takes this case outside the no-notice room
     // of one owner plus the vault's own agents. The agent holds only a
     // propose slip: it may ask for a save, and it holds no write grant.
+    stage = 'guest and propose-only agent pairing';
     const guestRef = await museDura07Person(engine, "Dura07 Guest Person", occurredAt);
     const guest = await engine.pairActor({
       principalRef: guestRef, actorClass: "human", scope: ["core:read", "core:write"],
@@ -3075,13 +3214,20 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
       body: {},
       occurred_start: occurredAt, occurred_end: occurredAt,
     });
+    stage = 'base witness and TURN/MESSAGE read-back';
     const baseWitness = await engine.client.call("vault.witness", {
       conversation_ref: baseConversation.id,
       occurred_at: occurredAt,
       messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
         content: `An ordinary on-record turn, ${baseControl}.` }],
     } satisfies FacadeInput<"vault.witness">);
-    await engine.awaitReceipt(baseWitness.receipt_ref);
+    const baseTurn = await engine.client.call("vault.get", { entity_ref: baseWitness.turn_id });
+    expect(baseTurn.value?.id_hex).toBe(baseWitness.turn_id);
+    expect(baseTurn.value?.kind).toBe("TURN");
+    expect(baseWitness.message_short_ids).toHaveLength(1);
+    const baseMessage = await engine.client.call("vault.get", { entity_ref: baseWitness.message_short_ids[0]! });
+    expect(baseMessage.value?.kind).toBe("MESSAGE");
+    expect(JSON.stringify(baseMessage.value?.body).includes(baseControl)).toBe(true);
 
     const roomConversation = await engine.client.call("vault.conversations.create", {
       body: { members: [ownerRef, guest.principalRef, agent.principalRef] },
@@ -3091,6 +3237,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     const roomRequest: FacadeInput<"vault.off_record.rooms.status"> = {
       room, session_ref: roomSession,
     };
+    stage = 'room start and two private witness turns';
     const started = await engine.client.call("vault.off_record.rooms.start", {
       room, session_ref: roomSession, backend: "local",
     });
@@ -3123,6 +3270,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // P-DURA-028: whole-vault export runs while the room is live, carries the
     // on-record control, and skips both unsaved room turns.
+    stage = 'whole-vault export excludes live off-record room';
     const beforeSaveArchive = await museDura07WholeExportText();
     expect(beforeSaveArchive.includes(baseControl)).toBe(true);
     expect(beforeSaveArchive.includes(keptAlpha)).toBe(false);
@@ -3130,6 +3278,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // A write slip alone is not the vault's grant: the guest person, who
     // holds core:write but is no vault holder, cannot save either.
+    stage = 'guest and propose-only agent save refusal';
     const guestSave = await guest.client.raw(
       "POST", "/v1/core/facade/vault.off_record.rooms.save", roomRequest,
     );
@@ -3149,6 +3298,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // P-DURA-030, second half: the same agent may suggest, and the suggestion
     // waits in the room without saving anything.
+    stage = 'propose-only agent suggests without saving';
     await agent.client.call("vault.off_record.rooms.suggest_save", roomRequest);
     const afterSuggest = await guest.client.call("vault.off_record.rooms.status", roomRequest);
     expect(afterSuggest.waiting_suggestions
@@ -3157,6 +3307,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     expect(await museDura07BaseRecallHas(keptBeta)).toBe(false);
 
     // P-DURA-029 for export: a person keeps a copy, and the room hears who.
+    stage = 'guest room export and actor notice';
     const guestCopy = await guest.client.call("vault.off_record.rooms.export", roomRequest);
     expect(museDura07RoomExportHas(guestCopy, keptAlpha)).toBe(true);
     expect(museDura07RoomExportHas(guestCopy, keptBeta)).toBe(true);
@@ -3166,6 +3317,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // P-DURA-027: the holder saves the whole talk; both kept turns land, and
     // the waiting suggestion is answered by that save.
+    stage = 'owner whole-talk save and canonical read-back';
     const saved = await engine.client.call("vault.off_record.rooms.save", roomRequest);
     expect(saved.saved).toHaveLength(2);
     const canonicalRefs = [...new Set(saved.saved
@@ -3196,6 +3348,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // P-DURA-024: an owner's solo session holds a turn in-session, the base
     // never sees it, and closing the session drops it for good.
+    stage = 'solo off-record witness, in-session recall and close';
     const soloStarted = await engine.client.call("vault.off_record.start", {
       session_ref: soloSession, mode: "off_record", backend: "local",
     });
@@ -3233,6 +3386,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // Authority is rechecked live: once the owner revokes the agent's slip,
     // its next save attempt is refused as unauthorised and saves nothing.
+    stage = 'agent slip revoke and next save refusal';
     const revoked = await engine.client.request<museDura07SlipRevoked>(
       "POST", "/v1/core/slips/revoke",
       { slip_id: Array.from(Buffer.from(agentSlipId, "hex")) },
@@ -3251,6 +3405,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 
     // Restart: saved turns and the on-record control survive; every unsaved
     // turn and both live stretches are gone.
+    stage = 'restart preserves saved turns and discards unsaved turns';
     await engine.restart();
     await museDura07AwaitBaseRecall(keptAlpha, "first saved turn after restart");
     await museDura07AwaitBaseRecall(keptBeta, "second saved turn after restart");
@@ -3272,6 +3427,14 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
       "POST", "/v1/core/facade/vault.off_record.status", { session_ref: soloSession },
     );
     expect(soloAfterRestart.status).toBe(404);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-07 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-07 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -3337,8 +3500,14 @@ async function museDura08WitnessTurnId(engine: EngineFixture, conversation_ref: 
     conversation_ref, occurred_at: museDura08OccurredAt,
     messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
   });
-  await engine.awaitReceipt(receipt.receipt_ref);
-  return (await museDura08Entity(engine.client, receipt.turn_short_id)).id_hex;
+  expect(receipt.message_short_ids).toHaveLength(1);
+  const message = await museDura08Entity(engine.client, receipt.message_short_ids[0]!);
+  expect(message.kind).toBe("MESSAGE");
+  expect(JSON.stringify(message.body).includes(content)).toBe(true);
+  const turn = await museDura08Entity(engine.client, receipt.turn_id);
+  expect(turn.kind).toBe("TURN");
+  expect(turn.id_hex).toBe(receipt.turn_id);
+  return turn.id_hex;
 }
 
 async function museDura08WriteClaim(
@@ -3365,7 +3534,7 @@ async function museDura08RecallHas(
 ): Promise<boolean> {
   const pack = await client.call("vault.recall", {
     query: sentinel, effort: "light", limit: 10, token_budget: 8192, format: "md",
-    scope: { person_ref: subject_ref, kinds: ["semantic"], worlds: { kind: "all" } },
+    scope: { kinds: ["CLAIM"], worlds: { kind: "all" } },
   });
   return pack.items.some(item => item.predicate === predicate && item.value_text.includes(sentinel));
 }
@@ -3456,12 +3625,15 @@ async function museDura08AuditRows(client: PublicHttpClient): Promise<museDura08
   }
 }
 
-async function museDura08VaultId(client: PublicHttpClient, ownerRef: string): Promise<string> {
-  const rows = await museDura08AuditRows(client);
-  const mint = rows.find(row => row.source_op === "slip_mint"
-    && row.holder_ref === ownerRef && typeof row.vault_ref === "string");
-  if (!mint || typeof mint.vault_ref !== "string") throw new Error("Minted owner slip has no vault reference");
-  return mint.vault_ref;
+async function museDura08CreateSharedVault(client: PublicHttpClient): Promise<string> {
+  const vaultId = BigInt(`0x${secretHex(8)}`).toString();
+  const plan = await client.call("vault.shape.plan", {
+    preset: { preset: "family", vault_id: vaultId },
+  });
+  await client.call("vault.shape.apply", { plan, approve: plan.items.map(item => item.seq) });
+  const read = await client.call("vault.shape.read", {});
+  expect(read.live.rows.some(row => row.kind === "shared" && row.vault_id === vaultId)).toBe(true);
+  return vaultId;
 }
 
 function museDura08SharedExecutedValue(value: FacadeResult<"vault.shared.execute">): Facade.SharedActExecuted {
@@ -3478,6 +3650,7 @@ async function museDura08ErasePolicy(client: PublicHttpClient, vault_id: string)
 
 suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase waits for the Owner veto window, and a legal hold keeps only its target while vault erase lands", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-08", profile });
+  let stage = "public setup";
   try {
     const ownerRef = engine.pairedActor.principalRef;
     const scope = await ownerBaseClaimScope(engine.client, ownerRef);
@@ -3495,6 +3668,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
 
     // P-DURA-023, vault side first, while this is still a one-Owner vault:
     // a personal-vault erase lands at once, hold or no hold.
+    stage = 'held claim commit and registry-kind recall';
     const held = await museDura08WriteClaim(engine, scope, ownerRef, heldPredicate, heldSentinel);
     expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([heldSentinel]);
     expect(await museDura08RecallHas(engine.client, ownerRef, heldPredicate, heldSentinel)).toBe(true);
@@ -3518,6 +3692,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(agentSelf.actor_class).toBe("agent");
 
     const matterRef = museDura08Sentinel("matter");
+    stage = 'place customer hold and read its exact scope';
     const hold = await engine.client.call("vault.legal_holds.place", {
       targets: [{ record: held.id }], matter_ref: matterRef,
     });
@@ -3543,9 +3718,9 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(exportBeforeErase.includes(outsideSentinel)).toBe(true);
 
     // Wrong actor kind: no Grant names erase, so a write-scoped agent is
-    // refused at both the owner-checked preview and the confirm, the record
-    // stays, and the hold log records the refused delete.
-    const refusalsBefore = museDura08DeleteRefusedCount(logBeforeRefusal, hold.hold_id, held.id);
+    // refused at both the owner-checked preview and the confirm. The record
+    // stays; the refusal's own call receipt is the second-door observation.
+    stage = 'agent erase refusal, live claim and call receipt';
     const agentPreviewRefused = await agent.client.raw<museDura08ErrorEnvelope>(
       "POST", "/v1/core/facade/vault.records.erase_preview", { record: held.id },
     );
@@ -3559,11 +3734,19 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(agentConfirmRefused.status).toBe(403);
     museDura08ExpectErrorEnvelope(agentConfirmRefused.body);
     expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([heldSentinel]);
-    const logAfterRefusal = await engine.client.call("vault.legal_holds.log", {});
-    expect(museDura08DeleteRefusedCount(logAfterRefusal, hold.hold_id, held.id)).toBeGreaterThan(refusalsBefore);
+    const refusalRef = new PublicHttpError(agentConfirmRefused).error?.receiptRef;
+    if (typeof refusalRef !== "string") throw new Error("Agent erase refusal carries no call receipt ref");
+    const refusalReceipt = await awaitPublic(
+      () => engine.client.call("vault.receipts.get", { receipt_ref: refusalRef }),
+      value => value !== null,
+      { label: "MUSE-DURA-08 agent erase refusal call receipt", timeoutMs: LIMITS.requestMs },
+    );
+    expect(refusalReceipt?.actor_ref).toBe(agent.principalRef);
+    expect(refusalReceipt?.outcome).toEqual({ refused: { code: new PublicHttpError(agentConfirmRefused).error?.code } });
 
     // The Owner's ordinary record erase remains available on the held
     // record. This deliberately does not use lift-and-erase.
+    stage = 'MISSING DOOR host-order clone setup: customer hold cannot substitute';
     const heldOutcome = await museDura08EraseRecord(engine.client, held.id);
     expect(heldOutcome.first.existed).toBe(true);
     expect(heldOutcome.first_act ?? null).toBeNull();
@@ -3593,6 +3776,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
 
     // P-DURA-012: add a second Owner through the public shared doors.
     // Owner changes are instant by default, so the add act executes now.
+    stage = 'second-owner identity witness and person read-back';
     const secondName = museDura08Sentinel("second-owner");
     const evidence = await museDura08WitnessTurnId(engine, conversation.id, `This distinct person is ${secondName}.`);
     const secondCreated = await engine.client.call("vault.people.create", {
@@ -3602,7 +3786,9 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(secondId).not.toBe(ownerRef);
     expect((await museDura08Entity(engine.client, secondCreated.person.entity_ref)).kind).toBe("PERSON");
 
-    const vaultId = await museDura08VaultId(engine.client, ownerRef);
+    stage = 'create decimal-id shared vault through shape doors';
+    const vaultId = await museDura08CreateSharedVault(engine.client);
+    stage = 'add second Owner and read receipt/membership';
     const addAct = await engine.client.call("vault.shared.propose_add_owner", {
       vault_id: vaultId, owner: secondId,
     });
@@ -3642,6 +3828,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     const veto = await museDura08WriteClaim(engine, scope, ownerRef, vetoPredicate, vetoSentinel);
     expect(await museDura08ClaimValues(engine.client, ownerRef, vetoPredicate, veto.id)).toEqual([vetoSentinel]);
 
+    stage = 'multi-Owner erase waits for veto';
     const vetoOutcome = await museDura08EraseRecord(engine.client, veto.id);
     expect(vetoOutcome.first.existed).toBe(true);
     expect(vetoOutcome.first.state).toBe("completion_pending");
@@ -3662,6 +3849,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(matured.some(row => row.act_id === vetoActId)).toBe(false);
 
     // It cannot be executed inside its window, and no outcome is recorded.
+    stage = 'early execute refuses; record stays';
     const earlyExecute = await engine.client.raw<museDura08ErrorEnvelope>(
       "POST", "/v1/core/facade/vault.shared.execute", { act_id: vetoActId },
     );
@@ -3672,6 +3860,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     expect(await museDura08ClaimValues(engine.client, ownerRef, vetoPredicate, veto.id)).toEqual([vetoSentinel]);
 
     // An Owner objection inside the window is recorded on the act.
+    stage = 'second-Owner objection and non-effect read-back';
     const objected = await secondOwner.client.call("vault.shared.object", { act_id: vetoActId });
     expect(objected.id).toBe(vetoActId);
     expect(objected.starter).toBe(ownerRef);
@@ -3686,6 +3875,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
       agentConfirmStatus: agentConfirmRefused.status, earlyExecuteStatus: earlyExecute.status,
     });
 
+    stage = 'restart preserves erase, hold scope and waiting veto';
     await engine.restart();
 
     // After restart: the erased held record is still gone from claims,
@@ -3710,6 +3900,14 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     const startedRowAfterRestart = startedAfterRestart.find(row => row.act_id === vetoActId);
     if (!startedRowAfterRestart) throw new Error("Started erase notice did not survive restart");
     expect(startedRowAfterRestart.deadline).toBe(startedRow.deadline);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-DURA-08 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-DURA-08 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
