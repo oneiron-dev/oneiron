@@ -286,6 +286,21 @@ pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<Enti
     Ok(marker.id)
 }
 
+/// Sets the owner's strength policy: a claim archives only with a score
+/// below `archive_below`, once quiet for `quiet_ms`.
+///
+/// # Errors
+///
+/// The vault's, and a policy out of bounds.
+pub fn set_strength_policy(vault: &Vault, archive_below: f64, quiet_ms: u64) -> Result<()> {
+    vault.set_consolidation_strength_policy(
+        &crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy {
+            archive_below,
+            quiet_ms,
+        },
+    )
+}
+
 /// Whether the row `id` is live: an archived claim is not.
 ///
 /// # Errors
