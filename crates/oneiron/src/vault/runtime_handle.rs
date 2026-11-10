@@ -3,23 +3,29 @@
 //!
 //! The runtime modules (`verbs`, `code_run`, `engine_executor`,
 //! `runtime_hooks`, `code_sandbox`, `off_record`, `outbound_consent`) read
-//! seven `Vault` fields that are not public. They read them through
+//! eight `Vault` fields that are not public. They read them through
 //! [`Vault::runtime`], never by field syntax, so a crate above core can read
 //! the same state with no field widened. `Vault::store` is public and is read
 //! directly. Core modules keep their direct field reads.
+//!
+//! The isolating backends ride here too (F1-6): the binary that builds a
+//! vault installs them on that vault ([`Vault::install_sandbox_backends`]),
+//! so two vaults of one process can carry different sets, and no process
+//! global names them.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::Vault;
 use crate::code_run::activity::AttemptActivityRuntime;
 use crate::code_sandbox::egress::VaultHostFloor;
+use crate::code_sandbox::microvm::{NoSandboxBackends, SandboxBackends};
 use crate::config::VaultConfig;
 use crate::engine_executor::AttemptCancels;
 use crate::runtime_hooks::verb::VerbHookState;
 use crate::skill::SkillInvocations;
 use crate::store::result_body_pins::ResultBodyPins;
 
-/// Borrowed references to the seven non-public `Vault` fields the agent
+/// Borrowed references to the eight non-public `Vault` fields the agent
 /// runtime reads ([`Vault::runtime`]). Each accessor returns the field as the
 /// vault holds it, borrowed for the vault's lifetime.
 #[derive(Clone, Copy)]
@@ -31,6 +37,7 @@ pub struct RuntimeHandle<'v> {
     attempt_activity: &'v AttemptActivityRuntime,
     result_body_pins: &'v ResultBodyPins,
     skill_invocations: &'v SkillInvocations,
+    sandbox_backends: &'v OnceLock<Arc<dyn SandboxBackends>>,
 }
 
 impl Vault {
@@ -45,7 +52,24 @@ impl Vault {
             attempt_activity: &self.attempt_activity,
             result_body_pins: &self.result_body_pins,
             skill_invocations: &self.skill_invocations,
+            sandbox_backends: &self.sandbox_backends,
         }
+    }
+
+    /// Installs the isolating backends this vault's guests run on: the
+    /// binary that built the vault installs them once, before it serves
+    /// code. The first install holds; a later one is refused and handed
+    /// back. Until one is installed the vault carries
+    /// [`NoSandboxBackends`], so every tier that needs isolation is refused.
+    ///
+    /// # Errors
+    ///
+    /// `Err(backends)` when this vault already carries an installed set.
+    pub fn install_sandbox_backends(
+        &self,
+        backends: Arc<dyn SandboxBackends>,
+    ) -> Result<(), Arc<dyn SandboxBackends>> {
+        self.sandbox_backends.set(backends)
     }
 }
 
@@ -111,5 +135,16 @@ impl<'v> RuntimeHandle<'v> {
     #[inline]
     pub const fn skill_invocations(self) -> &'v SkillInvocations {
         self.skill_invocations
+    }
+
+    /// The isolating backends this vault's host installed
+    /// (`Vault::sandbox_backends`), or [`NoSandboxBackends`] when it
+    /// installed none.
+    #[must_use]
+    pub fn sandbox_backends(self) -> Arc<dyn SandboxBackends> {
+        self.sandbox_backends
+            .get()
+            .cloned()
+            .unwrap_or_else(|| Arc::new(NoSandboxBackends))
     }
 }
