@@ -10,7 +10,10 @@
 //! person for the span and asserts it distinct from both Adas
 //! (`entity.distinct_from`). A member outside R reads both Adas and an
 //! `entity.distinct_from` between them, never the R MESSAGE; the test asserts
-//! it reads no distinct fact born of the R MESSAGE.
+//! it reads no distinct fact born of the R MESSAGE. The second test says
+//! "Ada" in a MESSAGE that names no relationship and is not private, which a
+//! member reads only through a grant on its conversation (review round 2 of
+//! #6971); the outsider holds none, so it reads no fact born of it either.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
 //! assertion is the leak check.
@@ -105,8 +108,12 @@ fn person(vault: &Vault, name: &str) -> EntityId {
     id
 }
 
-#[test]
-fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outside_it() {
+/// Runs the fixture with the "Ada" MESSAGE's metadata from `metadata`
+/// (given R), and returns how many of the distinct facts the someone-new
+/// answer asserts the member outside R reads.
+fn distinct_facts_the_outsider_reads(
+    metadata: impl FnOnce(EntityId) -> Option<serde_json::Value>,
+) -> usize {
     let dir = tempfile::tempdir().expect("tempdir");
     let outsider = EntityId::now();
     let mut config = VaultConfig::device();
@@ -170,7 +177,7 @@ fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outsi
                     hidden_message,
                     1,
                     "Ada told me about the move.",
-                    Some(serde_json::json!({"rel": relationship.to_hex()})),
+                    metadata(relationship),
                 ),
             ],
             occurred_at: 10,
@@ -265,23 +272,38 @@ fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outsi
             .value
             .is_some()
     };
-    assert!(
-        reads(&ada_one),
-        "FIXTURE: the outsider reads a PERSON"
-    );
+    assert!(reads(&ada_one), "FIXTURE: the outsider reads a PERSON");
     assert!(
         !open.is_empty() && open.iter().all(reads),
         "FIXTURE: the outsider reads the distinct fact between the two Adas"
     );
     assert!(
         !reads(&hidden_message),
-        "FIXTURE: the outsider does not read the R MESSAGE"
+        "FIXTURE: the outsider does not read the \"Ada\" MESSAGE"
     );
 
-    let leaked: Vec<&EntityId> = born.iter().filter(|id| reads(*id)).collect();
-    assert!(
-        leaked.is_empty(),
-        "LEAK: a member outside R reads {} distinct fact(s) born of the R MESSAGE",
-        leaked.len()
+    born.iter().filter(|id| reads(*id)).count()
+}
+
+#[test]
+fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outside_it() {
+    let leaked = distinct_facts_the_outsider_reads(|relationship| {
+        Some(serde_json::json!({"rel": relationship.to_hex()}))
+    });
+    assert_eq!(
+        leaked, 0,
+        "LEAK: a member outside R reads {leaked} distinct fact(s) born of the R MESSAGE"
+    );
+}
+
+/// Review round 2 of #6971: a MESSAGE that names no relationship and is not
+/// private reads to a member only through a grant on its conversation. The
+/// outsider holds none, so it reads no distinct fact born of it.
+#[test]
+fn a_someone_new_answer_on_an_unscoped_message_asserts_no_distinct_fact_a_member_reads() {
+    let leaked = distinct_facts_the_outsider_reads(|_| None);
+    assert_eq!(
+        leaked, 0,
+        "LEAK: a member with no grant on the conversation reads {leaked} distinct fact(s) born of an unscoped MESSAGE"
     );
 }

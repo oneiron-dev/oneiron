@@ -129,6 +129,10 @@ fn assert_distinct_in_txn(
 /// MESSAGE: the relationships whose members read them (`None` for an open
 /// MESSAGE), and whether they are private. A MESSAGE whose audience does
 /// not resolve reads to no gated reader, so nothing is derived from it.
+/// A gated MESSAGE or SUMMARY that names no relationship reads only through
+/// a grant on its conversation, which a CLAIM never carries: its derived
+/// facts are private, so they reach no reader its words do not (OPUS-LEAKS,
+/// review round 2 of #6971).
 fn message_audience_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -142,6 +146,15 @@ fn message_audience_in_txn(
         crate::claim::RelationshipRead::Decided(false) => Err(crate::Error::InvalidConfig(
             "an identity ask's MESSAGE has no audience a reader resolves".into(),
         )),
+        crate::claim::RelationshipRead::Gated {
+            kind, space: None, ..
+        } if matches!(
+            kind,
+            crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
+        ) =>
+        {
+            Ok((None, true))
+        }
         crate::claim::RelationshipRead::Gated { space, private, .. } => Ok((space, private)),
     }
 }
