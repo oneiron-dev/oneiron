@@ -173,6 +173,7 @@ fn run(cfg: &Config) -> Result<(), String> {
             cfg.rows,
             encoded.len(),
             hash.len - before,
+            cfg.dims,
         );
 
         // Decode every encoded row back to f32; dimensions come from the CLI.
@@ -202,6 +203,7 @@ fn run(cfg: &Config) -> Result<(), String> {
             cfg.rows,
             decoded.len(),
             hash.len - before,
+            cfg.dims,
         );
     }
 
