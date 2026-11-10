@@ -101,6 +101,11 @@ mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
 mod xlsx_recalc;
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
 #[cfg(unix)]

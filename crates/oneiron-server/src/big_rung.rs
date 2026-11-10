@@ -406,6 +406,19 @@ fn probability(value: &Value) -> Option<f64> {
     (p.is_finite() && (0.0..=1.0).contains(&p)).then_some(p)
 }
 
+/// The answer and probability a written reply gives over `contract`; `None`
+/// when the reply names nothing the contract takes, or no probability.
+///
+/// The reply says how sure the model is of its own answer.
+pub(crate) fn written_decision(
+    reply: BigReply,
+    contract: &AnswerContract,
+    text: &str,
+) -> Option<(DecisionAnswer, f64)> {
+    let (answer, sure) = reply.read(text)?;
+    Some((typed(contract, &answer)?, sure))
+}
+
 /// The written answer as one the contract takes.
 fn typed(contract: &AnswerContract, answer: &Value) -> Option<DecisionAnswer> {
     let text = answer
@@ -590,25 +603,21 @@ impl DecisionModel for BigModel {
                 ..decision
             });
         }
-        let Some((answer, probability)) = self.reply.read(&text) else {
+        let Some((answer, probability)) =
+            written_decision(self.reply, &call.question.contract, &text)
+        else {
             return Ok(ProviderDecision {
                 served,
                 ..abstained()
             });
         };
-        Ok(match typed(&call.question.contract, &answer) {
-            Some(answer) => ProviderDecision {
-                answer,
-                probability: Some(probability),
-                paired: None,
-                person: None,
-                served,
-                cost_per_thousand: Some(cost),
-            },
-            None => ProviderDecision {
-                served,
-                ..abstained()
-            },
+        Ok(ProviderDecision {
+            answer,
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served,
+            cost_per_thousand: Some(cost),
         })
     }
 }
