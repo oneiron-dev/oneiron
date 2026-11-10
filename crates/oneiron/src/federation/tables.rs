@@ -44,9 +44,10 @@ crate::side_table::side_tables! {
         => crate::federation::erase_connect_proposer_in_txn;
     /// One engine-control change (untangle 6.6, S66-3): who changed which knob, of which class,
     /// to what, and when; the receipt that names a holder of `engine.controls`. Key: id16 (the
-    /// change).
+    /// change). A hard erase of an actor takes out the receipts that name it.
     FEDERATION_ENGINE_CONTROL_CHANGE: VaultMeta b"federation:engine_control_change:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::federation::erase_engine_control_actor_in_txn;
     /// An administrative ruling's admission, kept before the grant row that admitted it was
     /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
     /// (the ruling).
@@ -62,9 +63,11 @@ crate::side_table::side_tables! {
     /// Each narrowing the owner applied to a base agent's Steward grant (untangle 6.3c): the
     /// owner, the grant revoked, the narrower grant minted (none for a whole revoke), the verbs
     /// before and after, and the breaks he confirmed. The record that he chose it. Key: id16 (the
-    /// agent) + u64 (recording time).
+    /// agent) + u64 (recording time) + id16 (the grant revoked). A hard erase of the owner takes
+    /// his records out.
     FEDERATION_SYSTEM_AGENT_NARROWING: VaultMeta b"federation:system_agent_narrowing:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::federation::erase_narrowing_actor_in_txn;
     /// The vault functions each system-critical grant keeps running (untangle 6.3c): narrowing
     /// one shows the one system-agent warning and waits for the owner's confirm. Key: id16 (the
     /// grant).
