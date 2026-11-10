@@ -440,12 +440,14 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
 }
 
 /// Where a reach-out citing `record` stands: where the record does, its
-/// relationships, its claim scope (its privacy, sensitivity and project)
-/// and its world, so a member who does not read the record does not read
-/// the reach-out that names it and when it was (OPUS-LEAKS).
+/// relationships, its claim scope (its privacy and sensitivity), its facet
+/// and project stamps and its world, so a member who does not read the
+/// record does not read the reach-out that names it and when it was
+/// (OPUS-LEAKS).
 fn record_place(vault: &Vault, record: &EntityId) -> Result<proposals::FindingPlace> {
     let body = vault.get_claim(record)?.ok_or_else(invalid)?;
     Ok(proposals::FindingPlace {
+        stamps: Some((body.scope_facet, body.scope_project)),
         scope: body.scope,
         world: body.world,
         relationships: body.rel,

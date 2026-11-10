@@ -323,6 +323,7 @@ fn claim_place(row: &UnclearAttribution) -> Option<proposals::FindingPlace> {
         scope,
         world,
         relationships: None,
+        stamps: None,
     })
 }
 
