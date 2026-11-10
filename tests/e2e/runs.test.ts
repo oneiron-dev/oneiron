@@ -985,9 +985,9 @@ async function runs08Agent(client: PublicHttpClient, label: string, ceiling?: "a
   return agent_def_ref;
 }
 /** The asking agent's ask authority, each part read back after the put: an actor-bound Auto ceiling, and a read
- * grant on TURN records. Ask admission checks that the asker can read the question it cites
- * (task_ask.rs validate_task_answer_unit), and the owner witnessed that TURN. That reader key carries no actor
- * class, so the grant names the exact actor_ref and no actor_class; it grants read only, on TURNs only. */
+ * grant on the three records vault.fanout.spawn judges (fanout_batch.rs): the question TURN it cites for its ask
+ * (task_ask.rs validate_task_answer_unit), its parent TASK and the child AGENT_DEF it names. That reader key carries
+ * no actor class, so the grant names the exact actor_ref and no actor_class; it grants read only, on those bands only. */
 async function grantAgentAskAuthority(owner: PublicHttpClient, agentRef: string): Promise<void> {
   const before: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
   const manifest = before.manifests.find(row => row.manifest_ref === before.default_manifest_ref);
@@ -995,11 +995,11 @@ async function grantAgentAskAuthority(owner: PublicHttpClient, agentRef: string)
   const row: FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number] = {
     actor_class: "agent", actor_ref: agentRef, ceiling: "auto",
   };
-  const questionRead: Facade.PolicyScopedGrantRow = {
+  const spawnRead: Facade.PolicyScopedGrantRow = {
     actor_ref: agentRef, effector: "core:read", receipt_required: false,
     scope: {
       worlds: { kind: "all" }, facets: { kind: "all" },
-      bands: { kind: "some", values: [1] }, // Kind bands hold type bytes: 1 is ENTITY_TYPE_TURN.
+      bands: { kind: "some", values: [1, 41, 101] }, // 1 TURN (question), 41 AGENT_DEF (child), 101 TASK (parent).
       audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] },
       sensitivity: { kind: "at_most", value: "restricted" },
     },
@@ -1009,7 +1009,7 @@ async function grantAgentAskAuthority(owner: PublicHttpClient, agentRef: string)
     manifest: {
       ...manifest.manifest,
       actor_ceilings: [...manifest.manifest.actor_ceilings, row],
-      scoped_grants: [...(manifest.manifest.scoped_grants ?? []), questionRead],
+      scoped_grants: [...(manifest.manifest.scoped_grants ?? []), spawnRead],
     },
   };
   const receipt = await owner.call("vault.gate.policy.put", put);
@@ -1019,7 +1019,7 @@ async function grantAgentAskAuthority(owner: PublicHttpClient, agentRef: string)
   expect(live?.manifest.actor_ceilings).toContainEqual(row);
   expect(live?.manifest.scoped_grants?.find(grant => grant.actor_ref === agentRef)).toMatchObject({
     effector: "core:read", receipt_required: false,
-    scope: { bands: { kind: "some", values: [1] }, verbs: { kind: "some", values: ["read"] } },
+    scope: { bands: { kind: "some", values: [1, 41, 101] }, verbs: { kind: "some", values: ["read"] } },
   });
   const stored = await owner.call("vault.agents.get", { agent_def_ref: agentRef });
   expect(stored.definition.ceiling).toBe("auto");
