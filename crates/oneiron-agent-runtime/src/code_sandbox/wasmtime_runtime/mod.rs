@@ -45,6 +45,10 @@ pub struct WasmtimeComponentRuntime {
     /// The host's measured disk floor foreign steps' proposed files spool on
     /// (FIX 7650); none spools them as before.
     proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
+    /// The isolating backends the run's vault carries (F1-6), its isolated
+    /// lane's only source of a backend; none bound selects none, so every
+    /// tier that needs isolation is refused.
+    sandbox_backends: Option<std::sync::Arc<dyn super::microvm::SandboxBackends>>,
     budget: ComponentBudget,
     adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
@@ -79,6 +83,7 @@ impl WasmtimeComponentRuntime {
             component_bytes: std::sync::Arc::from(bytes),
             foreign_egress: None,
             proposal_spool: None,
+            sandbox_backends: None,
             budget,
             adapter: None,
         })
@@ -94,6 +99,7 @@ impl WasmtimeComponentRuntime {
             component_bytes: std::sync::Arc::clone(&self.component_bytes),
             foreign_egress: self.foreign_egress.clone(),
             proposal_spool: self.proposal_spool.clone(),
+            sandbox_backends: self.sandbox_backends.clone(),
             budget: self.budget,
             adapter: None,
         }
@@ -467,6 +473,13 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
         self.proposal_spool = Some(spool);
     }
 
+    fn bind_sandbox_backends(
+        &mut self,
+        backends: std::sync::Arc<dyn super::microvm::SandboxBackends>,
+    ) {
+        self.sandbox_backends = Some(backends);
+    }
+
     fn run_step(
         &mut self,
         step: JsCodeModeStep<'_>,
@@ -502,10 +515,12 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
             script: prepared.executed(),
             ..step
         };
-        let outcome = match super::microvm::select_backend_for_tier(
-            &super::SANDBOX_BACKENDS,
-            step.boundary.tier(),
-        )? {
+        let backends: &dyn super::microvm::SandboxBackends = match &self.sandbox_backends {
+            Some(backends) => &**backends,
+            None => &super::microvm::NoSandboxBackends,
+        };
+        let outcome = match super::microvm::select_backend_for_tier(backends, step.boundary.tier())?
+        {
             Some(backend) => isolated::run(self, step, prepared, backend, cancel, host),
             None => self.execute_cancellable(step, prepared, host, cancel),
         };

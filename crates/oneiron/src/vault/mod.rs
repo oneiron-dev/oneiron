@@ -256,6 +256,11 @@ pub struct Vault {
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
         std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
+    /// The isolating backends the binary that built this vault installed
+    /// ([`Vault::install_sandbox_backends`], F1-6); none until it installs
+    /// them, and then every tier that needs isolation is refused.
+    pub(crate) sandbox_backends:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
