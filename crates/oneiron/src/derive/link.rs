@@ -97,7 +97,10 @@ pub(super) fn stage_same_as_in_txn(
         return refuse(vault, txn, context, source, SAME_AS_NOT_CLAIMS);
     }
     // As the Dreamer's nightly SameAs drafts it: under the source's own
-    // exposure, its refs the pair, its taint the pair's meet.
+    // exposure, its refs the pair, its taint the pair's meet. The refs ride
+    // the typed evidence envelope, as a derived claim's do: the derivation
+    // floor (GATE-12) reads no other shape, and a bare `refs` map is no
+    // evidence to it.
     let meet = bodies.iter().fold(ClaimSource::Generated, |meet, body| {
         crate::dreamer_consolidation::source_meet(
             meet,
@@ -118,15 +121,13 @@ pub(super) fn stage_same_as_in_txn(
         1.0,
     )
     .with_scope_stamps(anchor.scope_facet, anchor.scope_project)
-    .with_evidence(Value::Map(vec![(
-        "refs".into(),
-        Value::Array(
-            [source, target]
-                .iter()
-                .map(|id| Value::Binary(id.as_bytes().to_vec()))
-                .collect(),
-        ),
-    )]));
+    .with_evidence(crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![source, target],
+            chain: Vec::new(),
+            source_meet: meet,
+        },
+    ));
     if let Some(world) = anchor.world {
         candidate = candidate.with_world(world);
     }
