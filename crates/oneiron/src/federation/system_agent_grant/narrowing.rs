@@ -331,5 +331,25 @@ impl Vault {
     }
 }
 
+/// The narrowing history's actor scrub, named in the table's declaration: a
+/// hard erase of an owner takes out every record of a narrowing he applied,
+/// so no row keeps naming an erased person. The grants those narrowings left
+/// stand as they are.
+pub(crate) fn erase_narrowing_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    for (key, narrowing) in SYSTEM_AGENT_NARROWING.scan(&vault.store, txn)? {
+        if key.0 == *actor || narrowing.owner == *actor {
+            SYSTEM_AGENT_NARROWING.delete(&vault.store, txn, &key)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;
