@@ -14,7 +14,8 @@
 use std::collections::BTreeSet;
 
 use oneiron::federation::EngineDefaultOrigin;
-use oneiron::task_verb::sdk::{EngineDefaultGrantEntry, invoke};
+use oneiron::memory::MEMORY_CODE_FORBIDDEN;
+use oneiron::task_verb::sdk::{EmptyRequest, engine_default_grants_as, invoke};
 use oneiron::test_doors::coach::{coach, read_and_engine_controls};
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, open_owner_carrier_vault, owner};
 use oneiron::{EdgeActorClass, EntityId};
@@ -62,16 +63,21 @@ fn the_owner_reads_each_engine_default_and_its_origin() {
         );
     }
 
-    // The verb answers the owner with the same receipts.
-    let owner_id = vault.ensure_embedded_owner_actor().expect("owner");
-    let answer = invoke(
-        &vault.memory(owner_id, EdgeActorClass::Human),
+    // The verb answers the owner, under his proof, with the same receipts.
+    // The fixture vault holds no writer lease, so the proof is passed as a
+    // host door passes it; `Memory::embedded_owner` admits only the handle
+    // that holds the lease.
+    let entries = engine_default_grants_as(&vault, &owner_proof, EmptyRequest {})
+        .expect("the owner's read");
+    // The verb is the owner's alone: the Coach, which holds one of the
+    // defaults, is refused on its own handle.
+    let refused = invoke(
+        &vault.memory(coach, EdgeActorClass::System),
         "vault.engine.defaults",
         json!({}),
     )
-    .expect("the owner's read");
-    let entries: Vec<EngineDefaultGrantEntry> =
-        serde_json::from_value(answer).expect("receipt entries");
+    .expect_err("the Coach is not the owner");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
     assert_eq!(
         entries
             .iter()
