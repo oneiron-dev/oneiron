@@ -628,6 +628,7 @@ fn stored(vault: &Vault, row: &AuthorityLogEntry) -> bool {
 /// `authority_log_signer_bound` check. The owner raises the row, and the
 /// next pass lands the held row with no re-send.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no row waits at the bound (FIX 8564, 8876)"]
 fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
     let (_dir, vault) = test_vault();
     let vault = Arc::new(vault);
@@ -687,6 +688,7 @@ fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
 /// bound then landed nothing until a full replay. The marker now outlives
 /// the refused tombstone.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no held row or retry marker exists (FIX 8564, 8876)"]
 fn a_refused_tombstone_beside_a_held_row_leaves_its_retry_marker() {
     let (_dir, vault) = test_vault();
     let materializer = Materializer::new();
@@ -726,6 +728,7 @@ fn a_refused_tombstone_beside_a_held_row_leaves_its_retry_marker() {
 /// pass found the row stored byte for byte and wrote nothing, so the window
 /// stayed pending. The next pass now settles the marker.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no held row or retry marker exists (FIX 8564, 8876)"]
 fn a_held_row_that_lands_before_its_marker_settles_clears_it_on_the_next_pass() {
     let (_dir, vault) = test_vault();
     let vault = Arc::new(vault);
