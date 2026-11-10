@@ -28,7 +28,9 @@ mod tests {
     use super::super::verify_tests_time_lta_a::tests::{
         VERIFY_SECS, append_dss_revision, append_sig_revision, tsa_ca, verify_engine,
     };
-    use crate::api::{PadesProfile, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
+    use crate::api::{
+        PadesProfile, PdfSealEngine, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    };
 
     const THIS_UPDATE: u64 = AT_UNIX - 3600;
     const NEXT_UPDATE: Option<u64> = Some(AT_UNIX + 3600);
