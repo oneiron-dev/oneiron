@@ -11,6 +11,7 @@ use super::verify_tests_fixtures_dss_a::tests::*;
 use super::verify_tests_lta_probes::tests::base_input;
 use super::verify_tests_time_lta_a::tests::*;
 use crate::api::*;
+use crate::memory::testing::operation_limits;
 
 fn signed_with_eol(
     bytes: &[u8],
@@ -19,10 +20,10 @@ fn signed_with_eol(
     tsa: Option<&TestCa>,
     gen_time: u64,
 ) -> Vec<u8> {
-    let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(bytes, &operation_limits()).unwrap();
     let kind = pdf::RevisionKind::Signature {
-        field_name: pdf::field_name_for(op),
-        date_str: pdf::pdf_date(AT_UNIX * 1000),
+        field_name: pdf::field_name_for(op, &operation_limits()).unwrap(),
+        date_str: pdf::pdf_date(AT_UNIX * 1000, &operation_limits()).unwrap(),
     };
     let mut draft = pdf::append_revision(bytes, &state, &kind, 64 * 1024).unwrap();
     let mut br = draft.byte_range.unwrap();
@@ -62,12 +63,12 @@ fn signed_with_eol(
         chain_ders: &[],
     };
     let cms_der = cms::build_signed_data(&material, &wire, &sig, &unsigned);
-    pdf::patch_contents(&mut draft, &cms_der).unwrap();
+    pdf::patch_contents(&mut draft, &cms_der, &operation_limits()).unwrap();
     draft.bytes
 }
 
 fn append_unknown(bytes: &[u8]) -> Vec<u8> {
-    let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(bytes, &operation_limits()).unwrap();
     let mut out = bytes.to_vec();
     out.push(b'\n');
     let n = state.max_obj + 1;
@@ -134,7 +135,7 @@ fn review_unknown_timestamp_key_is_not_lta() {
     let signer = test_ca("review-key");
     let tsa = tsa_ca();
     let signed = append_sig_revision(&base_input(), &signer, "key", None, AT_UNIX);
-    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
     let mut draft = pdf::append_revision(
         &signed,
         &state,
@@ -167,7 +168,7 @@ fn review_unknown_timestamp_key_is_not_lta() {
         &pdf::hash_byte_range(&draft.bytes, br).unwrap(),
         AT_UNIX,
     );
-    pdf::patch_contents(&mut draft, &token).unwrap();
+    pdf::patch_contents(&mut draft, &token, &operation_limits()).unwrap();
     let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
     let report = engine.verify_sealed_pdf(&draft.bytes).unwrap();
     assert_eq!(report.signatures[1].integrity, VerifyVerdict::Passed);
@@ -177,14 +178,15 @@ fn review_unknown_timestamp_key_is_not_lta() {
 fn review_unknown_evidence_key_is_not_lta() {
     let signer = test_ca("review-evidence");
     let signed = append_sig_revision(&base_input(), &signer, "ev", None, AT_UNIX);
-    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
     let material = super::super::profile::DssMaterial {
         certs_der: vec![signer.cert_der.clone()],
         ocsps_der: vec![],
         crls_der: vec![],
     };
     let (mut objects, dss_obj) =
-        super::super::profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+        super::super::profile::build_dss_objects(&material, state.max_obj + 1, &operation_limits())
+            .unwrap();
     let stream = objects
         .iter_mut()
         .find(|(_, b)| b.windows(6).any(|w| w == b"stream"))
@@ -210,14 +212,15 @@ fn review_unknown_evidence_key_is_not_lta() {
 fn review_r2_fake_xref_object_is_not_lta() {
     let signer = test_ca("review-fake-xref");
     let signed = append_sig_revision(&base_input(), &signer, "fake-xref", None, AT_UNIX);
-    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
     let material = super::super::profile::DssMaterial {
         certs_der: vec![signer.cert_der.clone()],
         ocsps_der: vec![],
         crls_der: vec![],
     };
     let (mut objects, dss_obj) =
-        super::super::profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+        super::super::profile::build_dss_objects(&material, state.max_obj + 1, &operation_limits())
+            .unwrap();
     objects.push((
         dss_obj + 1,
         b"<< /Type /XRef /Unknown (changed) >>".to_vec(),
@@ -264,7 +267,7 @@ fn review_r3_trailer_info_change(stream: bool) {
         engine.verify_sealed_pdf(&signed).unwrap().verdict(),
         VerifyVerdict::Passed
     );
-    let mut state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let mut state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
     assert_eq!(state.info, Some(old_info));
     let normal = append_dss_revision(&signed, vec![signer.cert_der.clone()], vec![]);
     let normal_report = engine.verify_sealed_pdf(&normal).unwrap();
@@ -280,7 +283,8 @@ fn review_r3_trailer_info_change(stream: bool) {
         crls_der: vec![],
     };
     let (objects, dss_obj) =
-        super::super::profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+        super::super::profile::build_dss_objects(&material, state.max_obj + 1, &operation_limits())
+            .unwrap();
     let draft = pdf::append_revision(
         &signed,
         &state,

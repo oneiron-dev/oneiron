@@ -14,6 +14,7 @@ pub(crate) mod tests {
     use super::super::verify_tests_time_lta_a::tests::*;
     use super::super::*;
     use crate::api::VerifyCheckKind;
+    use crate::memory::testing::{operation_ledger, operation_limits};
 
     #[test]
     fn dss_cert_only_fails_revocation_coverage() {
@@ -75,15 +76,19 @@ pub(crate) mod tests {
         let doc = dss_doc(&[leaf_der.clone(), fake.cert_der], &[crl], &[]);
         let anchor_cert = EmbeddedCert::from_der(&anchor.cert_der).unwrap();
         let covered = covered_of(&[&leaf_der]);
-        let mut checks = Checks::new();
+        let limits = operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(&limits);
         verify_dss(
             &doc,
             std::slice::from_ref(&anchor_cert),
             &covered,
             AT_UNIX,
-            usize::MAX,
+            &memory,
             &mut checks,
-        );
+            &limits,
+        )
+        .unwrap();
         assert_material_fails(&checks);
     }
 
@@ -107,15 +112,19 @@ pub(crate) mod tests {
         let doc = dss_doc(&[leaf_der.clone(), fake.cert_der], &[], &[ocsp]);
         let anchor_cert = EmbeddedCert::from_der(&anchor.cert_der).unwrap();
         let covered = covered_of(&[&leaf_der]);
-        let mut checks = Checks::new();
+        let limits = operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(&limits);
         verify_dss(
             &doc,
             std::slice::from_ref(&anchor_cert),
             &covered,
             AT_UNIX,
-            usize::MAX,
+            &memory,
             &mut checks,
-        );
+            &limits,
+        )
+        .unwrap();
         assert_material_fails(&checks);
     }
 
@@ -141,15 +150,19 @@ pub(crate) mod tests {
         );
         let anchor = EmbeddedCert::from_der(&anchor_ca.cert_der).unwrap();
         let covered = covered_of(&[&anchor_ca.cert_der, &inter_der]);
-        let mut checks = Checks::new();
+        let limits = operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(&limits);
         verify_dss(
             &doc,
             std::slice::from_ref(&anchor),
             &covered,
             AT_UNIX,
-            usize::MAX,
+            &memory,
             &mut checks,
-        );
+            &limits,
+        )
+        .unwrap();
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
     }
 
@@ -211,16 +224,16 @@ pub(crate) mod tests {
             "ds-leaf",
             vec![rcgen::KeyUsagePurpose::DigitalSignature],
         );
-        assert!(validate_chain(&[ds], &anchors_of(&ca), AT_UNIX).is_ok());
+        assert!(validate_chain(&[ds], &anchors_of(&ca), AT_UNIX, &operation_ledger()).is_ok());
         let cc = leaf_with_ku(
             &ca,
             "cc-leaf",
             vec![rcgen::KeyUsagePurpose::ContentCommitment],
         );
-        assert!(validate_chain(&[cc], &anchors_of(&ca), AT_UNIX).is_ok());
+        assert!(validate_chain(&[cc], &anchors_of(&ca), AT_UNIX, &operation_ledger()).is_ok());
         // No KeyUsage extension at all: RFC 5280-unconstrained, permitted.
         let bare = leaf_with_ku(&ca, "bare-leaf", Vec::new());
-        assert!(validate_chain(&[bare], &anchors_of(&ca), AT_UNIX).is_ok());
+        assert!(validate_chain(&[bare], &anchors_of(&ca), AT_UNIX, &operation_ledger()).is_ok());
     }
 
     fn crl_ext(oid: &str, value_der: Vec<u8>) -> x509_cert::ext::Extension {
@@ -464,11 +477,15 @@ pub(crate) mod tests {
         let anchors = anchors_of(&tsa);
         let missing = mint_token_shaped(&tsa, &imprint, AT_UNIX, false);
         assert!(
-            tsp::validate_token_for_verify(&missing, &imprint, &anchors).is_err(),
+            tsp::validate_token_for_verify(&missing, &imprint, &anchors, &operation_ledger())
+                .is_err(),
             "a token without the content-type attribute must fail"
         );
         let complete = mint_token_shaped(&tsa, &imprint, AT_UNIX, true);
-        assert!(tsp::validate_token_for_verify(&complete, &imprint, &anchors).is_ok());
+        assert!(
+            tsp::validate_token_for_verify(&complete, &imprint, &anchors, &operation_ledger())
+                .is_ok()
+        );
     }
 
     #[test]
@@ -488,7 +505,8 @@ pub(crate) mod tests {
             .expect("TSTInfo version marker present");
         token[pos + 2] = 0x02; // version := v2
         assert!(
-            tsp::validate_token_for_verify(&token, &imprint, &anchors).is_err(),
+            tsp::validate_token_for_verify(&token, &imprint, &anchors, &operation_ledger())
+                .is_err(),
             "a non-v1 TSTInfo must fail the verify path"
         );
     }
@@ -509,7 +527,7 @@ pub(crate) mod tests {
         };
         let weak = mint_token_custom(&tsa, &imprint, AT_UNIX, true, Some(nonce), true);
         assert!(
-            tsp::validate_token_for_verify(&weak, &imprint, &anchors).is_err(),
+            tsp::validate_token_for_verify(&weak, &imprint, &anchors, &operation_ledger()).is_err(),
             "extra weak digest alg must fail the verify path"
         );
         assert!(
@@ -520,12 +538,15 @@ pub(crate) mod tests {
                 None,
                 &anchors,
                 AT_UNIX * 1000,
+                &operation_ledger(),
             )
             .is_err(),
             "extra weak digest alg must fail the response path"
         );
         let clean = mint_token_custom(&tsa, &imprint, AT_UNIX, true, Some(nonce), false);
-        assert!(tsp::validate_token_for_verify(&clean, &imprint, &anchors).is_ok());
+        assert!(
+            tsp::validate_token_for_verify(&clean, &imprint, &anchors, &operation_ledger()).is_ok()
+        );
         assert!(
             tsp::validate_response(
                 &wrap_granted(&clean),
@@ -534,6 +555,7 @@ pub(crate) mod tests {
                 None,
                 &anchors,
                 AT_UNIX * 1000,
+                &operation_ledger(),
             )
             .is_ok()
         );

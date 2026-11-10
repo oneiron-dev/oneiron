@@ -169,7 +169,8 @@ fn public_verifier_reports_duplicate_object_numbers_before_and_after_signing() {
     // An unindexed earlier definition of a new object in an appended
     // revision must be visible even though the merged object map keeps
     // only the definition named by xref.
-    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let state =
+        pdf::reparse_revision(&signed, &crate::memory::testing::operation_limits()).unwrap();
     let id = state.max_obj + 1;
     let mut later = signed;
     later.extend_from_slice(format!("\n{id} 0 obj\n<< /Probe /Orphan >>\nendobj\n").as_bytes());
@@ -295,7 +296,8 @@ fn revision_classifier_allows_writer_lta_but_denies_unlisted_post_sign_object() 
     );
     assert_eq!(clean.verdict(), VerifyVerdict::Passed);
     assert_eq!(clean.signatures[0].profile, Some(PadesProfile::BaselineLta));
-    let state = pdf::reparse_revision(&renewed, &SealResourceLimits::default()).unwrap();
+    let state =
+        pdf::reparse_revision(&renewed, &crate::memory::testing::operation_limits()).unwrap();
     let (tampered, _) = emit_revision(
         &renewed,
         &state,
