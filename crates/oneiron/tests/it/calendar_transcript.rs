@@ -247,7 +247,10 @@ fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
         "one attempt per partition: the pre-existing conversation and the import's own"
     );
     assert!(
-        vault.open_session().unwrap().is_none(),
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none(),
         "the import closes its own sitting exactly once"
     );
     assert_eq!(

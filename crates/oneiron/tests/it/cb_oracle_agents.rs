@@ -2356,9 +2356,9 @@ mod lead_fixture {
             use ed25519_dalek::{Signer, SigningKey};
             use oneiron::authority::{
                 AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey,
-                AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
-                DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, GenesisRecoveryStep, ROLE_ADMIN,
-                ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
+                AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority,
+                GenesisRecoveryStep, ROLE_ADMIN, ROLE_OWNER, authority_entry_hash,
+                authority_transcript, genesis_vault_id,
             };
             const OWNER_KEY_SEED: u8 = 0xD9;
 
@@ -2391,8 +2391,6 @@ mod lead_fixture {
                     },
                     genesis_nonce: [OWNER_KEY_SEED; 32],
                     recovery: GenesisRecoveryStep::Saved([1; 32]),
-                    tier_floor: AuthorityTier::Software,
-                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 },
                 signer: AuthoritySignature {
                     suite: key.suite(),

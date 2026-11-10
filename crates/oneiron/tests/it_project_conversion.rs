@@ -472,9 +472,16 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
     duplicate.origin_thread = record.origin_thread.clone();
     duplicate.origin_at = record.origin_at;
     assert!(vault.put_project(second, &duplicate, 3).is_err());
+    let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner =
+        vault.authenticate_owner(owner_actor, "principal:owner", true, GateDecisionId::now())?;
+    let issuer = host_issuer(&vault);
+    let signer = vault.owner_project_signer(&issuer)?;
     assert!(
         vault
-            .convert_thread_to_project(room, thread, message, second, None, 3)
+            .convert_thread_to_project(
+                &owner, &signer, room, thread, message, second, None, None, 3
+            )
             .is_err()
     );
     assert!(vault.project(second)?.is_none());
