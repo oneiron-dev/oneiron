@@ -120,7 +120,11 @@ impl BatchBuilder<'_> {
         let vault = self.vault;
         // An agent's batch: each definition it creates is the one its author
         // writer gives it (ARCH-0053:20), before anything stages.
-        vault.bound_agent_authored_puts_in_txn(&*wtxn, self.agent_authoring, &mut self.ops)?;
+        vault.bound_agent_authored_puts_in_txn(
+            &*wtxn,
+            self.agent_authoring.as_ref(),
+            &mut self.ops,
+        )?;
         #[cfg(feature = "sync")]
         admit_federated_puts(vault, wtxn, &mut self.ops, &self.federated_puts)?;
         // A batch inside an actor-bound transaction cannot silently choose the

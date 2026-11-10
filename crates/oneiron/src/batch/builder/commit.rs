@@ -295,7 +295,7 @@ impl BatchBuilder<'_> {
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         let prepared_person_substrate = self.prepared_person_substrate.take();
         let prepared_agent_birth = self.prepared_agent_birth.take();
-        let agent_authoring = self.agent_authoring;
+        let agent_authoring = self.agent_authoring.take();
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -347,7 +347,7 @@ impl BatchBuilder<'_> {
             // stored row it names: a put the writer makes a proposed change
             // moves to the proposal's own id.
             if let Err(err) =
-                vault.bound_agent_authored_puts_in_txn(&*wtxn, agent_authoring, &mut ops)
+                vault.bound_agent_authored_puts_in_txn(&*wtxn, agent_authoring.as_ref(), &mut ops)
             {
                 return Rows::Discard(Err(err.into()));
             }

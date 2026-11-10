@@ -62,21 +62,31 @@ impl AgentDefinitionPutDisposition {
     }
 }
 
-/// The agent a generic row door writes for, and that door's verb name. A
-/// batch that carries one holds each definition it creates to that agent's
-/// slice (ARCH-0053:20).
-#[derive(Debug, Clone, Copy)]
+/// The agent a generic row door writes for, that door's verb name, and the
+/// key of the read the door holds its caller to. A batch that carries one
+/// holds each definition it creates to that agent's slice (ARCH-0053:20).
+#[derive(Debug, Clone)]
 pub(crate) struct AgentAuthoring {
     author: EntityId,
     door: &'static str,
+    /// The door's write lane key: the credential an agent with no definition
+    /// of its own takes its slice from. `None` for an unbound lane, which
+    /// grants nothing by itself.
+    read_key: Option<crate::claim::ScopedReadActorKey>,
 }
 
 impl AgentAuthoring {
-    /// `actor` writing through `door`; `None` when `actor` is no agent.
-    pub(crate) fn of(actor: &crate::WriteActor, door: &'static str) -> Option<Self> {
+    /// `actor` writing through `door` under the lane key `read_key`; `None`
+    /// when `actor` is no agent.
+    pub(crate) fn of(
+        actor: &crate::WriteActor,
+        door: &'static str,
+        read_key: Option<&crate::claim::ScopedReadActorKey>,
+    ) -> Option<Self> {
         (actor.actor_class() == crate::edge::EdgeActorClass::Agent).then(|| Self {
             author: actor.entity_ref(),
             door,
+            read_key: read_key.cloned(),
         })
     }
 }
@@ -135,15 +145,19 @@ fn mark_agent_authored(definition: &mut AgentDefinition, author: &EntityId, door
     definition.lifecycle_status = ClaimLifecycleStatus::Active;
 }
 
-/// Whether every grant `request` names is one `holder` holds: its scope, its
-/// skills, its connectors and its code-mode MCPs.
-fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
-    let scope_within = match (&request.scope, &holder.scope) {
+/// Whether the scope `request` reads is inside the scope `holder` reads.
+fn scope_within(request: &AgentScope, holder: &AgentScope) -> bool {
+    match (request, holder) {
         (_, AgentScope::All) | (AgentScope::Base, AgentScope::Base | AgentScope::World(_)) => true,
         (AgentScope::World(child), AgentScope::World(parent)) => child == parent,
         _ => false,
-    };
-    scope_within
+    }
+}
+
+/// Whether every grant `request` names is one `holder` holds: its scope, its
+/// skills, its connectors and its code-mode MCPs.
+fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
+    scope_within(&request.scope, &holder.scope)
         && request
             .skills
             .iter()
@@ -169,16 +183,14 @@ fn stands(definition: &AgentDefinition) -> bool {
         )
 }
 
-fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> bool {
-    grants_within(request, author)
-        && !request.ceiling.widens_beyond(author.ceiling)
-        // The owner's model choices hold as they are (FIX 4472): an authored
-        // put cannot change them. `request` has already taken every choice it
-        // left out from the author (FIX 9557), so each resolved choice is
-        // checked, the dreaming ones included; turning its own dreaming off
-        // is the one narrowing a model choice allows.
-        && request.model_tier == author.model_tier
-        && request.models == author.models
+/// Whether `request` keeps the single model choices its author runs under:
+/// its tier, its compaction model and its dreaming. The owner's choices on
+/// the author's row hold as they are (FIX 4472): an authored put cannot
+/// change them. `request` has already taken every choice it left out from
+/// the author (FIX 9557), so each resolved choice is checked; turning its
+/// own dreaming off is the one narrowing a model choice allows.
+fn keeps_author_model_choices(request: &AgentDefinition, author: &AgentDefinition) -> bool {
+    request.model_tier == author.model_tier
         && request.compaction_model == author.compaction_model
         && request.dreaming_model == author.dreaming_model
         && (request.dreaming_mode() == author.dreaming_mode()
@@ -731,9 +743,11 @@ impl Vault {
     /// writes rows through lands what `vault.agents.put` lands. A new
     /// definition inside the author's slice is active at the author's
     /// approval; wider, it is a proposal no dispatch runs. An agent that holds
-    /// no definition of its own (a PERSON bound as an agent) has no slice to
-    /// lend, so what it authors is a proposal. A put over a stored definition
-    /// answers to [`Self::agent_authored_update_in_txn`].
+    /// no definition of its own (a PERSON bound as an agent) lends the slice
+    /// its grant gives it ([`Self::within_granted_slice_in_txn`]): inside it
+    /// the definition is approved, and with no grant at all it is a proposal.
+    /// A put over a stored definition answers to
+    /// [`Self::agent_authored_update_in_txn`].
     ///
     /// # Errors
     ///
@@ -743,7 +757,7 @@ impl Vault {
     fn agent_authored_put_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        authoring: AgentAuthoring,
+        authoring: &AgentAuthoring,
         id: &EntityId,
         body: &[u8],
     ) -> Result<AuthoredPut> {
@@ -779,12 +793,222 @@ impl Vault {
             .0
         } else {
             self.ensure_new_authored_definition_in_txn(txn, id, &requested)?;
+            let within = self.within_granted_slice_in_txn(txn, authoring, &requested)?;
             let mut definition = requested;
             mark_agent_authored(&mut definition, author, authoring.door);
-            definition.approval_status = ClaimApprovalStatus::Proposed;
+            definition.approval_status = if within {
+                ClaimApprovalStatus::Approved
+            } else {
+                ClaimApprovalStatus::Proposed
+            };
             definition
         };
         encode_agent_definition(&definition).map(AuthoredPut::Bounded)
+    }
+
+    /// Whether `requested` is inside the slice of an agent that holds no
+    /// definition of its own: the slice its grant gives it (the owner's
+    /// ruling, 10 Nov 2026: a definition within the creating agent's own
+    /// powers goes live). The grant is the credential in the door's lane key,
+    /// or one standing owner-agent Grant that confers `read` on the agent;
+    /// an identity key alone grants nothing. Inside the slice:
+    ///
+    /// - the worlds `requested` reads (all, base, or base and one world) lie
+    ///   inside the grant's worlds, met with the lane key's asked worlds and
+    ///   its room turn's;
+    /// - its ceiling is no higher than the ceiling policy and the gate's
+    ///   definition bound leave the agent;
+    /// - each skill, connector and code-mode MCP it names is one the agent
+    ///   can itself use ([`Self::named_tools_in_writer_use_in_txn`]).
+    ///
+    /// No definition lists the models such an agent may run on, so no model
+    /// `requested` names is outside its slice.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    fn within_granted_slice_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: &AgentAuthoring,
+        requested: &AgentDefinition,
+    ) -> Result<bool> {
+        use crate::claim::world_access::WorldAuthoritySet;
+        use crate::federation::ScopeAxis;
+        use crate::gate::PolicyApprovalCeiling;
+
+        let author = authoring.author;
+        let requested_worlds = match &requested.scope {
+            AgentScope::All => ScopeAxis::All,
+            AgentScope::Base => WorldAuthoritySet::new(true, [])?.scope_axis(),
+            AgentScope::World(world) => WorldAuthoritySet::new(true, [*world])?.scope_axis(),
+        };
+        let key = authoring.read_key.as_ref();
+        let mut reach = key.map_or(ScopeAxis::All, |key| key.world_ceiling().worlds);
+        if let Some(turn) = key.and_then(|key| key.room_turn()) {
+            reach = reach.meet(&turn.terms.with(|terms| terms.worlds.worlds.clone()));
+        }
+        let credential_grants =
+            key.is_some_and(|key| key.reads_as_vault_owner() || key.authority_scope().is_some());
+        let scope_within = if credential_grants {
+            requested_worlds.is_narrowing_of(&reach)
+        } else {
+            let grants = self.agent_grants_in_txn(txn)?;
+            let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+                &self.store,
+                txn,
+                grants
+                    .iter()
+                    .filter(|standing| standing.grant.member_ref == author)
+                    .map(|standing| &standing.grant),
+            )?;
+            let now = self.instant_in_txn(txn)?.secs();
+            let owners = crate::policy_model::owners_in_txn(self, txn)?;
+            grants.iter().any(|standing| {
+                standing.stands_in_txn(self, txn, author, "read", now, &owners, &classes)
+                    && requested_worlds
+                        .is_narrowing_of(&reach.meet(&standing.grant.authority_scope.worlds))
+            })
+        };
+        if !scope_within {
+            return Ok(false);
+        }
+        let writer = crate::WriteActor::new(author, crate::edge::EdgeActorClass::Agent);
+        let ceiling = match crate::gate::resolve_policy_manifest(&self.store, txn)?
+            .actor_ceiling("agent", Some(&author.to_hex()))
+            .restrict(
+                crate::gate::agent_definition_ceiling_for_actor(&self.store, txn, writer)
+                    .unwrap_or(PolicyApprovalCeiling::Auto),
+            ) {
+            PolicyApprovalCeiling::Auto => super::types::AgentCeiling::Auto,
+            PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
+        };
+        Ok(!requested.ceiling.widens_beyond(ceiling)
+            && self.named_tools_in_writer_use_in_txn(txn, &author, None, requested)?)
+    }
+
+    /// Whether the agent `writer` can itself use each skill, connector and
+    /// code-mode MCP `requested` names (the lead's ruling, 10 Nov 2026: the
+    /// slice is what the writer can itself use right now). `held` is the
+    /// writer's own definition, when it has one: a name on its lists is one
+    /// it holds. Any other name is held to the check the runtime makes when
+    /// the writer uses it:
+    ///
+    /// - a skill, to the load door's rule for one resident
+    ///   ([`Self::writer_loads_skill_in_txn`]);
+    /// - a connector or a code-mode MCP, to the standing-grant lookup a
+    ///   connector call starts with
+    ///   ([`Self::writer_granted_servers_in_txn`]).
+    ///
+    /// A name the writer cannot use puts `requested` outside its slice.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    fn named_tools_in_writer_use_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &EntityId,
+        held: Option<&AgentDefinition>,
+        requested: &AgentDefinition,
+    ) -> Result<bool> {
+        for skill in &requested.skills {
+            if held.is_some_and(|held| held.skills.contains(skill)) {
+                continue;
+            }
+            if !self.writer_loads_skill_in_txn(txn, writer, &skill.skill_id)? {
+                return Ok(false);
+            }
+        }
+        let servers: Vec<&str> = requested
+            .connectors
+            .iter()
+            .filter(|connector| !held.is_some_and(|held| held.connectors.contains(connector)))
+            .map(String::as_str)
+            .chain(
+                requested
+                    .code_mode_mcps
+                    .iter()
+                    .filter(|mcp| !held.is_some_and(|held| held.code_mode_mcps.contains(mcp)))
+                    .map(|mcp| mcp.key.as_str()),
+            )
+            .collect();
+        if servers.is_empty() {
+            return Ok(true);
+        }
+        let granted = self.writer_granted_servers_in_txn(txn, writer)?;
+        Ok(servers
+            .iter()
+            .all(|server| granted.iter().any(|granted| granted.as_str() == *server)))
+    }
+
+    /// Whether the agent `writer` can load a skill named `skill_id`: the
+    /// vault holds a live SKILL record of that name that the load door would
+    /// load for it (`skill::pack_load`, `load_skill_pack_bound`), that is, an
+    /// active, approved record that is shared or the writer's own fork. A
+    /// record whose body does not decode is no skill here. The dependency's
+    /// minimum version is not judged: no load reads it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    fn writer_loads_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &EntityId,
+        skill_id: &str,
+    ) -> Result<bool> {
+        let skills = self.entities_by_type_page_in_txn(
+            txn,
+            crate::registry::ENTITY_TYPE_SKILL,
+            None,
+            usize::MAX,
+        )?;
+        for id in skills {
+            let record = match self.get_skill_record_in_txn(txn, &id) {
+                Ok(Some(record)) => record,
+                Ok(None) | Err(Error::Artifact(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            if record.skill_id == skill_id
+                && crate::skill::skill_loadable(&record)
+                && crate::skill::resident_of(&record)
+                    .is_ok_and(|resident| resident.is_none_or(|resident| resident == *writer))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The servers the agent `writer` holds a live scoped outbound grant on:
+    /// the lookup a connector call starts with
+    /// (`outbound_consent::connector_call_driver::governance`,
+    /// `connector_call_grant`), for any tool. The call's own checks of the
+    /// tool, its key and its arguments stay with the call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    fn writer_granted_servers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &EntityId,
+    ) -> Result<Vec<String>> {
+        let frontier =
+            crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
+        Ok(
+            crate::outbound_grant::standing_outbound_grants_for_principal_in_txn(
+                &self.store,
+                txn,
+                &writer.to_hex(),
+            )?
+            .iter()
+            .filter(|grant| grant.is_active_under_policy(&frontier))
+            .filter_map(|grant| grant.scope.scoped_mcp_grant())
+            .map(|scoped| scoped.server.to_owned())
+            .collect(),
+        )
     }
 
     /// What an agent's generic put over the stored definition `stored` at
@@ -794,7 +1018,8 @@ impl Vault {
     /// owner-only widening rule its three switches and its models. A put that
     /// grants the row more answers to the author's slice, as a new definition
     /// does (ARCH-0053:20). An author other than the row itself, whose own
-    /// standing slice holds everything the put names, holds the wider power:
+    /// slice holds everything the put names
+    /// ([`Self::author_holds_wider_grant_in_txn`]), holds the wider power:
     /// its put stays as staged. Any other is a proposed change (ARCH-0053
     /// r6): the stored definition stays as it is, and keeps working, and the
     /// wider version is stored as a new proposal record that names it
@@ -809,7 +1034,7 @@ impl Vault {
     fn agent_authored_update_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        authoring: AgentAuthoring,
+        authoring: &AgentAuthoring,
         id: &EntityId,
         stored: &[u8],
         body: &[u8],
@@ -820,21 +1045,8 @@ impl Vault {
             return Ok(AuthoredPut::AsStaged);
         }
         let author = &authoring.author;
-        if author != id
-            && let LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_AGENT_DEF,
-                body: author_body,
-            } = live_entity_row_in_txn(&self.store, txn, author)?
-        {
-            let author_def = decode_agent_definition(&author_body)?;
-            if stands(&author_def) {
-                let slice = self.policy_bounded_author_in_txn(txn, author, &author_def)?;
-                if grants_within(&requested, &slice)
-                    && !requested.ceiling.widens_beyond(slice.ceiling)
-                {
-                    return Ok(AuthoredPut::AsStaged);
-                }
-            }
+        if author != id && self.author_holds_wider_grant_in_txn(txn, authoring, &requested)? {
+            return Ok(AuthoredPut::AsStaged);
         }
         // The proposal is the next version of the stored definition: it meets
         // what that update would meet, and keeps the lineage the row has.
@@ -855,6 +1067,40 @@ impl Vault {
             id: proposal_id,
             body: encode_agent_definition(&proposal)?,
         })
+    }
+
+    /// Whether the slice of `authoring`'s agent holds every grant `requested`
+    /// names: its scope, its ceiling, and each skill, connector and code-mode
+    /// MCP. An agent with a standing definition lends that definition's scope
+    /// and policy-bounded ceiling; one with no definition lends the slice its
+    /// grant gives it ([`Self::within_granted_slice_in_txn`]). An agent whose
+    /// definition does not stand lends nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and an author definition that does not decode.
+    fn author_holds_wider_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: &AgentAuthoring,
+        requested: &AgentDefinition,
+    ) -> Result<bool> {
+        let author = &authoring.author;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_AGENT_DEF,
+            body: author_body,
+        } = live_entity_row_in_txn(&self.store, txn, author)?
+        else {
+            return self.within_granted_slice_in_txn(txn, authoring, requested);
+        };
+        let author_def = decode_agent_definition(&author_body)?;
+        if !stands(&author_def) {
+            return Ok(false);
+        }
+        let slice = self.policy_bounded_author_in_txn(txn, author, &author_def)?;
+        Ok(scope_within(&requested.scope, &slice.scope)
+            && !requested.ceiling.widens_beyond(slice.ceiling)
+            && self.named_tools_in_writer_use_in_txn(txn, author, Some(&slice), requested)?)
     }
 
     /// `author_def` at the ceiling policy leaves the agent `author`: the
@@ -907,7 +1153,7 @@ impl Vault {
     pub(crate) fn bound_agent_authored_puts_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        authoring: Option<AgentAuthoring>,
+        authoring: Option<&AgentAuthoring>,
         ops: &mut [BatchOp],
     ) -> Result<()> {
         let Some(authoring) = authoring else {
@@ -955,7 +1201,24 @@ impl Vault {
         self.ensure_new_authored_definition_in_txn(txn, id, requested)?;
         let bounded_author = self.policy_bounded_author_in_txn(txn, author, &author_def)?;
         let mut definition = inherit_model_choices(requested, &bounded_author);
-        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
+        // Inside the author's slice: its scope and ceiling, the single model
+        // choices it runs under, each listed model its own list admits (the
+        // check a seat on that model makes, `models::list_admits`), and each
+        // skill, connector and code-mode MCP it holds or can itself use.
+        let within = !scope_widens
+            && scope_within(&definition.scope, &bounded_author.scope)
+            && !definition.ceiling.widens_beyond(bounded_author.ceiling)
+            && keeps_author_model_choices(&definition, &bounded_author)
+            && definition
+                .models
+                .iter()
+                .all(|entry| super::models::list_admits(&bounded_author.models, &entry.model_ref))
+            && self.named_tools_in_writer_use_in_txn(
+                txn,
+                author,
+                Some(&bounded_author),
+                &definition,
+            )?;
         mark_agent_authored(&mut definition, author, door);
         let disposition = if within {
             definition.approval_status = author_def.approval_status;

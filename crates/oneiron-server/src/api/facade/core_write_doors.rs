@@ -151,6 +151,14 @@ pub(crate) async fn vault_batch(
     })
 }
 
+/// The write actor `auth` binds, when it binds one. A credential that binds
+/// none writes as before.
+pub(crate) fn credential_writer(server: &SyncServer, auth: &CoreAuth) -> Option<WriteActor> {
+    super::facade_actor(server, auth)
+        .ok()
+        .map(|(actor, class)| WriteActor::new(actor, class))
+}
+
 /// One atomic batch, committed at owner grade only when `auth` carries it,
 /// its TURNs platform announcements only at `auth`'s owner authority. It is
 /// held to `auth`'s write lane ([`core_write_lane`], FIX 1223, 6068): a put
@@ -174,9 +182,7 @@ pub(crate) async fn write_core_batch(
         CoreBatchCommit::BelowOwner
     };
     let announcement = crate::api::announcement_authority(server, auth);
-    let writer = super::facade_actor(server, auth)
-        .ok()
-        .map(|(actor, class)| WriteActor::new(actor, class));
+    let writer = credential_writer(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
     clock_ingress::run_blocking(move || {
