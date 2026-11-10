@@ -18,6 +18,32 @@ export interface PairActorOptions {
   /** Must already exist through a public owner/person/agent door. Pairing never creates it. */
   readonly principalRef:string;readonly actorClass:"human"|"agent"|"system";
   readonly scope?:readonly string[];readonly lifetimeSeconds?:number;
+  /** Facet ids (32 lower-hex) the slip reads. `token pair` names no facet, so with this set the link comes from the
+   * owner door the CLI posts to, POST /v1/core/pairing/links. Omitted: every facet, through the CLI as before. */
+  readonly facetRefs?:readonly string[];
+  /** One of facetRefs: the facet the slip's writes are born in. Unnamed, the engine takes the smallest. */
+  readonly writeFacetRef?:string;
+}
+/** ARCH-0028 registration-time tiers, as `token agent --tier` spells them. */
+export type AgentTier="read-only"|"propose-only"|"full-access";
+export interface AgentTokenOptions {
+  /** 1 to 64 letters, digits, `-`, `_` or `.`. One name is one agent principal however often it is minted. */
+  readonly name:string;readonly tier:AgentTier;readonly lifetimeSeconds?:number;
+  /** A host secret for this mint only, for a failed-mint case: the mint process's ONEIRON_AUTH_SECRET (the shipped
+   * CLI refuses it in argv), never the relaunch's. Omitted, the CLI reads the fixture's own secret from its config. */
+  readonly authSecret?:string;
+}
+/** The slip `token agent` minted, held as a paired actor, and what the CLI printed beside it. */
+export interface AgentToken extends PairedActor {
+  readonly slipId:string;readonly ceiling:string;readonly revokedSlipIds:readonly string[];
+}
+/** A mint's outcome as data: tryMintAgentToken reports a nonzero CLI exit instead of throwing it. */
+export type AgentTokenAttempt=
+  |{readonly ok:true;readonly actor:AgentToken}
+  |{readonly ok:false;readonly exitCode:number;readonly error:CliError};
+interface PairingLinkReply {
+  readonly code:string;readonly expires_at:number;
+  readonly pin?:{readonly challenge:readonly number[];readonly digest:readonly number[]};
 }
 export interface EndpointEmbedder {
   readonly endpoint:string;readonly modelKey:string;readonly modelId:string;readonly dimensions:number;
@@ -206,11 +232,70 @@ export class EngineFixture {
     },reply=>server.running&&reply.status===200,{timeoutMs:LIMITS.readyMs,label:"owned server HTTP health",readiness:true});
   }
   async pairActor(options:PairActorOptions):Promise<PairedActor> {
+    const link=options.facetRefs===undefined?await this.cliPairingLink(options):await this.facetPairingLink(options,options.facetRefs);
+    redactor.add(link);
+    return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
+  }
+  private async cliPairingLink(options:PairActorOptions):Promise<string> {
     const result=await this.pairedActor.cli.run(["token","pair","--url",this.url,"--principal-ref",options.principalRef,"--actor-class",options.actorClass,
       ...(options.scope?["--scope",options.scope.join(",")]:[]),...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.requestMs,true);
     if(result.exitCode!==0) throw new CliError(result,"actor-pair");
-    const link=result.stdout.trim();redactor.add(link);
-    return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
+    return result.stdout.trim();
+  }
+  /** The body `token pair` posts (commands.rs token_pair), with the facet axis narrowed. Every axis is spelled out:
+   * the engine reads a missing axis as deny. The HTTP record keeps transport metadata only, never the code. */
+  private async facetPairingLink(options:PairActorOptions,facetRefs:readonly string[]):Promise<string> {
+    if(facetRefs.length===0) throw new TypeError("facetRefs names at least one facet; omit it for every facet");
+    for(const ref of facetRefs) if(!/^[0-9a-f]{32}$/.test(ref)) throw new TypeError(`facet ref ${ref} is not a canonical lower-hex id`);
+    if(options.writeFacetRef!==undefined&&!facetRefs.includes(options.writeFacetRef)) throw new TypeError("writeFacetRef must be one of facetRefs");
+    const all={kind:"all"} as const;
+    const reply=await this.pairedActor.client.request<PairingLinkReply>("POST","/v1/core/pairing/links",{
+      scope:{worlds:all,facets:{kind:"some",values:[...facetRefs]},bands:all,audience:all,
+        verbs:options.scope?{kind:"some",values:[...options.scope]}:all,sensitivity:all},
+      lifetime_secs:options.lifetimeSeconds??365*24*60*60,
+      principal:{holder_ref:options.principalRef,actor_class:options.actorClass,
+        ...(options.writeFacetRef===undefined?{}:{write_facet:options.writeFacetRef})},
+    });
+    const {code,pin}=reply.body;
+    const hex=(bytes:readonly number[])=>bytes.map(byte=>byte.toString(16).padStart(2,"0")).join("");
+    const link=`${new URL(this.url).origin}/pair#${code}.${options.principalRef}`;
+    return pin?`${link}.${hex(pin.challenge)}.${hex(pin.digest)}`:link;
+  }
+  /** One agent slip from the shipped `token agent` CLI, which mints on the stopped vault: the server stops, the CLI
+   * writes the slip to a new owner-only file, and the server starts again as restart() does (MCP sessions and the
+   * cached schema go with the old process). The latest mint for a name sets its tier and revokes its earlier slips.
+   * A nonzero CLI exit throws its CliError; tryMintAgentToken returns it instead. */
+  async mintAgentToken(options:AgentTokenOptions):Promise<AgentToken> {
+    const attempt=await this.tryMintAgentToken(options);
+    if(!attempt.ok) throw attempt.error;
+    return attempt.actor;
+  }
+  /** mintAgentToken, with a nonzero CLI exit returned as `{ok:false}`. The server is relaunched with the fixture's
+   * own environment and read by the owner again before either outcome returns. */
+  async tryMintAgentToken(options:AgentTokenOptions):Promise<AgentTokenAttempt> {
+    if(this.closed) throw new Error("Cannot mint on a closed fixture");
+    const file=resolve(this.root,`agent-token-${secretHex(6)}.credential`);
+    if(options.authSecret!==undefined) redactor.add(options.authSecret);
+    const env=options.authSecret===undefined?this.env:{...this.env,ONEIRON_AUTH_SECRET:options.authSecret};
+    const cli=new CliClient(requireAsset(this.build,"cli"),this.root,env,this.artifacts);
+    await this.server?.stop();
+    const minted=await cli.run(["token","agent","--name",options.name,"--tier",options.tier,
+      "--config",resolve(this.root,"oneiron.toml"),"--out",file,
+      ...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.readyMs,true)
+      .finally(()=>this.launch());
+    this.schema=undefined;
+    try {
+      await this.client.call("vault.receipts",{limit:1});
+      if(minted.exitCode!==0) return {ok:false,exitCode:minted.exitCode,error:new CliError(minted)};
+      const credential=(await readFile(file,"utf8")).trim();
+      credentialParts(credential); // checks the paired form and registers credential, bearer and seed with the redactor
+      const printed=JSON.parse(minted.stdout) as {principal_ref:string;actor_class:string;ceiling:string;slip_id:string;revoked_slip_ids:string[]};
+      if(printed.actor_class!=="agent") throw new Error(`token agent minted actor class ${printed.actor_class}`);
+      return {ok:true,actor:{...this.actor(printed.principal_ref,"agent",{credential,pin:null}),
+        slipId:printed.slip_id,ceiling:printed.ceiling,revokedSlipIds:printed.revoked_slip_ids}};
+    } finally {
+      await rm(file,{force:true});
+    }
   }
   /** Only public receipt reads, never a private job drain or an internal commit counter. */
   async awaitReceipt(ref:string,timeoutMs:number=LIMITS.requestMs):Promise<unknown> {

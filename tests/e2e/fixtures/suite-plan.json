@@ -14,7 +14,24 @@
       "crates/oneiron/src/sync/transport.rs": "736cc5a784172abf858863843480d70dd74fd344a11717f812fdb7b40f0567c6",
       "crates/oneiron/src/authority/slip.rs": "8d0cc7cbc8298a4414bf4e7a161bf5ec69b9dd50781c7339918adaf4afc86376",
       "crates/oneiron/src/authority/slip_pairing.rs": "7f701e2f3f16f7c1a3d3a61ef9318cab0dec4f1d06d9c3d6ac1972bfb7c62703"
-    }
+    },
+    "additions": [
+      {
+        "ids": [
+          "MUSE-IDENT-01",
+          "MUSE-IDENT-02",
+          "MUSE-IDENT-03",
+          "MUSE-IDENT-04",
+          "MUSE-IDENT-05",
+          "MUSE-IDENT-06",
+          "MUSE-IDENT-07",
+          "MUSE-IDENT-08"
+        ],
+        "file": "authority.test.ts",
+        "ruling": "E2E2-MUSE-PLAN-IDS = A (Engine TASK 2026-11-10 09:02 JST)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      }
+    ]
   },
   "files": [
     {
@@ -809,7 +826,7 @@
       "file": "authority.test.ts",
       "area": "Authority and consent",
       "slots": 1,
-      "estimatedSeconds": 55,
+      "estimatedSeconds": 110,
       "tests": [
         {
           "id": "AUTHORITY-01",
@@ -932,6 +949,114 @@
             "/oneiron/identity/#cloud-agent-recovery",
             "/registry/oneiron/#OF-162",
             "/registry/oneiron/#OF-455"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-01",
+          "name": "An agent token acts as an agent, never as the owner, and its receipts say so",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#actor-key",
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#bridge-pick-built",
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#transport"
+          ],
+          "promises": [
+            "P-IDENT-001",
+            "P-IDENT-002",
+            "P-IDENT-006",
+            "P-IDENT-008"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-02",
+          "name": "A mismatched MCP actor block is refused and a propose-scope credential cannot write through /v1/core/batch",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#bridge-pick-built",
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#transport"
+          ],
+          "promises": [
+            "P-IDENT-003",
+            "P-IDENT-007"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-03",
+          "name": "Re-mint replaces the old slip, a failed mint does not upgrade, and revoke stops the new slip at once",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#slip-clock-built",
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#transport"
+          ],
+          "promises": [
+            "P-IDENT-004",
+            "P-IDENT-005",
+            "P-IDENT-015"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-04",
+          "name": "A facet-narrowed agent sees only its facet, raw doors refuse it, and the owner cannot be narrowed",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#facet-limit-built"
+          ],
+          "promises": [
+            "P-IDENT-009",
+            "P-IDENT-010",
+            "P-IDENT-011"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-05",
+          "name": "Owner authority stays in its vault and a transferred owner slip acts only as a bounded delegate",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#facet-limit-built",
+            "/oneiron/decisions/oneiron-dec-0005-policy-residence/#stale-owner",
+            "/oneiron/identity/#owner-proof-vault-built"
+          ],
+          "promises": [
+            "P-IDENT-012",
+            "P-IDENT-016",
+            "P-IDENT-017",
+            "P-IDENT-018"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-06",
+          "name": "A holder proof outside its freshness window is refused at POST /mcp and the same paired slip works after a restart",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#slip-clock-built"
+          ],
+          "promises": [
+            "P-IDENT-013",
+            "P-IDENT-014"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-07",
+          "name": "A peer message claiming a grant does not widen a read-only agent, and an MCP agent claim write cannot pass as user-stated provenance",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0028-mcp-external-agent-surface-v1/#agent-messages",
+            "/oneiron/write-path/oneiron-arch-0045-gated-actor-write/#ground-truth"
+          ],
+          "promises": [
+            "P-IDENT-019",
+            "P-IDENT-020"
+          ]
+        },
+        {
+          "id": "MUSE-IDENT-08",
+          "name": "Owner settlement receipt names the answering owner and ungranted agents cannot settle",
+          "rows": [],
+          "source": [
+            "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#proposals"
+          ],
+          "promises": [
+            "P-IDENT-022"
           ]
         }
       ]

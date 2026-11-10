@@ -64,7 +64,11 @@ export interface BuildManifest {
     readonly bindings: Readonly<Record<string, "real" | "stub">>;
   };
 }
-export interface PlannedTest { readonly id: string; readonly name: string; readonly rows: readonly string[]; readonly source: readonly string[] }
+export interface PlannedTest {
+  readonly id: string; readonly name: string; readonly rows: readonly string[]; readonly source: readonly string[];
+  /** PROMISE-REGISTER ids (P-<AREA>-NNN) the case proves, for cases added after the owner plan. */
+  readonly promises?: readonly string[];
+}
 export interface PlannedFile {
   readonly file: string; readonly area: string; readonly slots: 1 | 2;
   readonly estimatedSeconds: number; readonly tests: readonly PlannedTest[];

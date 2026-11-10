@@ -7,8 +7,11 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 242 IDs, 443 public registry rows, and three explicit
-excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+The pinned plan has 29 files, 250 IDs, 443 public registry rows, and three explicit
+excluded rows. The owner plan's 242 IDs plus MUSE-IDENT-01..08 in `authority.test.ts`
+(ruling E2E2-MUSE-PLAN-IDS = A), which cite PROMISE-REGISTER ids in `promises`. The
+runner takes the file and ID counts from the plan pin's `expectedFacts` in
+`fixtures/manifest.json`; adding IDs means re-pinning the plan with new counts. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
 `vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
 DTOs. Bind each method's declared type rather than applying a casing rule to
@@ -352,7 +355,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 242-ID plan. The prepared manifest must identify
+never claims completion of the pinned plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -365,7 +368,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 242 IDs. Partial and optional-profile
+coverage still requires passing evidence for every planned ID. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
