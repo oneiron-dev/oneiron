@@ -437,8 +437,18 @@ pub fn snapshot_page(
     let mut bytes = 0u64;
     let mut receipt: Option<crate::claim::ScopedReadReceipt> = None;
     let mut next = None;
+    // The last position this caller was shown: the cursor it sent, a row
+    // served, or a row named oversized. The cursor this page returns is cut
+    // there, never at a withheld row, so it names no row the caller does not
+    // read (review of #6986); the next page passes the withheld rows again.
+    let mut shown = after;
     'kinds: while kind_at < handle.kinds.len() {
-        let want = limit.saturating_sub(rows.len() + oversized.len()).max(1);
+        // One index fetch returns at most MAX_TYPE_QUERY_RESULTS ids. Asking
+        // no more than that, a short fetch is the kind's end, and a page with
+        // a larger bound reads on in the same kind (review of #6964).
+        let want = limit
+            .saturating_sub(rows.len() + oversized.len())
+            .clamp(1, crate::vault::MAX_TYPE_QUERY_RESULTS);
         let entity_type = handle.kinds[kind_at].entity_type();
         let ids = vault.entities_by_type_page_in_txn(&txn, entity_type, after.as_ref(), want)?;
         let exhausted = ids.len() < want;
@@ -482,22 +492,24 @@ pub fn snapshot_page(
                         bytes: size,
                     });
                 } else if bytes.saturating_add(size) > bounds.page_bytes {
-                    next = Some(cursor(kind_at, after));
+                    next = Some(cursor(kind_at, shown));
                     break 'kinds;
                 } else {
                     bytes = bytes.saturating_add(size);
                     rows.push(row);
                 }
+                shown = Some(*id);
             }
             after = Some(*id);
             if rows.len() + oversized.len() >= limit {
-                next = Some(cursor(kind_at, after));
+                next = Some(cursor(kind_at, shown));
                 break 'kinds;
             }
         }
         if exhausted {
             kind_at += 1;
             after = None;
+            shown = None;
         }
     }
     let receipt = match receipt {

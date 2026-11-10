@@ -60,8 +60,9 @@ pub(crate) use self::edges::{
     filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
-/// The composed session census and a reader's skill list
-/// (`snapshot_read::skill_reader`) bound themselves exactly like
+/// The composed session census, a snapshot page (`snapshot_read::snapshot`)
+/// and a reader's skill list (`snapshot_read::skill_reader`) bound themselves
+/// exactly like
 /// [`Vault::entities_by_type`].
 pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
