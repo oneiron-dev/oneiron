@@ -21,6 +21,7 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERB, coach, define_agent};
 use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
+use oneiron::test_doors::substrate_reads::stand_project_steward_grant;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -119,6 +120,72 @@ fn the_dials_read_needs_engine_controls() {
         assert_refused(read(&vault, coach, EdgeActorClass::System, verb, input), verb);
     }
     dials(coach, EdgeActorClass::System).expect("the narrowed Coach still reads the dials");
+}
+
+/// A grant narrowed to part of the vault reads none of these vault-wide
+/// rows (review of #6996): no reader here filters by project, so a holder
+/// whose grant names one project is refused, another project's learning
+/// cell included. The same holder reads once its grant reaches the whole
+/// vault.
+#[test]
+fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open(&dir);
+    let agent = define_agent(&vault).expect("an agent");
+    let (own_project, other_project) = (EntityId::now(), EntityId::now());
+    let other_cell = json!({
+        "cell": { "subject": agent.to_hex(), "predicate": "learning.reliability" },
+        "project_ref": other_project.to_hex(),
+    });
+    let learning = || {
+        read(
+            &vault,
+            agent,
+            EdgeActorClass::Agent,
+            "vault.learning.read",
+            other_cell.clone(),
+        )
+    };
+    let dials = || {
+        read(
+            &vault,
+            agent,
+            EdgeActorClass::Agent,
+            "vault.settings.learning",
+            json!({}),
+        )
+    };
+
+    stand_project_steward_grant(
+        &vault,
+        agent,
+        &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB],
+        own_project,
+    )
+    .expect("a grant narrowed to one project");
+    for (verb, input) in evidence_reads(agent) {
+        assert_refused(
+            read(&vault, agent, EdgeActorClass::Agent, verb, input),
+            verb,
+        );
+    }
+    assert_refused(learning(), "vault.learning.read");
+    assert_refused(dials(), "vault.settings.learning");
+
+    stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+        .expect("a grant across the whole vault");
+    for (verb, input) in evidence_reads(agent) {
+        read(&vault, agent, EdgeActorClass::Agent, verb, input)
+            .unwrap_or_else(|error| panic!("{verb}: a whole-vault holder reads: {error:?}"));
+    }
+    // Admitted: whatever the empty cell answers, it is not the refusal.
+    if let Err(error) = learning() {
+        assert_ne!(
+            error.code, MEMORY_CODE_FORBIDDEN,
+            "vault.learning.read: {error:?}"
+        );
+    }
+    dials().expect("a whole-vault engine.controls holder reads the dials");
 }
 
 #[test]
