@@ -70,21 +70,28 @@ impl GraphQlExecutor for JournalTransport {
     }
 }
 
-/// A vault holding one live TASK: since FIX 8609 (cfe21b93cbd) the journal keeps a
-/// call's request and response bodies in custody under the TASK the call mutates.
-fn journal_vault() -> (tempfile::TempDir, oneiron::Vault, EntityId) {
-    let dir = tempfile::tempdir().expect("vault dir");
-    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
-    let task = EntityId::from_bytes([0x6a; 16]).expect("task");
+/// A live TASK (role Task: the MessagePack map `{"role": 1}`). Since FIX 8609
+/// (cfe21b93cbd) a Linear call's request and response bodies are kept in the
+/// custody of the TASK the call mutates, and a call for no live TASK is not sent.
+fn live_task(vault: &oneiron::Vault, seed: u8) -> EntityId {
+    let task = EntityId::from_bytes([seed; 16]).expect("task");
     vault
         .put_entity(
             &task,
             oneiron::registry::ENTITY_TYPE_TASK,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
-            b"task",
+            &[0x81, 0xa4, b'r', b'o', b'l', b'e', 0x01],
         )
         .expect("task");
+    task
+}
+
+/// A vault holding one live TASK for the journal tests.
+fn journal_vault() -> (tempfile::TempDir, oneiron::Vault, EntityId) {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
+    let task = live_task(&vault, 0x6a);
     (dir, vault, task)
 }
 #[test]
@@ -346,6 +353,8 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         )
         .expect("person");
     grant_linear_effects(&vault, actor);
+    // The TASK the call mutates; the PERSON is the agent acting.
+    let task = live_task(&vault, 0x5b);
     let key_id = EntityId::from_bytes([0x58; 16]).expect("key");
     vault
         .register_connector_key(
@@ -382,7 +391,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     let first = egress
-        .create_issue([41; 32], actor, &fields())
+        .create_issue([41; 32], task, &fields())
         .expect("first dispatch");
     let successful = linear_receipts(&vault);
     assert_eq!(successful.len(), 1);
@@ -391,12 +400,12 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     assert!(content_ref.starts_with("linear:request:v1:"));
     assert!(!content_ref.contains("mutation"));
     let replay = egress
-        .create_issue([41; 32], actor, &fields())
+        .create_issue([41; 32], task, &fields())
         .expect("engine replay");
     assert_eq!(first, replay);
     assert_eq!(linear_receipts(&vault), successful);
     assert_eq!(*writes.borrow(), 1);
-    assert!(egress.create_issue([42; 32], actor, &fields()).is_err());
+    assert!(egress.create_issue([42; 32], task, &fields()).is_err());
     assert_eq!(*writes.borrow(), 1);
     assert_eq!(
         vault
@@ -441,7 +450,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     )
     .expect("denied door");
     let mut denied = LinearHostEgress::new(denied, config()).expect("egress");
-    assert!(denied.create_issue([43; 32], actor, &fields()).is_err());
+    assert!(denied.create_issue([43; 32], task, &fields()).is_err());
     assert_eq!(*writes.borrow(), 1);
     let denied_receipts = linear_receipts(&vault);
     assert_eq!(denied_receipts.len(), 3);
@@ -485,7 +494,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     let mut resumed = LinearHostEgress::new(resumed, config()).expect("egress");
     assert_eq!(
         resumed
-            .create_issue([41; 32], actor, &fields())
+            .create_issue([41; 32], task, &fields())
             .expect("durable replay"),
         first
     );
@@ -510,6 +519,8 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
         )
         .expect("person");
     grant_linear_effects(&vault, actor);
+    // The TASK the call mutates; the PERSON is the agent acting.
+    let task = live_task(&vault, 0x6b);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
     let failed = JournalTransport {
@@ -527,7 +538,7 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
-    assert!(egress.create_issue([44; 32], actor, &fields()).is_err());
+    assert!(egress.create_issue([44; 32], task, &fields()).is_err());
     assert_eq!(*calls.borrow(), 1);
     let recorded = linear_receipts(&vault);
     assert_eq!(recorded.len(), 1);
@@ -567,7 +578,7 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
-    assert!(egress.create_issue([44; 32], actor, &fields()).is_err());
+    assert!(egress.create_issue([44; 32], task, &fields()).is_err());
     assert_eq!(*calls.borrow(), 1);
     assert_eq!(*writes.borrow(), 0);
     assert_eq!(linear_receipts(&reopened), recorded);
@@ -614,6 +625,8 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         )
         .expect("person");
     grant_linear_effects(&vault, actor);
+    // The TASK the call mutates; the PERSON is the agent acting.
+    let task = live_task(&vault, 0x6c);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
     let mut first = LinearHostEgress::new(
@@ -629,7 +642,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         config(),
     )
     .expect("egress");
-    assert!(first.create_issue([45; 32], actor, &fields()).is_err());
+    assert!(first.create_issue([45; 32], task, &fields()).is_err());
     assert_eq!(*calls.borrow(), 1);
     let definite = linear_receipts(&vault);
     assert_eq!(definite.len(), 1);
@@ -655,7 +668,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         config(),
     )
     .expect("egress");
-    assert!(second.create_issue([45; 32], actor, &fields()).is_err());
+    assert!(second.create_issue([45; 32], task, &fields()).is_err());
     assert_eq!(*calls.borrow(), 2);
     let outcomes = linear_receipts(&vault);
     assert_eq!(
@@ -686,7 +699,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         config(),
     )
     .expect("egress");
-    assert!(replay.create_issue([45; 32], actor, &fields()).is_err());
+    assert!(replay.create_issue([45; 32], task, &fields()).is_err());
     assert_eq!(
         *calls.borrow(),
         2,
@@ -716,6 +729,8 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
         )
         .expect("person");
     grant_linear_effects(&vault, actor);
+    // The TASK the call mutates; the PERSON is the agent acting.
+    let task = live_task(&vault, 0x6d);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
     let op = [46; 32];
@@ -736,7 +751,7 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     // Interrupt the exact staging path after writing only part of its
     // temporary file, leaving an orphan as a process crash would. The final
     // request name must not exist; no gate or transport has run.
-    let interrupted = journal.stage_request_with(&op, actor, &call, |staged| {
+    let interrupted = journal.stage_request_with(&op, task, &call, |staged| {
         staged.as_file_mut().write_all(b"{").expect("partial write");
         staged.as_file().sync_all().expect("partial sync");
         std::fs::hard_link(
@@ -776,7 +791,7 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     let created = egress
-        .create_issue(op, actor, &fields())
+        .create_issue(op, task, &fields())
         .expect("safe retry");
     assert_eq!(created.issue.issue_id, "created");
     assert_eq!(*calls.borrow(), 1);
@@ -785,11 +800,11 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     assert!(door.request_by_ref(&reference).expect("resolve").is_some());
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     assert_eq!(
-        egress.create_issue(op, actor, &fields()).expect("replay"),
+        egress.create_issue(op, task, &fields()).expect("replay"),
         created
     );
     let mut altered = fields();
     altered.title = "changed payload".into();
-    assert!(egress.create_issue(op, actor, &altered).is_err());
+    assert!(egress.create_issue(op, task, &altered).is_err());
     assert_eq!(*calls.borrow(), 1);
 }

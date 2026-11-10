@@ -332,10 +332,10 @@ fn a_crop_or_a_flag_never_leaves_a_body_export_refuses() {
     let args = map(vec![
         (
             "shape",
-            map(vec![
-                ("type", "freehand".into()),
-                ("points", Value::Array(vec![dab; 18])),
-            ]),
+            map(vec![(
+                "freehand",
+                map(vec![("points", Value::Array(vec![dab; 18]))]),
+            )]),
         ),
         (
             "stroke",

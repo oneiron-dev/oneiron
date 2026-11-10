@@ -122,7 +122,7 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
 fn retired_task_verb_names_are_unknown() {
     let dir = tempfile::tempdir().unwrap();
     let client = OneironClient::open(Some(dir.path()), &OpenOptions::default()).unwrap();
-    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+    for name in ["tasks.check", "tasks.expand", "tasks.ack"] {
         let refusal = client
             .agent_verb(name, serde_json::json!({}))
             .expect_err(name);
@@ -133,6 +133,17 @@ fn retired_task_verb_names_are_unknown() {
         );
         assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
     }
+    // Ruled (ONE-2510, 11ddd68e2ce): "A call to an old spelling that has
+    // exactly one canonical verb with the same leaf gets the typed
+    // `WRONG_ROOT` refusal"; `tasks.cancel` names `cancel`, and is not run.
+    let refusal = client
+        .agent_verb("tasks.cancel", serde_json::json!({}))
+        .expect_err("tasks.cancel");
+    assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_WRONG_ROOT);
+    assert!(
+        refusal.message.contains("the verb is `cancel`"),
+        "{refusal:?}"
+    );
 }
 
 /// ARCH-0067 §8 through the embedded client: the history read runs inside the
