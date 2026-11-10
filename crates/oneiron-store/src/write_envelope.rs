@@ -155,9 +155,10 @@ pub struct WriteEnvelope {
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
     machine_signature: Option<MachineWriteSignature>,
-    /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
-    /// payload, or API argument reaches this field, and the 4-arity
-    /// constructors below can only produce the trivial value.
+    /// ONE-1314. Stamped HOST-INTERNALLY only: no guest payload or API
+    /// argument reaches this field (no `Deserialize` on the envelope or the
+    /// lineage), and the 4-arity constructors below can only produce the
+    /// trivial value; see [`Self::with_lineage`].
     lineage: SourceLineage,
 }
 
@@ -185,9 +186,16 @@ impl WriteEnvelope {
     ///
     /// The ONE non-trivial-lineage constructor, reserved for host dispatchers
     /// that own a run's effect history (the code-run dispatcher, the Dreamer
-    /// promotion writer). It is `pub(crate)` on purpose: no public, guest, or
-    /// API path may supply a lineage value, so a caller cannot narrow its own
-    /// history to ride the auto lane.
+    /// promotion writer). No guest or API path may supply a lineage value, so
+    /// a caller cannot narrow its own history to ride the auto lane.
+    ///
+    /// `pub` because those dispatchers are in core and the envelope's fields
+    /// stay in the store, which encodes them. The guard is the wire, not Rust
+    /// privacy: neither [`SourceLineage`] nor [`WriteEnvelope`] implements
+    /// `Deserialize`, so no guest payload or API body decodes into one, and
+    /// the dispatchers stamp the lineage host-side. An in-process caller of
+    /// this constructor already chooses the declared source through
+    /// [`Self::new`], so the constructor gives it no new authority.
     pub fn with_lineage(
         actor: WriteActor,
         source: ClaimSource,
