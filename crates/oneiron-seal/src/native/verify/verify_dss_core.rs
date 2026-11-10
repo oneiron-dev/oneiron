@@ -408,7 +408,10 @@ pub(super) fn crl_signer_authorized(
         if !issued_by(cert, cert_issuer, memory)? {
             continue;
         }
-        for holder in std::iter::once(signer).chain(embedded.iter()) {
+        for holder in std::iter::once(signer)
+            .chain(embedded.iter())
+            .chain(anchors.iter())
+        {
             if holder.cert.tbs_certificate.subject == *subject
                 && holder.cert.tbs_certificate.subject_public_key_info == *key
                 && holder.der != cert_issuer.der
