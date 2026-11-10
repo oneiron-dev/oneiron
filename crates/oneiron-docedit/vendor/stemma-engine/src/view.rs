@@ -2099,6 +2099,7 @@ mod tests {
         let txn = EditTransaction {
             steps: vec![EditStep::CommentCreate {
                 block_id: NodeId::from(block_id.as_str()),
+                story: None,
                 expect: "scope of work".to_string(),
                 occurrence: None,
                 semantic_hash: None,

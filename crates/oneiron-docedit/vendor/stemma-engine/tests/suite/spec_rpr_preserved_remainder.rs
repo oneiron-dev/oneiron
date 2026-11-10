@@ -125,6 +125,7 @@ fn preserved_rpr_children_survive_an_unrelated_edit_and_validate_full() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target_block,
             expect: "Confidential".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,
@@ -203,6 +204,7 @@ fn preserved_rpr_children_survive_reimport_after_unrelated_edit() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target_block,
             expect: "Confidential".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,

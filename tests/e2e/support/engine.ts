@@ -89,6 +89,8 @@ export class EngineFixture {
   client!:PublicHttpClient;
   mcp!:McpClient;
   private server:ManagedProcess|undefined;
+  /** Every server process this fixture launched, restarts included, for serverOutputHas. */
+  private readonly launches:ManagedProcess[]=[];
   private schema:Schema|undefined;
   private closed=false;
   private disown:()=>void=()=>{};
@@ -198,6 +200,7 @@ export class EngineFixture {
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
       {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
+    this.launches.push(server);
     this.server=server;
     const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000,artifacts:this.artifacts,label:"health"});
     await awaitPublic(async()=>{
@@ -220,6 +223,16 @@ export class EngineFixture {
       {timeoutMs,label:`receipt ${ref}`}).then(page=>page.receipts.find(row=>row.receipt_ref===ref));
   }
   async websocket(actor:PairedActor=this.pairedActor):Promise<WsClient> {return WsClient.connect(this.url,actor.credential)}
+  /** Negative leak scan over the raw stdout and stderr of every server process this fixture launched,
+   * restarts included. It scans in memory only and never persists or returns output. Only a closed
+   * fixture has read every line its processes wrote, so call it after `close()`. A case asserts
+   * `{found:false,truncated:false}`: `truncated` means a stream outgrew its window, so absence is unproved. */
+  serverOutputHas(values:readonly string[]):{found:boolean;truncated:boolean} {
+    if(!this.closed) throw new Error("serverOutputHas reads complete output only: close the fixture first");
+    const scans=this.launches.map(server=>server.outputHas(values));
+    if(scans.length===0) throw new Error("serverOutputHas found no server launch to scan");
+    return {found:scans.some(scan=>scan.found),truncated:scans.some(scan=>scan.truncated)};
+  }
   /** OpenAPI covers non-facade endpoints; generated facade types are the facade contract. */
   async requireHttpDoor(path:string,method:string):Promise<void> {
     if(!this.schema) this.schema=(await this.client.request<Schema>("GET","/api/openapi.json")).body;
