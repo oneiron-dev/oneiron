@@ -328,3 +328,24 @@ pub(crate) fn index_corpus(vault: &Vault, corpus: &Corpus) -> Result<f64, String
     Ok(started.elapsed().as_secs_f64() * 1e3)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The former five-letter encoding repeated after `26^5` documents. The
+    /// marker is evidence for planted ground truth, so uniqueness must hold for
+    /// the full admitted `usize` domain rather than only for tiny fixtures.
+    #[test]
+    fn corpus_markers_do_not_wrap_at_the_old_base26_boundary() {
+        let old_wrap = 26_usize.pow(5);
+        let cases = [0, 1, old_wrap - 1, old_wrap, old_wrap + 1, usize::MAX];
+        let markers: std::collections::BTreeSet<String> =
+            cases.into_iter().map(marker_token).collect();
+        assert_eq!(markers.len(), cases.len());
+        assert_ne!(marker_token(0), marker_token(old_wrap));
+        assert!(markers.iter().all(|marker| {
+            marker.len() == 4 + MARKER_DIGITS
+                && marker.bytes().all(|byte| byte.is_ascii_lowercase())
+        }));
+    }
+}

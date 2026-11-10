@@ -176,3 +176,61 @@ fn make_block_entry(sys: &Path, name: &str, whole_disk: bool) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Direct disks, one-leaf device-mapper stacks, and multi-leaf stacks have
+    /// different truth values. Only the first two may resolve to one physical
+    /// disk; the third stays unavailable instead of selecting a convenient
+    /// slave or classifying `dm-1` from its virtual name.
+    #[cfg(unix)]
+    #[test]
+    fn sysfs_device_resolution_requires_exactly_one_physical_leaf() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let sys = root.path().join("sys");
+        make_block_entry(&sys, "nvme0n1", true);
+        make_block_entry(&sys, "dm-0", true);
+        make_block_entry(&sys, "dm-1", true);
+        make_block_entry(&sys, "sda", true);
+        std::os::unix::fs::symlink(
+            sys.join("class/block/nvme0n1"),
+            sys.join("class/block/dm-0/slaves/nvme0n1"),
+        )
+        .expect("single slave");
+        std::os::unix::fs::symlink(
+            sys.join("class/block/nvme0n1"),
+            sys.join("class/block/dm-1/slaves/nvme0n1"),
+        )
+        .expect("first multi-device slave");
+        std::os::unix::fs::symlink(
+            sys.join("class/block/sda"),
+            sys.join("class/block/dm-1/slaves/sda"),
+        )
+        .expect("second multi-device slave");
+
+        let partition_target = sys.join("devices/mock/nvme0n1/nvme0n1p1");
+        std::fs::create_dir_all(&partition_target).expect("partition target");
+        std::fs::write(partition_target.join("partition"), "1\n").expect("partition marker");
+        std::os::unix::fs::symlink(&partition_target, sys.join("class/block/nvme0n1p1"))
+            .expect("partition class link");
+
+        let direct = resolve_single_leaf_disk("nvme0n1", &sys).expect("direct leaf");
+        assert_eq!(direct.0, "nvme0n1");
+        assert_eq!(direct.1, vec!["nvme0n1"]);
+
+        let partition =
+            resolve_single_leaf_disk("nvme0n1p1", &sys).expect("partition resolves to parent");
+        assert_eq!(partition.0, "nvme0n1");
+        assert_eq!(partition.1, vec!["nvme0n1p1", "nvme0n1"]);
+
+        let mapped = resolve_single_leaf_disk("dm-0", &sys).expect("one-leaf mapper resolves");
+        assert_eq!(mapped.0, "nvme0n1");
+        assert_eq!(mapped.1, vec!["dm-0", "nvme0n1"]);
+
+        assert!(
+            resolve_single_leaf_disk("dm-1", &sys).is_none(),
+            "a multi-leaf stack cannot honestly be described as one NVMe device"
+        );
+    }
+}

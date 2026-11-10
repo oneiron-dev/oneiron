@@ -78,4 +78,11 @@ mod tests {
         );
         assert_eq!(format!("{a:?}"), "TransportKey([redacted])");
     }
+    #[cfg(feature = "iroh")]
+    #[test]
+    fn derived_endpoint_matches_iroh_handshake_identity() {
+        let key = TransportKey::derive(&SigningKey::from_bytes(&[7; 32]));
+        let endpoint = key.endpoint_key();
+        assert_eq!(*key.into_iroh_secret().public().as_bytes(), endpoint);
+    }
 }

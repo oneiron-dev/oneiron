@@ -93,3 +93,52 @@ fn invalid() -> BeamError {
         reason: "infra rows require carded provenance and finite measured values".into(),
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn published_v1_cards_appear_beside_a_receipted_measurement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("infra.json");
+        // Omitting comparators selects the shipped, source-carded v1 rows.
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "measurement_receipt": "fixture://measured-run/1",
+                "measured": { "recall_at_k": 0.9, "latency_us": 1200, "cost_usd": 0.0001 }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let report = run(&path).unwrap();
+        assert_eq!(report.purpose, "cost-framing-only");
+        assert_eq!(report.measurement_receipt, "fixture://measured-run/1");
+        assert_eq!(report.measured.recall_at_k, 0.9);
+        assert_eq!(report.comparators.len(), 3);
+        let zilliz = &report.comparators[0];
+        assert_eq!(zilliz.system, "Zilliz Cloud Capacity 12CU");
+        assert_eq!(zilliz.source, "https://zilliz.com/vdbbench-leaderboard-v2");
+        let triple = zilliz.measurement.as_ref().unwrap();
+        assert_eq!(triple.recall_at_k, 0.9723);
+        assert_eq!(triple.latency_us, 299_316);
+        assert!((triple.cost_usd - 2.976 / (376.007 * 3600.0)).abs() < 1e-12);
+        assert!(zilliz.caveat.contains("modeled"));
+        assert!(zilliz.caveat.contains("not the Oneiron corpus"));
+        assert!(
+            report
+                .comparators
+                .iter()
+                .all(|row| row.measurement.is_some())
+        );
+        let citations = crate::beam::citations::corpus().unwrap();
+        assert_eq!(citations.infra_cost_framing.len(), 3);
+        assert!(citations.infra_status.contains("Cost-framing-only"));
+        // Accuracy may cite a published BEAM card, but never an infra card.
+        assert!(citations.main_table.iter().all(|row| {
+            report
+                .comparators
+                .iter()
+                .all(|infra| row.evidence["card_id"] != infra.card_id)
+        }));
+    }
+}

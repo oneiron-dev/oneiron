@@ -400,6 +400,71 @@ fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
     }
 }
 
+#[test]
+fn measured_two_case_ingest_amortizes_measured_tokens_and_index_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let mut other = record.clone();
+    other["question_id"] = serde_json::json!("second-question");
+    let corpus_path = dir.path().join("run.jsonl");
+    std::fs::write(&corpus_path, format!("{record}\n{other}\n")).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    manifest["caseIds"] = serde_json::json!([record["question_id"], "second-question"]);
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    plan.amortized_question_count = 2;
+    let session = fixture_session(&plan, FixtureBackend::default());
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(
+        report.offline_total.input_tokens,
+        2 * record["corpus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| oneiron::count_context_pack_tokens(item["text"].as_str().unwrap()) as u64)
+            .sum::<u64>()
+    );
+    assert!(report.offline_stages.ingest.elapsed_us > 0);
+    assert!(report.offline_stages.index_build.elapsed_us > 0);
+    assert_eq!(
+        report.offline_total.elapsed_us,
+        report.offline_stages.ingest.elapsed_us + report.offline_stages.index_build.elapsed_us
+    );
+    assert_eq!(
+        report.offline_amortized.input_tokens,
+        report.offline_total.input_tokens / 2
+    );
+    assert_eq!(
+        report.offline_stages_amortized.ingest.input_tokens,
+        report.offline_stages.ingest.input_tokens / 2
+    );
+    assert_eq!(
+        report.offline_stages_amortized.ingest.elapsed_us,
+        report.offline_stages.ingest.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(
+        report.offline_stages_amortized.index_build.elapsed_us,
+        report.offline_stages.index_build.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(
+        report.offline_stages_amortized.index_build.token_source,
+        TokenAccountingSource::ElapsedOnly
+    );
+    assert_eq!(
+        report.offline_amortized.elapsed_us,
+        report.offline_total.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(report.amortized_question_count, 2);
+    assert_eq!(
+        report.offline_cost_usd_per_question,
+        report.offline_amortized.cost_usd
+    );
+}
+
 /// The shipped plan over two questions, where one model call fits each
 /// effort's token allowance and two do not.
 fn two_question_plan(dir: &std::path::Path) -> ModelRunPlan {
@@ -520,5 +585,47 @@ fn trajectory_arm_sees_only_its_own_steps_and_zero_memory_wins_ties() {
     assert_eq!(
         (trajectory.score.fixed, trajectory.solo_score.fixed),
         (0.0, 0.0)
+    );
+}
+
+// ARCH-0042 beam:D9: a claim rests on beam-fixed, where half credit counts.
+// The int-cast column drops each 0.5 to 0 and would call memory a tie.
+#[test]
+fn half_credit_moves_a_pick_that_int_cast_scores_as_a_tie() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = two_question_plan(dir.path());
+    let backend = FixtureBackend {
+        reads_context: true,
+        half_credit: true,
+        ..FixtureBackend::default()
+    };
+    let report = run_with_session(&plan, &fixture_session(&plan, backend)).unwrap();
+    let light = &plan.efforts[0];
+    let half = paired::BeamColumns {
+        int_cast: 0.0,
+        fixed: 0.5,
+    };
+    assert!(!report.picks.is_empty());
+    for pick in &report.picks {
+        assert_eq!(pick.arm, ArmKind::Deterministic, "{pick:?}");
+        assert_eq!(pick.effort.as_deref(), Some(light.name.as_str()));
+        assert_eq!(pick.paired_difference, half);
+    }
+    let deterministic = report
+        .points
+        .iter()
+        .find(|point| point.arm == ArmKind::Deterministic && point.effort == light.name)
+        .unwrap();
+    assert_eq!(deterministic.accuracy, half);
+    let json = serde_json::to_value(&report).unwrap();
+    let columns: BTreeSet<_> = json["picks"][0]["paired_difference"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        columns,
+        BTreeSet::from(["beam-fixed", "int-cast-saw-question"])
     );
 }

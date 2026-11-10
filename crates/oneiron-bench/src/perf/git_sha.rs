@@ -381,6 +381,51 @@ mod tests {
         (common, worktree)
     }
 
+    /// The ordinary linked-worktree shape: HEAD is a symbolic ref and the
+    /// branch's LOOSE ref lives in the common directory. Resolving only inside
+    /// the worktree git dir (or only in packed-refs) reports not_ready for a
+    /// perfectly resolvable commit, so the commondir hop is load-bearing.
+    #[test]
+    fn a_linked_worktree_resolves_its_loose_ref_through_commondir() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (common, worktree) = linked_worktree(root.path());
+        std::fs::write(common.join("refs/heads/w6/one-1579"), format!("{SHA}\n"))
+            .expect("loose ref");
+
+        // The loose ref is NOT under the worktree git dir, and there is no
+        // packed-refs at all: only the commondir hop can find it.
+        assert!(!worktree.join("refs/heads/w6/one-1579").exists());
+        assert!(!common.join("packed-refs").exists());
+        assert_eq!(resolve_git_sha(&worktree).as_deref(), Some(SHA));
+    }
+
+    /// A worktree-local loose ref still wins, and packed-refs in the common
+    /// directory remains the fallback when no loose ref exists anywhere.
+    #[test]
+    fn loose_refs_win_and_packed_refs_remain_the_fallback() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (common, worktree) = linked_worktree(root.path());
+        std::fs::write(
+            common.join("packed-refs"),
+            format!("# pack-refs with: peeled\n{OTHER_SHA} refs/heads/w6/one-1579\n"),
+        )
+        .expect("packed refs");
+
+        assert_eq!(
+            resolve_git_sha(&worktree).as_deref(),
+            Some(OTHER_SHA),
+            "with no loose ref anywhere the common packed-refs answers"
+        );
+
+        std::fs::write(common.join("refs/heads/w6/one-1579"), format!("{SHA}\n"))
+            .expect("loose ref");
+        assert_eq!(
+            resolve_git_sha(&worktree).as_deref(),
+            Some(SHA),
+            "a loose ref is authoritative over a stale packed entry"
+        );
+    }
+
     /// A detached HEAD is a sha outright, and a genuinely unresolvable ref
     /// stays fail-closed rather than guessing.
     #[test]
@@ -400,5 +445,136 @@ mod tests {
 
         std::fs::write(worktree.join("HEAD"), "not-a-sha\n").expect("HEAD");
         assert!(resolve_git_sha(&worktree).is_none());
+    }
+
+    /// The executable digest identifies file CONTENT, not a path label. Equal
+    /// bytes under different names produce equal build revisions; one changed
+    /// byte produces a different revision.
+    #[test]
+    fn executable_revision_is_a_content_digest() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let left = root.path().join("left");
+        let copy = root.path().join("copy");
+        let changed = root.path().join("changed");
+        std::fs::write(&left, b"oneiron-bench image v1").expect("left");
+        std::fs::write(&copy, b"oneiron-bench image v1").expect("copy");
+        std::fs::write(&changed, b"oneiron-bench image v2").expect("changed");
+        assert_eq!(
+            hash_file_blake3(&left).expect("left hashes"),
+            hash_file_blake3(&copy).expect("copy hashes")
+        );
+        assert_ne!(
+            hash_file_blake3(&left).expect("left hashes"),
+            hash_file_blake3(&changed).expect("changed hashes")
+        );
+    }
+
+    /// A SHA alone cannot describe a binary compiled from uncommitted
+    /// sources, so the dirty flag rides beside it and is captured at COMPILE
+    /// time. An artifact that embedded nothing must stay `not_ready` rather
+    /// than assume a clean tree, and it must never be re-derived by looking at
+    /// whatever checkout happens to sit under the manifest path at report time.
+    #[test]
+    fn build_tree_dirtiness_is_a_compile_time_fact_and_fails_closed() {
+        for raw in ["1", "true", "TRUE", " yes ", "dirty", "Modified"] {
+            assert_eq!(parse_dirty(raw), Some(true), "{raw} means dirty");
+        }
+        for raw in ["0", "false", "No", "clean", "CLEAN "] {
+            assert_eq!(parse_dirty(raw), Some(false), "{raw} means clean");
+        }
+        for raw in ["", "  ", "maybe", "2", "unknown", "-1"] {
+            assert_eq!(
+                parse_dirty(raw),
+                None,
+                "`{raw}` is unreadable and must not be coerced to clean"
+            );
+        }
+
+        let resolved = build_tree_dirty();
+        assert_eq!(
+            resolved.dirty,
+            COMPILE_TIME_BUILD_DIRTY.and_then(parse_dirty)
+        );
+        assert!(
+            resolved.source.contains(BUILD_DIRTY_ENV),
+            "{}",
+            resolved.source
+        );
+        if COMPILE_TIME_BUILD_DIRTY.is_none() {
+            assert!(
+                resolved.dirty.is_none(),
+                "an artifact that embedded nothing knows nothing about its build tree"
+            );
+        }
+
+        // The flag is a compile-time constant. The resolver reads no runtime
+        // variable and no checkout, so it is stable for the artifact's life,
+        // unlike the report-time source-checkout observation beside it.
+        assert_eq!(build_tree_dirty(), resolved);
+        assert!(
+            !resolved.source.contains(BUILD_MANIFEST_DIR),
+            "build attribution must not be derived from the manifest path: {}",
+            resolved.source
+        );
+    }
+
+    /// The running binary must expose an artifact revision without relying on
+    /// any Git checkout or caller working directory.
+    #[test]
+    fn the_running_executable_has_a_build_revision_digest() {
+        let revision = running_executable_blake3();
+        let digest = revision.digest.expect("the test executable can be hashed");
+        assert_eq!(digest.len(), 64);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let executable = PathBuf::from(
+            revision
+                .executable
+                .expect("the running executable has a reported location"),
+        );
+        let expected =
+            hash_file_blake3(&executable).expect("the reported executable can be hashed");
+        assert_eq!(digest, expected);
+    }
+
+    /// Source-checkout provenance comes from the build checkout before the
+    /// running executable's checkout, and never from the caller cwd. This is a
+    /// descriptive source HEAD and is deliberately distinct from build ID.
+    #[test]
+    fn source_sha_prefers_build_and_executable_provenance_not_caller_state() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // Stop discovery at the fixture boundary even when TMPDIR is inside a checkout.
+        std::fs::create_dir(root.path().join(".git")).expect("isolated fixture git dir");
+        let build_repo = root.path().join("build-repo");
+        let executable_repo = root.path().join("executable-repo");
+        for (repo, sha) in [(&build_repo, SHA), (&executable_repo, OTHER_SHA)] {
+            std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+            std::fs::write(
+                repo.join(".git/HEAD"),
+                format!(
+                    "{sha}
+"
+                ),
+            )
+            .expect("detached HEAD");
+        }
+        let manifest_dir = build_repo.join("crates/oneiron-bench");
+        let executable = executable_repo.join("target/release/oneiron-bench");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        std::fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("executable dir");
+
+        let resolved = git_sha_from_provenance(&manifest_dir, Some(&executable));
+        assert_eq!(resolved.sha.as_deref(), Some(SHA));
+        assert!(resolved.source.starts_with("build_manifest_dir:"));
+
+        // Make the missing build path sit under a real checkout regardless of
+        // TMPDIR, so lexical ancestor discovery cannot accidentally pass.
+        std::fs::write(root.path().join(".git/HEAD"), format!("{SHA}\n")).expect("ancestor HEAD");
+        let missing_build = root.path().join("packaged/no/source");
+        assert!(git_sha_from_provenance(&missing_build, None).sha.is_none());
+        let fallback = git_sha_from_provenance(&missing_build, Some(&executable));
+        assert_eq!(fallback.sha.as_deref(), Some(OTHER_SHA));
+        assert!(fallback.source.starts_with("current_executable:"));
     }
 }

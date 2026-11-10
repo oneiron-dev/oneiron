@@ -101,3 +101,48 @@ pub(crate) fn f16_bits_to_f32(bits: u16) -> f32 {
     f32::from_bits(sign | rebiased | (mantissa << 13))
 }
 
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    /// The named halfway cases, spelled out. `1.00048828125` is exactly half
+    /// way between `1.0` (even significand) and `1.0009765625` (odd), so
+    /// ties-to-even must return `1.0`; rounding every tie upward would bias
+    /// the whole F16 row away from the exact float32 ranking it is scored
+    /// against.
+    #[test]
+    fn binary16_halfway_values_round_to_the_even_significand() {
+        // (input, expected bits, why)
+        for (value, expected, note) in [
+            // Bit forms keep the exact halfway values without asking a
+            // decimal literal to carry precision beyond f32's display width.
+            (
+                f32::from_bits(0x3F80_1000), // 1.00048828125 exactly
+                0x3C00_u16,
+                "tie below an odd neighbour",
+            ),
+            (
+                f32::from_bits(0x3F80_3000), // 1.00146484375 exactly
+                0x3C02,
+                "tie above an odd neighbour",
+            ),
+            // Subnormal branch: half of the smallest subnormal is the tie
+            // between +0 (even) and 2^-24 (odd).
+            (f32::from_bits(0x3300_0000), 0x0000, "subnormal tie to zero"),
+            // 1.5 * 2^-24 ties between 2^-24 (odd) and 2^-23 (even).
+            (f32::from_bits(0x33C0_0000), 0x0002, "subnormal tie upward"),
+            // 65520 ties between 65504 (odd) and the unrepresentable 65536,
+            // which IEEE resolves to infinity.
+            (65_520.0, 0x7C00, "overflow tie"),
+        ] {
+            let bits = f32_to_f16_bits(value);
+            assert_eq!(bits, expected, "{value} ({note}) encoded as {bits:#06x}");
+            assert_eq!(
+                f32_to_f16_bits(-value),
+                expected | 0x8000,
+                "{value} ({note}) must round the same way with a sign bit"
+            );
+        }
+    }
+}
