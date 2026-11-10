@@ -4,7 +4,12 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod consolidation;
+pub mod dag_append;
+pub mod live_run_claim_put;
 pub mod run_hold;
+pub mod untangle_regressions;
+pub mod wake_d1_park_release;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

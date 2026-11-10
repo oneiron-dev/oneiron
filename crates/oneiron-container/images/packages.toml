@@ -131,7 +131,7 @@ native = [
   { package = "oneiron-server", bin = "oneiron-server", dest = "/usr/bin/oneiron-server" },
   { package = "oneiron-server", bin = "oneiron-broker", dest = "/usr/bin/oneiron-broker" },
   { package = "oneiron-server", bin = "oneiron-vm-init", dest = "/usr/bin/oneiron-vm-init" },
-  { package = "oneiron-server", bin = "oneiron-vm-outbox", dest = "/usr/bin/oneiron-vm-outbox" },
+  { package = "oneiron-vm-outbox", bin = "oneiron-vm-outbox", dest = "/usr/bin/oneiron-vm-outbox" },
 ]
 image = { entrypoint = ["/usr/sbin/oneiron-vault-init"] }
 
