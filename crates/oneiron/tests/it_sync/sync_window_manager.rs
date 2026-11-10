@@ -188,15 +188,25 @@ fn open_window_runs_pinned_recovery_order_and_converges() {
     );
 }
 
-/// AC test (b) — observers attach AFTER recovery. Recovery commits (pm
-/// replay + reverse remat) happen on the bare doc, so Observer A — which
-/// fires for ALL local commits regardless of origin — must see none of
-/// them: no `u:w:{key}:*` rows, no `m:u_seq:w:{key}` row. An implementation
-/// that attaches observers before steps 3-5 persists the recovery commits
-/// and fails here. The CRDT-ahead entity is materialized by step 5 exactly
-/// once, with no double-apply via Observer B.
+// Recovery persists raw Loro updates, and startup imports those bytes directly.
+fn persisted_window_updates(vault: &Vault, key: &WindowKey) -> Vec<Vec<u8>> {
+    let mut row_keys = vault
+        .sync_state_keys_with_prefix(&format!("u:w:{key}:"))
+        .unwrap();
+    // Fixed-width 16-hex sequences put commits in key order (FIX 8883).
+    row_keys.sort();
+    row_keys
+        .into_iter()
+        .map(|row_key| vault.sync_state_get(&row_key).unwrap().unwrap())
+        .collect()
+}
+
+/// A cold open persists and routes each recovery commit once before observers
+/// attach. FIX 3787 (#3149, a0d15200af5) makes recovery durable; FIX 5133
+/// (#4221, b7a4b1fe82d) keeps one update per commit. The setup snapshot and
+/// recovery rows rebuild the document, and later commits still run both observers.
 #[test]
-fn observers_attach_after_recovery_with_no_replay_side_effects() {
+fn cold_open_persists_each_recovery_commit_once_before_observers_attach() {
     let (_temp, vault) = test_vault();
     let key = WindowKey::new("2026-03");
     let t = key.start_timestamp().unwrap() + 60;
@@ -242,20 +252,88 @@ fn observers_attach_after_recovery_with_no_replay_side_effects() {
         materializer,
         "test-user",
     ));
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _attachment = manager.outbound().attach(outbound_tx);
     let win = manager.open_window(&key).unwrap();
 
     // CRDT-ahead entity materialized by step 5, exactly once (bytes exact).
     assert_eq!(vault.get(&crdt_only).unwrap().unwrap(), b"crdt-only");
-
-    // No observer side effects from the recovery commits.
-    assert_eq!(
-        vault.sync_state_keys_with_prefix(&u_prefix).unwrap().len(),
-        0,
-        "Observer A persisted recovery commits — observers attached before steps 3-5"
-    );
     assert!(
-        vault.sync_state_get(&seq_key).unwrap().is_none(),
-        "u_seq row written during recovery — observers attached before steps 3-5"
+        vault
+            .sync_state_get(&format!("pm:{key}:{}", pm_entity.to_hex()))
+            .unwrap()
+            .is_none(),
+        "pm replay must clear the marker"
+    );
+    assert_eq!(
+        map_get_bytes(&win.doc.get_map("entities"), &pm_entity.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"pm-fresh"),
+        "pm replay must replace the stale CRDT bytes with the LMDB-ahead bytes"
+    );
+
+    let recovery_updates = persisted_window_updates(&vault, &key);
+    let n = recovery_updates.len();
+    assert!(
+        n >= 1,
+        "FIX 3787: cold-open recovery commits must be persisted as u:w: rows"
+    );
+    let seq_bytes = vault
+        .sync_state_get(&seq_key)
+        .unwrap()
+        .expect("recovery must persist the update sequence");
+    // A missing counter starts at 0, so the first update takes sequence 1.
+    assert_eq!(
+        u64::from_le_bytes(
+            seq_bytes
+                .try_into()
+                .expect("u_seq must be an 8-byte u64 LE")
+        ),
+        u64::try_from(n).unwrap(),
+        "each recovery row must advance the initially absent sequence once"
+    );
+
+    // Rebuild from durable input only, never exporting or copying the live doc.
+    let fresh = LoroDoc::new();
+    fresh
+        .import(&setup_doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    for update in &recovery_updates {
+        fresh.import(update).unwrap();
+    }
+    assert_eq!(
+        fresh.oplog_vv(),
+        win.doc.oplog_vv(),
+        "the setup snapshot and recovery rows must preserve every recovery operation"
+    );
+    let fresh_entities = fresh.get_map("entities");
+    let recovered_entities = win.doc.get_map("entities");
+    for id in [&crdt_only, &pm_entity] {
+        assert_eq!(
+            map_get_bytes(&fresh_entities, &id.to_hex()).unwrap(),
+            map_get_bytes(&recovered_entities, &id.to_hex()).unwrap(),
+            "durable recovery must reconstruct the same entity bytes"
+        );
+    }
+    for (index, update) in recovery_updates.iter().enumerate() {
+        assert!(
+            !recovery_updates[..index].contains(update),
+            "each recovery commit must be persisted once, not again by an early Observer A"
+        );
+    }
+
+    let mut routed_updates = Vec::new();
+    while let Ok(update) = outbound_rx.try_recv() {
+        assert_eq!(update.window_key, key.as_str());
+        routed_updates.push(update.update_bytes);
+    }
+    assert_eq!(
+        routed_updates.len(),
+        n,
+        "FIX 5133: route exactly one update for each persisted recovery commit"
+    );
+    assert_eq!(
+        routed_updates, recovery_updates,
+        "recovery must route the persisted updates in commit order"
     );
 
     // ...but observers ARE live after open: a post-open commit fires both
@@ -277,16 +355,17 @@ fn observers_attach_after_recovery_with_no_replay_side_effects() {
     );
     assert_eq!(
         vault.sync_state_keys_with_prefix(&u_prefix).unwrap().len(),
-        1,
+        n + 1,
         "Observer A must be live after open"
     );
 }
 
-/// Open of a window with NO persisted CRDT state must still run recovery on
-/// the fresh bare doc: reverse remat mirrors LMDB-ahead entities before
-/// observers attach (no `u:w` rows), instead of starting from an empty doc.
+/// A fresh window mirrors LMDB-ahead entities before observers attach and
+/// persists the mirror so update rows alone rebuild it. FIX 3787 (#3149,
+/// a0d15200af5) makes recovery durable and routes it; FIX 5133 (#4221,
+/// b7a4b1fe82d) keeps one persisted and routed update per recovery commit.
 #[test]
-fn open_fresh_window_recovers_lmdb_ahead_entities_before_observers() {
+fn open_fresh_window_mirrors_lmdb_ahead_entities_and_persists_the_mirror() {
     let (_temp, vault) = test_vault();
     let key = WindowKey::new("2026-05");
     let t = key.start_timestamp().unwrap() + 60;
@@ -308,14 +387,39 @@ fn open_fresh_window_recovers_lmdb_ahead_entities_before_observers() {
         make_entity_blob(1, t, b"pre-existing"),
         "fresh window must pick up LMDB-ahead entities via reverse remat"
     );
-    assert_eq!(
-        vault
-            .sync_state_keys_with_prefix(&format!("u:w:{key}:"))
-            .unwrap()
-            .len(),
-        0,
-        "the reverse-remat mirror commit ran before Observer A attached"
+    let recovery_updates = persisted_window_updates(&vault, &key);
+    let n = recovery_updates.len();
+    assert!(
+        n >= 1,
+        "FIX 3787: a fresh window must persist its reverse-remat recovery commits"
     );
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{key}"))
+            .unwrap()
+            .is_none(),
+        "a fresh open persists recovery updates, not a window snapshot"
+    );
+    let fresh = LoroDoc::new();
+    for update in &recovery_updates {
+        fresh.import(update).unwrap();
+    }
+    assert_eq!(
+        map_get_bytes(&fresh.get_map("entities"), &lmdb_only.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"pre-existing"),
+        "recovery rows alone must reconstruct the exact LMDB-ahead entity"
+    );
+    assert_eq!(
+        fresh.oplog_vv(),
+        win.doc.oplog_vv(),
+        "recovery rows alone must preserve every fresh-window operation"
+    );
+    for (index, update) in recovery_updates.iter().enumerate() {
+        assert!(
+            !recovery_updates[..index].contains(update),
+            "each fresh-window recovery commit must be persisted only once"
+        );
+    }
 }
 
 /// AC test (c) — double-open returns the same live instance (exactly one
