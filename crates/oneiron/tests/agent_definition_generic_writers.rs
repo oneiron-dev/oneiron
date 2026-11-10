@@ -21,16 +21,32 @@
 //! re-consent; doc-only or narrowing edits flow auto"). An author whose own
 //! slice holds the wider grant applies it. An edit that grants nothing new
 //! stays active. None of these is refused.
+//!
+//! The slice is what the writer can itself use (owner, 10 Nov 2026: "a
+//! definition within the creating agent's own powers goes live"). An agent
+//! with no definition of its own lends the slice its grant gives it, and one
+//! with no grant at all lends none. A definition that names a skill its
+//! author can load is inside the slice; one that names a skill or a
+//! connector its author cannot use is a proposal.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
-use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome,
+};
+use oneiron::authority::{ActSurface, AgentTier};
+use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, base_world_id};
+use oneiron::federation::{Scope, ScopeId};
+use oneiron::memory::{CanAnswer, CanEffectVerdict};
+use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
+use oneiron::skill::{SkillDependency, SkillLifecycle, SkillRecord};
 use oneiron::store::GateDecisionId;
+use oneiron::verbs::{AgentGrantMintRequest, CanRequest};
 use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
@@ -210,12 +226,14 @@ fn fixture() -> Fixture {
         )
         .expect("owner creates the All, ceiling-Proposed author");
     // A put over a stored row is admitted only on a lane that reads the row.
-    // Each author reads the rows it updates; the permit grants a read alone.
-    for reader in [author, wide_author] {
-        vault
-            .install_read_permit_for_test(oneiron::WriteActor::new(reader, EdgeActorClass::Agent))
-            .expect("the author reads the stored rows it updates");
-    }
+    // Each author reads the rows it updates; the permits grant a read alone.
+    // One call installs both: the installer takes the unchanged stock policy.
+    vault
+        .install_read_permits_for_test(&[
+            oneiron::WriteActor::new(author, EdgeActorClass::Agent),
+            oneiron::WriteActor::new(wide_author, EdgeActorClass::Agent),
+        ])
+        .expect("each author reads the stored rows it updates");
     Fixture {
         vault,
         owner_person,
@@ -554,10 +572,10 @@ fn agent_raw_put_stores_a_definition_inside_its_slice_active() {
     run_new_definition(Door::RawPut, 0x77, Slice::Within);
 }
 
-/// A PERSON bound as an agent holds no definition, so it has no slice to
-/// lend: even the narrowest definition it authors is a proposal.
+/// A PERSON bound as an agent that holds no definition and no grant has no
+/// slice to lend: even the narrowest definition it authors is a proposal.
 #[test]
-fn agent_without_a_definition_stores_a_new_definition_as_a_proposal() {
+fn agent_without_a_definition_or_a_grant_stores_a_new_definition_as_a_proposal() {
     let fixture = fixture();
     let id = EntityId::from_bytes([0x78; 16]).expect("candidate id");
     let write = put(
@@ -721,4 +739,316 @@ fn agent_batch_edit_that_grants_a_stored_definition_nothing_new_stays_active() {
         .expect("read the child")
         .expect("the child row");
     assert_eq!(stored.version, "2", "the edit landed");
+}
+
+/// A named agent's principal: a PERSON row, which holds no definition.
+fn named_agent(fixture: &Fixture, name: &str) -> EntityId {
+    let writer = fixture
+        .vault
+        .ensure_agent_principal(name)
+        .expect("named agent principal");
+    assert_eq!(
+        fixture.vault.get_entity_type(&writer).expect("entity type"),
+        Some(ENTITY_TYPE_PERSON),
+        "a named agent's principal holds no definition"
+    );
+    writer
+}
+
+/// The owner grants `writer` read, propose and write over base reality alone,
+/// through `vault.agents.grants.mint`.
+fn grant_base_reach(fixture: &Fixture, writer: EntityId) {
+    let owner = fixture
+        .vault
+        .authenticate_owner(
+            fixture.owner_person,
+            &fixture.owner_person.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let mut authority_scope = Scope::top();
+    authority_scope.worlds = [ScopeId(base_world_id())].into_iter().collect();
+    authority_scope.verbs = AgentTier::FullAccess
+        .grant_verbs()
+        .iter()
+        .map(|verb| (*verb).to_owned())
+        .collect();
+    let minted = oneiron::verbs::mint_agent_grant_as(
+        &fixture.vault,
+        &owner,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent: writer,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+        },
+    )
+    .expect("the owner grants the agent base reality");
+    assert!(minted.grant.confers, "the grant confers");
+}
+
+/// An agent with no definition of its own lends the slice its grant gives
+/// it: a definition inside the grant's worlds lands active.
+#[test]
+fn agent_with_a_grant_and_no_definition_stores_a_definition_inside_its_grant_active() {
+    let fixture = fixture();
+    let writer = named_agent(&fixture, "conformance.granted-author");
+    grant_base_reach(&fixture, writer);
+    let id = EntityId::from_bytes([0x7C; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        writer,
+        Door::Batch,
+        id,
+        &candidate(Slice::Within),
+        NOW + 1,
+    );
+    assert_lands(
+        "granted-agent-memory/vault.batch/new/base-inside-base-grant",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Active,
+    );
+}
+
+/// The same grant does not hold every world: a definition at scope All, with
+/// the ceiling left Proposed so the scope alone is wider, is a proposal.
+#[test]
+fn agent_with_a_grant_and_no_definition_stores_a_definition_wider_than_its_grant_as_a_proposal() {
+    let fixture = fixture();
+    let writer = named_agent(&fixture, "conformance.granted-author");
+    grant_base_reach(&fixture, writer);
+    let id = EntityId::from_bytes([0x7D; 16]).expect("candidate id");
+    let mut wider = candidate(Slice::Within);
+    wider.scope = AgentScope::All;
+    let write = put(&fixture.vault, writer, Door::Batch, id, &wider, NOW + 1);
+    assert_lands(
+        "granted-agent-memory/vault.batch/new/all-outside-base-grant",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+/// The control of the two tests above: the same kind of principal with no
+/// grant lends no slice.
+#[test]
+fn named_agent_with_no_grant_stores_a_new_definition_as_a_proposal() {
+    let fixture = fixture();
+    let writer = named_agent(&fixture, "conformance.grantless-author");
+    let id = EntityId::from_bytes([0x7E; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        writer,
+        Door::Batch,
+        id,
+        &candidate(Slice::Within),
+        NOW + 1,
+    );
+    assert_lands(
+        "grantless-agent-memory/vault.batch/new/narrowest",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+/// The name of the shared skill [`shared_active_skill`] stores.
+const SHARED_SKILL: &str = "conformance.shared";
+
+/// Stores a shared skill, active and approved, and loads it on a leased
+/// attempt bound to `writer` through the public load door: the writer can
+/// use this skill. Returns the dependency that names it.
+fn shared_active_skill(fixture: &Fixture, writer: EntityId) -> SkillDependency {
+    let vault = &fixture.vault;
+    let skill = EntityId::from_bytes([0x6B; 16]).expect("skill id");
+    let mut record = SkillRecord::new(
+        SHARED_SKILL,
+        "generic writer conformance skill",
+        "1",
+        ClaimApprovalStatus::Approved,
+        SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Vec::new(),
+        RmpValue::Map(vec![(
+            RmpValue::from("source"),
+            RmpValue::from("conformance"),
+        )]),
+    );
+    let at = |offset: u64| TimeRange {
+        start: NOW + offset,
+        end: NOW + offset,
+    };
+    vault
+        .put_skill_record(&skill, &record, at(1), NOW + 1)
+        .expect("the skill is born a candidate");
+    record.lifecycle_status = SkillLifecycle::Active;
+    vault
+        .update_skill_record(&skill, &record, at(2), NOW + 2)
+        .expect("the skill is activated");
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(queued) = queue
+        .enqueue(EnqueueAttempt {
+            kind: "conformance.skill-load".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: NOW + 3,
+        })
+        .expect("enqueue the writer's attempt")
+    else {
+        panic!("a fresh attempt is enqueued");
+    };
+    vault
+        .bind_actor_attempt(queued.id, &writer)
+        .expect("the attempt is the writer's");
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim_kind(
+            "conformance.skill-load",
+            ClaimAttempt {
+                lease_owner: "conformance-skill-worker".to_owned(),
+                now: NOW + 4,
+            },
+        )
+        .expect("claim the writer's attempt")
+    else {
+        panic!("the attempt is leased");
+    };
+    let loaded = vault
+        .load_attempt_skill_pack(
+            leased.id,
+            &skill,
+            "conformance-skill-worker",
+            leased.attempt_count,
+            "conformance/model@1",
+            NOW + 5,
+        )
+        .expect("the load door loads the skill on the writer's attempt");
+    assert_eq!(loaded.record.skill_id, SHARED_SKILL);
+    println!(
+        "CONFORMANCE case=skill-load writer={} skill={SHARED_SKILL} load=loaded",
+        writer.to_hex()
+    );
+    SkillDependency::new(SHARED_SKILL)
+}
+
+/// A definition that names a skill its author can load is inside the slice,
+/// though the author's own definition lists no skill.
+#[test]
+fn agent_batch_stores_a_definition_naming_a_skill_its_author_can_load_active() {
+    let fixture = fixture();
+    let dependency = shared_active_skill(&fixture, fixture.author);
+    let author = fixture
+        .vault
+        .get_agent_definition(&fixture.author)
+        .expect("read the author")
+        .expect("the author row");
+    assert!(
+        author.skills.is_empty(),
+        "the author's definition lists no skill"
+    );
+    let mut requested = candidate(Slice::Within);
+    requested.skills = vec![dependency];
+    let id = EntityId::from_bytes([0x7F; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &requested,
+        NOW + 6,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/new/skill-the-author-loads",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Active,
+    );
+}
+
+/// A definition that names a skill the vault does not hold names one its
+/// author cannot load: a proposal.
+#[test]
+fn agent_batch_stores_a_definition_naming_a_skill_its_author_cannot_load_as_a_proposal() {
+    let fixture = fixture();
+    let mut requested = candidate(Slice::Within);
+    requested.skills = vec![SkillDependency::new("conformance.absent")];
+    let id = EntityId::from_bytes([0x80; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &requested,
+        NOW + 1,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/new/skill-the-author-cannot-load",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+/// A definition that names a connector its author cannot call is a proposal.
+/// The runtime's own preflight of a call on that connector does not allow it
+/// for the author.
+#[test]
+fn agent_batch_stores_a_definition_naming_a_connector_its_author_cannot_use_as_a_proposal() {
+    const CONNECTOR: &str = "conformance_forbidden";
+    let fixture = fixture();
+    let preflight: CanRequest = serde_json::from_value(json!({
+        "effect": {"connector_call": {"name": CONNECTOR, "tool": "fetch", "arguments": {}}}
+    }))
+    .expect("a connector call preflight");
+    let answer = fixture
+        .vault
+        .memory(fixture.author, EdgeActorClass::Agent)
+        .can(&preflight);
+    let (allowed, label) = match &answer {
+        Ok(CanAnswer::Effect(answer)) => (
+            answer.verdict == CanEffectVerdict::Allow,
+            format!(
+                "{:?} reasons={:?} holds={:?}",
+                answer.verdict, answer.reasons, answer.holds
+            ),
+        ),
+        Ok(_) => (false, "an ask preflight".to_owned()),
+        Err(error) => (false, format!("refused: {error:?}")),
+    };
+    println!("CONFORMANCE case=connector-preflight connector={CONNECTOR} can={label}");
+    assert!(
+        !allowed,
+        "the author cannot call {CONNECTOR}: the preflight answered {label}"
+    );
+    let mut requested = candidate(Slice::Within);
+    requested.connectors = vec![CONNECTOR.to_owned()];
+    let id = EntityId::from_bytes([0x81; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &requested,
+        NOW + 1,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/new/connector-the-author-cannot-use",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
 }

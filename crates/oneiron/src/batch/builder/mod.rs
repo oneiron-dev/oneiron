@@ -180,9 +180,16 @@ impl<'a> BatchBuilder<'a> {
     /// before any put lands, the author writer bounds the body, so a
     /// definition inside the slice is active and a wider one is a proposal.
     /// Any other actor's batch writes as staged. Every door that commits an
-    /// agent's own puts names its writer here.
-    pub fn authored_through(mut self, actor: &crate::WriteActor, door: &'static str) -> Self {
-        self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door);
+    /// agent's own puts names its writer here, with the key of the read its
+    /// write lane holds the caller to (`None` for an unbound lane): an agent
+    /// with no definition of its own takes its slice from that credential.
+    pub fn authored_through(
+        mut self,
+        actor: &crate::WriteActor,
+        door: &'static str,
+        read_key: Option<&crate::claim::ScopedReadActorKey>,
+    ) -> Self {
+        self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door, read_key);
         self
     }
 

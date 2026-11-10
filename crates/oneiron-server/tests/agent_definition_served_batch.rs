@@ -1,4 +1,6 @@
-//! Served `vault.batch` follows ARCH-0053:20 on its credential's agent slice.
+//! The served row doors follow ARCH-0053:20 on their credential's agent
+//! slice: `vault.batch`, and the `remember` memory verb (with its `put` and
+//! `put_entity` spellings, which reach the same handler arm).
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -134,7 +136,32 @@ enum Slice {
     Within,
 }
 
-async fn run_new_definition(candidate_seed: u8, slice: Slice) {
+/// A served door an agent's credential puts an AGENT_DEF row through.
+#[derive(Clone, Copy)]
+enum ServedDoor {
+    /// `POST /v1/core/facade/vault.batch`.
+    Batch,
+    /// `POST /v1/core/memory/verbs/remember`.
+    Remember,
+}
+
+impl ServedDoor {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Batch => "vault.batch",
+            Self::Remember => "memory.remember",
+        }
+    }
+
+    fn uri(self) -> &'static str {
+        match self {
+            Self::Batch => "/v1/core/facade/vault.batch",
+            Self::Remember => "/v1/core/memory/verbs/remember",
+        }
+    }
+}
+
+async fn run_new_definition(door: ServedDoor, candidate_seed: u8, slice: Slice) {
     let (_dir, server, author) = fixture();
     let vault = server.vault();
     let id = EntityId::from_bytes([candidate_seed; 16]).expect("candidate id");
@@ -145,11 +172,15 @@ async fn run_new_definition(candidate_seed: u8, slice: Slice) {
     };
     let bytes = encode_agent_definition(&definition("conformance.candidate", scope, ceiling, true))
         .expect("valid definition");
-    let input = json!({"entities": [{
+    let entity = json!({
         "id": id.to_hex(), "entity_type": ENTITY_TYPE_AGENT_DEF,
         "occurred_start": NOW + 1, "occurred_end": NOW + 1, "learned_at": NOW + 1,
         "body": json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("MessagePack")),
-    }]});
+    });
+    let input = match door {
+        ServedDoor::Batch => json!({"entities": [entity]}),
+        ServedDoor::Remember => json!({"entity": entity}),
+    };
     let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
     let mut claims = vault
         .ensure_host_root_slip(&issuer)
@@ -172,7 +203,7 @@ async fn run_new_definition(candidate_seed: u8, slice: Slice) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/core/facade/vault.batch")
+                .uri(door.uri())
                 .header(
                     "Authorization",
                     format!("Bearer {}", slip.to_token().expect("token")),
@@ -215,8 +246,9 @@ async fn run_new_definition(candidate_seed: u8, slice: Slice) {
         Ok(()) => "landed".to_owned(),
         Err(error) => format!("refused: {error}"),
     };
+    let door_name = door.name();
     println!(
-        "CONFORMANCE case=served/vault.batch/new/{slice_label} door=vault.batch write={write_label} stored=[{standing}] dispatch={dispatch}"
+        "CONFORMANCE case=served/{door_name}/new/{slice_label} door={door_name} write={write_label} stored=[{standing}] dispatch={dispatch}"
     );
     assert!(
         write.is_ok(),
@@ -254,10 +286,20 @@ async fn run_new_definition(candidate_seed: u8, slice: Slice) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn served_batch_stores_no_active_definition_wider_than_its_agent_slice() {
-    run_new_definition(0x73, Slice::Wider).await;
+    run_new_definition(ServedDoor::Batch, 0x73, Slice::Wider).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn served_batch_stores_a_definition_inside_its_agent_slice_active() {
-    run_new_definition(0x75, Slice::Within).await;
+    run_new_definition(ServedDoor::Batch, 0x75, Slice::Within).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn served_remember_stores_no_active_definition_wider_than_its_agent_slice() {
+    run_new_definition(ServedDoor::Remember, 0x76, Slice::Wider).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn served_remember_stores_a_definition_inside_its_agent_slice_active() {
+    run_new_definition(ServedDoor::Remember, 0x77, Slice::Within).await;
 }
