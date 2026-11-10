@@ -34015,9 +34015,9 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 6,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -34074,6 +34074,22 @@
       "crate-vis": 1,
       "fn": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParkReleaseView",
+      "ReleaseParkedAttemptRequest"
+     ],
+     "path": "src/dreamer_runner/park_release.rs",
+     "purpose": "The owner's release of a parked Dreamer attempt that no resumer frees (untangle slice 3, WAKE-D1; lead 14:3x…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -90217,7 +90233,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 4
+      "mod": 5
      }
     },
     {
@@ -90245,6 +90261,16 @@
       "enum": 1,
       "fn": 25,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/wake_d1_park_release.rs",
+     "purpose": "Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -99136,6 +99162,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wake_d1_park_release.rs",
+     "purpose": "WAKE-D1 (#6877): a Cancelled park resumes on the next pass, and a run its owner cancelled never does; an…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -99679,7 +99713,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100610,7 +100644,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100780,8 +100814,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7240,
-   "test_files": 904
+   "source_files": 7242,
+   "test_files": 905
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125080,7 +125114,7 @@
      "path": "src/api/facade/program_read_doors.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -154389,7 +154423,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ParkOwnerClass",
@@ -154401,7 +154435,7 @@
      "surface": {
       "const": 9,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -154810,7 +154844,7 @@
     "dreamer_runner": {
      "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -154857,7 +154891,7 @@
      "purpose": "—"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports…",
    "source_files": 39,
    "test_files": 0
