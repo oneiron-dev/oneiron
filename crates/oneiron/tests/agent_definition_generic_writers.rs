@@ -757,7 +757,22 @@ fn named_agent(fixture: &Fixture, name: &str) -> EntityId {
 
 /// The owner grants `writer` read, propose and write over base reality alone,
 /// through `vault.agents.grants.mint`.
+///
+/// The owner's grant act is signed by this install's machine key, so the
+/// vault is rooted and the install enrolled first, as a serving start does.
 fn grant_base_reach(fixture: &Fixture, writer: EntityId) {
+    let issuer = fixture
+        .vault
+        .bootstrap_host_slip_issuer()
+        .expect("host issuer");
+    fixture
+        .vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root");
+    fixture
+        .vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("install carries the owner's grant act");
     let owner = fixture
         .vault
         .authenticate_owner(
