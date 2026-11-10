@@ -3,11 +3,12 @@
 //! their writers consulted one transition table. The slice changes no
 //! behaviour, so this file passes on the commit before the table and on the
 //! slice's head. It uses only public paths, so it builds without the
-//! library's own test modules:
+//! library's own test modules. On the testkit: each test opens a copy of the
+//! empty fixture vault and reads the fake clock, so every run sees the same
+//! times:
 //! `cargo test --locked -p oneiron --all-features --test run_lifecycle`.
 
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
@@ -15,23 +16,20 @@ use oneiron::attempt_queue::{
     CleanupAttemptLeases, EnqueueAttempt, EnqueueOutcome, HoldAttemptForBudget, InterveneAttempt,
     InterveneOutcome, RetryAttempt, RetryOutcome,
 };
-use oneiron::{Vault, VaultConfig};
+use oneiron::Vault;
+use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
 const KIND: &str = "test.run_lifecycle";
 const WORKER: &str = "worker:run-lifecycle";
 const PERSON: &str = "person:operator";
 
-fn open() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault opens");
-    (dir, vault)
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after 1970")
-        .as_secs()
+fn open() -> (TestVault, Vault) {
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault opens");
+    (copy, vault)
 }
 
 fn enqueue(queue: &AttemptQueue<'_>, now: u64) -> AttemptRecord {
@@ -122,9 +120,9 @@ fn interventions_and_the_budget_hold_follow_the_table() {
     use AttemptInterventionEffect as E;
     use AttemptInterventionKind as K;
     use AttemptState as S;
-    let (_dir, vault) = open();
+    let (copy, vault) = open();
     let queue = AttemptQueue::new(&vault);
-    let now = unix_now();
+    let now = copy.clock().now();
     let row = enqueue(&queue, now);
     let id = row.id;
 
@@ -222,9 +220,9 @@ fn a_deferred_row_resumes_deferred() {
     use AttemptInterventionEffect as E;
     use AttemptInterventionKind as K;
     use AttemptState as S;
-    let (_dir, vault) = open();
+    let (copy, vault) = open();
     let queue = AttemptQueue::new(&vault);
-    let now = unix_now();
+    let now = copy.clock().now();
     enqueue(&queue, now);
     let leased = claim(&queue, now + 1);
     let due = now + 3_600;
@@ -259,9 +257,9 @@ fn a_deferred_row_resumes_deferred() {
 
 #[test]
 fn reclaim_keeps_a_held_lease_and_requeues_an_expired_one() {
-    let (_dir, vault) = open();
+    let (copy, vault) = open();
     let queue = AttemptQueue::new(&vault);
-    let now = unix_now();
+    let now = copy.clock().now();
     let row = enqueue(&queue, now);
     let leased = claim(&queue, now + 1);
     let read = |id| queue.get(id).expect("get").expect("row");
