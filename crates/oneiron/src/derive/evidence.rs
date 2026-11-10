@@ -58,12 +58,16 @@ pub(super) fn stage_in_txn(
         return refuse(vault, txn, context, head, EVIDENCE_HEAD_NOT_A_CLAIM);
     };
     let cited: Vec<EntityId> = sources.iter().copied().collect();
+    // The set's floor is `Generated`, as the Dreamer's extraction sets it:
+    // a derived support never claims more trust than a derivation has, and
+    // the provenance writer refuses one that does (a user's TURN read as
+    // `UserStated` evidence would be "source trust widened").
     let evidence = match VerifiedEvidenceSet::verify_whole_in_txn(
         vault,
         &read,
         txn,
         &cited,
-        ClaimSource::UserStated,
+        ClaimSource::Generated,
     ) {
         Ok(evidence) => evidence,
         Err(Error::InvalidClaimBody(_)) => {
