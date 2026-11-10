@@ -422,7 +422,11 @@ pub(crate) mod tests {
         let tsa = tsa_ca();
         let signed = append_sig_revision(&base_input(), &signer, "dss-refs", Some(&tsa), AT_UNIX);
         let engine = verify_engine(vec![signer.cert_der.clone(), tsa.cert_der.clone()], AT_UNIX);
-        for (mode, valid_material) in [("128", true), ("129", false), ("cycle", false)] {
+        // Rule 5 conversion (072a918f8b6, #3385): a reference chain is
+        // followed whole however long, so the old 128-hop cap is gone and a
+        // 129-hop chain is valid material like the 128-hop one. Only the
+        // cycle, a chain that never ends, still fails.
+        for (mode, valid_material) in [("128", true), ("129", true), ("cycle", false)] {
             let state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
             let material = profile::DssMaterial {
                 certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],

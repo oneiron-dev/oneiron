@@ -458,6 +458,15 @@ pub(crate) mod tests {
         (c.status, c.finding)
     }
 
+    /// The DSS material check did not run, for `reason`: never a pass, and
+    /// never AbsentAllowed (#5937, 23c390695c2: unresolved DSS evidence).
+    pub(crate) fn assert_material_unresolved(checks: &Checks, reason: VerifyFindingCode) {
+        assert_eq!(
+            dss_finding(checks),
+            (VerifyCheckStatus::NotRun, Some(reason))
+        );
+    }
+
     pub(crate) fn assert_material_fails(checks: &Checks) {
         assert_eq!(
             dss_finding(checks),
@@ -602,6 +611,10 @@ pub(crate) mod tests {
     #[test]
     fn dss_ocsp_unknown_status_fails_closed() {
         // The blueprint leaves `unknown` unpinned (§7.5/§7.7): fail closed.
+        // Rule D (23c390695c2, #5937; docs/ops/seal-profile-evidence.md): an
+        // authenticated `unknown` is unresolved, NotRun with
+        // RevocationStatusUnknown, so the verdict is indeterminate, never a
+        // pass.
         let ca = test_ca("dss-ca");
         let ocsp = build_ocsp(
             &ca,
@@ -613,6 +626,6 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
     }
 }
