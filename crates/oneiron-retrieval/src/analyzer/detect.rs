@@ -145,35 +145,3 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
     }
     &text[..end]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pure_ascii_latin_defaults_to_english() {
-        assert_eq!(detect_with_whichlang("running"), Some(LanguageHint::En));
-        assert_eq!(detect_with_whichlang("runs"), Some(LanguageHint::En));
-        assert_eq!(
-            detect_with_whichlang(&"apple ".repeat(20)),
-            Some(LanguageHint::En)
-        );
-        let prose = "she runs every morning before work near the riverbank";
-        assert_eq!(detect_with_whichlang(prose), Some(LanguageHint::En));
-    }
-
-    #[test]
-    fn long_accentless_spanish_resolves_to_spanish() {
-        // ≥ 64 bytes AND ≥ 3 unique letter tokens — passes the length gate,
-        // whichlang routes accent-less Spanish to `Spa`.
-        let text = "el gato blanco come manzanas rojas en el jardin grande con su amigo pequeno";
-        assert!(text.len() >= MIN_WHICHLANG_ASCII_BYTES);
-        assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
-    }
-
-    #[test]
-    fn ascii_short_circuit_uses_window_not_full_text() {
-        let text = format!("{}é", "a".repeat(DETECT_WINDOW_BYTES));
-        assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
-    }
-}

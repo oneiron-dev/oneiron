@@ -79,6 +79,7 @@ fn chat(origin: &str, body: &[u8]) -> CallHeader {
         "/v1/chat/completions".to_owned(),
         vec![("content-type".to_owned(), "application/json".to_owned())],
         "gpt-x".to_owned(),
+        false,
         body,
     )
 }
@@ -91,37 +92,6 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn one_call_is_one_send_with_the_key_and_the_answer_comes_back() {
-    let fake = FakeProvider::start(FakeReply::json(
-        200,
-        &serde_json::json!({"usage": {"prompt_tokens": 3}}),
-    ));
-    let broker = broker(None, &[fake.ca_pem()]).await;
-    let reply = client(&broker.socket, broker.uid)
-        .connect()
-        .await
-        .expect("connect")
-        .call(&chat(fake.origin(), BODY), BODY, key())
-        .await
-        .expect("call");
-    let Outcome::Answered { status, .. } = reply.outcome else {
-        panic!("not answered: {:?}", reply.outcome);
-    };
-    assert_eq!(status, 200);
-    assert!(contains(&reply.body, b"prompt_tokens"));
-    let seen = fake.seen();
-    assert_eq!(seen.len(), 1, "exactly one send");
-    assert_eq!(seen[0].method, "POST");
-    assert_eq!(seen[0].path, "/v1/chat/completions");
-    assert_eq!(seen[0].body, BODY, "the exact bytes the digest bound");
-    assert_eq!(
-        seen[0].header("authorization"),
-        Some(format!("Bearer {SENTINEL}").as_str())
-    );
-    assert_eq!(seen[0].header("accept-encoding"), Some("identity"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

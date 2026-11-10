@@ -44,14 +44,19 @@ fn three_subscribers_keep_full_sequence_and_only_terminal_is_durable() {
         },
         LlmStreamEvent::TextEnd {
             part_id: "a".into(),
+            signature: None,
         },
         LlmStreamEvent::Done {
             message: LlmMessage {
                 role: LlmMessageRole::Assistant,
-                content: vec![ContentPart::Text { text: "hi".into() }],
+                content: vec![ContentPart::Text {
+                    text: "hi".into(),
+                    signature: None,
+                }],
             },
             usage: LlmUsage::zero(),
             finish_reason: FinishReason::Stop,
+            reply_assertions: Default::default(),
         },
     ];
     let source = LlmStream::new(FakeStream(events.clone().into()));
@@ -90,6 +95,7 @@ fn failed_terminal_write_is_not_published_and_can_be_retried() {
         },
         usage: LlmUsage::zero(),
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
     };
     assert!(bus.publish(terminal.clone()).is_err());
     assert!(drain(&mut sub).is_empty());
