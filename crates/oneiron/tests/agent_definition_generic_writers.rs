@@ -9,9 +9,10 @@
 //! the generic `vault.structural.put` and `vault.batch` rows: a pumped run's
 //! `RunHostDoor` answers them on the agent's own Agent-class `Memory`
 //! (crates/oneiron-server/src/server/run_host_door.rs:830-876). These tests
-//! call those same generated rows on that Memory, storing a fresh AGENT_DEF
-//! wider than its Base, ceiling-Proposed author, and require that it is not
-//! stored Approved, Active and enabled.
+//! call those same generated rows on that Memory for a fresh AGENT_DEF of a
+//! Base, ceiling-Proposed author. A definition wider than the author lands as
+//! a proposal no dispatch runs; one inside the author's slice lands active.
+//! Neither is refused.
 
 use std::sync::Arc;
 
@@ -91,13 +92,26 @@ fn json_of(value: &RmpValue) -> Value {
     }
 }
 
-/// The candidate's body as JSON, made by the engine's own codec: scope All,
-/// ceiling Auto, Approved, Active, enabled.
-fn wider_candidate_body() -> Value {
+/// How the candidate stands against its Base, ceiling-Proposed author.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slice {
+    /// Scope All, ceiling Auto.
+    Wider,
+    /// Scope Base, ceiling Proposed: the author's own.
+    Within,
+}
+
+/// The candidate's body as JSON, made by the engine's own codec: Approved,
+/// Active, enabled, at the scope and ceiling `slice` names.
+fn candidate_body(slice: Slice) -> Value {
+    let (scope, ceiling) = match slice {
+        Slice::Wider => (AgentScope::All, AgentCeiling::Auto),
+        Slice::Within => (AgentScope::Base, AgentCeiling::Proposed),
+    };
     let bytes = encode_agent_definition(&definition(
         "conformance.candidate",
-        AgentScope::All,
-        AgentCeiling::Auto,
+        scope,
+        ceiling,
         ClaimSource::Generated,
         true,
         false,
@@ -106,7 +120,7 @@ fn wider_candidate_body() -> Value {
     json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("candidate MessagePack"))
 }
 
-fn run_case(verb: &str, candidate_seed: u8) {
+fn run_case(verb: &str, candidate_seed: u8, slice: Slice) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("personal vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -147,7 +161,7 @@ fn run_case(verb: &str, candidate_seed: u8) {
         "vault.structural.put" => json!({
             "id": candidate.to_hex(),
             "kind": "AGENT_DEF",
-            "body": wider_candidate_body(),
+            "body": candidate_body(slice),
             "occurred_at": NOW + 1,
             "learned_at": NOW + 1,
         }),
@@ -157,7 +171,7 @@ fn run_case(verb: &str, candidate_seed: u8) {
             "occurred_start": NOW + 1,
             "occurred_end": NOW + 1,
             "learned_at": NOW + 1,
-            "body": wider_candidate_body(),
+            "body": candidate_body(slice),
         }]}),
         other => panic!("no fixture for {other}"),
     };
@@ -202,25 +216,66 @@ fn run_case(verb: &str, candidate_seed: u8) {
             )
         },
     );
+    let slice_label = match slice {
+        Slice::Wider => "wider",
+        Slice::Within => "within",
+    };
     println!(
-        "CONFORMANCE path=agent-memory/{verb} write={write_label} stored=[{standing}] dispatch={dispatch}"
+        "CONFORMANCE path=agent-memory/{verb} slice={slice_label} write={write_label} stored=[{standing}] dispatch={dispatch}"
     );
-    if let Some(def) = stored {
-        assert!(
-            !(def.approval_status == ClaimApprovalStatus::Approved
-                && def.lifecycle_status == ClaimLifecycleStatus::Active
-                && def.enabled),
-            "ARCH-0053:20: {verb} stored an Approved, Active, enabled definition wider than its author's slice"
-        );
+    assert!(
+        write.is_ok(),
+        "ARCH-0053:20: {verb} refused a {slice_label} definition: {write_label}"
+    );
+    let def = stored.expect("the put landed a definition");
+    assert_eq!(
+        def.lifecycle_status,
+        ClaimLifecycleStatus::Active,
+        "{verb} {slice_label}: a saved definition is live at rest"
+    );
+    match slice {
+        Slice::Wider => {
+            assert_eq!(
+                def.approval_status,
+                ClaimApprovalStatus::Proposed,
+                "ARCH-0053:20: {verb} stored a definition wider than its author's slice as other than a proposal"
+            );
+            assert_ne!(
+                dispatch, "dispatched",
+                "ARCH-0053:20: {verb} left a definition wider than its author's slice dispatchable"
+            );
+        }
+        Slice::Within => {
+            assert_eq!(
+                def.approval_status,
+                ClaimApprovalStatus::Approved,
+                "ARCH-0053:20: {verb} did not land a definition inside its author's slice at the author's approval"
+            );
+            assert!(def.enabled, "{verb} within: the definition stays enabled");
+            assert_eq!(
+                dispatch, "dispatched",
+                "ARCH-0053:20: {verb} left a definition inside its author's slice undispatchable"
+            );
+        }
     }
 }
 
 #[test]
 fn agent_structural_put_stores_no_active_definition_wider_than_its_slice() {
-    run_case("vault.structural.put", 0x72);
+    run_case("vault.structural.put", 0x72, Slice::Wider);
 }
 
 #[test]
 fn agent_batch_stores_no_active_definition_wider_than_its_slice() {
-    run_case("vault.batch", 0x73);
+    run_case("vault.batch", 0x73, Slice::Wider);
+}
+
+#[test]
+fn agent_structural_put_stores_a_definition_inside_its_slice_active() {
+    run_case("vault.structural.put", 0x74, Slice::Within);
+}
+
+#[test]
+fn agent_batch_stores_a_definition_inside_its_slice_active() {
+    run_case("vault.batch", 0x75, Slice::Within);
 }
