@@ -77,6 +77,7 @@ fn fmt_step(id: &str, marks: InlineMarkSet, style: RunStyleEdit) -> EditStep {
     EditStep::SetRunFormatting {
         block_id: NodeId::from(id),
         expect: "Format".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks,
         style,
