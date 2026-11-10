@@ -1,9 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, type PairedActor, awaitPublic } from "./support/engine.ts";
-import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile, redactor } from "./support/run.ts";
-import { McpRpcError } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
+import { defineFile, redactor, secretHex } from "./support/run.ts";
+import { McpRpcError, PublicHttpError, PublicHttpClient, CliError, CliClient, McpClient, credentialParts, type SdkDriverResult } from "./support/clients.ts";
+import { randomUUID } from "node:crypto";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -493,7 +495,7 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     expect(new Set(shares.map(row => row.share_id)).size).toBe(4);
     surfaces03Equal(shares.map(({ share_id: _id, created_at: _at, ...stable }) => stable));
     for (const [index, share] of shares.entries()) {
-      expect(share.share_id).toBe(shareInputs[index]?.share_id);
+      expect(share.share_id).toBe<unknown>(shareInputs[index]?.share_id);
       expect(share.recipient).toBe(agent.principalRef);
       expect(share.brief_ref).toBe(canonicalBrief.id_hex);
       expect(share.travel).toEqual({ born_with: [] });
@@ -1012,9 +1014,6 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
   }
 });
 
-// None: the merged destination already imports awaitPublic, type PairedActor,
-// redactor and secretHex.
-
 type surfaces07ReadVerb = "vault.agents.get" | "vault.workflows.get" | "vault.workflows.status";
 type surfaces07Read = {
   [V in surfaces07ReadVerb]: { verb: V; input: FacadeInput<V>; expected: FacadeResult<V> }
@@ -1152,7 +1151,7 @@ async function surfaces07Refuse(
     expect(data).toMatchObject({ kind: "facade_error", error_code: "facade_error",
       human_message: message, request_id: expect.any(String), recovery_suggestions: expect.any(Array) });
     // This is the explicit transport mapping, not acceptance of an unrelated refusal.
-    expect({ code: "FORBIDDEN", message: data.human_message }).toEqual({ code: error.code, message: error.message });
+    expect({ code: "FORBIDDEN", message: data.human_message }).toEqual<unknown>({ code: error.code, message: error.message });
     receipts.push(await surfaces07RefusalReceipt(engine, data.receipt_ref,
       request.verb, actor.principalRef, "mcp", "facade_error"));
   }
@@ -1167,7 +1166,7 @@ async function surfaces07Refuse(
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("SURFACES-07 SDK allowed an agent owner act");
     const error = surfaces07Object(result.error);
-    expect({ code: error.code, message: error.message, suggestions: error.suggestions }).toEqual(expectedErrors[index]);
+    expect({ code: error.code, message: error.message, suggestions: error.suggestions }).toEqual<unknown>(expectedErrors[index]);
     // The SDK driver retains public m.lastReceiptRef() for each operation,
     // including refusals, before the next operation replaces that handle state.
     const metadata = surfaces07Object(result);
@@ -1294,8 +1293,6 @@ suite.test(test, "SURFACES-07", "Custom agent and saved workflow revisions agree
     await engine.close();
   }
 });
-
-// No additional imports: the merged surfaces test already imports every symbol used here.
 
 // The fixture names related_to, which is not an engine EdgeKind. This partial
 // exercises the registered mentions kind; it does not claim related_to support.
@@ -1432,7 +1429,7 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
     surfaces08NoValues(rest.bytes, hidden);
     expect(rest.status).toBe(refusal.status);
     const error = surfaces08Error(rest.body, refusal.code);
-    expect(rest.headers.get("x-oneiron-receipt-ref")).toBe(error.receiptRef);
+    expect(rest.headers.get("x-oneiron-receipt-ref")).toBe<unknown>(error.receiptRef);
     receipts.push(await surfaces08ReceiptRead(actor, error.receiptRef, refusal.verb,
       refusal.code, "http_facade", hidden));
     expectedErrors.push(error);
@@ -2038,7 +2035,7 @@ enabled = false
         });
         expect(reply.choices).toHaveLength(1);
         expect(reply.oneiron.recall_skipped == null).toBe(true);
-        if (normalized.length > 0) expect(semantic).toEqual(normalized[0]);
+        if (normalized.length > 0) expect(semantic).toEqual<unknown>(normalized[0]);
         normalized.push(semantic); chatResults.push(reply); exchangeRefs.push(remembered.claim);
         const calls = providers.seenFixtureCalls;
         expect(calls).toHaveLength(index + 1);
@@ -2104,7 +2101,7 @@ enabled = false
         expect(rows.value.map(row => row.claim_ref).sort()).toEqual(before.map(row => row.claim_ref).sort());
         for (const row of rows.value) {
           const original = before.find(item => item.claim_ref === row.claim_ref);
-          expect(row).toEqual(original); surfaces09Absent(row, privateValue);
+          expect(row).toEqual<unknown>(original); surfaces09Absent(row, privateValue);
         }
         const recall = await agent.client.call("vault.recall", { query: data.query, effort: "light", limit: 8, format: "md" });
         expect(Buffer.from(JSON.stringify(recall)).includes(Buffer.from(data.admittedMemory))).toBe(true);
