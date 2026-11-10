@@ -14,6 +14,7 @@ use crate::design_plan::{Cell, Column, ColumnKind, Dataset, Rect};
 use crate::edit::tests::{SLIDE, deck, part, target, timing, with_notes_master};
 use crate::edit::{ValueEdit, edit};
 use crate::native_patch::{ChartFamily, Frame, NativeEdit, Target as Series, native_patch};
+use crate::resource::Resources;
 use crate::retained_opc::rels_name;
 
 const SECOND: &str = "ppt/slides/slide2.xml";
@@ -55,6 +56,7 @@ fn rich() -> Package {
                 name: name.into(),
                 kind,
                 unit: None,
+                format: None,
             })
             .to_vec(),
         rows: vec![
@@ -64,6 +66,7 @@ fn rich() -> Package {
         ],
         missing: None,
         sources: vec!["source".into()],
+        merges: Vec::new(),
     };
     let frame = Frame {
         slide: SLIDE,
@@ -142,7 +145,12 @@ fn rich() -> Package {
     package
         .replace_xml_part(PRESENTATION, presentation.into_bytes())
         .unwrap();
-    Package::open(&package.export().unwrap(), limits()).unwrap()
+    Package::open(
+        &package.export().unwrap(),
+        limits(),
+        &Resources::measuring(),
+    )
+    .unwrap()
 }
 
 /// Copy `slide`, read with its current render fingerprint.
@@ -636,7 +644,7 @@ fn office_oracle_candidate() {
     let slide = |n: u32| format!("ppt/slides/slide{n}.xml");
     let (four, five, nine) = (slide(4), slide(5), slide(9));
     let emitted = crate::emit::tests::oracle_deck().bytes;
-    let mut package = Package::open(&emitted, limits()).unwrap();
+    let mut package = Package::open(&emitted, limits(), &Resources::measuring()).unwrap();
     with_notes_master(&mut package);
     let effects = timing()
         .replace(r#"spid="8""#, r#"spid="3""#)
@@ -652,7 +660,7 @@ fn office_oracle_candidate() {
     };
     edit(&mut package, &op).unwrap();
     let base = package.export().unwrap();
-    let mut package = Package::open(&base, limits()).unwrap();
+    let mut package = Package::open(&base, limits(), &Resources::measuring()).unwrap();
 
     let shape = NewShape {
         preset: Preset::RoundRect,

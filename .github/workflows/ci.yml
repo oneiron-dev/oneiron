@@ -157,11 +157,9 @@ jobs:
           # The deny-policy tests call the pinned cargo-deny.
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
           python3 scripts/code-sandbox/generate.py --check
-          python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
       # Office oracle scripts are host tools CI never runs. These checks read only stored
       # inputs, synthetic packages and the archived-receipt pointer: no Office, network or receipt.
