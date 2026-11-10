@@ -449,3 +449,6 @@ fn decode_numeric_value(value: Value) -> Option<f32> {
     }
     Some(parsed.clamp(0.0, 1.0))
 }
+
+#[cfg(test)]
+mod tests;

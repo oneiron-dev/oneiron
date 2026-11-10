@@ -198,3 +198,26 @@ pub fn normalize_with_offset_map<'a>(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remap_end_rounds_up_through_nfkc_expansion() {
+        // `㍻` (U+337B, 3 bytes, 1 grapheme) → `平成` (6 bytes, 2 graphemes).
+        // boundaries = [(0,0), (6,3)] — interior offsets must NOT collapse
+        // a token's byte_end to 0 (preceding boundary). `remap_end` rounds
+        // UP to the next boundary so the token stays pinned to the
+        // original 3-byte grapheme.
+        let policy = NormalizationPolicy::default();
+        let out = normalize_with_offset_map("㍻", &policy);
+        assert_eq!(out.as_str(), "平成");
+        // Two normalized tokens at 0..3 (`平`) and 3..6 (`成`) must both
+        // map to the original 0..3 span.
+        assert_eq!(out.remap(0), 0);
+        assert_eq!(out.remap_end(3), 3);
+        assert_eq!(out.remap(3), 0);
+        assert_eq!(out.remap_end(6), 3);
+    }
+}

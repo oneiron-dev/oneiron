@@ -52,6 +52,21 @@ fn failure_rules_parser_refuses_malformed_tables() {
 }
 
 #[test]
+#[should_panic(expected = "addressable by a u16 row index")]
+fn policy_guard_refuses_a_table_past_the_u16_row_index() {
+    let row = BudgetPolicyRow::new(BudgetPolicySelector::Purpose(CallPurpose::Eval), None, None);
+    let table = BudgetPolicyTable::from_rows(vec![row; usize::from(u16::MAX) + 2]);
+    let _ = BudgetGuard::with_policy_table(
+        "seam",
+        1_000,
+        10,
+        BudgetExhaustionPolicy::Suspend,
+        actor(),
+        &table,
+    );
+}
+
+#[test]
 fn an_actor_cap_row_still_refuses_admission() {
     let actor = actor();
     let cap = BudgetPolicyRow::new(
@@ -143,4 +158,44 @@ fn metric_tier_check_refuses_foreign_versions_and_mismatched_reports() {
             "{result:?}"
         );
     }
+}
+
+#[test]
+fn only_a_fallback_finish_marks_an_output_as_failed() {
+    let response = |finish_reason| LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: Vec::new(),
+        },
+        usage: LlmUsage::zero(),
+        finish_reason,
+    };
+    let fallback = FinishReason::Other {
+        name: "fallback:deterministic".to_owned(),
+    };
+    assert_eq!(
+        fallback_failure_class(&response(fallback)),
+        Some(DreamerFailureClass::Fatal)
+    );
+    for finish in [
+        FinishReason::Stop,
+        FinishReason::Length,
+        FinishReason::Other {
+            name: "provider:fallback".to_owned(),
+        },
+    ] {
+        assert_eq!(fallback_failure_class(&response(finish)), None);
+    }
+}
+
+#[test]
+fn dynamic_model_ids_join_sanitized_segments() {
+    let id = dynamic_model_id("local", "guard-3".to_owned(), "2026-10");
+    assert_eq!(id.as_str(), "local/guard-3@2026-10");
+}
+
+#[test]
+#[should_panic(expected = "sanitized safeguard model binding")]
+fn dynamic_model_ids_refuse_an_unsanitized_segment() {
+    let _ = dynamic_model_id("local", "guard 3".to_owned(), "2026-10");
 }
