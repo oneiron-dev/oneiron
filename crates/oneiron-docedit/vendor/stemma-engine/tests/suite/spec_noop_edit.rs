@@ -596,6 +596,7 @@ fn a_no_op_formatting_refusal_names_the_current_formatting() {
             vec![EditStep::SetRunFormatting {
                 block_id: NodeId::from("p1"),
                 expect: "Already bold".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 marks: InlineMarkSet {
                     bold: true,

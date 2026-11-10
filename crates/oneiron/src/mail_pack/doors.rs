@@ -215,15 +215,16 @@ fn valid_calendar_details(
 }
 
 impl Memory<'_> {
-    /// The PERSON the bound actor is, or acts for (a pen through its
-    /// subject anchor; the embedded owner of a vault with no authority root
-    /// through the owner it stands for), in `txn`.
+    /// The PERSON the bound actor is, or acts for (a pen, or an agent as its
+    /// own model PERSON, through its subject anchor; the embedded owner of a
+    /// vault with no authority root through the owner it stands for), in
+    /// `txn`.
     pub(super) fn mail_caller_person_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
         let vault = self.vault();
         let actor = self.actor();
         let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
         if let Some(person) =
-            crate::workspace_roster::person_of_actor_in_txn(vault, txn, actor, at)?
+            crate::workspace_roster::subject_person_of_actor_in_txn(vault, txn, actor, at)?
             && live_person_in(vault, txn, &person)?
         {
             return Ok(person);
