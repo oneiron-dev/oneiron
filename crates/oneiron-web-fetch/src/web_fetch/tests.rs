@@ -1896,7 +1896,9 @@ fn fetch_result_decoding_keeps_the_field_doors_closed() {
 
 #[test]
 fn a_long_chain_is_bounded_by_live_frontier_not_historical_enqueues() {
-    let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
+    // The frontier ceiling FIX 8168 removed (5d7407d2178, #4109: "no page or crawl is
+    // refused for its link count"); the chain still crosses it.
+    let frontier_ceiling = 65_536;
     let seed = fixture_url("https://chain.test/p/0");
     let mut walk = super::ladder::CrawlWalk::new(seed, frontier_ceiling + 2);
     let markdown = "markdown body for a one-link chain";

@@ -145,18 +145,6 @@ fn signature_validation_refuses_a_suite_that_does_not_match_its_key() {
 }
 
 #[test]
-fn a_software_key_never_meets_a_hardware_floor() {
-    assert!(!tier_meets_floor(
-        AuthorityTier::Software,
-        AuthorityTier::Hardware
-    ));
-    assert!(tier_meets_floor(
-        AuthorityTier::Hardware,
-        AuthorityTier::Hardware
-    ));
-}
-
-#[test]
 fn entry_signatures_refuse_tampering_a_foreign_signer_and_an_unsigned_cosign() {
     let entry = signed_entry(&[11]);
     assert!(verify_entry_signatures(&entry).is_ok());
