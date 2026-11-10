@@ -1,0 +1,16 @@
+{
+  "protocol_revision": "2026-07-28",
+  "summary": "MUSE-GATE-06 notes connector pack for slate drafting and manifest drift",
+  "v1_files": [
+    {
+      "path": "PACK.md",
+      "text": "---\nname: muse.gate06_notes\ndescription: MUSE-GATE-06 notes connector pack for slate drafting and manifest drift\nversion: 1.0.0\nlicense: Apache-2.0\nkind: connector\nadapter: built-in:email\n---\nMUSE-GATE-06 connector pack fixture. It declares no grants, wakes, hooks or code;\ninstalling it starts no transport and makes no network call.\n"
+    }
+  ],
+  "v2_files": [
+    {
+      "path": "PACK.md",
+      "text": "---\nname: muse.gate06_notes\ndescription: MUSE-GATE-06 notes connector pack for slate drafting and manifest drift\nversion: 1.1.0\nlicense: Apache-2.0\nkind: connector\nadapter: built-in:email\n---\nMUSE-GATE-06 connector pack fixture. It declares no grants, wakes, hooks or code;\ninstalling it starts no transport and makes no network call.\n"
+    }
+  ]
+}

@@ -136,6 +136,39 @@
         "typed selective/full revert_run",
         "typed untrusted policy proposal"
       ]
+    },
+    {
+      "id": "gate06-connector-pack",
+      "path": "gate06-connector-pack.json",
+      "source": {
+        "uri": "author-created:oneiron-e2e-muse-gate06-connector-pack-20261110",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5710c8901b321a4666fa7bcfd7bc8f02f6a75af6ab26f6f6bbd1a8b4f63ea430",
+      "expectedFacts": {
+        "packName": "muse.gate06_notes",
+        "kind": "connector",
+        "adapter": "built-in:email",
+        "v1Version": "1.0.0",
+        "v2Version": "1.1.0",
+        "protocolRevision": "2026-07-28",
+        "summary": "MUSE-GATE-06 notes connector pack for slate drafting and manifest drift",
+        "files": [
+          "PACK.md"
+        ],
+        "oracle": "Authored pack folders: v2 differs from v1 only in its PACK.md version line, so the installed content hash moves while pack name, adapter and protocol revision stay. The v1 and v2 tool manifests are authored in the MUSE-GATE-06 case itself."
+      },
+      "scenarios": [
+        "MUSE-GATE-06"
+      ],
+      "requires": [
+        "vault.packs.connector.prepare",
+        "vault.packs.connector.get",
+        "vault.packs.connector.grants.get",
+        "vault.packs.connector.accept",
+        "vault.packs.connector.update"
+      ]
     }
   ]
 }
