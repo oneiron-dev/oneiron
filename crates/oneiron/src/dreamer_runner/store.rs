@@ -1170,6 +1170,8 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
+        // WAKE-D1: a park only the owner's release resumes tells the owner, in its own write.
+        super::park_release::raise_park_release_notice_in_txn(self.vault, wtxn, &record);
         // FIX 4747: a parking agent run keeps its executor lease.
         crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, record.attempt_id)?;
         Ok(record)
