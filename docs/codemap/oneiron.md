@@ -1416,7 +1416,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/weave_trigger.rs` | src | s | 1 struct · 2 fn | WeaveDigestRendered | Typed weave publication and persisted correction reads for the bound reader |
 | `src/claim/selector_world.rs` | src | s | 1 enum | SyncSelectorWorld | World filter vocabulary for a closed-subgraph CLAIM selector |
 | `src/claim/served_lifecycle.rs` | src | s | 1 enum | ServedLifecycle | Lifecycle version exposed by a scoped claim read |
-| `src/claim/source_trust.rs` | src | s | 1 re-export · 10 crate-vis | — | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
+| `src/claim/source_trust.rs` | src | s | 1 re-export · 11 crate-vis | — | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/supersession_diff.rs` | src | s | 6 crate-vis | — | Immutable before/after revision bindings for accepted supersession edges |
 | `src/claim/supersession_provenance.rs` | src | m | 8 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
 | `src/claim/supersession_provenance/tests.rs` | test | s | — | — | — |
@@ -8129,6 +8129,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_world_residence.rs` | test | m | — | — | World-month residence regressions through public engine doors |
 | `tests/it_sync/tagging_local_only.rs` | test | s | — | — | What a saved tag set and a provisional entity do across two devices of one vault (ARCH-0036, serving the… |
 | `tests/it_sync/task_authority_convergence.rs` | test | m | — | — | TASK authority across two real vaults |
+| `tests/key_value_credential_read.rs` | test | s | — | — | [E2E-KV-GET-PREFILTER]: the keyed store's own reader under a read credential |
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
 | `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
