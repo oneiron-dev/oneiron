@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { PublicHttpClient, credentialParts } from "./support/clients.ts";
+import { PublicHttpClient, PublicHttpError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import { assertFlowActive, defineFile, ownResource, recordStart, redactor } from "./support/run.ts";
@@ -734,11 +734,13 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const graphText = `${graphToken} readable graph anchor`;
     const hiddenText = `${token} private`;
     // claim() observes each commit receipt and hydrates the write as owner.
+    // Public synthetic values isolate the world ceiling from model-channel name projection.
+    // Even a Public claim in the hidden world must remain unreadable.
     const readable = await claim(engine, scope, {
-      predicate: "profile.name", value: readableText, occurred_at: at, learned_at: at,
+      predicate: "profile.name", value: readableText, sensitivity: 0, occurred_at: at, learned_at: at,
     });
     const hidden = await claim(engine, { ...scope, world_id: hiddenWorld.id_hex }, {
-      predicate: "profile.name", value: hiddenText, occurred_at: at, learned_at: at,
+      predicate: "profile.name", value: hiddenText, sensitivity: 0, occurred_at: at, learned_at: at,
     });
     expect(readable.entity.body).toMatchObject({ val: readableText, life: "active" });
     expect(hidden.entity.body).toMatchObject({ val: hiddenText, life: "active" });
@@ -767,9 +769,26 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       scope: { worlds: { kind: "all" }, kinds: ["CLAIM"] }, filter: { include_stale: true },
     };
     async function checkReader() {
-      const recalled = await reader.call("vault.recall", recallInput);
+      const recalled = await reader.call("vault.recall", recallInput).catch((error: unknown) => {
+        if (error instanceof PublicHttpError) {
+          throw new Error(
+            `RETRIEVAL-04 vault.recall: HTTP ${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}`,
+            { cause: error },
+          );
+        }
+        throw new Error(`RETRIEVAL-04 vault.recall: ${errorText(error)}`, { cause: error });
+      });
       // Medium recall also returns the fresh vault's own seeded base-world claims; the promise is
       // that the readable claim is there and nothing of the hidden world is (retrieval04Absent below).
+      const recalledReadable = recalled.items.find(item => item.short_id === readable.ref);
+      if (!recalledReadable) {
+        throw new Error(
+          `RETRIEVAL-04 medium vault.recall omitted readable CLAIM ${readable.ref}; returned_short_ids=${JSON.stringify(recalled.items.map(item => item.short_id))}`,
+        );
+      }
+      // Require the authored claim's identity and its Public value, not just a matching string elsewhere.
+      expect(recalledReadable.predicate).toBe("profile.name");
+      expect(recalledReadable.value_text).toBe(readableText);
       expect(recalled.items.map(item => item.value_text)).toContain(readableText);
       expect(recalled.rendered).toBeTruthy();
       retrieval04Receipt(recalled.narrowing);
@@ -1494,10 +1513,13 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     const privateRow = records.get("private-community")!;
     expect((await reader.call("vault.get", { entity_ref: privateRow.ref })).value).toBeNull();
     const before = await claimSet(engine);
+    // One judged-at second for every read, set after all claims exist: baseline, enabled and off then differ
+    // only in the configured prior, not in elapsed decay between wall-clock reads (as_of is Unix seconds).
+    const readAt = Math.ceil(Date.now() / 1000) + 1;
     const scored = ["calm", "intense", "community-neighbor"] as const;
     async function read(phase: string, effort: Facade.RecallEffort) {
       const pack = await reader.call("vault.recall", {
-        query: "retrievalpriors", effort, limit: 50,
+        query: "retrievalpriors", effort, limit: 50, as_of: readAt,
         query_affect: fixture.queryAffect, telemetry: { capture_trace: true },
       });
       const evidence = pack.retrieval_run_id
