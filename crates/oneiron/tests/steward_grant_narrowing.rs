@@ -17,8 +17,8 @@ use oneiron::federation::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemFunction,
 };
 use oneiron::test_doors::steward::{
-    GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer, grant_mark,
-    open_owner_carrier_vault, owner, weave_reach,
+    GrantMark, STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer,
+    grant_mark, open_owner_carrier_vault, owner, weave_reach,
 };
 
 fn verbs(names: &[&str]) -> BTreeSet<String> {
@@ -157,4 +157,96 @@ fn revoking_the_dreamers_minted_grant_whole_is_an_opt_out_the_host_keeps() {
         grant_mark(&vault, dreamer).expect("mark"),
         Some(GrantMark::OptedOut)
     );
+}
+
+/// Narrows the Dreamer's grant to `keep`, confirming the breaks when the
+/// door asks; the breaks the applied narrowing carries.
+fn narrow_confirming(
+    vault: &oneiron::Vault,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    dreamer: oneiron::EntityId,
+    keep: &BTreeSet<String>,
+) -> Vec<SystemFunction> {
+    let confirm = match vault
+        .narrow_system_agent_grant(owner, dreamer, keep, None)
+        .expect("narrowing")
+    {
+        SystemAgentGrantNarrowing::ConfirmRequired { confirm, .. } => confirm,
+        SystemAgentGrantNarrowing::Narrowed { breaks, .. } => return breaks,
+        SystemAgentGrantNarrowing::Unchanged => panic!("the narrowing drops a verb"),
+    };
+    let SystemAgentGrantNarrowing::Narrowed { breaks, .. } = vault
+        .narrow_system_agent_grant(owner, dreamer, keep, Some(confirm))
+        .expect("confirmed narrowing")
+    else {
+        panic!("the confirmed narrowing applies");
+    };
+    breaks
+}
+
+/// Review of #6914: the history was keyed by the agent and the recording
+/// second, so a second narrowing in that second replaced the first record.
+#[test]
+fn every_narrowing_stays_in_the_record_when_several_share_a_second() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    vault.provision_system_agent_grants().expect("first mint");
+
+    // Four narrowings back to back, one verb fewer each time.
+    let steps = [
+        verbs(&STEWARD_VERBS),
+        verbs(&[STEWARD_READ_VERB, "derive", STEWARD_ARCHIVE_VERB]),
+        verbs(&[STEWARD_READ_VERB, "derive"]),
+        verbs(&[STEWARD_READ_VERB]),
+        BTreeSet::new(),
+    ];
+    for keep in &steps[1..] {
+        narrow_confirming(&vault, &owner, dreamer, keep);
+    }
+
+    let records = vault.system_agent_narrowings(dreamer).expect("records");
+    assert_eq!(
+        records.len(),
+        steps.len() - 1,
+        "one record for each narrowing: {records:?}"
+    );
+    for (index, (_, record)) in records.iter().enumerate() {
+        assert_eq!(record.before, steps[index], "narrowing {index}, before");
+        assert_eq!(record.after, steps[index + 1], "narrowing {index}, after");
+    }
+    assert!(
+        records.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "oldest first: {records:?}"
+    );
+}
+
+/// Review of #6914: the strength archive is judged by the landing verdict, so
+/// a grant without `derive` archives nothing. The warning named consolidation
+/// only.
+#[test]
+fn dropping_derive_warns_that_recall_upkeep_stops_too() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    vault.provision_system_agent_grants().expect("first mint");
+    let keep = verbs(&[STEWARD_READ_VERB, STEWARD_ARCHIVE_VERB, "delete"]);
+    let both = vec![SystemFunction::Consolidation, SystemFunction::RecallUpkeep];
+
+    let SystemAgentGrantNarrowing::ConfirmRequired { breaks, .. } = vault
+        .narrow_system_agent_grant(&owner, dreamer, &keep, None)
+        .expect("narrowing")
+    else {
+        panic!("a system-critical narrowing asks first");
+    };
+    assert_eq!(breaks, both, "the warning names both functions");
+
+    assert_eq!(narrow_confirming(&vault, &owner, dreamer, &keep), both);
+    let records = vault.system_agent_narrowings(dreamer).expect("records");
+    let [(_, record)] = records.as_slice() else {
+        panic!("one narrowing record, found {}", records.len());
+    };
+    assert_eq!(record.confirmed, both, "the record keeps both");
 }
