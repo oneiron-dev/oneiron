@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use clap::Parser;
+use oneiron::HostingPrivacyPosture;
 use oneiron_server::config::ServeArgs;
 use oneiron_server::managed::{ManagedArgs, ManagedError};
 use oneiron_vault_contract::{CONTRACT_VERSION, DEK_LEN, TOKEN_LEN, write_credentials};
@@ -81,10 +82,11 @@ fn boot_refused(
 
 #[test]
 fn managed_privacy_flags_are_refused_in_both_cli_forms() {
+    // Key custody is the supervisor's: a KMS reference on argv is refused,
+    // never read and dropped. `--privacy-posture` is the operator's own
+    // declaration since QUORUM-HOST-ROOT = C (#5299), so it is read instead
+    // (`managed_privacy_posture_is_read_in_both_cli_forms`).
     for (flag, value) in [
-        ("privacy-posture", "managed"),
-        ("privacy-posture", "self-host"),
-        ("privacy-posture", "relay"),
         ("hosted-kms-key-ref", "kms://example/cli-secret-ref"),
         ("hosted-kms-key-ref", ""),
     ] {
@@ -116,6 +118,41 @@ fn managed_privacy_flags_are_refused_in_both_cli_forms() {
                 "{stderr}"
             );
             assert!(!stderr.contains("kms://example/cli-secret-ref"));
+        }
+    }
+}
+
+#[test]
+fn managed_privacy_posture_is_read_in_both_cli_forms() {
+    // The managed operator declares hosting on argv (QUORUM-HOST-ROOT = C,
+    // docs/ops/hosted-checkpoint-policy.md). Each posture, in either form,
+    // reaches the managed settings and the serve config: read, never dropped.
+    for posture in [
+        HostingPrivacyPosture::Hosted,
+        HostingPrivacyPosture::Relay,
+        HostingPrivacyPosture::SelfHostLocal,
+    ] {
+        for joined in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let value = posture.as_str();
+            let extra = if joined {
+                vec![format!("--privacy-posture={value}")]
+            } else {
+                vec!["--privacy-posture".to_owned(), value.to_owned()]
+            };
+            let mut argv = vec!["oneiron-server".to_owned()];
+            argv.extend(managed_argv(dir.path()));
+            argv.extend(extra);
+            let args = ArgvProbe::try_parse_from(argv).unwrap().serve;
+            let managed = ManagedArgs::from_serve_args(&args)
+                .unwrap()
+                .expect("--managed-by-hypnos selects managed mode");
+            assert_eq!(managed.privacy_posture, posture, "{value} joined={joined}");
+            assert_eq!(
+                managed.serve_config(&args).privacy_posture,
+                posture,
+                "{value} joined={joined}"
+            );
         }
     }
 }

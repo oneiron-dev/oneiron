@@ -13,7 +13,7 @@ use wasmtime::component::Linker;
 /// thrown value, never prose; any wording for it belongs to the host or prompt
 /// layer.
 type Reply<T> = std::result::Result<T, String>;
-const IMPORTS: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
+const IMPORTS: &[(&str, &str)] = include!("../../../../oneiron/wit/generated/imports.rs");
 
 /// A step's host calls, counted for observation only (FIX 8676): the
 /// budget's `host_calls` is an advisory threshold, and no count refuses a
