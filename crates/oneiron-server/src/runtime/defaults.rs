@@ -228,6 +228,10 @@ pub struct RuntimeConfigOverride {
     /// a seat's `machine_ref` may name beside its machine id; a layer that
     /// names it replaces the whole list.
     pub seat_host_aliases: Option<Vec<String>>,
+    /// `[runtime] clock`: the clock this server's vault reads.
+    pub clock: Option<super::RuntimeClock>,
+    /// `[runtime] clock_file`: the file a manual clock reads its time from.
+    pub clock_file: Option<std::path::PathBuf>,
 }
 
 impl RuntimeConfigOverride {
@@ -281,6 +285,12 @@ impl RuntimeConfigOverride {
         }
         if other.seat_host_aliases.is_some() {
             self.seat_host_aliases = other.seat_host_aliases;
+        }
+        if other.clock.is_some() {
+            self.clock = other.clock;
+        }
+        if other.clock_file.is_some() {
+            self.clock_file = other.clock_file;
         }
     }
 }
