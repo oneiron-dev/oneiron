@@ -201,11 +201,7 @@ impl BatchBuilder<'_> {
                     id,
                     body,
                 )? {
-                    return Err(crate::error::Error::Gate(
-                        crate::error::GateError::ConsentOwnerNotAuthenticated(
-                            "only the vault owner changes the audience an identity was named under",
-                        ),
-                    ));
+                    return Err(crate::claim::owner_only_audience_change());
                 }
             }
             Ok(())
