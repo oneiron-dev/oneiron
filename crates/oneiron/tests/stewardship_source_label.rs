@@ -10,8 +10,12 @@
 //! never the R claim; the test asserts it reads no reach-out that names the
 //! R claim or its time.
 //!
+//! A second test checks the place a reach-out copies: its record's canonical
+//! facet and project stamps win over a selector nested in the opaque scope
+//! map (review round 2 of #6972).
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
-//! assertion is the leak check.
+//! assertion of each test is the leak check.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test stewardship_source_label`.
@@ -24,11 +28,13 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::{
     embedded_owner, grant_dreamer_relationship_claims, open_member_vault, run_stewardship_once,
 };
+use oneiron::write_envelope::ClaimCandidate;
 use oneiron::write_envelope::claim_body::relationship_scope_of;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Vault, VaultConfig,
+    Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
+use rmpv::Value;
 
 /// When each record about a person happened.
 const RECORD_AT: u64 = 10;
@@ -193,5 +199,53 @@ fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
         "LEAK: a member outside R reads a reach-out naming the R record {} and its time {}",
         rob_value["last_record"],
         rob_value["quiet_since"]
+    );
+}
+
+/// Review round 2 of #6972: a reach-out copies its record's opaque scope map
+/// and its canonical facet and project stamps (`FindingPlace`) onto one
+/// candidate. A selector nested in that map must not override the stamps:
+/// a record stamped project P whose map names project Q would land its
+/// reach-out in Q, where a reader of Q but not of P learns of the P record.
+#[test]
+fn a_copied_place_keeps_its_canonical_stamps_over_a_nested_selector() {
+    let (facet, project) = (EntityId::now(), EntityId::now());
+    let (selector_facet, selector_project) = (EntityId::now(), EntityId::now());
+    let scope = Value::Map(vec![
+        (Value::from("facet"), Value::from(selector_facet.to_hex())),
+        (
+            Value::from("scopeProjectId"),
+            Value::from(selector_project.to_hex()),
+        ),
+    ]);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(EntityId::now(), EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer.finding"),
+        )]))
+        .expect("provenance"),
+        ClaimApprovalStatus::Auto,
+    );
+    let body = ClaimCandidate::new(
+        STEWARDSHIP_PREDICATE,
+        ClaimSubject::Entity(EntityId::now()),
+        Value::from("reach out"),
+        1.0,
+    )
+    .with_scope(scope.clone())
+    .with_scope_stamps(facet, project)
+    .into_claim_body(&envelope, EntityId::now())
+    .expect("FIXTURE: the claim body");
+    assert_eq!(
+        body.scope,
+        Some(scope),
+        "FIXTURE: the opaque scope map is kept as written"
+    );
+    assert_eq!(
+        (body.scope_facet, body.scope_project),
+        (facet, project),
+        "LEAK: a nested selector overrode the copied record's canonical facet and project stamps"
     );
 }
