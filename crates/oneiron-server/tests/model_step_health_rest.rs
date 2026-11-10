@@ -239,49 +239,53 @@ async fn settled(app: &axum::Router, vault: &Vault, step_key: &str, secs: u64) -
 /// 0`) parks the step: the receipt says parked, with when the offer is back
 /// and the one send made, and the receipt door says so too. Once the rest
 /// ends the step resumes on its own and its second send answers.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_step_parks_past_its_rest_wait_and_resumes_on_its_own() {
-    let fake = FakeLlm::start(vec![Reply::Status(503), Reply::text("resumed")], None).await;
-    let dir = tempfile::tempdir().unwrap();
-    let extra = "health_rest_secs = 2\nstep_rest_wait_secs = 0";
-    let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
-    let body = receipt(&app, submit(&vault, "health-parks", 3)).await;
-    assert_eq!(body["result"]["status"], "parked", "{body:#}");
-    assert_eq!(body["result"]["sends"], 1, "{body:#}");
-    assert!(
-        body["result"]["until"].as_u64().unwrap() > vault.now_recorded_at(),
-        "{body:#}"
-    );
-    assert_eq!(fake.seen().len(), 1, "{body:#}");
-    let read = receipt(&app, read_receipt(&vault, "health-parks")).await;
-    assert_eq!(read["result"]["status"], "parked", "{read:#}");
-    let done = settled(&app, &vault, "health-parks", 20).await;
-    assert_eq!(done["result"]["status"], "finished", "{done:#}");
-    assert!(done.to_string().contains("resumed"), "{done:#}");
-    assert_eq!(fake.seen().len(), 2, "{done:#}");
-    host.shutdown().await;
+#[test]
+fn a_step_parks_past_its_rest_wait_and_resumes_on_its_own() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(vec![Reply::Status(503), Reply::text("resumed")], None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 2\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
+        let body = receipt(&app, submit(&vault, "health-parks", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(body["result"]["sends"], 1, "{body:#}");
+        assert!(
+            body["result"]["until"].as_u64().unwrap() > vault.now_recorded_at(),
+            "{body:#}"
+        );
+        assert_eq!(fake.seen().len(), 1, "{body:#}");
+        let read = receipt(&app, read_receipt(&vault, "health-parks")).await;
+        assert_eq!(read["result"]["status"], "parked", "{read:#}");
+        let done = settled(&app, &vault, "health-parks", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert!(done.to_string().contains("resumed"), "{done:#}");
+        assert_eq!(fake.seen().len(), 2, "{done:#}");
+        host.shutdown().await;
+    });
 }
 
 /// The sends a parked step made count against its declared attempts across
 /// its resumes: three 503s with three attempts declared park the step twice,
 /// and it fails on its third send in all, never three sends a resume.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_parked_steps_resumes_keep_its_declared_attempts() {
-    let fake = FakeLlm::start(
-        vec![Reply::Status(503), Reply::Status(503), Reply::Status(503)],
-        Some(Reply::text("unreached")),
-    )
-    .await;
-    let dir = tempfile::tempdir().unwrap();
-    let extra = "health_rest_secs = 1\nstep_rest_wait_secs = 0";
-    let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
-    let body = receipt(&app, submit(&vault, "health-park-exhausts", 3)).await;
-    assert_eq!(body["result"]["status"], "parked", "{body:#}");
-    let done = settled(&app, &vault, "health-park-exhausts", 30).await;
-    assert_eq!(done["result"]["status"], "failed", "{done:#}");
-    assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
-    assert_eq!(fake.seen().len(), 3, "{done:#}");
-    host.shutdown().await;
+#[test]
+fn a_parked_steps_resumes_keep_its_declared_attempts() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![Reply::Status(503), Reply::Status(503), Reply::Status(503)],
+            Some(Reply::text("unreached")),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 1\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
+        let body = receipt(&app, submit(&vault, "health-park-exhausts", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        let done = settled(&app, &vault, "health-park-exhausts", 30).await;
+        assert_eq!(done["result"]["status"], "failed", "{done:#}");
+        assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
+        assert_eq!(fake.seen().len(), 3, "{done:#}");
+        host.shutdown().await;
+    });
 }
 
 /// A first health rest outside one to sixty seconds is refused at load.
