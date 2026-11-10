@@ -17,10 +17,10 @@ use std::sync::{Arc, OnceLock};
 
 use super::Vault;
 use crate::code_run::activity::AttemptActivityRuntime;
-use crate::code_sandbox::egress::VaultHostFloor;
 use crate::code_sandbox::microvm::{NoSandboxBackends, SandboxBackends};
 use crate::config::VaultConfig;
 use crate::engine_executor::AttemptCancels;
+use crate::host_net_floor::VaultHostFloor;
 use crate::runtime_hooks::verb::VerbHookState;
 use crate::skill::SkillInvocations;
 use crate::store::result_body_pins::ResultBodyPins;
