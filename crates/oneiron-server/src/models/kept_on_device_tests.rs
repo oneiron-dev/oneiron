@@ -3,6 +3,7 @@
 //! name no world). A call whose work stays on the device never reaches a
 //! cloud fallback: it waits within its one wait for an offer on the device,
 //! then is held with a typed outcome, and each hold writes a run receipt.
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use futures_util::StreamExt;
@@ -448,3 +449,63 @@ async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     assert_eq!(first.seen().len(), 3);
     assert!(second.seen().is_empty(), "the text stayed here");
 }
+
+/// Every place in this crate that reaches a fallback ladder, and where its
+/// call's world comes from. A call that names no world is held by the
+/// vault-wide floor while any world stays on the device, so a new caller
+/// that passes no world fails closed; this list makes it name its source.
+const LADDER_CALLERS: [(&str, &str); 10] = [
+    (
+        "api/llm.rs",
+        "none, as a caller's named world does not vouch for its text: the floor",
+    ),
+    ("api/ai/chat.rs", "none: the floor"),
+    (
+        "models/declared.rs",
+        "none, as a host's named world does not vouch for its text: the floor",
+    ),
+    ("models/raw.rs", "one host-injected offer, never a fallback"),
+    (
+        "models/run_backend.rs",
+        "the engine's envelope: a consolidation pass names its partition's world, the rest none (the floor)",
+    ),
+    (
+        "ai_host/dreamer.rs",
+        "the engine's envelope, through a run backend",
+    ),
+    (
+        "ai_host/code_mode.rs",
+        "the executor's envelope, which names no world: the floor",
+    ),
+    (
+        "ai_host/step.rs",
+        "none, as nothing proves its text's worlds: the floor",
+    ),
+    ("ai_host/compaction.rs", "none: the floor"),
+    (
+        "server/recall_rerank.rs",
+        "none: the floor, beside rerank's own row check",
+    ),
+];
+
+/// How a ladder is reached: its entry points, and the backend that wraps one,
+/// matched with every whitespace taken out, so a call split over lines is
+/// found too. A caller binds the ladder it reaches as `ladder`.
+const ENTRY_POINTS: [&str; 4] = [
+    "ladder.generate(",
+    "ladder.stream(",
+    ".generate_while(",
+    "RunBackend::new(",
+];
+
+fn sources(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            sources(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
