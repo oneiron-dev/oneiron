@@ -112,9 +112,15 @@ impl SessionWriteRoute {
         self.target
     }
 
-    /// The overlay this route stages into. Crate-private and used only by the
-    /// session apply entry, which must stage through the same overlay the
-    /// route was minted against.
+    /// The overlay this route stages into, for the session apply entry, which
+    /// must stage through the same overlay the route was minted against.
+    ///
+    /// `pub` because that entry is in core and the route stays in the store
+    /// beside the overlay's module-scoped mode-generation and retirement
+    /// methods. The boundary holds in core: the engine hands no route and no
+    /// overlay to another crate (`OffRecordSession::write_route` and
+    /// `OffRecordSession::overlay` are crate-private), so another crate can
+    /// only reach an overlay it built itself.
     pub const fn overlay(&self) -> &Arc<SessionOverlay> {
         &self.overlay
     }
