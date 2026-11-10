@@ -767,7 +767,9 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     };
     async function checkReader() {
       const recalled = await reader.call("vault.recall", recallInput);
-      expect(recalled.items.map(item => item.value_text)).toEqual([readableText]);
+      // Medium recall also returns the fresh vault's own seeded base-world claims; the promise is
+      // that the readable claim is there and nothing of the hidden world is (retrieval04Absent below).
+      expect(recalled.items.map(item => item.value_text)).toContain(readableText);
       expect(recalled.rendered).toBeTruthy();
       retrieval04Receipt(recalled.narrowing);
       retrieval04Absent(recalled, forbidden);
@@ -1914,6 +1916,11 @@ suite.test(test, "RETRIEVAL-11", "An external agent's Generated claim becomes re
     };
     const retrieval11Matches = (item: Facade.MemoryItem, id: string, shortRef: string) =>
       item.record?.id === id || item.short_id === shortRef;
+    // The owner-stated control is lexically indexed at its own write, so it must be visible first;
+    // only then is the approved Generated claim awaited, so a red names the right claim.
+    await awaitPublic(() => engine.client.call("vault.recall", recallInput),
+      value => value.items.some(item => retrieval11Matches(item, control.id, control.ref)),
+      { timeoutMs: 5000, label: "owner-stated control visible in recall" });
     let pack: FacadeResult<"vault.recall">;
     const recallLabel = "approved Generated claim visible in recall";
     try {
