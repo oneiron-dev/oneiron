@@ -12,10 +12,15 @@ use super::*;
 
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::inbox::{InboxExceptionClass, InboxQuery};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial, DecisionProvider,
+    DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
 use crate::llm::{
-    AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
+    AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome, BoundedAutoChecker,
 };
 
 const CHECKER_REF: &str = "host-checker-v1";
@@ -34,11 +39,30 @@ const BASE_OAUTH_EXCHANGE_SECS: u64 = 3_600;
 const BASE_INITIAL_OWNER_SECS: u64 = 365 * 24 * 60 * 60;
 const LIFETIME_PRECEDENCE: &str = "vault_ceiling_holder_narrows";
 
-/// Counts every consult and records what it was shown.
+fn checker_pin() -> ProviderPin {
+    ProviderPin {
+        rung: DecisionRung::Big,
+        model: "host-checker".to_owned(),
+        version: "1".to_owned(),
+    }
+}
+
+fn checker_decision(answer: DecisionAnswer, probability: Option<f64>) -> ProviderDecision {
+    ProviderDecision {
+        answer,
+        probability,
+        paired: None,
+        person: None,
+        served: None,
+        cost_per_thousand: None,
+    }
+}
+
+/// Counts every provider consult and records the candidate state it was shown.
 struct RecordingAutoChecker {
     outcome: AutoCheckOutcome,
     calls: AtomicUsize,
-    seen: Mutex<Vec<AutoCheckCandidateOwned>>,
+    seen: Mutex<Vec<serde_json::Value>>,
 }
 
 impl RecordingAutoChecker {
@@ -64,45 +88,118 @@ impl RecordingAutoChecker {
         self.calls.load(AtomicOrdering::Relaxed)
     }
 
-    fn seen(&self) -> Vec<AutoCheckCandidateOwned> {
+    fn seen(&self) -> Vec<serde_json::Value> {
         self.seen.lock().expect("checker log").clone()
     }
 }
 
-impl AutoChecker for RecordingAutoChecker {
-    fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+impl DecisionProvider for RecordingAutoChecker {
+    fn pin(&self) -> ProviderPin {
+        checker_pin()
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
         self.seen
             .lock()
             .expect("checker log")
-            .push(AutoCheckCandidateOwned::from(candidate));
-        self.outcome.clone()
+            .push(call.state.clone());
+        let (answer, probability) = match &self.outcome {
+            AutoCheckOutcome::Allow => (DecisionAnswer::Choice("allow".to_owned()), Some(1.0)),
+            AutoCheckOutcome::Hold { .. } => (DecisionAnswer::Choice("hold".to_owned()), Some(1.0)),
+            AutoCheckOutcome::Unavailable | AutoCheckOutcome::Verdict(_) => {
+                (DecisionAnswer::Abstain, None)
+            }
+        };
+        Ok(checker_decision(answer, probability))
+    }
+}
+
+impl AutoCheckNotes for RecordingAutoChecker {
+    fn hold_reasons(
+        &self,
+        _candidate: &AutoCheckCandidate<'_>,
+        _due: Instant,
+    ) -> Result<Vec<String>> {
+        Ok(match &self.outcome {
+            AutoCheckOutcome::Hold { reasons } => reasons.clone(),
+            _ => Vec::new(),
+        })
     }
 }
 
 /// A host implementation that unwinds instead of answering.
 struct PanickingAutoChecker;
 
-impl AutoChecker for PanickingAutoChecker {
-    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+impl DecisionProvider for PanickingAutoChecker {
+    fn pin(&self) -> ProviderPin {
+        checker_pin()
+    }
+
+    fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         panic!("host auto checker panicked");
+    }
+}
+
+impl AutoCheckNotes for PanickingAutoChecker {
+    fn hold_reasons(
+        &self,
+        _candidate: &AutoCheckCandidate<'_>,
+        _due: Instant,
+    ) -> Result<Vec<String>> {
+        Ok(Vec::new())
     }
 }
 
 /// A host implementation that answers long after the gate stopped waiting.
 struct SlowAutoChecker;
 
-impl AutoChecker for SlowAutoChecker {
-    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+impl DecisionProvider for SlowAutoChecker {
+    fn pin(&self) -> ProviderPin {
+        checker_pin()
+    }
+
+    fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         std::thread::sleep(Duration::from_millis(
             crate::llm::AUTO_CHECKER_DEADLINE_MS + 500,
         ));
-        AutoCheckOutcome::Allow
+        Ok(checker_decision(
+            DecisionAnswer::Choice("allow".to_owned()),
+            Some(1.0),
+        ))
     }
 }
 
-fn bounded(checker: impl AutoChecker) -> crate::llm::BoundedAutoChecker {
-    crate::llm::BoundedAutoChecker::new(std::sync::Arc::new(checker))
+impl AutoCheckNotes for SlowAutoChecker {
+    fn hold_reasons(
+        &self,
+        _candidate: &AutoCheckCandidate<'_>,
+        _due: Instant,
+    ) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+}
+
+fn bounded<T>(checker: Arc<T>) -> BoundedAutoChecker
+where
+    T: DecisionProvider + AutoCheckNotes + 'static,
+{
+    BoundedAutoChecker::new(AutoCheckDecisions {
+        ladder: HeldLadder {
+            big: Some(checker.clone() as Arc<dyn DecisionProvider>),
+            ..HeldLadder::unstaffed()
+        },
+        principal: test_id(0x51),
+        dial: DecisionDial {
+            first: DecisionRung::Big,
+            ceiling: DecisionRung::Big,
+            band: DecisionBand::default(),
+        },
+        bands: DecisionBandPolicy::default(),
+        wording: "May this write land without the owner's review?".to_owned(),
+        notes: checker,
+        calibrated: None,
+    })
 }
 
 fn checker_entry(value: &str) -> (Value, Value) {
@@ -210,6 +307,7 @@ fn gate_claim_write(
             defer_metrics_until_commit: false,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
         GateWriteMode {
@@ -481,7 +579,7 @@ fn checker_hold_falls_to_proposed() -> Result<()> {
     )?;
     let body = vault.get_claim(&claim_id)?.expect("proposal landed");
     let checker = Arc::new(RecordingAutoChecker::hold());
-    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let bounded_checker = bounded(checker.clone());
     gate_claim_write(
         &vault,
         &claim_id,
@@ -545,20 +643,22 @@ fn checker_hold_falls_to_proposed() -> Result<()> {
 fn dead_checker_fail_closed() -> Result<()> {
     // Unavailable straight from the host: this is how a budget denial or a
     // fatal model error reaches the gate.
-    let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
+    let unavailable = bounded(Arc::new(RecordingAutoChecker::new(
+        AutoCheckOutcome::Unavailable,
+    )));
     // A hold that names no reason is a malformed verdict.
-    let malformed = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+    let malformed = bounded(Arc::new(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
         reasons: vec!["  ".to_owned()],
-    }));
+    })));
     // Prose naming no token the receipt vocabulary can keep is the same
     // malformed verdict one step later: the hold survives `normalized`
     // but renders to nothing, and an unexplained refusal must not be
     // recorded as an explained one.
-    let untokenizable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+    let untokenizable = bounded(Arc::new(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
         reasons: vec!["...!!".to_owned()],
-    }));
-    let panicking = bounded(PanickingAutoChecker);
-    let slow = bounded(SlowAutoChecker);
+    })));
+    let panicking = bounded(Arc::new(PanickingAutoChecker));
+    let slow = bounded(Arc::new(SlowAutoChecker));
     let dead: [(&str, &BoundedAutoChecker); 5] = [
         ("unavailable", &unavailable),
         ("malformed verdict", &malformed),
@@ -607,15 +707,30 @@ fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() ->
     struct AllowThenHold {
         calls: AtomicUsize,
     }
-    impl AutoChecker for AllowThenHold {
-        fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
-            if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
-                AutoCheckOutcome::Allow
+    impl DecisionProvider for AllowThenHold {
+        fn pin(&self) -> ProviderPin {
+            checker_pin()
+        }
+
+        fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+            let label = if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
+                "allow"
             } else {
-                AutoCheckOutcome::Hold {
-                    reasons: vec![HOLD_REASON.to_owned()],
-                }
-            }
+                "hold"
+            };
+            Ok(checker_decision(
+                DecisionAnswer::Choice(label.to_owned()),
+                Some(1.0),
+            ))
+        }
+    }
+    impl AutoCheckNotes for AllowThenHold {
+        fn hold_reasons(
+            &self,
+            _candidate: &AutoCheckCandidate<'_>,
+            _due: Instant,
+        ) -> Result<Vec<String>> {
+            Ok(vec![HOLD_REASON.to_owned()])
         }
     }
 
@@ -627,7 +742,7 @@ fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() ->
     let host = Arc::new(AllowThenHold {
         calls: AtomicUsize::new(0),
     });
-    let checker = BoundedAutoChecker::new(host.clone());
+    let checker = bounded(host.clone());
     let receipts_before = vault.store.gate_decisions(100)?;
     let mut after_apply_ran = false;
 
@@ -787,7 +902,7 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
         let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
         let checker = Arc::new(RecordingAutoChecker::new(outcome));
-        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        let bounded_checker = bounded(checker.clone());
         let result = commit_lineage_candidate(
             &vault,
             &claim_id,
@@ -803,49 +918,53 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         let seen = checker.seen();
         assert_eq!(seen.len(), 1);
         assert_eq!(
-            seen[0].source,
+            serde_json::from_value::<ClaimSource>(seen[0]["source"].clone())
+                .expect("checker declared source"),
             ClaimSource::Observed,
             "history never relabels the candidate"
         );
-        assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
-        let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
-        assert_eq!(
-            request.envelope.locality,
-            crate::llm::CallPurpose::AutoCheck
-                .default_policy()
-                .unwrap()
-                .locality
-        );
-        let text_parts: Vec<_> = request
-            .messages
-            .iter()
-            .flat_map(|message| message.content.iter())
-            .filter_map(|part| match part {
-                crate::llm::ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let host_text = text_parts.join(" ");
-        let tokens: Vec<_> = host_text
-            .split_whitespace()
-            .map(|token| token.trim_matches(|c: char| c == ':' || c == ','))
-            .collect();
+        let lineage: Option<Vec<ClaimSource>> =
+            serde_json::from_value(seen[0]["lineage"].clone()).expect("checker lineage");
+        let lineage = lineage.map(|sources| {
+            let (first, rest) = sources.split_first().expect("nonempty source lineage");
+            rest.iter().copied().fold(
+                crate::write_envelope::SourceLineage::of(*first),
+                |lineage, source| lineage.with(source),
+            )
+        });
+        assert_eq!(lineage.as_ref(), Some(envelope.lineage()));
         assert!(
-            tokens.windows(2).any(|pair| pair == ["source", "observed"]),
+            seen[0]["source"] == "observed",
             "the host request must identify the declared source as Observed"
         );
         assert!(
-            tokens.windows(3).any(|fields| {
-                fields[0] == "lineage"
-                    && fields[1..].contains(&"observed")
-                    && fields[1..].contains(&"tool_output")
-            }),
+            seen[0]["lineage"]
+                .as_array()
+                .expect("checker lineage")
+                .windows(2)
+                .any(|fields| {
+                    fields.contains(&serde_json::json!("observed"))
+                        && fields.contains(&serde_json::json!("tool_output"))
+                }),
             "the host request must disclose both historical source classes"
         );
-        assert_eq!(seen[0].actor_class, "agent");
-        assert_eq!(seen[0].predicate, "profile.name");
-        assert_eq!(seen[0].value_preview, "Ada Lovelace");
-        assert_eq!(seen[0].sensitivity_band, Some(0));
+        assert_eq!(
+            seen[0]["actor_class"].as_str().expect("checker actor class"),
+            "agent"
+        );
+        assert_eq!(
+            seen[0]["predicate"].as_str().expect("checker predicate"),
+            "profile.name"
+        );
+        assert_eq!(
+            seen[0]["value_preview"].as_str().expect("checker preview"),
+            "Ada Lovelace"
+        );
+        assert_eq!(
+            serde_json::from_value::<Option<u8>>(seen[0]["sensitivity_band"].clone())
+                .expect("checker sensitivity band"),
+            Some(0)
+        );
         if let Some(reason) = pending_reason {
             let (outcome, reasons) =
                 gate_rejection_parts(result.expect_err("checker refuses Auto"));
@@ -908,7 +1027,7 @@ fn restricted_lineage_without_matching_permit_never_consults_checker() -> Result
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
         let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
         let checker = Arc::new(RecordingAutoChecker::allow());
-        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        let bounded_checker = bounded(checker.clone());
         let error = commit_lineage_candidate(
             &vault,
             &claim_id,
@@ -958,7 +1077,7 @@ fn checker_reasons(reasons: &[String]) -> Vec<String> {
 fn a_checker_never_allows_a_value_it_saw_only_part_of() -> Result<()> {
     let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
     let checker = Arc::new(RecordingAutoChecker::allow());
-    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let bounded_checker = bounded(checker.clone());
 
     // The positive control: a value the preview holds whole is allowed.
     let short = test_id(0x3a);
@@ -987,7 +1106,9 @@ fn a_checker_never_allows_a_value_it_saw_only_part_of() -> Result<()> {
         checker
             .seen()
             .last()
-            .map_or(0, |seen| seen.value_preview.len())
+            .map_or(0, |seen| {
+                seen["value_preview"].as_str().expect("checker preview").len()
+            })
     );
     assert!(result.is_err(), "the Auto write is held");
     assert_eq!(checker.calls(), 1, "a partial value is never sent");
