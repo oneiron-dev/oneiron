@@ -171,7 +171,8 @@ pub(crate) fn seal_whole_part_in_txn(
 /// holds `value` as a lifted key under the text's hash, as
 /// [`carrier::mark_carrier_text_in_txn`] marks a key the door's rules place,
 /// with `value` in its own custody record (`record` and `place` name where it
-/// was found). The text keeps its bytes. Returns the value's handle.
+/// was found). The text keeps its bytes. Returns the handle a reader other
+/// than the owner reads in the value's place (`[secret sc12]`).
 #[cfg(oneiron_test_support)]
 pub(crate) fn mark_text_value_in_txn(
     vault: &crate::Vault,
@@ -212,7 +213,7 @@ pub(crate) fn mark_text_value_in_txn(
             "a seeded key's custody record has no handle",
         ))?;
     put_file_marks_in_txn(&vault.store, wtxn, files, &minted, at)?;
-    Ok(handle)
+    Ok(format!("{HANDLE_OPEN}{handle}]"))
 }
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
