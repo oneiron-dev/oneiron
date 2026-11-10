@@ -30,6 +30,14 @@
         "file": "retrieval.test.ts",
         "ruling": "Engine ORDER 2026-11-10 12:54 JST (Muse recall plumbing cases)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-RECALL-09"
+        ],
+        "file": "retrieval.test.ts",
+        "ruling": "Engine RULING 2026-11-11 05:37 JST E2E4-RECALL-CONTRACT 1 = A (ledger engine-20261111-e2e4-recall-contract)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (P-RECALL-007 changed 2026-11-11, PC-20261111-1)"
       }
     ]
   },
@@ -1085,7 +1093,7 @@
       "file": "retrieval.test.ts",
       "area": "Retrieval and embeddings",
       "slots": 1,
-      "estimatedSeconds": 210,
+      "estimatedSeconds": 300,
       "tests": [
         {
           "id": "RETRIEVAL-01",
@@ -1283,7 +1291,7 @@
         },
         {
           "id": "MUSE-RECALL-02",
-          "name": "Recall takes the five effort levels, light makes no model call, a deadline returns the best pack so far, and a big limit is clamped and said",
+          "name": "Recall takes the five effort levels, light makes no model call, a deadline returns the best pack so far, and a limit of 1,001 is served whole with no clamp flag",
           "rows": [],
           "source": [
             "/oneiron/retrieval/#effort",
@@ -1351,7 +1359,7 @@
         },
         {
           "id": "MUSE-RECALL-07",
-          "name": "A short id hydrates for read-granted callers, a hard-deleted person's short id is not reused, and a 50-ref hydrate returns live rows despite retired and never-assigned refs",
+          "name": "A short id hydrates for read-granted callers, hard-erased and soft-deleted persons' short ids are not reused, and a 50-ref hydrate returns live rows despite erased, deleted and never-assigned refs",
           "rows": [],
           "source": [
             "/cross/auth/cross-arch-0007-hydration-endpoint-v1/#single",
@@ -1374,6 +1382,17 @@
           ],
           "promises": [
             "P-RECALL-021"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-09",
+          "name": "Recall above 1,048,576 records a limit question while serving available memories, refuses a write-only agent, and keeps the question and memory after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-limit-clamped-built"
+          ],
+          "promises": [
+            "P-RECALL-007"
           ]
         }
       ]
