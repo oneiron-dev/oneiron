@@ -154,6 +154,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             // rather than guess at defaults that would silently auto-run.
             None,
         );
+        // FIX 8655: an exact close by its verified closer admits nothing
+        // new, so the stored body's source and its Auto approval are
+        // history, not a request. `claim_gate_input` keeps the source of
+        // every Auto body; left in, the evaluator asks the closer for the
+        // birth source's Auto permit, and an owner who never held the
+        // Dreamer's `generated` permit cannot retract the Dreamer's claim.
+        if verified_close {
+            input.source = None;
+            input.sensitivity_band = None;
+        }
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
