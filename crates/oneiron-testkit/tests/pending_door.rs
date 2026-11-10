@@ -19,8 +19,15 @@ fn date(text: &str) -> Date {
 #[test]
 fn waiting_tests_are_pending_until_their_deadline_and_expired_after_it() {
     let before = PendingDoors::parse(REGISTER, date("2026-11-30")).expect("parse");
-    assert_eq!(before.pending.len(), 3, "E2E cases and door rows are not nextest tests");
-    assert!(before.expired.is_empty(), "on its deadline a test still waits");
+    assert_eq!(
+        before.pending.len(),
+        3,
+        "E2E cases and door rows are not nextest tests"
+    );
+    assert!(
+        before.expired.is_empty(),
+        "on its deadline a test still waits"
+    );
     assert_eq!(before.expired_filter(), "none()");
 
     let after = PendingDoors::parse(REGISTER, date("2026-12-01")).expect("parse");
@@ -28,7 +35,9 @@ fn waiting_tests_are_pending_until_their_deadline_and_expired_after_it() {
     assert_eq!(after.expired.len(), 1);
     assert_eq!(
         after.expired_report(),
-        ["door or delete: ND-090 crates/oneiron/src/memory/chat.rs::chat_keeps_order (DELETE-UNLESS, deadline 2026-11-30)"]
+        [
+            "door or delete: ND-090 crates/oneiron/src/memory/chat.rs::chat_keeps_order (DELETE-UNLESS, deadline 2026-11-30)"
+        ]
     );
 
     let gone = PendingDoors::parse(REGISTER, date("2026-12-02")).expect("parse");

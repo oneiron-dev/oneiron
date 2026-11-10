@@ -98346,6 +98346,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_approval_recall.rs",
+     "purpose": "Approval publishes a Generated claim without changing corroboration eligibility",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -101057,7 +101065,7 @@
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7250,
-   "test_files": 922
+   "test_files": 923
   },
   "oneiron-agent-runtime": {
    "files": [

@@ -79,10 +79,7 @@ impl ServerSpec {
     /// used: the server listens on the socket this kit hands it.
     #[must_use]
     pub fn serve(program: impl Into<PathBuf>, config: &Path) -> Self {
-        Self::new(program)
-            .arg("serve")
-            .arg("--config")
-            .arg(config)
+        Self::new(program).arg("serve").arg("--config").arg(config)
     }
 
     /// Adds one argument.
@@ -95,7 +92,8 @@ impl ServerSpec {
     /// Sets one environment variable for the server.
     #[must_use]
     pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
-        self.env.push((key.as_ref().to_owned(), value.as_ref().to_owned()));
+        self.env
+            .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
         self
     }
 
@@ -173,12 +171,19 @@ impl ServerProcess {
         let mut message = [0_u8; 512];
         loop {
             match notify.recv(&mut message) {
-                Ok(read) if String::from_utf8_lossy(&message[..read]).lines().any(|line| line == "READY=1") => {
+                Ok(read)
+                    if String::from_utf8_lossy(&message[..read])
+                        .lines()
+                        .any(|line| line == "READY=1") =>
+                {
                     break;
                 }
                 Ok(_) => {}
                 Err(error)
-                    if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) => {}
                 Err(error) => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -196,7 +201,10 @@ impl ServerProcess {
                 let _ = child.wait();
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    format!("{} was not ready within {STARTUP_LIMIT:?}", self.spec.program.display()),
+                    format!(
+                        "{} was not ready within {STARTUP_LIMIT:?}",
+                        self.spec.program.display()
+                    ),
                 ));
             }
         }
@@ -267,7 +275,9 @@ impl ServerProcess {
     /// It is still running, or it does not start (see [`Self::spawn`]).
     pub fn restart(&mut self) -> io::Result<()> {
         if self.child.is_some() {
-            return Err(io::Error::other("the server is still running; kill or stop it first"));
+            return Err(io::Error::other(
+                "the server is still running; kill or stop it first",
+            ));
         }
         self.start()
     }

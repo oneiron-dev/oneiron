@@ -206,7 +206,11 @@ fn miss_report(digest: &PromptDigest, seen: &SeenCall, prompt_body: &Value) -> S
         seen.method,
         seen.path,
         seen.model.as_deref().unwrap_or("none"),
-        if seen.streamed { "streamed" } else { "buffered" },
+        if seen.streamed {
+            "streamed"
+        } else {
+            "buffered"
+        },
     )
 }
 

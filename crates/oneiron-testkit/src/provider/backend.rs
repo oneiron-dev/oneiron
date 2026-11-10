@@ -166,7 +166,10 @@ impl ScriptedBackend {
         let answered = self.script.answer(&mut seen, &body);
         self.script.see(seen);
         let step = answered.map_err(fatal)?;
-        if matches!(step.reply, Reply::Json(_) | Reply::Events(_) | Reply::Body { .. }) {
+        if matches!(
+            step.reply,
+            Reply::Json(_) | Reply::Events(_) | Reply::Body { .. }
+        ) {
             let violation = format!(
                 "step {:?} answers with an HTTP-only reply; an in-process call takes Text, Deltas, Status or CutStream",
                 step.id
@@ -196,14 +199,21 @@ impl LlmBackend for ScriptedBackend {
         true
     }
 
-    fn generate<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
         let answer = self.call(&request, false).and_then(|step| {
             let usage = usage_of(step.usage);
             match step.reply {
                 Reply::Text(text) => Ok((text, usage)),
                 Reply::Deltas(deltas) => Ok((deltas.concat(), usage)),
                 Reply::Status(status) => Err(status_error(status)),
-                _ => Err(fatal(format!("step {:?} cannot answer a buffered call", step.id))),
+                _ => Err(fatal(format!(
+                    "step {:?} cannot answer a buffered call",
+                    step.id
+                ))),
             }
         });
         Box::pin(async move {
@@ -229,8 +239,15 @@ impl LlmBackend for ScriptedBackend {
             Reply::Text(text) => (vec![text.clone()], true),
             Reply::Deltas(deltas) => (deltas.clone(), true),
             Reply::Status(status) => return Err(status_error(*status)),
-            Reply::CutStream { deltas, after } => (deltas[..(*after).min(deltas.len())].to_vec(), false),
-            _ => return Err(fatal(format!("step {:?} cannot answer a streamed call", step.id))),
+            Reply::CutStream { deltas, after } => {
+                (deltas[..(*after).min(deltas.len())].to_vec(), false)
+            }
+            _ => {
+                return Err(fatal(format!(
+                    "step {:?} cannot answer a streamed call",
+                    step.id
+                )));
+            }
         };
         if complete && deltas.concat().is_empty() {
             return Err(LlmError::Fatal(FatalLlmError::EmptyResponse));

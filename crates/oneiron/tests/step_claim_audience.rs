@@ -179,13 +179,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
     .expect("the script");
     let before = step_claims(&vault);
     assert!(matches!(
-        block_on(call_as_step(
-            &ctx,
-            &backend,
-            &guard,
-            bound_request,
-        ))
-        .expect("the bound step"),
+        block_on(call_as_step(&ctx, &backend, &guard, bound_request,)).expect("the bound step"),
         StepOutcome::Finished { .. }
     ));
     let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
@@ -221,13 +215,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
     // An unbound call's claim is as before.
     let before = step_claims(&vault);
     assert!(matches!(
-        block_on(call_as_step(
-            &ctx,
-            &backend,
-            &guard,
-            open_request,
-        ))
-        .expect("the unbound step"),
+        block_on(call_as_step(&ctx, &backend, &guard, open_request,)).expect("the unbound step"),
         StepOutcome::Finished { .. }
     ));
     let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
