@@ -17,10 +17,10 @@ use std::sync::Arc;
 
 use oneiron_seal::{
     FetchPolicy, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, SealConfig,
-    SealRequest, SealResourceLimits,
+    SealRequest,
 };
 
-use support::{FixedClock, FixtureBackend, TEST_TIME_MS, p256_identity};
+use support::{FixedClock, FixtureBackend, TEST_TIME_MS, grant_all_limits, p256_identity};
 
 fn oracle_available() -> bool {
     Command::new("python3")
@@ -50,7 +50,7 @@ fn seal_sample_from_input(input: &[u8]) -> Vec<u8> {
             trust_anchors_der: vec![anchor],
             timestamp_authorities: Vec::new(),
             fetch_policy: FetchPolicy::default(),
-            resource_limits: SealResourceLimits::default(),
+            resource_limits: grant_all_limits(),
         },
         Arc::new(FixtureBackend::new(id)),
         Arc::new(OfflineFetcher),
@@ -69,6 +69,7 @@ fn seal_sample_from_input(input: &[u8]) -> Vec<u8> {
         ))
         .unwrap()
         .bytes
+        .to_vec()
 }
 
 /// Run one configured reader wrapper against a fresh native seal. The wrapper
