@@ -448,7 +448,7 @@ fn booking_page_invite_scope_round_trips_without_retagging_existing_scopes() {
         StandingOutboundGrantScope::ScopedMcp {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
             tool_data_classes: vec![
                 crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
             ],

@@ -2,9 +2,10 @@ use super::*;
 
 use rmpv::Value;
 
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::error::ClaimError;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
     DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
