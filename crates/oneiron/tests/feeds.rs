@@ -442,8 +442,9 @@ fn a_blocks_edge_reaches_an_edges_follower_through_its_own_door() {
 }
 
 /// Lead call K: a cursor in a pruned source left idle past retention gets the typed gap answer,
-/// never a page that skips what a prune took. Its ack is refused until the reader resyncs, and
-/// after the resync the subscription pages on from its sources' heads.
+/// never a page that skips what a prune took. Its ack is refused until the reader resyncs. The
+/// reader resyncs first and takes its snapshot after, so a change that commits after the resync
+/// is in the next page (review #6942 round 2).
 #[test]
 fn a_returning_cursor_past_retention_gets_a_gap_and_resyncs() {
     const T0: u64 = 1_780_000_000;
@@ -560,6 +561,65 @@ fn a_reader_without_the_label_sees_no_sign_that_hidden_entities_changed() {
             "the owner's lane is shown them: {shown:?}"
         );
     }
+}
+
+/// Review #6942 round 2: a page's limit counts the entries the reader is shown, never the rows
+/// it passes. With a limit of one, rows the subscription does not show (here CODE_SYMBOLs its
+/// selector does not take; a row its lane does not show takes the same step) do not end the
+/// page: the first page holds the PERSON written after them, as it would with none before it.
+#[test]
+fn a_page_limit_counts_only_the_entries_the_reader_is_shown() {
+    let (_dir, vault) = open();
+    let key = owner_key(&vault);
+    let lane = vault.scoped_read(key.clone());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_PERSON],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe")
+        .subscription;
+    for _ in 0..3 {
+        put_symbol(&vault);
+    }
+    let person = put_person(&vault);
+    let read_one = || match vault
+        .feed_read(
+            &lane,
+            &FeedReadRequest {
+                subscription,
+                limit: Some(1),
+            },
+        )
+        .expect("read")
+    {
+        FeedRead::Page(page) => page,
+        FeedRead::Gap(gap) => panic!("a page, not {gap:?}"),
+    };
+
+    let page = read_one();
+    assert_eq!(page.entries.len(), 1, "{page:?}");
+    assert_eq!(page.entries[0].entity, person, "{page:?}");
+    assert!(page.more, "the page is full: {page:?}");
+    vault
+        .feed_ack(
+            &lane,
+            &FeedAckRequest {
+                subscription,
+                through: page.through,
+            },
+        )
+        .expect("ack");
+    let next = read_one();
+    assert!(next.entries.is_empty() && !next.more, "{next:?}");
 }
 
 fn put_symbol(vault: &Vault) -> EntityId {
