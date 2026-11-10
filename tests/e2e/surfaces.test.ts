@@ -926,7 +926,7 @@ async function surfaces06Mcp<T>(tool: string, call: () => Promise<T>): Promise<T
 function surfaces06Absent(label: string, value: unknown, privateValues: readonly string[]): void {
   const bytes = Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
   expect({ check: label, ok: privateValues.every(value => !bytes.includes(Buffer.from(value))
-    && !bytes.includes(Buffer.from(Buffer.from(value).toString("base64"))) }))
+    && !bytes.includes(Buffer.from(Buffer.from(value).toString("base64")))) }))
     .toEqual({ check: label, ok: true });
 }
 function surfaces06Content(value: FacadeResult<"vault.personas.preview">) {
