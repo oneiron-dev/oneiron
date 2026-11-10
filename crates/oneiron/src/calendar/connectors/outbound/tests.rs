@@ -75,15 +75,34 @@ impl CalendarRemoteTransport for ChangeDuringUpsert<'_> {
     }
 }
 
-fn seat() -> CalendarConnectorSeatState {
-    CalendarConnectorSeatState::new(CalendarConnectorSeatConfig {
+fn seat_config() -> CalendarConnectorSeatConfig {
+    CalendarConnectorSeatConfig {
         seat_ref: "work-seat".into(),
         secret_ref: "caldav:work".into(),
         system: "work".into(),
         calendar_ref: "work".into(),
         cadence_jitter_min_seconds: 300,
         cadence_jitter_max_seconds: 900,
-    })
+    }
+}
+
+/// The installed seat's operation (FIX 12531/12496, 11b8ba72a77: the write
+/// and sync doors take the authenticated operation, not the seat): the
+/// vault's embedded owner installs the suite's seat, and the test reuses
+/// that registration. Reinstalling the same seat is idempotent.
+fn operation(vault: &Vault) -> CalendarConnectorOperation {
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
+    let registration = super::door::configure(
+        &memory,
+        &owner,
+        &super::door::CalendarConnectorConfigureRequest {
+            config: seat_config(),
+            endpoint: "https://caldav.work.test/".to_owned(),
+        },
+    )
+    .expect("install connector seat");
+    CalendarConnectorOperation::new(vault, owner, registration).expect("seat operation")
 }
 
 /// `event`'s stored body with only `name` replaced. A local EVENT write must
@@ -120,6 +139,7 @@ fn put_local_edit(vault: &Vault, event: EntityId, body: &[u8]) {
 #[test]
 fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() {
     let (_dir, vault) = open_calendar_vault();
+    let operation = operation(&vault);
     let owner = crate::WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         crate::EdgeActorClass::Human,
@@ -142,7 +162,7 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
         on_first: RefCell::new(Some(Box::new(|| put_local_edit(&vault, event, &edited)))),
         requests: RefCell::default(),
     };
-    let first = write_calendar_event(&vault, &seat(), &transport, event, NOW).unwrap();
+    let first = write_calendar_event(&vault, &operation, &transport, event, NOW).unwrap();
     assert_eq!(
         calendar_write_outbox_rows(&vault).unwrap()[0].state,
         CalendarWriteOutboxState::Committed
@@ -154,7 +174,7 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
         .1;
     assert_eq!(passport.content_hash, first.content_hash);
     assert_eq!(passport.last_sequence, first.sequence);
-    let echo = run_calendar_connector_sync(&vault, &seat(), &transport, NOW + 2, 7).unwrap();
+    let echo = run_calendar_connector_sync(&vault, &operation, &transport, NOW + 2, 7).unwrap();
     assert!(matches!(
         echo,
         CalendarSyncOutcome::Reenqueued {
@@ -164,7 +184,7 @@ fn remote_applied_snapshot_settles_without_overwriting_an_inflight_local_edit() 
         }
     ));
     assert_eq!(vault.get(&event).unwrap(), Some(edited.clone()));
-    let second = write_calendar_event(&vault, &seat(), &transport, event, NOW + 3).unwrap();
+    let second = write_calendar_event(&vault, &operation, &transport, event, NOW + 3).unwrap();
     assert_eq!(second.sequence, first.sequence + 1);
     let requests = transport.requests.borrow();
     assert_eq!(requests.len(), 2);
@@ -188,6 +208,7 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
     use crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION;
     use crate::calendar::ingest::{admit_connector_event, connector_event_ref};
     let (_dir, vault) = open_calendar_vault();
+    let operation = operation(&vault);
     let feed = parse_ics_feed(b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@test\r\nSEQUENCE:1\r\nDTSTART:20260806T140000Z\r\nDTEND:20260806T150000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:master\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@test\r\nSEQUENCE:1\r\nRECURRENCE-ID:20260806T140000Z\r\nDTSTART:20260806T160000Z\r\nDTEND:20260806T170000Z\r\nSUMMARY:staged child\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").unwrap();
     for parsed in &feed.events {
         admit_connector_event(&vault, "work", "fixture://series", parsed, NOW).unwrap();
@@ -239,7 +260,7 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
         }))),
         requests: RefCell::default(),
     };
-    let first = write_calendar_event(&vault, &seat(), &transport, child, NOW).unwrap();
+    let first = write_calendar_event(&vault, &operation, &transport, child, NOW).unwrap();
     let staged = parse_ics_feed(&transport.requests.borrow()[0].ics).unwrap();
     assert_eq!(staged.events.len(), 2);
     for (member, component) in [master, child].into_iter().zip(&staged.events) {
@@ -256,7 +277,7 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
             .unwrap()
             .is_none()
     );
-    let echo = run_calendar_connector_sync(&vault, &seat(), &transport, NOW + 2, 7).unwrap();
+    let echo = run_calendar_connector_sync(&vault, &operation, &transport, NOW + 2, 7).unwrap();
     assert!(matches!(
         echo,
         CalendarSyncOutcome::Reenqueued {
@@ -267,7 +288,7 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
         }
     ));
     assert_eq!(vault.get(&child).unwrap(), Some(child_edit.clone()));
-    let next = write_calendar_event(&vault, &seat(), &transport, master, NOW + 3).unwrap();
+    let next = write_calendar_event(&vault, &operation, &transport, master, NOW + 3).unwrap();
     assert_eq!(next.sequence, first.sequence + 1);
     let requests = transport.requests.borrow();
     assert_eq!(requests.len(), 2);
@@ -324,6 +345,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
         }
     }
     let (_dir, vault) = open_calendar_vault();
+    let operation = operation(&vault);
     let owner = crate::WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         crate::EdgeActorClass::Human,
@@ -345,7 +367,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
     // An ordinary transport failure leaves the row prepared. The provider then
     // applies the prepared request, and a crash before the local settle leaves
     // it remote-applied.
-    assert!(write_calendar_event(&vault, &seat(), &Unreachable, event, NOW).is_err());
+    assert!(write_calendar_event(&vault, &operation, &Unreachable, event, NOW).is_err());
     let mut row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
     let transport = ChangeDuringUpsert {
         on_first: RefCell::new(None),
@@ -361,12 +383,15 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
             .unwrap()
             .ics,
     };
-    issue_prepared_upsert(&vault, &seat(), &transport, &uid, NOW, &mut row, &request).unwrap();
+    issue_prepared_upsert(
+        &vault, &operation, &transport, &uid, NOW, &mut row, &request,
+    )
+    .unwrap();
     let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
     assert_eq!(row.state, CalendarWriteOutboxState::RemoteApplied);
     let edited = renamed_body(&vault, event, "newer local edit");
     put_local_edit(&vault, event, &edited);
-    let resumed = write_calendar_event(&vault, &seat(), &transport, event, NOW + 2).unwrap();
+    let resumed = write_calendar_event(&vault, &operation, &transport, event, NOW + 2).unwrap();
     assert_eq!(Some(resumed.clone()), row.receipt);
     assert_eq!(transport.requests.borrow().len(), 1);
     assert_eq!(
@@ -374,7 +399,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
         CalendarWriteOutboxState::Committed
     );
     assert_eq!(vault.get(&event).unwrap(), Some(edited));
-    let next = write_calendar_event(&vault, &seat(), &transport, event, NOW + 3).unwrap();
+    let next = write_calendar_event(&vault, &operation, &transport, event, NOW + 3).unwrap();
     assert_eq!(next.sequence, resumed.sequence + 1);
     assert_eq!(transport.requests.borrow()[1].expected_etag, resumed.etag);
 }
@@ -415,6 +440,7 @@ fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
         }
     }
     let (_dir, vault) = open_calendar_vault();
+    let operation = operation(&vault);
     let owner = crate::WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         crate::EdgeActorClass::Human,
@@ -436,9 +462,9 @@ fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
         on_first: RefCell::new(None),
         requests: RefCell::default(),
     };
-    let older = write_calendar_event(&vault, &seat(), &transport, event, NOW).unwrap();
+    let older = write_calendar_event(&vault, &operation, &transport, event, NOW).unwrap();
     put_local_edit(&vault, event, &renamed_body(&vault, event, "current"));
-    let current = write_calendar_event(&vault, &seat(), &transport, event, NOW + 1).unwrap();
+    let current = write_calendar_event(&vault, &operation, &transport, event, NOW + 1).unwrap();
     assert!(current.sequence > older.sequence);
     assert_ne!(current.content_hash, older.content_hash);
     let event_before = vault.get_raw(&event).unwrap();
@@ -469,7 +495,7 @@ fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
             ics: stale.ics,
         })],
     });
-    let outcome = run_calendar_connector_sync(&vault, &seat(), &replay, NOW + 2, 7).unwrap();
+    let outcome = run_calendar_connector_sync(&vault, &operation, &replay, NOW + 2, 7).unwrap();
     assert!(matches!(
         outcome,
         CalendarSyncOutcome::Reenqueued {
@@ -496,6 +522,7 @@ fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
 #[test]
 fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
     let (_dir, vault) = open_calendar_vault();
+    let operation = operation(&vault);
     let owner = crate::WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         crate::EdgeActorClass::Human,
@@ -527,6 +554,8 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             uid: uid.into(),
             last_sequence: 0,
             content_hash: [7; 32],
+            // 9669444193b: authored content carries no archived source.
+            source: None,
             direction: CalendarPassportDirection::TwoWay,
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
@@ -552,7 +581,7 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
         on_first: RefCell::new(None),
         requests: RefCell::default(),
     };
-    write_calendar_event(&vault, &seat(), &transport, target, NOW).unwrap();
+    write_calendar_event(&vault, &operation, &transport, target, NOW).unwrap();
     assert_eq!(
         crate::calendar::passport::event_ref_for_indexed_uid(&vault, uid).unwrap(),
         Some(minted)
