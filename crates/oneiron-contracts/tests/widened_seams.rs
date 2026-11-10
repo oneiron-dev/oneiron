@@ -3,7 +3,9 @@
 //! input exactly as they did when they were crate-private.
 
 use oneiron_contracts::affect::{Vad, VadComponent};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::claim::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ReadScope, ScopedReadReceipt,
+};
 use oneiron_contracts::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::{EntityId, derived_domains, parse_entity_id, serde_hex};
 use oneiron_contracts::error::{Error, RegistryError};
@@ -70,6 +72,33 @@ fn entity_type_validators_refuse_reserved_and_engine_only_bytes() {
         "{engine_only:?}"
     );
     assert!(validate_public_entity_type(ENTITY_TYPE_PERSON).is_ok());
+}
+
+#[test]
+fn record_axes_derives_axes_without_widening_a_receipt() {
+    let scope = |band| ReadScope {
+        entity_types: None,
+        max_sensitivity_band: band,
+        include_stale: false,
+        min_confidence: 0.0,
+        min_salience: 0.0,
+        deny_all: false,
+    };
+    let mut receipt = ScopedReadReceipt {
+        requested: scope(3),
+        actor_ceiling: scope(1),
+        applied: scope(1),
+        narrowed_axes: Vec::new(),
+        suppressed_count: 0,
+        replan_hint: Vec::new(),
+    };
+    let before = receipt.clone();
+    receipt.record_axes();
+    assert_eq!(receipt.requested, before.requested);
+    assert_eq!(receipt.actor_ceiling, before.actor_ceiling);
+    assert_eq!(receipt.applied, before.applied);
+    assert_eq!(receipt.narrowed_axes, ["max_sensitivity_band"]);
+    assert_eq!(receipt.replan_hint, receipt.narrowed_axes);
 }
 
 #[test]

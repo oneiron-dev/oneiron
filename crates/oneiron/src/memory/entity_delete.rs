@@ -204,9 +204,9 @@ impl Memory<'_> {
             Error::ConcurrentWrite("deletion authority or preview changed before commit")
         };
         let reverify =
-            |txn: &heed::RoTxn<'_>| -> Result<(), Error> { authority(txn).map_err(&map_refusal) };
+            |txn: &heed::RoTxn<'_>| -> Result<(), Error> { authority(txn).map_err(map_refusal) };
         let recheck =
-            |txn: &heed::RoTxn<'_>| -> Result<(), Error> { check(txn).map_err(&map_refusal) };
+            |txn: &heed::RoTxn<'_>| -> Result<(), Error> { check(txn).map_err(map_refusal) };
         let both = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
             reverify(txn)?;
             recheck(txn)

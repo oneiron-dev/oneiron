@@ -411,8 +411,10 @@ impl Memory<'_> {
         let vault = self.vault();
         let actor = self.actor();
         let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+        // An agent's own model PERSON names it in an audience
+        // (`names_actor_in`), so adding that person is its own walk-in.
         let own = person == actor
-            || crate::workspace_roster::person_of_actor_in_txn(vault, txn, actor, at)?
+            || crate::workspace_roster::subject_person_of_actor_in_txn(vault, txn, actor, at)?
                 == Some(person);
         let entering = !thread.folded.current().contains(&person);
         // The verified class of this write's actor, never a caller's flag.
