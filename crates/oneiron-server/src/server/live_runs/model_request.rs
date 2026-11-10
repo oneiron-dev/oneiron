@@ -3,6 +3,8 @@
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_def::ensure_listed;
+use oneiron::agent_dispatch::SpendScopeId;
+use oneiron::attempt_queue::AttemptId;
 use oneiron::authority::VerifiedSlip;
 use oneiron::code_run::live_run::CodeRunLiveRunBinding;
 use oneiron::code_run::{RepoModelGenerateInput, RepoRequestWitness};
@@ -50,20 +52,34 @@ impl HeldLiveRun {
         &self.entry.definition
     }
 
-    /// Whether this exact attachment still stands for `credential`: the
-    /// entry's lease, the binding and the credential's read key.
-    pub(crate) fn attachment_stands(
+    /// The scope the run's entries spend under; `None` for an unmetered
+    /// run.
+    pub(crate) fn spend_scope(&self) -> Option<&SpendScopeId> {
+        self.entry.spend_scope.as_ref()
+    }
+
+    /// The try the run's runner holds leased.
+    pub(crate) fn leased_try(&self) -> AttemptId {
+        self.entry.leased.id
+    }
+
+    /// Whether this exact attachment still stands for `credential`, as a
+    /// check a whole call keeps asking: the entry's lease, the binding and
+    /// the credential's read key. A read that fails answers no.
+    pub(crate) fn attachment_watch(
         &self,
         server: &SyncServer,
-        credential: &VerifiedSlip,
-    ) -> oneiron::Result<bool> {
-        attachment_holds(
-            &server.live_runs,
-            server.vault(),
-            &self.entry,
-            &self.binding,
-            credential,
-        )
+        credential: VerifiedSlip,
+    ) -> Box<dyn Fn() -> bool + Send + Sync> {
+        let (vault, runs, entry, binding) = (
+            Arc::clone(server.vault()),
+            Arc::clone(&server.live_runs),
+            Arc::clone(&self.entry),
+            self.binding.clone(),
+        );
+        Box::new(move || {
+            attachment_holds(&runs, &vault, &entry, &binding, &credential).unwrap_or(false)
+        })
     }
 
     /// The last request this exact credential attachment was actually served.

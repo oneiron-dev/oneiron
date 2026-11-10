@@ -2,9 +2,10 @@
 //! 6.5c); HTTP, SDK and MCP reach the same typed door.
 //! Saved terminals and response checkpoints answer before fresh provider admission.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::response::Response;
-use oneiron::agent_def::AgentDefinition;
+use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
     ModelStepSubmitRequest, RunStepCaller,
@@ -23,12 +24,14 @@ use oneiron::{
 use super::facade_actor;
 use super::host_doors::support::{Listed, internal, owner_proof};
 use super::live_run_doors::hold_live_run;
+use crate::ai_host::live_lease::{LeaseLine, LiveLease};
+use crate::ai_host::payer_funding::{attempt_grant_funding, scope_run_funding};
 use crate::auth::CoreAuth;
-use crate::mcp::ScopeMeter;
 use crate::models::OfferLadder;
 use crate::server::{HeldLiveRun, SyncServer};
 
-/// The run a scoped run's physical step call is admitted in.
+/// The run a live run's own physical step calls are admitted in, on its
+/// scope's meter or its Grant's wallet.
 const MODEL_STEP_RUN: &str = "model-step";
 
 /// `model_step_caller`, the pre-check of `ai.steps.submit` and
@@ -45,8 +48,7 @@ pub(in crate::api::facade) fn step_caller_admits(
         Ok(_) => return Ok(()),
         Err(refusal) => refusal,
     };
-    let agent =
-        facade_actor(server, auth).is_ok_and(|(_, class)| class == EdgeActorClass::Agent);
+    let agent = facade_actor(server, auth).is_ok_and(|(_, class)| class == EdgeActorClass::Agent);
     let reads = auth.verified_slip().is_some_and(|slip| {
         server
             .vault()
@@ -118,82 +120,21 @@ async fn submit(
 }
 
 /// The run's own actor (slice 6.5c): `handle` names the live run the
-/// caller's credential attached. The run stays held for the whole call, as
-/// it does for an attached model call, and the engine keeps the step under
-/// the run's actor, its lease, its definition's model list and its spend
-/// scope.
+/// caller's credential attached. The engine keeps the step under the run's
+/// actor, its lease and its definition's model list; this host admits its
+/// physical calls on the run's own spend line.
 async fn submit_on_run(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<EntityId>,
     handle: &str,
-    mut input: ModelStepSubmit,
+    input: ModelStepSubmit,
 ) -> MemoryResult<ModelStepReceipt> {
-    let (actor, _run, held) = hold_live_run(server, auth, session, handle).await?;
-    let parts = RunStepParts::of(actor, &held);
-    // Saved work answers with no new model, route or meter, as the owner's
-    // does. The same read names the scope a fresh call spends under.
-    let (saved, scope) = {
-        let (server, parts, probe) = (Arc::clone(server), parts.clone(), input.clone());
-        let runtime = tokio::runtime::Handle::current();
-        super::clock_ingress::run_blocking(move || {
-            let saved = runtime.block_on(model_step::resume_saved_as_run_actor(
-                server.vault(),
-                parts.caller(),
-                &probe,
-            ));
-            let scope = model_step::run_step_spend_scope(server.vault(), parts.caller());
-            (saved, scope)
-        })
+    let step = RunStep::hold(server, auth, session, handle).await?;
+    let runtime = tokio::runtime::Handle::current();
+    super::clock_ingress::run_blocking(move || step.submit(&runtime, input))
         .await
         .map_err(|_| internal("ai.steps.submit"))?
-    };
-    if let Ok(Some(receipt)) = saved {
-        return still_attached(server, auth, &held).map(|()| receipt);
-    }
-    let scope = scope?;
-    // The vault's inference policy for the model the step names, and its
-    // route. The caller was admitted above as the run's own actor.
-    let (ladder, raw_run) = crate::api::llm::admit_live_run(server, &mut input.request)
-        .map_err(inference_refusal)?;
-    let (run, unscoped_guard) = match &scope {
-        // The physical call goes out on a line this scope bounds and its
-        // payer funds. The engine books the scope once, from the step's own
-        // guard, so this line carries no booking of its own. A scope whose
-        // line does not open never falls back to the host's line.
-        Some(scope) => {
-            let meter = ScopeMeter::open(server.vault(), scope).map_err(|_| {
-                MemoryError::bad_request("the attached run's spend line did not open")
-            })?;
-            let run = server.ai.model_runtime().funded_run(
-                MODEL_STEP_RUN,
-                meter.guard.clone(),
-                meter.payer,
-            );
-            (run, meter.guard)
-        }
-        // A run with no scope steps on the raw routes' meter, as the owner
-        // does.
-        None => (raw_run, raw_step_guard(server)?),
-    };
-    let run = exact_step_run(&ladder, run, &mut input)?;
-    let backend = StepBackend { ladder, run };
-    let receipt = {
-        let (server, parts) = (Arc::clone(server), parts.clone());
-        let runtime = tokio::runtime::Handle::current();
-        super::clock_ingress::run_blocking(move || {
-            runtime.block_on(model_step::submit_as_run_actor(
-                server.vault(),
-                parts.caller(),
-                input,
-                &backend,
-                &unscoped_guard,
-            ))
-        })
-        .await
-        .map_err(|_| internal("ai.steps.submit"))??
-    };
-    still_attached(server, auth, &held).map(|()| receipt)
 }
 
 pub(crate) async fn ai_steps_receipt(
@@ -231,59 +172,172 @@ async fn receipt_on_run(
     handle: &str,
     input: ModelStepReceiptRequest,
 ) -> MemoryResult<ModelStepReceipt> {
-    let (actor, _run, held) = hold_live_run(server, auth, session, handle).await?;
-    let parts = RunStepParts::of(actor, &held);
-    let vault_server = Arc::clone(server);
-    let receipt = super::clock_ingress::run_blocking(move || {
-        model_step::receipt_as_run_actor(vault_server.vault(), parts.caller(), &input)
-    })
-    .await
-    .map_err(|_| internal("ai.steps.receipt"))??;
-    still_attached(server, auth, &held).map(|()| receipt)
+    let step = RunStep::hold(server, auth, session, handle).await?;
+    super::clock_ingress::run_blocking(move || step.receipt(&input))
+        .await
+        .map_err(|_| internal("ai.steps.receipt"))?
 }
 
-/// What a step call names of the live run it holds, owned so a blocking
-/// task can carry it while the door keeps the run held.
-#[derive(Clone)]
-struct RunStepParts {
+/// A held live run at the step doors. The blocking task that serves the
+/// call owns it, so the run stays held until the step and all its writes
+/// finish, whether or not the caller still waits (as `on_live_run` keeps
+/// it).
+struct RunStep {
+    server: Arc<SyncServer>,
+    held: HeldLiveRun,
     actor: WriteActor,
     proof: HostBinding,
-    definition: Arc<AgentDefinition>,
+    /// Whether the attachment the call came in on still stands.
+    attached: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
-impl RunStepParts {
-    fn of(actor: WriteActor, held: &HeldLiveRun) -> Self {
-        Self {
-            actor,
+/// What a run's fresh step call goes out on.
+struct StepLine {
+    /// The run its physical calls are admitted in.
+    run: RunAdmission,
+    /// The step's logical allowance.
+    guard: BudgetGuard,
+    /// The live lease of the physical calls' meter on the run's scope.
+    lease: Option<LeaseLine>,
+}
+
+impl RunStep {
+    /// Holds the live run `handle` names on the caller's own credential.
+    async fn hold(
+        server: &Arc<SyncServer>,
+        auth: &CoreAuth,
+        session: Option<EntityId>,
+        handle: &str,
+    ) -> MemoryResult<Self> {
+        let (actor, _run, held) = hold_live_run(server, auth, session, handle).await?;
+        let credential = auth.verified_slip().cloned().ok_or_else(detached)?;
+        Ok(Self {
+            attached: held.attachment_watch(server, credential),
             proof: held.proof(),
-            definition: Arc::new(held.definition().clone()),
-        }
+            server: Arc::clone(server),
+            held,
+            actor,
+        })
     }
 
+    /// The run's own actor as the engine checks it: nothing in it comes
+    /// from the request.
     fn caller(&self) -> RunStepCaller<'_> {
         RunStepCaller {
             actor: self.actor,
             lease: &self.proof,
-            definition: &self.definition,
+            definition: self.held.definition(),
+            attached: self.attached.as_ref(),
+        }
+    }
+
+    fn submit(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        mut input: ModelStepSubmit,
+    ) -> MemoryResult<ModelStepReceipt> {
+        let vault = self.server.vault();
+        // Saved work answers with no new model, route or meter, as the
+        // owner's does. A miss or unavailable lookup keeps the admitted path.
+        let saved = runtime.block_on(model_step::resume_saved_as_run_actor(
+            vault,
+            self.caller(),
+            &input,
+        ));
+        if let Ok(Some(receipt)) = saved {
+            return self.answer(receipt);
+        }
+        // The vault's inference policy for the model the step names, and its
+        // route. The caller was admitted above as the run's own actor.
+        let (ladder, raw_run) = crate::api::llm::admit_live_run(&self.server, &mut input.request)
+            .map_err(inference_refusal)?;
+        let line = self.line(raw_run)?;
+        let run = exact_step_run(&ladder, line.run, &mut input)?;
+        let backend = RunStepBackend {
+            step: StepBackend { ladder, run },
+            lease: line.lease.as_ref().map(|lease| lease.on(vault)),
+            attached: self.attached.as_ref(),
+            detached: AtomicBool::new(false),
+        };
+        let receipt = runtime.block_on(model_step::submit_as_run_actor(
+            vault,
+            self.caller(),
+            input,
+            &backend,
+            &line.guard,
+        ));
+        // What the step's calls spent and no look booked goes on the scope
+        // whatever the step answered.
+        backend.book_rest();
+        self.answer(receipt?)
+    }
+
+    fn receipt(&self, input: &ModelStepReceiptRequest) -> MemoryResult<ModelStepReceipt> {
+        let receipt = model_step::receipt_as_run_actor(self.server.vault(), self.caller(), input)?;
+        self.answer(receipt)
+    }
+
+    /// The line a fresh call of the run's step goes out on. A run that
+    /// spends under a scope is admitted on a meter that scope bounds, which
+    /// its live lease reads and books (FIX 1819), and bills the scope's
+    /// payer (OF-531). Work an owner's agent Grant funds holds on that
+    /// Grant's wallet, scoped or not (FIX 7766). A line that does not open
+    /// never falls back to the host's.
+    fn line(&self, raw_run: RunAdmission) -> MemoryResult<StepLine> {
+        let vault = self.server.vault();
+        let unopened = || MemoryError::bad_request("the attached run's spend line did not open");
+        let funding =
+            attempt_grant_funding(vault, self.held.leased_try()).map_err(|_| unopened())?;
+        let models = self.server.ai.model_runtime();
+        let Some(scope) = self.held.spend_scope() else {
+            // A run with no scope steps on the raw routes' meter, as the
+            // owner does.
+            let run = match funding {
+                None => raw_run,
+                Some(funding) => models.grant_funded_run(
+                    MODEL_STEP_RUN,
+                    raw_meter(&self.server)?.clone(),
+                    None,
+                    Some(funding),
+                ),
+            };
+            return Ok(StepLine {
+                run,
+                guard: raw_step_guard(&self.server)?,
+                lease: None,
+            });
+        };
+        let (payer, _) = scope_run_funding(vault, Some(scope), false).map_err(|_| unopened())?;
+        let dispatcher = AgentDispatcher::new(vault);
+        // The physical calls' meter, and beside it the step's own logical
+        // allowance, so the engine's logical lease does not charge the
+        // meter twice. Only the meter's spend is booked on the scope.
+        let meter = dispatcher.guard_for_scope(scope).map_err(|_| unopened())?;
+        let guard = dispatcher.guard_for_scope(scope).map_err(|_| unopened())?;
+        Ok(StepLine {
+            run: models.grant_funded_run(MODEL_STEP_RUN, meter.clone(), payer, funding),
+            guard,
+            lease: Some(LeaseLine::new(scope.clone(), meter)),
+        })
+    }
+
+    /// Refuses an answer to an attachment that no longer stands: the lease,
+    /// the binding or the credential's read key went while the call ran.
+    fn answer(&self, receipt: ModelStepReceipt) -> MemoryResult<ModelStepReceipt> {
+        if (self.attached)() {
+            Ok(receipt)
+        } else {
+            Err(detached())
         }
     }
 }
 
-/// Refuses an answer to an attachment that no longer stands: the lease, the
-/// binding or the credential's read key went while the call ran.
-fn still_attached(server: &SyncServer, auth: &CoreAuth, held: &HeldLiveRun) -> MemoryResult<()> {
-    let stands = match auth.verified_slip() {
-        Some(credential) => held.attachment_stands(server, credential)?,
-        None => false,
-    };
-    if stands {
-        return Ok(());
-    }
-    Err(MemoryError::new(
+fn detached() -> MemoryError {
+    MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         "the live-run credential or lease no longer holds",
         &[],
-    ))
+    )
 }
 
 fn inference_refusal(response: Box<Response>) -> MemoryError {
@@ -327,13 +381,18 @@ fn exact_step_run(
     Ok(run.with_work_context(context))
 }
 
-/// The logical allowance of a step on the raw routes' meter.
-fn raw_step_guard(server: &SyncServer) -> MemoryResult<BudgetGuard> {
-    let meter = server
+/// The raw routes' meter.
+fn raw_meter(server: &SyncServer) -> MemoryResult<&BudgetGuard> {
+    Ok(server
         .llm
         .as_ref()
         .ok_or_else(|| internal("ai.steps.submit"))?
-        .meter();
+        .meter())
+}
+
+/// The logical allowance of a step on the raw routes' meter.
+fn raw_step_guard(server: &SyncServer) -> MemoryResult<BudgetGuard> {
+    let meter = raw_meter(server)?;
     let read = meter.read();
     // This logical-step allowance is bounded by the host's remaining raw
     // allowance. Physical calls still reserve and settle on the shared run
@@ -378,6 +437,72 @@ impl LlmBackend for StepBackend {
 
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(self.ladder.generate_step_attempt(&self.run, request))
+    }
+
+    fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// [`StepBackend`] for a held live run. Each physical admission first asks
+/// whether the caller's attachment still stands, then looks at the run's
+/// spend scope: the look books what the step's calls spent so far and
+/// bounds the next by what the scope has left now, its siblings' spend
+/// included.
+struct RunStepBackend<'a> {
+    step: StepBackend,
+    lease: Option<LiveLease<'a>>,
+    attached: &'a (dyn Fn() -> bool + Send + Sync),
+    /// Set once an admission met an attachment that no longer stands.
+    detached: AtomicBool,
+}
+
+impl RunStepBackend<'_> {
+    fn look(&self) {
+        if let Some(lease) = &self.lease {
+            lease.book_and_revise();
+        }
+    }
+
+    /// Books on the scope what the step's calls spent and no look booked.
+    fn book_rest(&self) {
+        if let Some(lease) = &self.lease
+            && let Err(error) = lease.book_rest()
+        {
+            tracing::warn!(kind = ?error.kind(), "a run's model-step spend was not booked");
+        }
+    }
+}
+
+impl LlmBackend for RunStepBackend<'_> {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.step.supports(model, capability)
+    }
+
+    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let may_send = || {
+                if !(self.attached)() {
+                    self.detached.store(true, Ordering::Relaxed);
+                    return false;
+                }
+                self.look();
+                true
+            };
+            let answer = self
+                .step
+                .ladder
+                .generate_step_attempt_while(&self.step.run, request, &may_send)
+                .await;
+            self.look();
+            // An attempt stopped for its attachment ends the step's retries:
+            // each would meet the same stop. The engine saves no result for
+            // a run its host no longer holds attached.
+            if self.detached.load(Ordering::Relaxed) {
+                return Err(FatalLlmError::Auth.into());
+            }
+            answer
+        })
     }
 
     fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
