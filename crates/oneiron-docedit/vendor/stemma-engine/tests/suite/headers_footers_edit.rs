@@ -160,6 +160,7 @@ fn tracked_edit_header_reject_restores_accept_keeps() {
         expect: "Confidential Draft".to_string(),
         semantic_hash: None,
         content: text_content("Final Version"),
+        exact_marks: false,
         rationale: None,
     }];
 
@@ -230,6 +231,7 @@ fn edit_header_preserves_page_field_or_fails_loud() {
                 expect: "Page ".to_string(),
                 semantic_hash: None,
                 content: text_content("No field here"),
+                exact_marks: false,
                 rationale: None,
             }],
             MaterializationMode::TrackedChange,
@@ -257,6 +259,7 @@ fn edit_header_preserves_page_field_or_fails_loud() {
                         ContentFragment::Text(" total.".to_string()),
                     ],
                 },
+                exact_marks: false,
                 rationale: None,
             }],
             MaterializationMode::Direct,
