@@ -6,7 +6,7 @@ import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError, WsClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile } from "./support/run.ts";
+import { defineFile, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -73,6 +73,20 @@ async function fed01Role(
   expect(grant.vault_id).toBe(vaultId);
   expect(grant.member_ref).toBe(member);
   return grant;
+}
+
+async function fed01Diagnose<T>(label: string, act: () => Promise<T>): Promise<T> {
+  try {
+    return await act();
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    const detail = error.error;
+    const receiptRef = detail?.receiptRef;
+    throw new Error(
+      `FEDERATION-01 ENGINE DEFECT 2026-11-10: accepted Admin has no writable authority binding; ${label}: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} receiptRef=${typeof receiptRef === "string" ? receiptRef : "<none>"} header=${error.reply.headers.get("x-oneiron-receipt-ref") ?? "<none>"} error=${JSON.stringify(detail) ?? "<none>"} body=${JSON.stringify(error.reply.body) ?? "<none>"}`,
+      { cause: error },
+    );
+  }
 }
 
 /* Promise: Admin membership changes respect Owner authority and revoke removed access; Delegates cannot delegate onward.
@@ -151,9 +165,9 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
     } });
     const adminGrant = await fed01Role(owner, vaultId, adminRef, "admin");
 
-    const invited = await admin.client.call("vault.members.add", {
+    const invited = await fed01Diagnose("admin vault.members.add", () => admin.client.call("vault.members.add", {
       vault_id: vaultId, member: memberRef, role: "member",
-    });
+    }));
     expect(invited.actor).toBe(adminRef);
     expect(invited.vault_id).toBe(vaultId);
     const invitation = (await member.client.call("vault.members.invitations", { vault_id: vaultId }))
@@ -196,9 +210,9 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
       audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] }, sensitivity: { kind: "all" },
     };
     const expiresAt = accepted.completed_at + 3600; // One-hour input anchored to a public server receipt.
-    const delegated = await admin.client.call("vault.members.delegate", {
+    const delegated = await fed01Diagnose("admin vault.members.delegate", () => admin.client.call("vault.members.delegate", {
       parent_grant: adminGrant.grant_ref, member_ref: delegateRef, authority_scope: delegateScope, expires_at: expiresAt,
-    });
+    }));
     const delegateGrant = await fed01Role(owner, vaultId, delegateRef, "delegate");
     expect(delegateGrant.grant_ref).toBe(delegated.grant_ref);
     expect(delegateGrant.delegated_by).toBe(adminRef);
@@ -214,9 +228,9 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
     const afterOnward = await owner.call("vault.members.projection", { vault_id: vaultId, member: memberRef });
     expect(afterOnward.grants.some(row => row.active && row.delegated_by === delegateRef)).toBe(false);
 
-    const changed = await admin.client.call("vault.members.change", {
+    const changed = await fed01Diagnose("admin vault.members.change", () => admin.client.call("vault.members.change", {
       vault_id: vaultId, member: memberRef, role: "viewer",
-    });
+    }));
     expect(changed.change).toEqual({ member_role_changed: { member: memberRef, from: "member", to: "viewer" } });
     expect(changed.revoked_slips.length).toBeGreaterThan(0);
     await fed01Role(owner, vaultId, memberRef, "viewer");
@@ -225,7 +239,7 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
     // A new credential is proven live BEFORE removal, so the next refusal is not the earlier downgrade.
     const viewer = await engine.pairActor({ principalRef: memberRef, actorClass: "human", scope: ["core:read"] });
     await fed01Role(viewer.client, vaultId, memberRef, "viewer");
-    const removed = await admin.client.call("vault.members.remove", { vault_id: vaultId, member: memberRef });
+    const removed = await fed01Diagnose("admin vault.members.remove", () => admin.client.call("vault.members.remove", { vault_id: vaultId, member: memberRef }));
     await fed01Refused(owner, memberRef, () => viewer.client.call("vault.members.projection", {
       vault_id: vaultId, member: memberRef,
     }), 401, "UNAUTHORIZED", false);
@@ -617,7 +631,8 @@ async function fed03Refusal(engine: EngineFixture, attempt: Promise<unknown>, st
   const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
   expect(receipt?.receipt_ref).toBe(receiptRef);
   expect(receipt?.actor_ref).toBe(actor);
-  expect(receipt?.verb).toBe(`v1/core/facade/${verb}`);
+  expect(receipt?.transport).toBe("http_facade");
+  expect(receipt?.verb).toBe(verb);
   expect(receipt?.outcome).toEqual({ refused: { code } });
   return refusal;
 }
@@ -986,6 +1001,50 @@ function fed04ExpectEnvelope(envelope: Fed04Envelope, pact: Fed04Pact, windowKey
   expect(typeof note.receipt_owed).toBe("boolean");
 }
 
+/** A guest's WS connect that explains its own refusal. Bun's WS client
+ * reports a refused upgrade only as "WS upgrade failed", so on failure the
+ * same upgrade is re-issued as a raw HTTP GET /ws (the authority.test.ts
+ * refusedUpgrade shape) to carry the real status, error code and message.
+ * The sync upgrade names no JSON body today (a bare 401/403), so the
+ * diagnosis reports status, headers and raw text, never an assumed body. */
+async function fed04GuestSocket(
+  origin: string,
+  guestCredential: string,
+  guestClient: PublicHttpClient,
+): Promise<WsClient> {
+  try {
+    return await WsClient.connect(origin, guestCredential);
+  } catch (upgradeError) {
+    let diagnosis: string;
+    try {
+      const probe = await guestClient.raw("GET", "/ws", undefined, {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": Buffer.from(secretHex(16), "hex").toString("base64"),
+      });
+      const outcome = probe.body as { error?: { code?: unknown; message?: unknown } } | null;
+      const code = typeof outcome === "object" && outcome !== null ? outcome.error?.code : undefined;
+      const message =
+        typeof outcome === "object" && outcome !== null ? outcome.error?.message : undefined;
+      const receipt = probe.headers.get("x-oneiron-receipt-ref") ?? "none";
+      const raw = probe.raw.length > 300 ? `${probe.raw.slice(0, 300)}...` : probe.raw;
+      diagnosis =
+        `HTTP ${probe.status}` +
+        ` code=${typeof code === "string" ? code : "none"}` +
+        ` message=${typeof message === "string" ? message : "none"}` +
+        ` receipt=${receipt}` +
+        ` raw=${JSON.stringify(raw)}`;
+    } catch (probeError) {
+      const detail = probeError instanceof Error ? probeError.message : String(probeError);
+      diagnosis = `HTTP probe of GET /ws failed: ${detail}`;
+    }
+    throw new Error(`FEDERATION-04 ENGINE DEFECT 2026-11-10: scoped guest cannot reach WS facade admission (${diagnosis})`, {
+      cause: upgradeError,
+    });
+  }
+}
+
 /* FEDERATION-04 — decision: WRITTEN (partial).
  * Promise: a live Connect guest can fetch its signed scoped envelope;
  *   revocation reports that copies are not recallable and stops the guest's
@@ -1076,7 +1135,7 @@ suite.test(test, "FEDERATION-04", "A live Connect guest can fetch its signed sco
       artifacts: engine.artifacts,
       label: "fed04-guest",
     });
-    guestSocket = await WsClient.connect(engine.url, guestCredential);
+    guestSocket = await fed04GuestSocket(engine.url, guestCredential, guestClient);
 
     // Act: the owner shares. Second doors: the guest fetches over HTTP and WS.
     const sharedEnvelope = await engine.client.call("vault.guests.share", request);
@@ -1455,7 +1514,8 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       occurred_at: FED07_ALLOW_TS,
       learned_at: FED07_ALLOW_TS,
     });
-    expect(allowUpsert.approval).toBe("auto");
+    // Explicit sensitivity requests Proposed; the peer burst route is asserted by allowReceipt below.
+    expect(allowUpsert.approval).toBe("proposed");
     const allowDelivery = await engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: allowWindow,
