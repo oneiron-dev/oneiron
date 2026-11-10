@@ -8,9 +8,7 @@ use oneiron::memory::consolidation_frontier::{
     ConsolidationAccountingRequest, ConsolidationPinRequest, ConsolidationReference,
     ConsolidationRootAccounting, ConsolidationRootBucket, ConsolidationRootInput,
 };
-use oneiron::memory::{
-    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput,
-};
+use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
@@ -52,7 +50,10 @@ fn setup() -> Fixture {
             .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, &bytes)
             .expect("write fixture row");
         assert_eq!(vault.get(&id).expect("read fixture row back"), Some(bytes));
-        assert_eq!(vault.get_entity_type(&id).expect("read row kind"), Some(kind));
+        assert_eq!(
+            vault.get_entity_type(&id).expect("read row kind"),
+            Some(kind)
+        );
     }
     let claim = EntityId::now();
     let receipt = vault
@@ -190,7 +191,10 @@ fn write_dreamer_scope_control(fixture: &Fixture) -> EntityId {
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("write raw facet scope through the public typed claim writer");
     assert_eq!(
-        fixture.vault.get_claim(&claim).expect("read control claim back"),
+        fixture
+            .vault
+            .get_claim(&claim)
+            .expect("read control claim back"),
         Some(body),
         "the typed writer preserves the requested scope spelling and bytes",
     );

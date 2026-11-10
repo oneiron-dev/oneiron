@@ -188,9 +188,7 @@ fn peer_entries_bind_only_the_authority_transcript_domain() {
         // domain prefix the signature commits to differs.
         let mut enroll = fixture.entries[1].clone();
         let mut transcript = domain.to_vec();
-        transcript.extend_from_slice(
-            &encode_value(&transcript_value(&enroll)).unwrap(),
-        );
+        transcript.extend_from_slice(&encode_value(&transcript_value(&enroll)).unwrap());
         enroll.signer.signature = host_signing.sign(&transcript).to_bytes().to_vec();
 
         let hash = authority_entry_hash(&enroll).unwrap();

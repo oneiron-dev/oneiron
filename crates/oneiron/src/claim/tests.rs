@@ -648,11 +648,8 @@ fn write_door_validates_edge_provenance_claim_structure() {
     // `conf` value never weakens them.
     let confidence = 0.75_f32;
     let valid_value = || {
-        let mut body = EdgeProvenanceClaimBody::new(
-            actor,
-            confidence,
-            SupersessionStatus::Confirmed,
-        );
+        let mut body =
+            EdgeProvenanceClaimBody::new(actor, confidence, SupersessionStatus::Confirmed);
         body.actor_class = Some(EdgeActorClass::Human);
         encode_edge_provenance_value(&body)
     };
@@ -694,11 +691,8 @@ fn write_door_validates_edge_provenance_claim_structure() {
 
     // Fully-valid new shape (actor_class in the value record, wrapper
     // evid absent): accepted through the reserved door.
-    validate_claim_body_bytes(
-        &encode("edge.provenance", valid_value(), None),
-        true,
-    )
-    .expect("valid edge.provenance claim must pass the write door");
+    validate_claim_body_bytes(&encode("edge.provenance", valid_value(), None), true)
+        .expect("valid edge.provenance claim must pass the write door");
 
     let missing_actor = {
         let Value::Map(mut entries) = valid_value() else {

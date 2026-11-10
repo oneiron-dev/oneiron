@@ -228,14 +228,13 @@ fn a_removed_machine_never_comes_back() {
     assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
     for retry in [
-        host.vault
-            .set_machine_role(
-                &host.owner,
-                ActSurface::ThisInstall,
-                request.machine,
-                yours,
-                None,
-            ),
+        host.vault.set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            request.machine,
+            yours,
+            None,
+        ),
         host.vault
             .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, yours, None),
     ] {
