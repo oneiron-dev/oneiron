@@ -56,6 +56,7 @@ use oneiron::calendar::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::ICS_FEED_SOURCE_ID;
+use oneiron::memory::{ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest};
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::store::GateDecisionId;
 use oneiron::{
@@ -698,6 +699,39 @@ fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
     (id, owner)
 }
 
+/// The owner approves every passport the import filed on `event`. The import
+/// gate files them pending review, and a write takes its UID and SEQUENCE only
+/// from an admitted passport (FIX 8650, #4292; Engine ruling
+/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02), so a write-back of
+/// a pulled EVENT follows the owner's approval of the import.
+fn approve_import_passports(vault: &Vault, event: EntityId) {
+    let (id, owner) = seat_owner(vault);
+    let memory = vault.memory(id, EdgeActorClass::Human);
+    for (passport, _) in live_passports_for_event(vault, &event).expect("passports") {
+        let claim_ref = passport.to_hex();
+        let review = memory
+            .claim_review_as_owner(
+                &owner,
+                &ClaimProposalReviewRequest {
+                    claim_ref: claim_ref.clone(),
+                    grant_ref: None,
+                },
+            )
+            .expect("review the import's passport");
+        memory
+            .claim_settle_as_owner(
+                &owner,
+                &ClaimSettleRequest {
+                    claim_ref,
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
+            .expect("approve the import's passport");
+    }
+}
+
 /// The installed registration of `seat`'s config, read through the owner's
 /// door.
 fn installed_row(
@@ -1001,7 +1035,10 @@ fn caldav_sync_token_resume_is_idempotent() {
     let CalendarSyncOutcome::Reenqueued { next_cursor, .. } = &first else {
         panic!("re-enqueued");
     };
-    assert_eq!(next_cursor.as_deref(), Some("tok-resume-1"));
+    // The cursor records the zone the sync gave the collection's resources
+    // beside the DAV token (FIX 19192, 28b461cf238; Engine ruling
+    // T0F-CALDAV-CURSOR-ZONE = A). The stub collection names none.
+    assert_eq!(next_cursor.as_deref(), Some("oneiron-zone:\ntok-resume-1"));
     assert_eq!(connector.wire().sync_cursors(), vec![None]);
     let event = resolve_event_by_uid(&vault, "uid-resume@x")
         .expect("resolve")
@@ -1024,7 +1061,9 @@ fn caldav_sync_token_resume_is_idempotent() {
         Some("v1"),
     )));
     observe_sync(&vault, &seat, &first);
-    let resumed_seat = caldav_seat().with_cursor("tok-resume-1");
+    // The resumed seat reads the bare DAV token back out of that cursor: the
+    // wire is sent `tok-resume-1` below.
+    let resumed_seat = caldav_seat().with_cursor(next_cursor.as_deref().expect("a resume cursor"));
     let second = run_sync(&vault, &resumed_seat, &connector, T1);
     assert_eq!(
         counters(&second),
@@ -1152,6 +1191,7 @@ fn caldav_outbox_is_durable_before_remote_call() {
     let event = resolve_event_by_uid(&vault, "uid-durable@x")
         .expect("resolve")
         .expect("event");
+    approve_import_passports(&vault, event);
 
     // Inject a transport failure: the provider call never lands.
     connector
@@ -1365,6 +1405,7 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
     let event = resolve_event_by_uid(&vault, "uid-mismatch@x")
         .expect("resolve")
         .expect("event");
+    approve_import_passports(&vault, event);
     let passport_id = live_passports_for_event(&vault, &event)
         .expect("passports")
         .first()
@@ -1658,6 +1699,7 @@ fn google_internal_dogfood_reads_and_writes_own_calendar() {
 
     // Conditional write to the same calendar: UID preserved, SEQUENCE bumped,
     // the known ETag rides as the precondition.
+    approve_import_passports(&vault, event);
     let receipt = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T2)
         .expect("write");
     assert_eq!(receipt.uid, "gid-standup@x", "write preserves the UID");

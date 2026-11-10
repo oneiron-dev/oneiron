@@ -76,6 +76,7 @@ const PROPOSED_DNC_SEED: u8 = 0x6C;
 const STALE_DNC_SEED: u8 = 0x6D;
 const SEND_GRANT_SEED: u8 = 0x6F;
 const MANIFEST_SEED: u8 = 0x6A;
+const POLICY_SEED: u8 = 0x6B;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -127,13 +128,14 @@ fn oracle_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// A vault whose sends actually REACH the transport: seeded policy plus a
-/// standing `send` grant for the one actor the seeded manifest gives an Auto
-/// ceiling. Constructed directly rather than through `test_id`, which refuses
-/// production-pinned seeds.
+/// A vault whose sends actually REACH the transport: an explicit policy that
+/// grants the actor's send (see [`send_grant_manifest`]) plus a standing
+/// `send` grant for the actor. The actor keeps the id the seeded manifest
+/// once gave an Auto ceiling, constructed directly rather than through
+/// `test_id`, which refuses production-pinned seeds.
 fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
     // The host installs this device's keystore after each open; the outbound
     // and claim doors load this install's keys from it (P6c).
     vault.install_device_keystore(std::sync::Arc::new(
@@ -156,7 +158,41 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
             },
         )
         .unwrap();
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        test_id(POLICY_SEED),
+        &send_grant_manifest(actor, CHANNEL, VERB),
+    )
+    .unwrap();
     (dir, vault, actor)
+}
+
+/// The explicit policy the sending vault runs under (Engine ruling
+/// T0F-SEEDED-SEND-BUILTIN-PACK = C, Tue 10 Nov 09:02): an Auto ceiling and an
+/// `external:{verb}` grant on `channel` for `actor`, the way the in-crate
+/// executor tests reach the sink (`outbound/tests/mod.rs` `policy_manifest`).
+/// A seeded vault would also need the channel's built-in pack installed and
+/// its connection checked (OF-519), which no test can ready yet.
+fn send_grant_manifest(actor: EntityId, channel: &str, verb: &str) -> Vec<u8> {
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "send-hygiene-send",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "agent", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": format!("external:{verb}"),
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": channel},
+        }],
+    });
+    rmp_serde::to_vec_named(&manifest).unwrap()
 }
 
 fn put_person(vault: &Vault, id: EntityId) {
