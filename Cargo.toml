@@ -146,6 +146,10 @@ items_after_statements = "deny"
 unwrap_used = "deny"
 cognitive_complexity = "deny"
 too_many_lines = "deny"
+# Clippy 1.99 also checks async fns: +3,019 hits, all MemoryError (14k on main). FIX [MEMORY-ERROR-SIZE].
+result_large_err = "allow"
+# New in Clippy 1.99 (130 sites); the as_chunks rewrite waits for the untangle. FIX [AS-CHUNKS-REWRITE].
+chunks_exact_to_as_chunks = "allow"
 
 # ONE-218 (existing-only open door): `heed` 0.20.5, vendored locally and pinned.
 #
