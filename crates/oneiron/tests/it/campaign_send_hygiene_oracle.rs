@@ -21,8 +21,8 @@ use crate::common::entity as test_id;
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_CAMPAIGN_MEMBER,
-    PREDICATE_COMM_DO_NOT_CONTACT, decode_campaign_member_value, encode_campaign_member_value,
-    encode_do_not_contact_value,
+    PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, decode_campaign_member_value,
+    encode_campaign_member_value, encode_do_not_contact_value,
 };
 use oneiron::campaign::send_hygiene::{
     LIST_UNSUBSCRIBE, ListUnsubscribeTarget, SuppressionCause, SuppressionInput, apply_suppression,
@@ -348,6 +348,54 @@ fn assert_opt_out_hold(result: &OutboundDispatchResult) {
 // Leg 1 — hard bounce suppresses in one write turn
 // ---------------------------------------------------------------------------
 
+/// The "same turn" half of the law, measured the only way it can be: make the
+/// LAST leg fail and prove the earlier legs are not on disk.
+///
+/// A policy that floors `campaign.member` at critical refuses the membership
+/// leg's replacement head. If the three legs were three transactions, the
+/// bounce fact and the suppression would have committed before that refusal —
+/// and the person would be left permanently suppressed by a write turn that
+/// reported failure.
+#[test]
+fn hard_bounce_suppression_rolls_back_whole() {
+    let (_dir, vault) = oracle_vault();
+    let person = test_id(PERSON_SEED);
+    put_member(&vault, MEMBER_SEED, &enrolled_member(), person);
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        test_id(MANIFEST_SEED),
+        &critical_membership_manifest(),
+    )
+    .unwrap();
+
+    let mut input = SuppressionInput {
+        person_ref: person,
+        campaign_ref: Some(test_id(CAMPAIGN_SEED)),
+        channel: CHANNEL.to_owned(),
+        sender_ref: Some(test_id(SENDER_SEED)),
+        evidence_ref: test_id(EVIDENCE_SEED),
+        occurred_at: 50,
+    };
+    let error = apply_suppression(&vault, SuppressionCause::HardBounce, &input);
+
+    assert!(
+        error.is_err(),
+        "a refused membership leg must reject the write turn"
+    );
+    assert!(live_claims(&vault, person, PREDICATE_COMM_BOUNCE).is_empty());
+    assert!(live_claims(&vault, person, PREDICATE_COMM_DO_NOT_CONTACT).is_empty());
+
+    // Control: the same policy admits the bounce and suppression legs, so the
+    // refusal above came from the membership leg alone.
+    input.campaign_ref = None;
+    apply_suppression(&vault, SuppressionCause::HardBounce, &input).unwrap();
+    assert_eq!(live_claims(&vault, person, PREDICATE_COMM_BOUNCE).len(), 1);
+    assert_eq!(
+        live_claims(&vault, person, PREDICATE_COMM_DO_NOT_CONTACT).len(),
+        1
+    );
+}
+
 /// F06 H195: two live member heads for the campaign made the membership leg
 /// refuse, and the refusal rolled back the do-not-contact claim written before
 /// it, so an unsubscribe naming its campaign left the person sendable. Each
@@ -397,6 +445,55 @@ fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
     let held = dispatch(&vault, actor, CHANNEL, "intent:torn", None, &mut sink);
     assert_eq!(held.outcome, OutboundDispatchOutcome::Suppressed);
     assert!(sink.calls.is_empty());
+    Ok(())
+}
+
+/// R1 F5: one head already suppressed and one enrolled. The first unsubscribe
+/// reuses one and replaces the other; a redelivery reuses both and must hand
+/// back the same receipt.
+///
+/// The ids order the enrolled head A below the suppressed head B, and both
+/// below the replacement C the store clock mints (UUIDv7, so its first bytes
+/// are today's timestamp). The first call meets A then B and answers C then B;
+/// the redelivery meets B then C. Only the receipt's own claim-id order makes
+/// the two answers agree (R2-F2: seeds 0x67/0x69 sorted above C, so the
+/// redelivery met C first and the check passed without the fix).
+#[test]
+fn mixed_member_heads_keep_a_stable_receipt_on_redelivery() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let person = test_id(PERSON_SEED);
+    let suppressed = CampaignMemberValue {
+        state: CampaignMemberState::Suppressed,
+        ..enrolled_member()
+    };
+    let below_the_clock = |seed: u8| {
+        let mut bytes = [seed; 16];
+        bytes[..2].copy_from_slice(&[0x01, 0x00]);
+        EntityId::from_bytes(bytes).unwrap()
+    };
+    let enrolled = below_the_clock(MEMBER_SEED);
+    let already_suppressed = below_the_clock(SECOND_MEMBER_SEED);
+    put_member_at(&vault, enrolled, &enrolled_member(), person);
+    put_member_at(&vault, already_suppressed, &suppressed, person);
+    let input = SuppressionInput {
+        person_ref: person,
+        campaign_ref: Some(test_id(CAMPAIGN_SEED)),
+        channel: CHANNEL.to_owned(),
+        sender_ref: None,
+        evidence_ref: test_id(EVIDENCE_SEED),
+        occurred_at: 60,
+    };
+    let first = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    assert_eq!(first.member_claim_refs.len(), 2);
+    assert!(
+        first
+            .member_claim_refs
+            .iter()
+            .all(|id| *id >= already_suppressed),
+        "the replacement sorts above both seeded heads"
+    );
+    let again = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    assert_eq!(again, first);
     Ok(())
 }
 

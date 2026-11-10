@@ -542,6 +542,34 @@ fn explicit_cross_channel_identity_never_changes_the_verdict() {
 // --- Leg 2: cheap identity enrichment -----------------------------------------
 
 #[test]
+fn cheap_connector_identity_is_attached_when_available() {
+    let (_dir, vault, actor) = oracle_vault();
+    let mut sink = RecordingSink::default();
+
+    // No governing connector key yet: nothing to resolve from, and the send is
+    // decided without an identity.
+    let unbound = dispatch(&vault, actor, CHANNEL, "intent:unbound", &mut sink);
+    assert!(!unbound.receipt.fields.contains_key("channel_identity_ref"));
+
+    vault
+        .register_connector_key(
+            &test_id(CONNECTOR_KEY_SEED),
+            ConnectorKeyRecord::active(CHANNEL, Some(actor), Vec::new(), 1),
+        )
+        .unwrap();
+    put_channel_identity(&vault, IDENTITY_SEED, CHANNEL, "owner@example.com", actor);
+
+    let bound = dispatch(&vault, actor, CHANNEL, "intent:bound", &mut sink);
+    assert_eq!(
+        bound.receipt.fields.get("channel_identity_ref"),
+        Some(&test_id(IDENTITY_SEED).to_hex()),
+        "the governing connector key's identity belongs on the receipt"
+    );
+    // Enrichment changed no verdict: both sends land on the same gate result.
+    assert_eq!(bound.gate_outcome, unbound.gate_outcome);
+}
+
+#[test]
 fn resolved_identity_never_becomes_the_deny_source_of_truth() {
     let (_dir, vault, actor) = oracle_vault();
     let mut sink = RecordingSink::default();

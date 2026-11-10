@@ -13,11 +13,14 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod analyzer_asset_policy;
 mod booking_lifecycle;
 mod booking_solver;
+mod byte_space_v3_conformance;
 mod calendar_connector_smoke;
 mod calendar_ics_ingest_adapter;
 mod calendar_outcome;
+mod calendar_prep;
 mod calendar_surface_oracle;
 mod calendar_transcript;
 mod campaign_claim_gate_oracle;
@@ -29,12 +32,14 @@ mod cb_oracle_agents;
 mod cb_oracle_frame;
 mod cb_oracle_plugin;
 mod cb_oracle_tasks;
+mod channel_identity_email_adapter_smoke;
 mod channel_identity_slack_adapter_smoke;
 mod code_consent;
 #[cfg(all(feature = "code-sandbox-wasmtime", target_os = "linux"))]
 mod code_mode_result_memory;
 mod collection_bounds;
 mod counterparty_opt_out_shipping_paths_oracle;
+mod decide_path_fitness;
 // The still decision clock is a test hook.
 #[cfg(feature = "test-hooks")]
 mod decision_deadline;
@@ -47,7 +52,9 @@ mod linkedin_connector_adapter;
 mod merge_split_oracle;
 mod microvm_contract;
 mod of060_fitness;
+mod outbound_intent_ledger;
 mod prompt_blocks;
+mod receipt_context;
 mod saved_query_oracle;
 mod self_heal_telemetry_decide;
 mod session_overlay_spec;

@@ -10,7 +10,7 @@ use oneiron::llm::decision::{
     ProviderPin,
 };
 use oneiron::self_heal::DiagnosticEventClass;
-use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy};
+use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use oneiron::store::RetrievalRunRecord;
 use oneiron::{EntityId, Error, HnswConfig, Result, Vault, VaultConfig};
 
@@ -121,6 +121,44 @@ fn vault_with_run() -> Result<(tempfile::TempDir, Vault, RetrievalRunRecord)> {
     assert_eq!(runs.len(), 1, "a context pack records one retrieval run");
     let run = runs.remove(0);
     Ok((dir, vault, run))
+}
+
+#[test]
+fn telemetry_detector_asks_the_ladder_and_keeps_the_receipt() -> Result<()> {
+    let (_dir, vault, run) = vault_with_run()?;
+    let principal = EntityId::now();
+    let head = HostHead::new(DecisionAnswer::Noul(true));
+    let host = decisions(Some(&head), principal);
+    let policy = policy();
+
+    let proposed = vault
+        .judge_retrieval_trace(&policy, &host, std::slice::from_ref(&run))?
+        .expect("a raised question proposes a diagnostic");
+
+    let question = policy.question(ProposedTier::Judge, (0, 0))?;
+    let asked = head.asked.lock().unwrap();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].0, question);
+    assert!(question.text.contains(&policy.prompt));
+    assert!(question.text.contains(&policy.rubric));
+    assert_eq!(asked[0].1, [EntityId::from_bytes(run.run_id.as_bytes())?]);
+
+    assert_eq!(proposed.tier, ProposedTier::Judge);
+    assert_eq!(proposed.decisions.len(), 1);
+    let receipt = &proposed.decisions[0];
+    assert_eq!(receipt.question, question.id);
+    assert_eq!(receipt.question_version, 1);
+    assert_eq!(receipt.principal, principal);
+    assert_eq!(receipt.providers, [head.pin()]);
+
+    // Another rubric is another question, so its bands are learned apart.
+    let reworded = DetectorPolicy {
+        rubric: "Yes when fewer than three items answer the query.".into(),
+        ..policy
+    };
+    let reworded = reworded.question(ProposedTier::Judge, (0, 0))?;
+    assert_ne!(reworded.id, question.id);
+    Ok(())
 }
 
 #[test]

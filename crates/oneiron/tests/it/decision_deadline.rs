@@ -377,6 +377,128 @@ fn with_no_work_time_left_no_read_starts_and_the_call_abstains() {
 }
 
 #[test]
+fn a_stronger_rung_starts_only_for_a_cause_and_on_the_same_clock() {
+    let cases = [
+        // A paired reading at the think row steps up.
+        (
+            answer(true, 0.9, Some(0.8)),
+            Some(0.7),
+            false,
+            Reasoning::Ran(ReasoningCause::PairedHigh),
+        ),
+        // A small margin under an enforced band steps up.
+        (
+            answer(true, 0.5, None),
+            None,
+            true,
+            Reasoning::Ran(ReasoningCause::SmallMargin),
+        ),
+        // A clear answer with a low paired reading stands.
+        (
+            answer(true, 0.9, Some(0.2)),
+            Some(0.7),
+            false,
+            Reasoning::NotNeeded,
+        ),
+        // With no think row a paired reading never steps.
+        (
+            answer(true, 0.9, Some(0.99)),
+            None,
+            false,
+            Reasoning::NotNeeded,
+        ),
+        // A small margin in a shadow band stands.
+        (answer(true, 0.5, None), None, false, Reasoning::NotNeeded),
+    ];
+    for (first, think, enforce, reasoning) in cases {
+        let q = question();
+        let ladder = Ladder::new(
+            Rung::new(DecisionRung::SystemOne, ms(200), Some(first.clone())),
+            Rung::new(
+                DecisionRung::Escalation,
+                ms(100),
+                Some(answer(false, 0.95, Some(0.1))),
+            ),
+        );
+        let decision = ladder
+            .run(
+                &q,
+                &policy(&q, think, enforce),
+                DecisionRung::Big,
+                Reversibility::ReversibleRead,
+                &clock(),
+            )
+            .expect("the call runs");
+        let stepped = reasoning != Reasoning::NotNeeded;
+        // One clock: the stronger rung sees the work time the first left, never a fresh budget.
+        assert_eq!(ladder.first.reads(), vec![WORK]);
+        let stronger: Vec<_> = stepped.then_some(WORK - ms(200)).into_iter().collect();
+        assert_eq!(ladder.stronger.reads(), stronger);
+        assert_eq!(
+            time(&decision),
+            DecisionTime {
+                budget_ms: 1000,
+                used_ms: if stepped { 300 } else { 200 },
+                stop: StopCause::Done,
+                answered: Some(if stepped {
+                    DecisionRung::Escalation
+                } else {
+                    DecisionRung::SystemOne
+                }),
+                reasoning,
+            }
+        );
+        let expected = if stepped {
+            DecisionAnswer::Noul(false)
+        } else {
+            first.answer.clone()
+        };
+        assert_eq!(decision.answer, expected);
+        // Every read's paired reading is on the receipt, bound to the rung that took it.
+        let paired: Vec<_> = decision
+            .receipt
+            .paired
+            .iter()
+            .map(|reading| (reading.provider.rung, reading.probability))
+            .collect();
+        let expected: Vec<_> = first
+            .paired
+            .map(|reading| (DecisionRung::SystemOne, reading.probability))
+            .into_iter()
+            .chain(stepped.then_some((DecisionRung::Escalation, 0.1)))
+            .collect();
+        assert_eq!(paired, expected);
+    }
+
+    // A rung that abstains answered nothing: the receipt names no answering rung.
+    let q = question();
+    let abstains = ProviderDecision {
+        answer: DecisionAnswer::Abstain,
+        probability: None,
+        paired: None,
+        person: None,
+    };
+    let ladder = Ladder::new(
+        Rung::new(DecisionRung::SystemOne, ms(200), Some(abstains)),
+        Rung::new(DecisionRung::Escalation, ms(100), None),
+    );
+    let decision = ladder
+        .run(
+            &q,
+            &policy(&q, None, false),
+            DecisionRung::Big,
+            Reversibility::ReversibleRead,
+            &clock(),
+        )
+        .expect("the call runs");
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(
+        (time(&decision).stop, time(&decision).answered),
+        (StopCause::Done, None)
+    );
+}
+
+#[test]
 fn a_reply_after_the_cut_is_never_taken_and_only_a_reversible_step_keeps_its_answer() {
     // The stronger rung replies after the answer is due, or fails once the work time is spent.
     let late = [
