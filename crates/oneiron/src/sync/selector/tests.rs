@@ -21,8 +21,7 @@ use crate::federation::{
     encode_federation_grant_body, encode_guest_share_envelope_body,
 };
 use crate::provenance::{
-    EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
-    encode_edge_provenance_value,
+    EdgeProvenanceClaimBody, SupersessionStatus, encode_edge_provenance_value,
 };
 use crate::registry::{
     ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
@@ -64,8 +63,6 @@ fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
         },
         genesis_nonce: [seed.wrapping_add(1); 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: 86_400,
     };
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
@@ -126,8 +123,9 @@ fn public_claim_blob() -> Vec<u8> {
 
 fn edge_provenance_claim_blob() -> Vec<u8> {
     let confidence = 0.75_f32;
-    let record =
+    let mut record =
         EdgeProvenanceClaimBody::new(entity_id(0x5A), confidence, SupersessionStatus::Confirmed);
+    record.actor_class = Some(EdgeActorClass::Human);
     let mut claim = ClaimBody::new(
         crate::provenance::PREDICATE_EDGE_PROVENANCE,
         ClaimSubject::Edge {
@@ -141,7 +139,6 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
     claim.source = Some(ClaimSource::ToolOutput);
     // Explicit `sensitivity: public` (band 0). The ONE-1645 provenance floor
     // makes an UNSTAMPED claim read band 2, which exceeds the
@@ -337,6 +334,7 @@ fn put_test_grant(vault: &Vault, member_ref: EntityId, scope: FederationGrantSco
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &body,
         )
         .commit()
@@ -627,6 +625,7 @@ fn federated_admission_rejects_classification_routed_maintenance_kinds() {
         &window_key,
         &update,
         FederationAdmissionRole::Member,
+        None,
     )
     .expect_err("classification-routed maintenance kinds must fail closed");
     assert!(matches!(
@@ -655,6 +654,7 @@ fn federated_admission_rejects_reserved_edge_kinds() {
             &window_key,
             &update,
             FederationAdmissionRole::Guest,
+            None,
         )
         .expect_err("reserved-kind federated edges must fail closed");
         assert!(matches!(
@@ -690,6 +690,7 @@ fn federated_admission_rejects_foreign_authority_log() {
         &window_key,
         &update,
         FederationAdmissionRole::Member,
+        None,
     )
     .expect_err("foreign authority roots must not enter admitted federation updates");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
@@ -728,6 +729,7 @@ fn federated_admission_rejects_wrong_key_authority_row() {
         &window_key,
         &update,
         FederationAdmissionRole::Member,
+        None,
     )
     .expect_err("a wrong-key authority row must not reach the admitted doc");
     assert_eq!(
@@ -767,11 +769,12 @@ fn federated_admission_admits_correct_key_authority_row() {
         &window_key,
         &update,
         FederationAdmissionRole::Member,
+        None,
     )
     .expect("a correct-key authority row must heal normally");
 
     let receiver = create_window_doc("receiver", &window_key);
-    receiver.import(&admitted).unwrap();
+    receiver.import(&admitted[0].1).unwrap();
     let blob = map_get_bytes(&receiver.get_map("entities"), &derived.to_hex())
         .expect("admitted authority row");
     assert_eq!(
@@ -792,12 +795,22 @@ fn federated_admission_duplicate_frame_is_byte_identical() {
     doc.commit();
     let update = doc.export(ExportMode::all_updates()).unwrap();
 
-    let first =
-        admit_federated_window_update(&vault, &window_key, &update, FederationAdmissionRole::Guest)
-            .expect("first admission");
-    let second =
-        admit_federated_window_update(&vault, &window_key, &update, FederationAdmissionRole::Guest)
-            .expect("duplicate admission");
+    let first = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Guest,
+        None,
+    )
+    .expect("first admission");
+    let second = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Guest,
+        None,
+    )
+    .expect("duplicate admission");
     assert_eq!(
         second, first,
         "same role/window/update must produce byte-identical admitted updates"
@@ -1363,11 +1376,12 @@ fn admission_drop_leaves_no_pending_remat_work() {
         &window_key,
         &update,
         FederationAdmissionRole::Member,
+        None,
     )
     .expect("a forged stamp must not fail the admission closed");
 
     let local = create_window_doc("local", &window_key);
-    local.import(&admitted).unwrap();
+    local.import(&admitted[0].1).unwrap();
     assert!(
         map_get_bytes(
             &local.get_map("edges"),
@@ -1936,7 +1950,7 @@ fn a_pending_staged_stamp_outlives_the_age_a_peer_stamp_retires_at() {
     );
 
     let aged =
-        vault.store.clock.now_recorded_at() + crate::federation::facet_read::HELD_STAMP_TTL_SECS;
+        vault.store.clock.now_recorded_at() + 30 * 24 * 60 * 60;
     let retire = |now| {
         crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
             Ok(grants.clone())
@@ -3695,7 +3709,11 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     let pact_id = [0x63; 32];
     let nonce = [0x64; 16];
     let scope = selector_pact_scope(ScopeAxis::All);
-    let digest = federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+    let digest = federation_scope_digest(
+        &[0x68; 32],
+        &nonce,
+        &encode_federation_pact_scope(&scope).unwrap(),
+    );
     let connect_gesture = sign_federation_pact_gesture(
         FederationLifecycleKind::Connect,
         &pact_id,
@@ -3761,7 +3779,11 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         let scope = selector_pact_scope(ScopeAxis::from_iter([entity_id(facet_byte)].map(ScopeId)));
         let nonce = [nonce_byte; 16];
         let digest =
-            federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+            federation_scope_digest(
+                &[0x68; 32],
+                &nonce,
+                &encode_federation_pact_scope(&scope).unwrap(),
+            );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Rescope,
             &pact_id,
@@ -3945,7 +3967,11 @@ fn seed_scoped_pacts_for_grant(
             hi_to_lo: scope.clone(),
         };
         let digest =
-            federation_scope_digest(&nonce, &encode_federation_pact_scope(&pact_scope).unwrap());
+            federation_scope_digest(
+                &[0x68; 32],
+                &nonce,
+                &encode_federation_pact_scope(&pact_scope).unwrap(),
+            );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Connect,
             &pact_id,
@@ -4007,18 +4033,25 @@ fn selector_request_decodes_wire_semantics() {
     let grant = entity_id(0x35);
     let world = local_world_id(0x51);
     let (_dir, vault, _) = test_vault_with_grant(member);
-    put_selector_test_federation_grant(
-        &vault,
-        &grant,
-        &FederationGrant::new(
-            test_selector_scope(),
-            member,
-            FederationGrantRole::Viewer,
-            FederationGrantPreset::ReadOnly,
-        ),
-        1,
-    )
+    let grant_body = encode_federation_grant_body(&FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Viewer,
+        FederationGrantPreset::ReadOnly,
+    ))
     .unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &grant,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            None,
+            &grant_body,
+        )
+        .commit()
+        .unwrap();
 
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("source", &window_key);
@@ -4107,18 +4140,25 @@ fn selector_request_decodes_wire_semantics() {
         },
     ] {
         let (_scope_dir, scope_vault, _) = test_vault_with_grant(member);
-        put_selector_test_federation_grant(
-            &scope_vault,
-            &grant,
-            &FederationGrant::new(
-                test_selector_scope(),
-                member,
-                FederationGrantRole::Viewer,
-                FederationGrantPreset::ReadOnly,
-            ),
-            1,
-        )
+        let grant_body = encode_federation_grant_body(&FederationGrant::new(
+            test_selector_scope(),
+            member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        ))
         .unwrap();
+        scope_vault
+            .batch()
+            .put_replicated(
+                &grant,
+                ENTITY_TYPE_FEDERATION_GRANT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                None,
+                &grant_body,
+            )
+            .commit()
+            .unwrap();
         let empty_facets = matches!(&scope.facets, ScopeAxis::Bottom);
         seed_scoped_pacts_for_grant(&scope_vault, grant, &[scope]);
         authorize_sync_selector(&scope_vault, test_selector_scope(), &silent).unwrap();
@@ -4519,18 +4559,25 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
         vec![SelectorRange::Semantic, SelectorRange::Core],
     );
     let (_dir, vault, _) = test_vault_with_grant(entity_id(0x34));
-    put_selector_test_federation_grant(
-        &vault,
-        &selector.grant_id,
-        &FederationGrant::new(
-            test_selector_scope(),
-            entity_id(0x34),
-            FederationGrantRole::Viewer,
-            FederationGrantPreset::ReadOnly,
-        ),
-        1,
-    )
+    let grant_body = encode_federation_grant_body(&FederationGrant::new(
+        test_selector_scope(),
+        entity_id(0x34),
+        FederationGrantRole::Viewer,
+        FederationGrantPreset::ReadOnly,
+    ))
     .unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &selector.grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            None,
+            &grant_body,
+        )
+        .commit()
+        .unwrap();
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("source", &window_key);
     let base_claim = entity_id(0x71);
@@ -4637,6 +4684,7 @@ fn put_delegate_grant(
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&delegate).unwrap(),
         )
         .commit()
@@ -5362,6 +5410,7 @@ fn peer_document_write_requires_stored_grant_scope_even_inside_selector() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -5404,6 +5453,7 @@ fn peer_document_write_requires_stored_grant_scope_even_inside_selector() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             2,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -5444,6 +5494,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
                 ENTITY_TYPE_FEDERATION_GRANT,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &encode_federation_grant_body(&grant).unwrap(),
             )
             .commit()
@@ -5502,6 +5553,8 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
             &update,
             test_selector_scope(),
             &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
         );
         if active {
             result.unwrap();
@@ -5514,6 +5567,8 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
                     &update,
                     test_selector_scope(),
                     &wider,
+                    crate::authority::PeerMachine::Unknown,
+                    |_| true,
                 )
                 .unwrap_err();
             assert_grant_scope_mismatch(&error, "peer document writer");
@@ -5542,6 +5597,13 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         expires_at: Some(1),
         delegated_by: Some(entity_id(0x35)),
         guest: None,
+        owner_agent: false,
+        repo_bounds: None,
+        kind: crate::federation::FederationGrantKind::Access,
+        git_push_bounds: None,
+        detach_on_member_leave: None,
+        verb_classes: std::collections::BTreeSet::new(),
+        wallet_ref: None,
     };
     vault
         .batch()
@@ -5550,6 +5612,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -5664,6 +5727,7 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: crate::TimeRange { start: 1, end: 1 },
                 learned_at: 1,
+                row_version: 0,
                 body: &blob[ENTITY_METADATA_HEADER_LEN..],
             },
             tier,
@@ -5749,18 +5813,25 @@ fn member_grant_vault(member: EntityId) -> (tempfile::TempDir, Vault, EntityId) 
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let grant_id = EntityId::now();
-    put_selector_test_federation_grant(
-        &vault,
-        &grant_id,
-        &FederationGrant::new(
-            test_selector_scope(),
-            member,
-            FederationGrantRole::Member,
-            FederationGrantPreset::Member,
-        ),
-        1,
-    )
+    let grant_body = encode_federation_grant_body(&FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    ))
     .unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            None,
+            &grant_body,
+        )
+        .commit()
+        .unwrap();
     (dir, vault, grant_id)
 }
 
@@ -5806,6 +5877,7 @@ fn a_replica_serves_a_replicated_note_that_carries_its_stamp() {
                 end: header.occurred_end,
             },
             header.learned_at,
+            None,
             &raw[ENTITY_METADATA_HEADER_LEN..],
         )
         .edge_with_value_fields(
@@ -5947,6 +6019,7 @@ fn ask_guest_grant_cannot_authorize_sync_selector() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &body,
         )
         .commit()
@@ -6789,6 +6862,7 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
             summary,
             sources,
             sources_at,
+            None,
             &epoch_summary_bytes(2, "the person")?,
         )
         .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
@@ -8116,6 +8190,7 @@ fn a_peer_edit_reaches_a_world_born_task_only_through_its_own_world() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()

@@ -136,6 +136,8 @@ use self::claim_candidate_apply::*;
 use self::deindex::*;
 use self::edge_apply::*;
 use self::lexical_query_hints::*;
+#[cfg(test)]
+pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;
