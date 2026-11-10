@@ -409,14 +409,21 @@ fn probability(value: &Value) -> Option<f64> {
 /// The answer and probability a written reply gives over `contract`; `None`
 /// when the reply names nothing the contract takes, or no probability.
 ///
-/// The reply says how sure the model is of its own answer.
+/// The reply says how sure the model is of its own answer. A yes/no's
+/// probability is P(yes) on every path (the joint read stores it so), so a no
+/// answer stores 1 - sure (FIX 22368).
 pub(crate) fn written_decision(
     reply: BigReply,
     contract: &AnswerContract,
     text: &str,
 ) -> Option<(DecisionAnswer, f64)> {
     let (answer, sure) = reply.read(text)?;
-    Some((typed(contract, &answer)?, sure))
+    let answer = typed(contract, &answer)?;
+    let probability = match answer {
+        DecisionAnswer::Noul(false) => 1.0 - sure,
+        _ => sure,
+    };
+    Some((answer, probability))
 }
 
 /// The written answer as one the contract takes.
