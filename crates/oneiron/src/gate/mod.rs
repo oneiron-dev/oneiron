@@ -104,8 +104,9 @@ pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_
 #[cfg(oneiron_test_support)]
 pub(crate) use self::derive_verdict::DeriveRefusal;
 // The landing rows' reference names the X02 grant a verdict stood on before
-// the Dreamer held a Steward grant (6.3b); only the lib tests read it here.
-#[cfg(test)]
+// the Dreamer held a Steward grant (6.3b); only the lib tests and the
+// regression door (`test_doors::untangle_regressions`) read it here.
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
 pub(crate) use self::dreamer_grant::{
     DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
