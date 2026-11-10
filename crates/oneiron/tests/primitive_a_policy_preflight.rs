@@ -139,3 +139,53 @@ fn a_preflight_names_between_one_and_a_hundred_refs() -> TestResult {
     );
     Ok(())
 }
+
+/// Review of #6985 (round 1, policy_preflight.rs:119): a local row whose
+/// words came from a source's row reads under that source's policy, and its
+/// preflight names that policy, though the row has no binding and no
+/// carried policy of its own.
+#[cfg(oneiron_test_support)]
+mod lineage {
+    use std::collections::BTreeSet;
+
+    use oneiron::snapshot_read::PolicyPreflightRef;
+    use oneiron::test_doors::source_audience::land_source_bound_artifact;
+    use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange};
+
+    use super::{TestResult, open, preflight};
+
+    #[test]
+    fn a_derived_rows_audience_names_the_policy_its_source_reads_under() -> TestResult {
+        let (_dir, vault) = open()?;
+        let owner_actor = vault.ensure_embedded_owner_actor()?;
+        let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+        // A source's row, under a policy open to the vault: the owner's read
+        // meets it.
+        let source = land_source_bound_artifact(&vault, BTreeSet::new(), true, owner_actor, 1)?;
+        // A local row written from it.
+        let derived = EntityId::now();
+        vault.put_entity(
+            &derived,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"a row written from the source's row",
+        )?;
+        vault.put_edge(&derived, EdgeKind::DerivedFrom, &source.row, 1.0)?;
+
+        let answer = preflight(&owner, vec![derived])?;
+        let [PolicyPreflightRef::Readable {
+            entity, audience, ..
+        }] = answer.refs.as_slice()
+        else {
+            return Err("the owner reads the derived row".into());
+        };
+        assert_eq!(*entity, derived);
+        assert_eq!(
+            audience,
+            &vec![source.policy],
+            "the derived row reads under its source's policy"
+        );
+        Ok(())
+    }
+}

@@ -2,11 +2,12 @@
 //! read lets it do with each of a list of refs, before it acts.
 //!
 //! The act `read` answers, per ref, `readable` (with the row's version and
-//! the source-audience policies it reads under, which a derived output
-//! keeps) or `withheld`. A withheld ref says nothing more: no reason, no
-//! audience, and an absent id answers the same, so the answer never tells a
-//! row the caller may not read from one that does not exist. The caller's
-//! ceiling (requested, ceiling and applied axes) is the read's own receipt.
+//! the source-audience policies the caller's read of it meets, along its
+//! lineage, which a row derived from it reads under too) or `withheld`. A
+//! withheld ref says nothing more: no reason, no audience, and an absent
+//! id answers the same, so the answer never tells a row the caller may not
+//! read from one that does not exist. The caller's ceiling (requested,
+//! ceiling and applied axes) is the read's own receipt.
 //!
 //! It is observation only: it mints, grants and writes nothing, and the real
 //! act is judged again when it is made.
@@ -50,9 +51,11 @@ pub enum PolicyPreflightRef {
         entity: EntityId,
         /// The row as the caller's read serves it now.
         version: SourceVersion,
-        /// The source-audience policies the row reads under: the one it was
-        /// born under and those a derivation carried to it. A row derived
-        /// from it keeps them. Empty for a row no source policy binds.
+        /// The source-audience policies the caller's read of the row meets,
+        /// along the lineage that read judges: those carried to it and the
+        /// one binding it, and those of every row its words came from (of a
+        /// CLAIM's supports, each one the caller reads). A row derived from
+        /// it reads under them too. Empty for a row no source policy reaches.
         audience: Vec<EntityId>,
     },
     /// The caller does not read the row, or no such row is live. Nothing
@@ -106,6 +109,9 @@ pub fn policy_preflight(
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let points: Vec<PointRead<'_>> = input.refs.iter().copied().map(PointRead::id).collect();
     let vault = memory.vault();
+    // The viewers the read's own source-audience judgment asks of.
+    let viewers: Vec<EntityId> = read.actor_key().authenticated_person().into_iter().collect();
+    let dbs = read.store_read();
     read.read_projected(
         &points,
         None,
@@ -116,9 +122,8 @@ pub fn policy_preflight(
                     refs.push(PolicyPreflightRef::Withheld { entity: *entity });
                     continue;
                 };
-                let mut audience = crate::source_audience::derived_policies_in(vault, txn, entity)?
-                    .unwrap_or_default();
-                audience.extend(crate::source_audience::binding_in(vault, txn, entity)?);
+                let audience =
+                    crate::source_audience::read_audience_in(vault, &dbs, txn, entity, &viewers)?;
                 refs.push(PolicyPreflightRef::Readable {
                     entity: *entity,
                     version,
