@@ -54,3 +54,14 @@ pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.
 pub const DERIVE_ITEM_CONTENT_KIND: &str = "vault.derive.item";
+
+/// `actor`'s own scoped read: what it may derive from and cite.
+fn actor_read(
+    vault: &crate::Vault,
+    actor: crate::write_envelope::WriteActor,
+) -> crate::error::Result<crate::claim::ScopedRead<'_>> {
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(actor).ok_or(
+        crate::error::Error::InvalidClaimBody("a derivation actor has no read"),
+    )?;
+    Ok(vault.scoped_read(key))
+}
