@@ -14,6 +14,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
 use oneiron::test_doors::derive::{
     About, Derived, Named, Profile, about_facts, claim_subject, commit, profile_stored,
+    wake_reads_about_facts,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant,
@@ -45,7 +46,10 @@ struct Fixture {
     person: EntityId,
 }
 
-/// A vault whose Dreamer landed one fact about a new person.
+/// A vault whose Dreamer landed one fact about a new person, and whose wake
+/// pass has read that person's facts since: a reader sees `about` lines
+/// only while they are written from the facts a wake pass last read, so
+/// lines published from these facts read back at once.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
@@ -58,6 +62,7 @@ fn fixture() -> Fixture {
     let person = claim_subject(&vault, *claim)
         .expect("read")
         .expect("the fact is about the person");
+    wake_reads_about_facts(&vault).expect("the wake pass reads the person's facts");
     Fixture {
         _dir: dir,
         vault,

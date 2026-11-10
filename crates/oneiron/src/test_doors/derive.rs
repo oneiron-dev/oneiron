@@ -322,6 +322,18 @@ pub fn about_facts(
     Ok((facts.digest, facts.bands))
 }
 
+/// The PEOPLE `about` step at the start of a Dreamer wake pass: it reads
+/// every person's facts and records the facts each person's lines are now
+/// asked from. A reader sees a person's lines only while they are written
+/// from the facts a wake pass last read.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn wake_reads_about_facts(vault: &Vault) -> Result<()> {
+    crate::dreamer_consolidation::enqueue_person_about_on_wake(vault, vault.now_recorded_at())
+}
+
 /// The subject of the stored claim `id`, when it is a stored claim about a
 /// row.
 ///
