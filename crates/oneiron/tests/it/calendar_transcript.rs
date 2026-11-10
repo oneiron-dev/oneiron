@@ -286,7 +286,7 @@ fn session_end_enqueues_existing_extraction_path_once() {
         before + 1,
         "first close must enqueue exactly one Meso partition attempt"
     );
-    let wake = vault.plan_session_end_wake().unwrap();
+    let wake = vault.plan_session_end_wake(&session_ref).unwrap();
     assert!(
         vault
             .end_session_with_wake(

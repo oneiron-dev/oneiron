@@ -26,120 +26,6 @@
 //        kill · ONE-1709 team-lead · ONE-1710 peer-answer trust)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_a {
-    /// One rendered AGENTS-section row.
-    struct AgentRow {
-        /// Actor handle (children: run/agent id; peers: connection-keyed).
-        id: String,
-        /// "child" or "peer".
-        lane: String,
-        /// Exact rendered text of the row.
-        line: String,
-        /// Harness label carried on peer rows (a label, never the identity).
-        harness_label: Option<String>,
-    }
-
-    struct AgentsSectionRender {
-        rows: Vec<AgentRow>,
-    }
-
-    /// ONE-1697 fixture: children `child_a` + `child_b` (running, M8 driver
-    /// state) + 2 peer connections of the SAME vendor/harness ("claude-code")
-    /// registered under two different config dirs whose owner-assigned actor
-    /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
-    /// render the AGENTS section collapsed.
-    fn arm_render_agents_section() -> AgentsSectionRender {
-        use oneiron::agent_run_status::AgentRunStatus;
-        use oneiron::context_board::{ChildAgentPresence, PeerPresence};
-        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
-
-        let node = RunTreeNode {
-            attempt_id: "child_a".to_owned(),
-            run_id: None,
-            parent_id: None,
-            worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
-            worker: None,
-            agent_id: None,
-            status: RunTreeStatus::Running,
-            result_ref: None,
-            timestamps: RunTreeTimestamps {
-                created_at: 1,
-                updated_at: 1,
-            },
-            failure: None,
-            events: Vec::new(),
-            children: Vec::new(),
-        };
-        let children = [
-            ChildAgentPresence::from_run_tree_node(&node)
-                .expect("running driver node must produce child presence"),
-            ChildAgentPresence {
-                id: "child_b".to_owned(),
-                status: AgentRunStatus::Working,
-                label: None,
-                role: "worker".to_owned(),
-            },
-        ];
-        let peers = [
-            PeerPresence {
-                actor_handle: "cc-main".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(1),
-            },
-            PeerPresence {
-                actor_handle: "cc-second".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(2),
-            },
-        ];
-
-        let section = oneiron::context_board::render_agents_section(&children, &peers);
-        let rows = section
-            .rows
-            .into_iter()
-            .map(|row| AgentRow {
-                id: row.id,
-                lane: row.lane.as_str().to_string(),
-                line: row.line,
-                harness_label: row.harness_label,
-            })
-            .collect();
-        AgentsSectionRender { rows }
-    }
-
-    /// ONE-1697 · 08b §4.1–4.2: one-line rows; children from driver state;
-    /// peer identity keys on the CONNECTION (config dir), never the vendor —
-    /// two same-vendor connections are two named actors (`cc-main` /
-    /// `cc-second`); harness is a row label with an exact value (F9).
-    #[test]
-    fn agents_section_renders_children_and_connection_keyed_peers() {
-        let section = arm_render_agents_section();
-        assert_eq!(section.rows.len(), 4);
-        let one_liners = section
-            .rows
-            .iter()
-            .filter(|r| r.line.lines().count() == 1)
-            .count();
-        assert_eq!(one_liners, 4);
-        let mut child_ids: Vec<&str> = section
-            .rows
-            .iter()
-            .filter(|r| r.lane == "child")
-            .map(|r| r.id.as_str())
-            .collect();
-        child_ids.sort_unstable();
-        assert_eq!(child_ids, ["child_a", "child_b"]);
-        let peers: Vec<&AgentRow> = section.rows.iter().filter(|r| r.lane == "peer").collect();
-        assert_eq!(peers.len(), 2);
-        let mut peer_ids: Vec<&str> = peers.iter().map(|r| r.id.as_str()).collect();
-        peer_ids.sort_unstable();
-        assert_eq!(peer_ids, ["cc-main", "cc-second"]);
-        let exact_labels = peers
-            .iter()
-            .filter(|r| r.harness_label.as_deref() == Some("claude-code"))
-            .count();
-        assert_eq!(exact_labels, 2);
-    }
-
     /// Outcome of a zero-config spawn.
     struct DefaultPresetSpawn {
         spawned_children: usize,
@@ -1423,8 +1309,10 @@ mod peer_fixture {
     use oneiron::claim::{ClaimBody, ClaimSubject};
     use oneiron::config::VaultConfig;
     use oneiron::dreamer_consolidation::{
-        ConsolidationProvenanceHopKind, PeerAnswerLineage, PeerTrustDigestLine,
-        PeerTrustDigestSink, evidence_chain_source, peer_answer_provenance_chain,
+        ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, PeerAnswerLineage,
+        PeerTrustDigestLine, PeerTrustDigestSink, PriorHead, conflict_open_marker_id,
+        decode_consolidation_evidence, detect_conflicts, evidence_chain_source,
+        peer_answer_provenance_chain, surface_peer_answer_digest,
     };
     use oneiron::edge::EdgeActorClass;
     use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
@@ -1432,6 +1320,7 @@ mod peer_fixture {
     use oneiron::{
         AttemptId, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange,
         Vault, dreamer_consolidation::PromotionCandidate, dreamer_promotion::DreamerRunContext,
+        dreamer_promotion::PromotionOutcome, dreamer_promotion::promote_consolidated_claims,
         task_verb::TaskAssignee, task_verb::TaskCreateSpec, task_verb::TaskResultInput,
         task_verb::TaskTerminalDisposition,
     };
@@ -1469,6 +1358,10 @@ mod peer_fixture {
     pub(crate) struct LandedPeerAnswer {
         pub(crate) answer_turn_ref: EntityId,
         pub(crate) consult_task_ref: EntityId,
+    }
+
+    pub(crate) struct OwnerNote {
+        pub(crate) claim_id: EntityId,
     }
 
     pub(crate) struct ForgeryAttempt {
@@ -1878,6 +1771,209 @@ mod peer_fixture {
             candidate
         }
 
+        pub(crate) fn consolidate_peer_answer(
+            &self,
+            answer: &LandedPeerAnswer,
+            value: &str,
+            confidence: f32,
+            supersedes: Option<EntityId>,
+        ) -> (PromotionOutcome, PromotionCandidate) {
+            let candidate = self.peer_candidate(answer, value, confidence, supersedes);
+            let outcome =
+                promote_consolidated_claims(&self.vault, &self.run(), vec![candidate.clone()])
+                    .expect("promotion runs");
+            assert!(
+                outcome.rejected.is_empty(),
+                "peer consolidation must not be rejected: {:?}",
+                outcome.rejected
+            );
+            if supersedes.is_some() {
+                // W7 contradiction closure holds attributed revisions until
+                // owner confirmation; peer storage itself needs no review.
+                assert!(outcome.landed.is_empty());
+                assert_eq!(outcome.pended, vec![candidate.claim_id]);
+            } else {
+                assert!(outcome.pended.is_empty(), "new peer facts need no approval");
+            }
+            (outcome, candidate)
+        }
+
+        /// One owner-authored first-party note, written through the ordinary
+        /// public claim door.
+        pub(crate) fn owner_note(&self, value: &str, confidence: f32) -> OwnerNote {
+            let claim_id = EntityId::from_bytes([0xC6; 16]).expect("note id");
+            let envelope = WriteEnvelope::new(
+                WriteActor::new(self.owner, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                WriteProvenance::new(Value::from("cb-b-1710-owner-note")).expect("provenance"),
+                // The owner's own note takes direct effect: `user_stated`
+                // needs no explicit auto permit, and the default manifest
+                // already grants the human class Auto. Requesting anything
+                // narrower would mint the very approval row this arm counts.
+                ClaimApprovalStatus::Auto,
+            );
+            self.vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    ClaimCandidate::new(
+                        PEER_PREDICATE,
+                        ClaimSubject::Entity(self.subject),
+                        Value::from(value),
+                        confidence,
+                    ),
+                    &envelope,
+                    TimeRange {
+                        start: PEER_NOW - 10,
+                        end: PEER_NOW - 10,
+                    },
+                    PEER_NOW - 10,
+                )
+                .commit()
+                .expect("the owner's own note lands");
+            OwnerNote { claim_id }
+        }
+
+        /// Routes the contradiction through the EXISTING consolidation
+        /// conflict path and returns `(surfacings, marker)` — no peer-specific
+        /// review state is minted.
+        pub(crate) fn detect_open_conflict(
+            &self,
+            candidate: &PromotionCandidate,
+            note: EntityId,
+        ) -> (usize, Option<EntityId>) {
+            let prior = PriorHead {
+                claim_id: note,
+                body: self.claim(note),
+            };
+            let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
+                .expect("conflict detection runs");
+            let marker = conflicts.first().map(|conflict| {
+                conflict_open_marker_id(conflict, self.attempt).expect("marker id derives")
+            });
+            (conflicts.len(), marker)
+        }
+
+        pub(crate) fn surface_digest(
+            &self,
+            answer: &LandedPeerAnswer,
+            claim_ref: EntityId,
+            conflict_open_ref: Option<EntityId>,
+        ) -> usize {
+            let mut sink = CountingDigestSink::default();
+            surface_peer_answer_digest(
+                &mut sink,
+                PeerTrustDigestLine {
+                    consult_task_ref: answer.consult_task_ref,
+                    answer_turn_ref: answer.answer_turn_ref,
+                    claim_ref,
+                    conflict_open_ref,
+                },
+            )
+            .expect("the digest line is informational and always accepted");
+            sink.lines.len()
+        }
+
+        /// Read-time resolution over the contradicted fact: the surfaceable
+        /// active heads, ordered by the ordinary confidence weighting.
+        pub(crate) fn read_ranked_heads(&self) -> Vec<EntityId> {
+            let mut heads: Vec<(EntityId, f32)> = self
+                .vault
+                .claims_for_subject(&self.subject)
+                .expect("read the subject's claims")
+                .into_iter()
+                .filter_map(|id| {
+                    let body = self.claim(id);
+                    let surfaceable = matches!(
+                        body.approval,
+                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                    ) && body.lifecycle == ClaimLifecycleStatus::Active
+                        && !body.stale
+                        && body.predicate == PEER_PREDICATE;
+                    surfaceable.then_some((id, body.confidence))
+                })
+                .collect();
+            heads.sort_by(|left, right| {
+                right
+                    .1
+                    .partial_cmp(&left.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            heads.into_iter().map(|(id, _)| id).collect()
+        }
+
+        /// ONE superseding write corrects the wrong note.
+        pub(crate) fn correct_with_supersession(
+            &self,
+            answer: &LandedPeerAnswer,
+            wrong: EntityId,
+            value: &str,
+            confidence: f32,
+        ) -> usize {
+            let (outcome, candidate) =
+                self.consolidate_peer_answer(answer, value, confidence, Some(wrong));
+            assert_eq!(self.claim(wrong).lifecycle, ClaimLifecycleStatus::Active);
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Proposed
+            );
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
+            assert!(
+                pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(
+                pending
+                    .iter()
+                    .filter(|row| row.claim_id != *candidate.claim_id.as_bytes())
+                    .all(|row| self
+                        .claim(EntityId::from_bytes(row.claim_id).expect("stored pending claim id"))
+                        .predicate
+                        == "core.conflict.open")
+            );
+            let proposed = self
+                .vault
+                .get(&candidate.claim_id)
+                .expect("read proposed correction")
+                .expect("proposal bytes");
+            self.vault
+                .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
+                .expect("owner confirms attributed correction");
+            let pending = self
+                .vault
+                .pending_gate_consents(1_000)
+                .expect("read correction and annotation consents");
+            assert!(
+                !pending
+                    .iter()
+                    .any(|row| row.claim_id == *candidate.claim_id.as_bytes())
+            );
+            assert!(pending.iter().all(|row| {
+                matches!(
+                    self.claim(
+                        EntityId::from_bytes(row.claim_id).expect("stored pending claim id")
+                    )
+                    .predicate
+                    .as_str(),
+                    "core.conflict.open" | "core.supersession.provenance"
+                )
+            }));
+            assert_eq!(
+                self.claim(candidate.claim_id).approval,
+                ClaimApprovalStatus::Approved
+            );
+            assert_eq!(
+                self.claim(wrong).lifecycle,
+                ClaimLifecycleStatus::Superseded,
+                "the wrong note is superseded, never deleted"
+            );
+            outcome.pended.len()
+        }
+
         /// Attempts the SAME tool_output-lineage → generated restamp through
         /// every claim-write door an agent can reach. Each attempt is
         /// counted, and each must be refused by the central lineage check.
@@ -2009,6 +2105,22 @@ mod peer_fixture {
                 .to_string()
                 .contains("claim source widens beyond evidence lineage")
         })
+    }
+
+    /// The typed chain read back off a landed claim's structured evidence.
+    pub(crate) fn stored_chain(body: &ClaimBody) -> Vec<ConsolidationProvenanceHop> {
+        let Some(Value::Map(evidence)) = &body.evidence else {
+            panic!("a promoted claim carries the envelope evidence map");
+        };
+        let candidate_evidence = evidence
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+            .map(|(_, value)| value)
+            .expect("candidate_evidence entry");
+        decode_consolidation_evidence(candidate_evidence)
+            .expect("the evidence envelope decodes")
+            .expect("a consolidation claim carries the typed envelope")
+            .chain
     }
 
     fn turn_body(text: &str) -> Vec<u8> {
