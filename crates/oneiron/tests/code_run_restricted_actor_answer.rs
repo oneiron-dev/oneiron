@@ -110,7 +110,7 @@ impl AgentVerbDoor for TierDoor {
     ) -> oneiron::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         // Only the recall row is bound: these programs call nothing else
         // through the verb door.
-        if call.verb != AgentVerb::Recall {
+        if call.verb != AgentVerb::VaultRecall {
             return Ok(Err(Self::refused("mcp_verb_not_bound")));
         }
         // Recall is Reads, which every tier holds.
