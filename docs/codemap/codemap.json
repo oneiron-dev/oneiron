@@ -2956,7 +2956,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append mutation doors",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -3106,6 +3106,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/hold_override_receipt.rs",
+     "purpose": "The attested record of a hold override (Fable 5.2 item 2, Engine call S65-B-R3): each time a generic Resume…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/hook_hold.rs",
      "purpose": "Lease-fenced verb-hook pauses: a workflow's, whose transcript its checkpoint writer retains in the same…",
      "surface": {
@@ -3142,7 +3152,7 @@
      "path": "src/attempt_queue/lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 3
      }
@@ -3165,7 +3175,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "mod": 9,
       "re-export": 12
      }
@@ -25316,7 +25326,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 17,
       "struct": 4
@@ -27020,7 +27030,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 1,
       "re-export": 4
      }
@@ -27042,7 +27052,7 @@
      "path": "src/conversation_dag/policy.rs",
      "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -27256,7 +27266,7 @@
      "path": "src/conversation_dag/writes.rs",
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 6
      }
     },
@@ -90220,6 +90230,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/dag_append.rs",
+     "purpose": "Doors for `tests/dag_append_composed_source.rs` (DAG-APPEND-SOURCE-LABEL): the source label each of the DAG…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/live_run_claim_put.rs",
      "purpose": "Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures…",
      "surface": {
@@ -90233,7 +90253,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 5
+      "mod": 6
      }
     },
     {
@@ -90243,7 +90263,7 @@
      "path": "src/test_doors/run_hold.rs",
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -95802,7 +95822,7 @@
      "path": "src/workspace_roster/join_consent.rs",
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 6,
       "fn": 5,
       "re-export": 2,
@@ -98249,6 +98269,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_room_offer.rs",
+     "purpose": "A custom agent asks to join a room by an offer card (ARCH-0006a, OF-530 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/build_cache.rs",
      "purpose": "Public cache boundary: real vaults and BLOB_ARTIFACT versions only",
      "surface": {}
@@ -98301,6 +98329,22 @@
      "notable": [],
      "path": "tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs",
      "purpose": "(c) There is no `From<ConsentProposal> for ConsentGrant` either: the guard cannot skip the owner entirely…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dag_append_composed_source.rs",
+     "purpose": "The DAG append's source label follows who composed the words (Engine ruling…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dag_append_source_label.rs",
+     "purpose": "A person's own DAG append is that person's word (Engine ruling DAG-APPEND-SOURCE-LABEL = A)",
      "surface": {}
     },
     {
@@ -99074,6 +99118,22 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_override_receipt.rs",
+     "purpose": "The attested record of a hold override (Engine call S65-B-R3)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_hold_release.rs",
+     "purpose": "Who releases a held run, keyed on the hold and the caller (Fable 5.2 item 2; lead 06:5x; Engine calls…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99267,7 +99327,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100660,7 +100720,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100830,8 +100890,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7242,
-   "test_files": 907
+   "source_files": 7244,
+   "test_files": 912
   },
   "oneiron-agent-runtime": {
    "files": [

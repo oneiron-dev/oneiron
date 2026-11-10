@@ -277,7 +277,6 @@ mod join_receipt;
 mod room_leave;
 pub(crate) mod tables;
 mod workplace_join;
-pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
@@ -285,6 +284,7 @@ pub use join_consent::{
     decide_join_in_txn, require_actor_join_in_txn, require_join_for_branch_in_txn,
     require_join_in_txn, room_funding_in_txn,
 };
+pub(crate) use join_consent::{person_of_actor_in_txn, subject_person_of_actor_in_txn};
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
 };
