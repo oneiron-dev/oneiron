@@ -17,7 +17,11 @@ fn get(server: &ServerProcess) -> String {
         .expect("send");
     let mut answer = String::new();
     stream.read_to_string(&mut answer).expect("read");
-    answer.rsplit("\r\n\r\n").next().unwrap_or_default().to_owned()
+    answer
+        .rsplit("\r\n\r\n")
+        .next()
+        .unwrap_or_default()
+        .to_owned()
 }
 
 #[test]

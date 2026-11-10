@@ -79,7 +79,12 @@ pub(crate) fn json_reply(
 }
 
 /// The delta events of a streamed answer, without its closing events.
-pub(crate) fn delta_events(protocol: Protocol, id: &str, model: &str, deltas: &[String]) -> Vec<String> {
+pub(crate) fn delta_events(
+    protocol: Protocol,
+    id: &str,
+    model: &str,
+    deltas: &[String],
+) -> Vec<String> {
     match protocol {
         Protocol::OpenAi => deltas
             .iter()
@@ -113,7 +118,12 @@ pub(crate) fn delta_events(protocol: Protocol, id: &str, model: &str, deltas: &[
 
 /// The events that open a streamed answer (Anthropic only; OpenAI opens
 /// with its first delta).
-pub(crate) fn opening_events(protocol: Protocol, id: &str, model: &str, usage: Option<Usage>) -> Vec<String> {
+pub(crate) fn opening_events(
+    protocol: Protocol,
+    id: &str,
+    model: &str,
+    usage: Option<Usage>,
+) -> Vec<String> {
     match protocol {
         Protocol::OpenAi => Vec::new(),
         Protocol::Anthropic => {
@@ -143,7 +153,12 @@ pub(crate) fn opening_events(protocol: Protocol, id: &str, model: &str, usage: O
 
 /// The events that close a streamed answer: the stop, the usage when the
 /// reply declares one, and OpenAI's `[DONE]`.
-pub(crate) fn closing_events(protocol: Protocol, id: &str, model: &str, usage: Option<Usage>) -> Vec<String> {
+pub(crate) fn closing_events(
+    protocol: Protocol,
+    id: &str,
+    model: &str,
+    usage: Option<Usage>,
+) -> Vec<String> {
     match protocol {
         Protocol::OpenAi => {
             let mut events = vec![event(
@@ -199,11 +214,19 @@ pub(crate) fn error_body(protocol: Protocol, status: u16, message: &str) -> Valu
     let client = (400..500).contains(&status);
     match protocol {
         Protocol::OpenAi => {
-            let kind = if client { "invalid_request_error" } else { "server_error" };
+            let kind = if client {
+                "invalid_request_error"
+            } else {
+                "server_error"
+            };
             json!({"error": {"message": message, "type": kind}})
         }
         Protocol::Anthropic => {
-            let kind = if client { "invalid_request_error" } else { "api_error" };
+            let kind = if client {
+                "invalid_request_error"
+            } else {
+                "api_error"
+            };
             json!({"type": "error", "error": {"type": kind, "message": message}})
         }
     }

@@ -42,7 +42,8 @@ const FORGED_CONSOLE: &str = "executor-real:11";
 const BARE_TEXT: &str = "console.log(\"executor-bare:13\"); finish(\"cleaned journey done\");";
 const BARE_CONSOLE: &str = "executor-bare:13";
 // Fixture `inputs.exhaustionReply`.
-const EXHAUSTION_TEXT: &str = "<exec>\n<exec>\nconsole.log(\"MUST-NOT-EXECUTE\");\n</exec>\n</exec>";
+const EXHAUSTION_TEXT: &str =
+    "<exec>\n<exec>\nconsole.log(\"MUST-NOT-EXECUTE\");\n</exec>\n</exec>";
 // Case-authored second turns (original E2E :169-171), preserved verbatim.
 const FINISH_FENCED: &str = "finish(\"rt02 fenced run done\");";
 const FINISH_FORGED: &str = "finish(\"rt02 forged run done\");";
@@ -72,7 +73,13 @@ fn test_run_id(tag: u8) -> EntityId {
 
 /// Production heal of a reply that must be accepted: `(repairs, code,
 /// trailing_speak)` through the door to `wire.rs:83-86`.
-fn healing_repairs(text: &str) -> (oneiron::code_run::ExecutorWireRepairs, String, Option<String>) {
+fn healing_repairs(
+    text: &str,
+) -> (
+    oneiron::code_run::ExecutorWireRepairs,
+    String,
+    Option<String>,
+) {
     let (repairs, outcome) = code_reply_healer::heal_code_reply_text(text);
     match outcome {
         Ok(healed) => (repairs, healed.0, healed.1),
@@ -111,14 +118,8 @@ fn fenced_reply_heals_to_bare_program() {
     // derivation itself is covered with the real `committed()` below.
     let model = test_model_id();
     let run_id = test_run_id(0xA1);
-    let (record, is_rejected, healed_model) = code_reply_healer::accepted_correction_record(
-        run_id,
-        0,
-        &model,
-        repairs,
-        0,
-        None,
-    );
+    let (record, is_rejected, healed_model) =
+        code_reply_healer::accepted_correction_record(run_id, 0, &model, repairs, 0, None);
     assert!(!is_rejected);
     assert!(healed_model.is_some());
     assert_eq!(record.run_id, run_id);
@@ -357,18 +358,22 @@ fn record_serialization_matches_e2e_wire_shape() {
             "stripped_exec_wrapper": false, "discarded_console_blocks": 0,
         }))
     );
-    assert_eq!(value.get("model_repair_retries_used"), Some(&serde_json::json!(0)));
+    assert_eq!(
+        value.get("model_repair_retries_used"),
+        Some(&serde_json::json!(0))
+    );
     assert_eq!(value.get("exhausted"), Some(&serde_json::json!(false)));
     assert_eq!(value.get("step"), Some(&serde_json::json!(0)));
     assert_eq!(value.get("attempt"), Some(&serde_json::json!(0)));
-    assert_eq!(value.get("model_id"), Some(&serde_json::json!(ENGINE_MODEL_ID)));
+    assert_eq!(
+        value.get("model_id"),
+        Some(&serde_json::json!(ENGINE_MODEL_ID))
+    );
     assert!(value.get("recorded_at_ms").is_some());
 
     let mut rej_repairs = ExecutorWireRepairs::default();
-    let rej_outcome = code_reply_healer::heal_code_reply_text_tracking(
-        EXHAUSTION_TEXT,
-        &mut rej_repairs,
-    );
+    let rej_outcome =
+        code_reply_healer::heal_code_reply_text_tracking(EXHAUSTION_TEXT, &mut rej_repairs);
     let reason = match rej_outcome {
         Err(oneiron::engine_executor::EngineExecutorError::Engine(
             oneiron::Error::InvalidClaimBody(reason),
@@ -395,7 +400,10 @@ fn record_serialization_matches_e2e_wire_shape() {
         rej_value.get("policy"),
         Some(&serde_json::json!({"normalization_passes": 1, "model_repair_retries": 0}))
     );
-    assert_eq!(rej_value.get("model_repair_retries_used"), Some(&serde_json::json!(0)));
+    assert_eq!(
+        rej_value.get("model_repair_retries_used"),
+        Some(&serde_json::json!(0))
+    );
     assert!(rej_value.get("checkpoint").is_none());
     assert_eq!(
         rej_value.get("repairs"),
@@ -435,7 +443,10 @@ fn record_serialization_matches_e2e_wire_shape() {
         None,
     );
     let clean_value = record_json(&clean_record);
-    assert_eq!(clean_value.get("outcome"), Some(&serde_json::json!({"kind": "clean"})));
+    assert_eq!(
+        clean_value.get("outcome"),
+        Some(&serde_json::json!({"kind": "clean"}))
+    );
     assert_eq!(
         clean_value.get("repairs"),
         Some(&serde_json::json!({
@@ -511,7 +522,11 @@ fn committed_checkpoint_carries_step_and_state_hash() {
         None => panic!("checkpoint must serialize a state_hash string"),
     };
     assert_eq!(hash_text.len(), 64);
-    assert!(hash_text.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+    assert!(
+        hash_text
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    );
 }
 
 #[test]
@@ -527,7 +542,7 @@ fn committed_checkpoint_rejects_step_mismatch() {
     };
     replay.step_checkpoints.push(step_checkpoint);
     match code_reply_healer::committed_checkpoint(&replay, 1) {
-        Err(oneiron::Error::InvariantViolation(_)) => {},
+        Err(oneiron::Error::InvariantViolation(_)) => {}
         Err(other) => panic!("mismatch must fail InvariantViolation, got: {other:?}"),
         Ok(committed) => panic!("mismatch must fail, got step {}", committed.step),
     }
