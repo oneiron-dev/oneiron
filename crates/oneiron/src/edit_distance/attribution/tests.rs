@@ -261,23 +261,20 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
             let mut forged = body.clone();
             forged.approval = approval;
             let bytes = crate::claim::encode_claim_body(&forged)?;
-            // e576014ab29 (#4332) retired the skill-cost re-approval refusal
-            // with the scalar rows: the attempt below is no longer refused at
-            // the door, it is inert by shape — an Imported head is never read
-            // as a cell's own (active_heads_in_txn wants Observed) — so it
-            // lands or fails without resurrecting anything. The None reads
-            // after the loop are the teeth.
-            let _ = target
-                .batch()
-                .put_replicated(
-                    &EntityId::now(),
-                    crate::registry::ENTITY_TYPE_CLAIM,
-                    t(70),
-                    70,
-                    None,
-                    &bytes,
-                )
-                .commit();
+            assert!(
+                target
+                    .batch()
+                    .put_replicated(
+                        &EntityId::now(),
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        t(70),
+                        70,
+                        None,
+                        &bytes,
+                    )
+                    .commit()
+                    .is_err()
+            );
         }
         preserved.push(body);
     }
@@ -361,6 +358,16 @@ impl DecisionProvider for ScriptedAttribution {
 
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let wanted = call.question.id.to_hex();
+        let hunks = call
+            .state
+            .get("hunks")
+            .and_then(serde_json::Value::as_array)
+            .expect("the attribution question carries every changed hunk");
+        assert_eq!(
+            hunks.len(),
+            self.answers.len(),
+            "the judge sees every changed hunk"
+        );
         let index = call
             .state
             .get("hunks")
