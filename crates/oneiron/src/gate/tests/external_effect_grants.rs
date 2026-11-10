@@ -43,6 +43,31 @@ fn approve_scoped_external_fixture(vault: &crate::Vault, key_id: &EntityId) -> R
     Ok(())
 }
 
+fn mint_scoped_mcp_grant(
+    vault: &crate::Vault,
+    grant_id: &EntityId,
+    principal_ref: &str,
+) -> Result<crate::outbound_grant::StandingOutboundGrant> {
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    vault.with_write_txn(|wtxn| {
+        vault.mint_standing_outbound_grant_in_txn(
+            wtxn,
+            &owner,
+            *grant_id,
+            principal_ref,
+            crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+                server: "files".to_owned(),
+                tool: "read_file".to_owned(),
+                data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+                tool_data_classes: vec![
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
+                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+            },
+        )
+    })
+}
+
 #[test]
 fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -97,7 +122,11 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
             verb_class: "send".to_owned(),
         },
     };
-    vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+    vault.mint_standing_outbound_grant(
+        &crate::test_util::embedded_owner_proof(&vault),
+        grant_id,
+        &intent,
+    )?;
     let old_pin = vault.pin_entity_revision(&grant_id)?;
     let old_raw =
         vault.get_raw_with_mode(&grant_id, crate::vault::entity_revision::ReadMode::Live)?;
@@ -186,23 +215,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0xD8), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xD9);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &crate::outbound_grant::ScopedMcpGrantMintIntent {
-            principal_ref: test_id(0xE0).to_hex(),
-            origin_component_id: "ask-mcp".to_owned(),
-            origin_action_id: "grant-scoped-mcp".to_owned(),
-            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &test_id(0xE0).to_hex())?;
     vault.register_connector_key(
         &test_id(0xDA),
         crate::connector_key::ConnectorKeyRecord::active(
@@ -270,23 +283,7 @@ fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<(
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0xDC), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xDD);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &crate::outbound_grant::ScopedMcpGrantMintIntent {
-            principal_ref: test_id(0xE0).to_hex(),
-            origin_component_id: "ask-mcp".to_owned(),
-            origin_action_id: "grant-scoped-mcp".to_owned(),
-            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &test_id(0xE0).to_hex())?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input(&test_id(0xE0).to_hex(), "send", "mcp:calendar");
     effect.has_opted_in = false;
@@ -323,23 +320,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
     )?;
     put_policy_manifest_bytes(&vault, test_id(0xB8), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xB9);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &crate::outbound_grant::ScopedMcpGrantMintIntent {
-            principal_ref: herald_id.to_hex(),
-            origin_component_id: "ask-mcp".to_owned(),
-            origin_action_id: "grant-scoped-mcp".to_owned(),
-            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &herald_id.to_hex())?;
     vault.register_connector_key(
         &test_id(0xBA),
         crate::connector_key::ConnectorKeyRecord::active(
@@ -378,23 +359,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
     let caller_id = test_id(0xBC);
     let grant_owner_id = test_id(0xBD);
     let grant_id = test_id(0xBE);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &crate::outbound_grant::ScopedMcpGrantMintIntent {
-            principal_ref: grant_owner_id.to_hex(),
-            origin_component_id: "ask-mcp".to_owned(),
-            origin_action_id: "grant-scoped-mcp".to_owned(),
-            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &grant_owner_id.to_hex())?;
     vault.register_connector_key(
         &test_id(0xBF),
         crate::connector_key::ConnectorKeyRecord::active(
@@ -442,7 +407,11 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
             channel: "line".to_owned(),
         },
     };
-    vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+    vault.mint_standing_outbound_grant(
+        &crate::test_util::embedded_owner_proof(&vault),
+        grant_id,
+        &intent,
+    )?;
     let policy = resolve(&vault)?;
 
     let mut out_of_scope = external_effect_gate_input("sender", "send", "email");
@@ -609,7 +578,11 @@ fn granted_contact_fixture(
         origin_receipt_ref: Some("gate:ask-1".to_owned()),
         scope,
     };
-    vault.mint_standing_outbound_grant(&test_id(0xD9), &intent, 10)?;
+    vault.mint_standing_outbound_grant(
+        &crate::test_util::embedded_owner_proof(&vault),
+        test_id(0xD9),
+        &intent,
+    )?;
     let contact_id = test_id(0xCB);
     let contact =
         CounterpartyContactRecord::user_introduction(test_id(0xCA), "kenji@example.com", 10)?;
