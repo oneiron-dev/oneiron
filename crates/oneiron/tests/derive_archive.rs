@@ -14,7 +14,7 @@ use oneiron::test_doors::consolidation::{
     UnboundPass, consolidate_unbound_turn, open_dreamer_vault,
 };
 use oneiron::test_doors::derive::{
-    Archive, Derived, Named, commit, commit_in_attempt, row_live, set_strength_policy,
+    Archive, Derived, Named, commit, commit_in_attempt, revert, row_live, set_strength_policy,
 };
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, archive_every_quiet_claim, dreamer, stand_steward_grant,
@@ -22,6 +22,7 @@ use oneiron::test_doors::steward::{
 use oneiron::{EdgeActorClass, EntityId, Vault};
 
 const READER: &str = "reader";
+const CHANGED_SINCE: &str = "derive.revert.changed_since";
 
 /// Sets a strength policy under which every landed claim is quiet and weak,
 /// and lets the vault's second-grained clock pass the policy's 1 ms window.
@@ -178,5 +179,67 @@ fn an_archive_names_its_attempt() {
             false,
             vec!["gate.deny.derive.archive_needs_attempt".to_owned()]
         )
+    );
+}
+
+#[test]
+fn reverting_an_archive_leaves_a_later_archive_of_the_same_claim() {
+    let fixture = fixture();
+    quiet_policy(&fixture.vault);
+    let archive_as = |run: &str, local: &'static str| {
+        commit_in_attempt(
+            &fixture.vault,
+            fixture.dreamer,
+            EdgeActorClass::System,
+            run,
+            Some(fixture.pass.attempt),
+            &[Derived::Archive(Archive {
+                local,
+                claim: Named::Stored(fixture.claim),
+                score: 0.1,
+            })],
+        )
+        .expect("commit")
+    };
+    let first = archive_as("run-archive-first", "first");
+    assert!(
+        first.items[0].landed,
+        "the first archive lands: {:?}",
+        first.items
+    );
+    fixture
+        .vault
+        .restore_archived(&fixture.claim)
+        .expect("the owner's restore");
+    assert!(
+        row_live(&fixture.vault, fixture.claim).expect("read"),
+        "the restored claim is live"
+    );
+
+    // The vault's second-grained clock passes the quiet window again.
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    let later = archive_as("run-archive-later", "later");
+    assert!(
+        later.items[0].landed,
+        "the later archive lands: {:?}",
+        later.items
+    );
+
+    let (reverted, left) = revert(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        first.batch,
+    )
+    .expect("revert")
+    .expect("the Dreamer may revert its own batch");
+    assert!(
+        reverted.is_empty(),
+        "the first archive no longer stands: {reverted:?}"
+    );
+    assert_eq!(left, vec![("first".to_owned(), CHANGED_SINCE.to_owned())]);
+    assert!(
+        !row_live(&fixture.vault, fixture.claim).expect("read"),
+        "the later archive still stands"
     );
 }
