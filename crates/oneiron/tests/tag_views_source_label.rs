@@ -24,7 +24,8 @@ use oneiron::access_grant::{
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
-    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork,
+    NerSpan,
 };
 use oneiron::memory::{
     MEMORY_CODE_NOT_FOUND, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
@@ -189,7 +190,13 @@ fn tagged_fixture() -> Fixture {
     // MESSAGEs on its own live grant, never R's.
     let shared = EntityId::now();
     vault
-        .put_entity(&shared, ENTITY_TYPE_RELATIONSHIP, at(1), 1, b"relationship S")
+        .put_entity(
+            &shared,
+            ENTITY_TYPE_RELATIONSHIP,
+            at(1),
+            1,
+            b"relationship S",
+        )
         .expect("relationship S");
     vault
         .create_access_grant(
@@ -326,7 +333,9 @@ impl Fixture {
 #[test]
 fn tag_views_serve_no_mention_from_a_message_outside_the_readers_relationship() {
     let fixture = tagged_fixture();
-    let outsider = fixture.vault.memory(fixture.outsider, EdgeActorClass::Human);
+    let outsider = fixture
+        .vault
+        .memory(fixture.outsider, EdgeActorClass::Human);
     let hidden = fixture.hidden_message.to_hex();
 
     let tags = outsider
