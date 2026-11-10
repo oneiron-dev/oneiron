@@ -265,7 +265,8 @@ fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
         .as_ref()
         .expect("gated terminal evidence");
     assert_eq!(evidence.turn_id, FIXTURE_TURN_ID);
-    assert_eq!(evidence.activated_memory_id, FIXTURE_MEMORY_ID);
+    // Rule D (OF-092, 30b6386f6fd): "no activated-memory id is required";
+    // the evidence no longer carries one, so its assertion went with it.
     assert_eq!(evidence.gate_score, 0.75);
     assert_eq!(metadata_of(outcome, "session_id"), Some("session-3"));
 }

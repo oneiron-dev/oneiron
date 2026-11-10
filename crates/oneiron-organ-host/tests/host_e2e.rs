@@ -16,7 +16,7 @@ use oneiron_organ_host::{
     BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
     OrganState, SightedInput, Unavailable,
 };
-use oneiron_organ_protocol::{FrameError, Value};
+use oneiron_organ_protocol::{FrameError, Hash32, Value, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -134,10 +134,7 @@ fn inputs_cross_as_regions_and_the_engine_hashes_them() {
     let host = host();
     for _ in 0..2 {
         let outcome = host
-            .call(
-                &vault,
-                call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"),
-            )
+            .call(&vault, call("organ.touch", Value::Nil, inputs.clone(), "g"))
             .expect("touch");
         assert_eq!(
             report_u64(&outcome.report, "fold"),

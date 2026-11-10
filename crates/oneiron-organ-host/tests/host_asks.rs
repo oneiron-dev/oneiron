@@ -23,7 +23,8 @@ use oneiron_organ_host::{
     HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, Value,
+    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, PROTOCOL, Value,
+    touch_fold,
 };
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -141,16 +142,10 @@ fn a_granted_ask_is_answered_through_a_region_and_receipted() {
     let seen = lines(&outcome.report);
     assert_eq!(seen.len(), 2);
     for line in &seen {
+        assert_eq!(field(line, "answered").and_then(Value::as_str), Some("hi"));
+        assert_eq!(field(line, "len").and_then(Value::as_u64), Some(200 * 1024));
         assert_eq!(
-            field(line, "answered").and_then(rmpv::Value::as_str),
-            Some("hi")
-        );
-        assert_eq!(
-            field(line, "len").and_then(rmpv::Value::as_u64),
-            Some(200 * 1024)
-        );
-        assert_eq!(
-            field(line, "fold").and_then(rmpv::Value::as_u64),
+            field(line, "fold").and_then(Value::as_u64),
             Some(touch_fold(&handler.bytes))
         );
     }
@@ -433,7 +428,7 @@ fn a_handler_may_not_call_an_organ() {
     let outcome = host
         .call_with(
             &vault,
-            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            ask_call(ANSWER, Value::Nil, 1, Duration::from_secs(10)),
             Vec::new(),
             &asks,
         )
