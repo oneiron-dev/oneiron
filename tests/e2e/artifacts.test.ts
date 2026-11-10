@@ -1,5 +1,8 @@
-import { afterAll, test } from "bun:test";
-import { defineFile } from "./support/run.ts";
+import { afterAll, expect, test } from "bun:test";
+import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import { EngineFixture, type PairedActor } from "./support/engine.ts";
+import { PublicHttpError, WsRpcError } from "./support/clients.ts";
+import { defineFile, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -328,3 +331,406 @@ suite.todo(test, "ARTIFACTS-08", "waits on typed public signing-ceremony HTTP/SD
  * a public preview or a generic task/claim write to manufacture these pointers.
  */
 suite.todo(test, "ARTIFACTS-09", "waits on typed artifact publish/repoint/unpublish and lease-bound private live-port preview calls");
+
+// ---- MUSE-LOOP-07 (Muse Wonder Full, ported 10 Nov) ----
+/*
+ * MUSE-LOOP-07 — PARTIAL (blob artifact family only).
+ * Promises proved: P-LOOP-024 (machine work lands beside the live artifact),
+ * P-LOOP-025 (Keep settles once as a new version with a receipt),
+ * P-LOOP-026 (Discard drops the proposal without replacing the live version),
+ * P-LOOP-005 at artifact-version author-stamp level (the human's landed edit
+ * keeps the human maker's made_by actor, distinct from the agent's).
+ * Doors used: vault.artifacts.put/append (act), vault.artifacts.view,
+ * vault.artifacts.read and vault.artifacts.proposals (second-door read-backs),
+ * vault.artifacts.keep/discard over WS plus vault.receipts.get (settle and
+ * receipt chain), typed facade calls caught as PublicHttpError (wrong-actor
+ * refusals), engine.restart() (survival), vault.authority.audit plus
+ * POST /v1/core/slips/revoke (the agent
+ * loses its credential authority mid-flow, as in AUTHORITY-05).
+ * Unproved: P-LOOP-023 (no typed FacadeVerb takes LensFrameEventRequest, so
+ * no public door submits a deterministic generated-UI action event for a held
+ * card), P-LOOP-031 (detaching a comment needs an anchored DOCX version; the
+ * harness carries no DOCX fixture asset), and P-LOOP-005 at op-stream level
+ * (vault.artifacts.body.commits needs a live DOCX/XLSX/PPTX body). See report.
+ */
+type museLoop07Client = PairedActor["client"];
+type museLoop07ArtifactView = NonNullable<FacadeResult<"vault.artifacts.view">>;
+type museLoop07VersionView = museLoop07ArtifactView["versions"][number];
+type museLoop07AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+
+async function museLoop07FacadeRefusal(run: () => Promise<unknown>, label: string): Promise<PublicHttpError> {
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error;
+    throw error;
+  }
+  throw new Error(`${label} unexpectedly succeeded for the wrong actor`);
+}
+
+function museLoop07ExpectRefusalEnvelope(error: PublicHttpError): void {
+  expect(typeof error.error?.code).toBe("string");
+  expect(typeof error.error?.message).toBe("string");
+  expect((error.error?.code as string).length > 0).toBe(true);
+  expect((error.error?.message as string).length > 0).toBe(true);
+}
+
+function museLoop07ExpectHttpRefusal(error: PublicHttpError, status: number): void {
+  expect(error.reply.status).toBe(status);
+  museLoop07ExpectRefusalEnvelope(error);
+}
+
+function museLoop07B64(text: string): string {
+  return Buffer.from(text, "utf8").toString("base64");
+}
+
+async function museLoop07View(client: museLoop07Client, artifactRef: string): Promise<museLoop07ArtifactView> {
+  const view = await client.call("vault.artifacts.view", { artifact_ref: artifactRef });
+  if (!view) throw new Error("vault.artifacts.view returned null for a registered artifact");
+  return view;
+}
+
+function museLoop07Version(view: museLoop07ArtifactView, version: number): museLoop07VersionView {
+  const row = view.versions.find(candidate => candidate.version === version);
+  if (!row) throw new Error(`Artifact view has no version ${version}`);
+  return row;
+}
+
+async function museLoop07ReadText(client: museLoop07Client, artifactRef: string, version: number): Promise<string | null> {
+  const content = await client.call("vault.artifacts.read", { artifact_ref: artifactRef, version });
+  return content ? Buffer.from(content.content_base64, "base64").toString("utf8") : null;
+}
+
+async function museLoop07WsCall<V extends FacadeVerb>(
+  engine: EngineFixture,
+  actor: PairedActor,
+  verb: V,
+  input: FacadeInput<V>,
+): Promise<{ value: FacadeResult<V>; receiptRef: string }> {
+  const socket = await engine.websocket(actor);
+  try {
+    const { value, frames } = await socket.call(verb, input);
+    const receiptRef = frames.find(
+      frame => frame.envelope.receipt_ref != null && frame.envelope.receipt_ref !== "",
+    )?.envelope.receipt_ref;
+    if (!receiptRef) throw new Error(`WS ${verb} returned no receipt_ref frame`);
+    return { value, receiptRef };
+  } finally {
+    socket.close();
+  }
+}
+
+async function museLoop07WsRefusedReceiptRef<V extends FacadeVerb>(
+  engine: EngineFixture,
+  actor: PairedActor,
+  verb: V,
+  input: FacadeInput<V>,
+): Promise<string> {
+  const socket = await engine.websocket(actor);
+  try {
+    await socket.call(verb, input);
+    throw new Error(`WS ${verb} unexpectedly succeeded for the wrong actor`);
+  } catch (error) {
+    if (error instanceof WsRpcError) {
+      const receiptRef = error.frames.find(
+        frame => frame.envelope.receipt_ref != null && frame.envelope.receipt_ref !== "",
+      )?.envelope.receipt_ref;
+      if (!receiptRef) throw new Error(`Refused WS ${verb} left no receipt_ref frame`);
+      return receiptRef;
+    }
+    throw error;
+  } finally {
+    socket.close();
+  }
+}
+
+async function museLoop07CallReceipt(
+  client: museLoop07Client,
+  receiptRef: string,
+): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> {
+  const receipt = await client.call("vault.receipts.get", { receipt_ref: receiptRef });
+  if (!receipt) throw new Error("vault.receipts.get returned null for a frame receipt_ref");
+  return receipt;
+}
+
+async function museLoop07AuditRows(client: museLoop07Client): Promise<museLoop07AuditRow[]> {
+  const rows: museLoop07AuditRow[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = { limit: 500, ...(after ? { after } : {}) };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    after = page.next_after;
+  }
+}
+
+function museLoop07MintedSlipId(
+  before: readonly museLoop07AuditRow[],
+  after: readonly museLoop07AuditRow[],
+  holder: string,
+): string {
+  const existing = new Set(before.map(row => row.entry_hash));
+  const minted = after.filter(row => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  return row.subject_ref!;
+}
+
+suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live version until the owner Keeps it once or Discards it, and each version keeps its maker's actor stamp", async () => {
+  const museLoop07T0 = 1769947200;
+  const museLoop07Marker = secretHex(8);
+  const museLoop07LiveV1 = `MUSE-LOOP-07 live version one ${museLoop07Marker}\n`;
+  const museLoop07AgentV2 = `MUSE-LOOP-07 agent proposal two ${museLoop07Marker}\n`;
+  const museLoop07HumanV3 = `MUSE-LOOP-07 human live edit three ${museLoop07Marker}\n`;
+  const museLoop07Discarded = `MUSE-LOOP-07 agent proposal to discard ${museLoop07Marker}\n`;
+  const museLoop07NoWrite = `MUSE-LOOP-07 read-only attempt ${museLoop07Marker}\n`;
+  const museLoop07PostRevoke = `MUSE-LOOP-07 post-revoke attempt ${museLoop07Marker}\n`;
+  redactor.add(
+    museLoop07Marker, museLoop07LiveV1, museLoop07AgentV2, museLoop07HumanV3,
+    museLoop07Discarded, museLoop07NoWrite, museLoop07PostRevoke,
+  );
+
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-07", profile });
+  const museLoop07OwnerSelf = await engine.client.call("self.actor", {});
+  expect(museLoop07OwnerSelf.actor_ref.length > 0).toBe(true);
+
+  // Actors, through the same public pairing SECRETS-01 uses: an existing
+  // PERSON record plus token pair. The proposer reads and writes; the second
+  // agent holds only the Read credential scope.
+  const museLoop07AuditBefore = await museLoop07AuditRows(engine.client);
+  const museLoop07AgentRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: `Muse Loop 07 Proposer ${museLoop07Marker}` }, occurred_at: museLoop07T0,
+  });
+  const museLoop07Agent = await engine.pairActor({
+    principalRef: museLoop07AgentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+  });
+  const museLoop07ReadOnlyRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: `Muse Loop 07 Reader ${museLoop07Marker}` }, occurred_at: museLoop07T0,
+  });
+  const museLoop07ReadOnly = await engine.pairActor({
+    principalRef: museLoop07ReadOnlyRecord.id_hex, actorClass: "agent", scope: ["core:read"],
+  });
+  const museLoop07AgentSelf = await museLoop07Agent.client.call("self.actor", {});
+  expect(museLoop07AgentSelf.actor_ref).not.toBe(museLoop07OwnerSelf.actor_ref);
+
+  // Live artifact at version 1, made by the owner. put registers the blob
+  // artifact and its bytes ride append (facade catalog, vault.artifacts.put).
+  const museLoop07Registered = await engine.client.call("vault.artifacts.put", {
+    name: `muse-loop-07-${museLoop07Marker}.txt`, media_type: "text/plain", occurred_at: museLoop07T0 + 1,
+  });
+  await engine.awaitReceipt(museLoop07Registered.receipt_ref);
+  const museLoop07ArtifactRef = museLoop07Registered.entity_ref;
+  const museLoop07First = await engine.client.call("vault.artifacts.append", {
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07LiveV1), occurred_at: museLoop07T0 + 2,
+  });
+  expect("landed" in museLoop07First).toBe(true);
+  if (!("landed" in museLoop07First)) throw new Error("The owner's first version did not land on the chain");
+  expect(museLoop07First.landed.version).toBe(1);
+
+  // Second-door read-backs of version 1 and its author stamp (P-LOOP-005).
+  const museLoop07View1 = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07View1.head).toBe(1);
+  expect(museLoop07View1.versions).toHaveLength(1);
+  const museLoop07HumanMaker = museLoop07Version(museLoop07View1, 1).made_by.process.actor;
+  expect(museLoop07HumanMaker.length > 0).toBe(true);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 1)).toBe(museLoop07LiveV1);
+
+  // P-LOOP-024: the agent's work lands beside the live version, never on it.
+  const museLoop07ProposalOutcome = await museLoop07Agent.client.call("vault.artifacts.append", {
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07AgentV2), occurred_at: museLoop07T0 + 3,
+  });
+  expect("proposed" in museLoop07ProposalOutcome).toBe(true);
+  if (!("proposed" in museLoop07ProposalOutcome)) throw new Error("Machine work overwrote the live artifact instead of proposing beside it");
+  const museLoop07Proposal = museLoop07ProposalOutcome.proposed;
+  expect(museLoop07Proposal.base_version).toBe(1);
+  const museLoop07ProposalMadeBy = museLoop07Proposal.made_by;
+  if (!museLoop07ProposalMadeBy) throw new Error("The waiting proposal carries no made_by author stamp");
+  const museLoop07AgentMaker = museLoop07ProposalMadeBy.process.actor;
+  expect(museLoop07AgentMaker).not.toBe(museLoop07HumanMaker);
+
+  const museLoop07ViewAfterProposal = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterProposal.head).toBe(1);
+  expect(museLoop07ViewAfterProposal.versions).toHaveLength(1);
+  expect(museLoop07Version(museLoop07ViewAfterProposal, 1).content_hash)
+    .toBe(museLoop07Version(museLoop07View1, 1).content_hash);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 1)).toBe(museLoop07LiveV1);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 2)).toBeNull();
+  const museLoop07ProposalsAfter = await engine.client.call("vault.artifacts.proposals", {
+    artifact_ref: museLoop07ArtifactRef,
+  });
+  expect(museLoop07ProposalsAfter).toHaveLength(1);
+  expect(museLoop07ProposalsAfter[0]?.proposal_ref).toBe(museLoop07Proposal.proposal_ref);
+  expect(museLoop07ProposalsAfter[0]?.base_version).toBe(1);
+
+  // Wrong actors are refused and leave the proposal waiting: an agent with
+  // only the Read scope cannot propose, and the proposer cannot Keep its own
+  // proposal (canon: the proposer's lineage never settles its proposal).
+  const museLoop07NoWriteRefusal = await museLoop07FacadeRefusal(
+    () => museLoop07ReadOnly.client.call("vault.artifacts.append", {
+      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07NoWrite), occurred_at: museLoop07T0 + 4,
+    }),
+    "Read-only agent append",
+  );
+  museLoop07ExpectHttpRefusal(museLoop07NoWriteRefusal, 403);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(1);
+
+  const museLoop07Settle1: FacadeInput<"vault.artifacts.keep"> = {
+    artifact_ref: museLoop07ArtifactRef, proposal_ref: museLoop07Proposal.proposal_ref,
+  };
+  const museLoop07ProposerKeepRefusal = await museLoop07FacadeRefusal(
+    () => museLoop07Agent.client.call("vault.artifacts.keep", museLoop07Settle1),
+    "Proposer Keep of its own proposal",
+  );
+  museLoop07ExpectHttpRefusal(museLoop07ProposerKeepRefusal, 403);
+  const museLoop07RefusedKeepReceiptRef = await museLoop07WsRefusedReceiptRef(
+    engine, museLoop07Agent, "vault.artifacts.keep", museLoop07Settle1,
+  );
+  const museLoop07RefusedKeepReceipt = await museLoop07CallReceipt(engine.client, museLoop07RefusedKeepReceiptRef);
+  expect(museLoop07RefusedKeepReceipt.verb).toBe("vault.artifacts.keep");
+  expect(museLoop07RefusedKeepReceipt.actor_ref).toBe(museLoop07AgentSelf.actor_ref);
+  expect(museLoop07RefusedKeepReceipt.actor_class).toBe(museLoop07AgentSelf.actor_class);
+  const museLoop07RefusedOutcome = museLoop07RefusedKeepReceipt.outcome;
+  if (typeof museLoop07RefusedOutcome !== "object") {
+    throw new Error("The proposer's refused Keep left a call receipt that is not a refusal");
+  }
+  expect(museLoop07RefusedOutcome.refused.code.length > 0).toBe(true);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(1);
+  expect((await museLoop07View(engine.client, museLoop07ArtifactRef)).head).toBe(1);
+
+  // P-LOOP-025: the owner Keeps it once. The kept version carries the agent's
+  // maker stamp; the Keep call receipt names the owner who settled it.
+  const museLoop07KeptCall = await museLoop07WsCall(engine, engine.pairedActor, "vault.artifacts.keep", museLoop07Settle1);
+  const museLoop07Kept = museLoop07KeptCall.value;
+  expect(museLoop07Kept.version.version).toBe(2);
+  expect(museLoop07Kept.version.parent_version).toBe(1);
+  expect(museLoop07Kept.version.made_by.process.actor).toBe(museLoop07AgentMaker);
+  expect(museLoop07Kept.receipt.receipt_id.length > 0).toBe(true);
+  const museLoop07KeepReceipt = await museLoop07CallReceipt(engine.client, museLoop07KeptCall.receiptRef);
+  expect(museLoop07KeepReceipt.verb).toBe("vault.artifacts.keep");
+  expect(museLoop07KeepReceipt.actor_ref).toBe(museLoop07OwnerSelf.actor_ref);
+  expect(museLoop07KeepReceipt.outcome).toBe("ok");
+
+  const museLoop07ViewAfterKeep = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterKeep.head).toBe(2);
+  expect(museLoop07ViewAfterKeep.versions).toHaveLength(2);
+  expect(museLoop07Version(museLoop07ViewAfterKeep, 2).made_by.process.actor).toBe(museLoop07AgentMaker);
+  expect(museLoop07Version(museLoop07ViewAfterKeep, 1).made_by.process.actor).toBe(museLoop07HumanMaker);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 2)).toBe(museLoop07AgentV2);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 1)).toBe(museLoop07LiveV1);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(0);
+
+  // Settled once: a Keep replay must not mint a second version. A refusal is
+  // the expected shape; an idempotent 200 is accepted only if it names the
+  // already-settled version 2, and the view must stay at two versions.
+  let museLoop07ReplayRefusal: PublicHttpError | undefined;
+  try {
+    const museLoop07Replayed = await engine.client.call("vault.artifacts.keep", museLoop07Settle1);
+    expect(museLoop07Replayed.version.version).toBe(2);
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    museLoop07ReplayRefusal = error;
+  }
+  if (museLoop07ReplayRefusal) {
+    expect(museLoop07ReplayRefusal.reply.status >= 400).toBe(true);
+    museLoop07ExpectRefusalEnvelope(museLoop07ReplayRefusal);
+  }
+  const museLoop07ViewAfterReplay = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterReplay.head).toBe(2);
+  expect(museLoop07ViewAfterReplay.versions).toHaveLength(2);
+
+  // P-LOOP-005: the human's own live edit lands on the chain and keeps the
+  // human maker's actor stamp, not the agent's.
+  const museLoop07HumanEdit = await engine.client.call("vault.artifacts.append", {
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07HumanV3), occurred_at: museLoop07T0 + 5,
+  });
+  expect("landed" in museLoop07HumanEdit).toBe(true);
+  if (!("landed" in museLoop07HumanEdit)) throw new Error("The human's live edit did not land as the next version");
+  expect(museLoop07HumanEdit.landed.version).toBe(3);
+  const museLoop07ViewAfterHumanEdit = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterHumanEdit.head).toBe(3);
+  expect(museLoop07Version(museLoop07ViewAfterHumanEdit, 3).made_by.process.actor).toBe(museLoop07HumanMaker);
+  expect(museLoop07Version(museLoop07ViewAfterHumanEdit, 3).made_by.process.actor).not.toBe(museLoop07AgentMaker);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 3)).toBe(museLoop07HumanV3);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 2)).toBe(museLoop07AgentV2);
+
+  // P-LOOP-026: a second agent proposal, Discarded by the owner, never
+  // replaces the live version.
+  const museLoop07DiscardOutcome = await museLoop07Agent.client.call("vault.artifacts.append", {
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07Discarded), occurred_at: museLoop07T0 + 6,
+  });
+  expect("proposed" in museLoop07DiscardOutcome).toBe(true);
+  if (!("proposed" in museLoop07DiscardOutcome)) throw new Error("The second machine proposal did not wait beside the live artifact");
+  const museLoop07Proposal2 = museLoop07DiscardOutcome.proposed;
+  expect(museLoop07Proposal2.base_version).toBe(3);
+  expect((await museLoop07View(engine.client, museLoop07ArtifactRef)).head).toBe(3);
+
+  const museLoop07Settle2: FacadeInput<"vault.artifacts.discard"> = {
+    artifact_ref: museLoop07ArtifactRef, proposal_ref: museLoop07Proposal2.proposal_ref,
+  };
+  const museLoop07ReadOnlyDiscardRefusal = await museLoop07FacadeRefusal(
+    () => museLoop07ReadOnly.client.call("vault.artifacts.discard", museLoop07Settle2),
+    "Read-only agent Discard",
+  );
+  museLoop07ExpectHttpRefusal(museLoop07ReadOnlyDiscardRefusal, 403);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(1);
+
+  const museLoop07DiscardedCall = await museLoop07WsCall(engine, engine.pairedActor, "vault.artifacts.discard", museLoop07Settle2);
+  expect(museLoop07DiscardedCall.value.receipt.receipt_id.length > 0).toBe(true);
+  const museLoop07DiscardReceipt = await museLoop07CallReceipt(engine.client, museLoop07DiscardedCall.receiptRef);
+
+  const museLoop07ViewAfterDiscard = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterDiscard.head).toBe(3);
+  expect(museLoop07ViewAfterDiscard.versions).toHaveLength(3);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 3)).toBe(museLoop07HumanV3);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 4)).toBeNull();
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(0);
+
+  const museLoop07KeepDiscardedRefusal = await museLoop07FacadeRefusal(
+    () => engine.client.call("vault.artifacts.keep", {
+      artifact_ref: museLoop07ArtifactRef, proposal_ref: museLoop07Proposal2.proposal_ref,
+    }),
+    "Keep of a discarded proposal",
+  );
+  expect(museLoop07KeepDiscardedRefusal.reply.status >= 400).toBe(true);
+  museLoop07ExpectRefusalEnvelope(museLoop07KeepDiscardedRefusal);
+  expect((await museLoop07View(engine.client, museLoop07ArtifactRef)).head).toBe(3);
+
+  // Restart: versions, maker stamps, bytes and the empty waiting list survive.
+  await engine.restart();
+  const museLoop07ViewAfterRestart = await museLoop07View(engine.client, museLoop07ArtifactRef);
+  expect(museLoop07ViewAfterRestart.head).toBe(3);
+  expect(museLoop07ViewAfterRestart.versions.map(version => version.version).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+  expect(museLoop07Version(museLoop07ViewAfterRestart, 1).made_by.process.actor).toBe(museLoop07HumanMaker);
+  expect(museLoop07Version(museLoop07ViewAfterRestart, 2).made_by.process.actor).toBe(museLoop07AgentMaker);
+  expect(museLoop07Version(museLoop07ViewAfterRestart, 3).made_by.process.actor).toBe(museLoop07HumanMaker);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 1)).toBe(museLoop07LiveV1);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 2)).toBe(museLoop07AgentV2);
+  expect(await museLoop07ReadText(engine.client, museLoop07ArtifactRef, 3)).toBe(museLoop07HumanV3);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(0);
+
+  // The proposer loses its authority mid-flow: the owner revokes its slip
+  // through the public door AUTHORITY-05 uses, and its next proposal is
+  // refused at the credential door, with the revoke in the authority audit.
+  const museLoop07AuditAfterPairing = await museLoop07AuditRows(engine.client);
+  const museLoop07AgentSlipId = museLoop07MintedSlipId(
+    museLoop07AuditBefore, museLoop07AuditAfterPairing, museLoop07Agent.principalRef,
+  );
+  const museLoop07Revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+    slip_id: Array.from(Buffer.from(museLoop07AgentSlipId, "hex")),
+  });
+  expect(museLoop07Revoked.status).toBe(200);
+  expect(museLoop07Revoked.body.revoked).toBe(true);
+  const museLoop07PostRevokeRefusal = await museLoop07FacadeRefusal(
+    () => museLoop07Agent.client.call("vault.artifacts.append", {
+      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07PostRevoke), occurred_at: museLoop07T0 + 7,
+    }),
+    "Revoked agent append",
+  );
+  museLoop07ExpectHttpRefusal(museLoop07PostRevokeRefusal, 401);
+  expect(museLoop07PostRevokeRefusal.error?.code).toBe("UNAUTHORIZED");
+  const museLoop07FinalAudit = await museLoop07AuditRows(engine.client);
+  expect((await museLoop07View(engine.client, museLoop07ArtifactRef)).head).toBe(3);
+  expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(0);
+});
