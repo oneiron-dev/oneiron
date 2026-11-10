@@ -118,7 +118,7 @@ impl ResultShare {
 /// Adds `bytes` to `held` in one step while the sum stays within `bound`;
 /// else adds nothing and returns what `held` was.
 fn add_within(held: &AtomicU64, bytes: u64, bound: u64) -> Result<u64, u64> {
-    held.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |now| {
+    held.try_update(Ordering::Relaxed, Ordering::Relaxed, |now| {
         now.checked_add(bytes).filter(|after| *after <= bound)
     })
 }

@@ -705,7 +705,8 @@ mod tests {
             let id = EntityId::now();
             self.vault
                 .mint_standing_outbound_grant(
-                    &id,
+                    &crate::test_util::embedded_owner_proof(&self.vault),
+                    id,
                     &GrantMintIntent {
                         principal_ref: actor.to_hex(),
                         origin_component_id: "linear-test".into(),
@@ -715,7 +716,6 @@ mod tests {
                             verb_class: "linear_issue_create".into(),
                         },
                     },
-                    10,
                 )
                 .unwrap();
             id
