@@ -542,6 +542,69 @@ pub(crate) fn readable_with_read_in(
     judge.row_readable(id, Some(raw))
 }
 
+/// The source-audience policies a read of the row `id` by every one of
+/// `viewers` meets, as [`readable_with_read_in`] judges it (slice 6.4e,
+/// `vault.policy.preflight`): those carried to the row and the one binding
+/// it, and those of every row its words came from, along the same lineage
+/// the judge walks. Of a CLAIM's supports, one of which the read needs,
+/// only those of each support that reads to `viewers` count, so no policy
+/// is named that the read did not meet. A row gone from `dbs` adds its own
+/// binding and carried policies and nothing more. A vault that holds no
+/// policy answers none.
+///
+/// It names the policies of a row a read admitted; it judges nothing of
+/// the row itself.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn read_audience_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    viewers: &[EntityId],
+) -> Result<BTreeSet<EntityId>> {
+    let mut policies = BTreeSet::new();
+    if !super::any_policy_in(vault, txn)? {
+        return Ok(policies);
+    }
+    let mut judge = Judge {
+        vault,
+        dbs,
+        txn,
+        ask: Ask::Read(viewers),
+        policies: BTreeMap::new(),
+        rows: BTreeMap::new(),
+    };
+    let mut seen = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(row) = pending.pop() {
+        if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
+            policies.extend(carried);
+        }
+        if let Some(policy) = super::binding_in(vault, txn, &row)? {
+            policies.insert(policy);
+        }
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &row)? else {
+            continue;
+        };
+        let (every, supports) = word_sources(vault, dbs, txn, row, &bytes)?;
+        for source in every {
+            if seen.insert(source) {
+                pending.push(source);
+            }
+        }
+        for support in supports {
+            if !seen.contains(&support) && judge.row_readable(support, None)? {
+                seen.insert(support);
+                pending.push(support);
+            }
+        }
+    }
+    Ok(policies)
+}
+
 /// What a judge asks of each row's own binding.
 #[derive(Clone, Copy)]
 enum Ask<'a> {
