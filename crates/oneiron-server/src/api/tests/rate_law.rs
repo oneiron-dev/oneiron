@@ -75,6 +75,17 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes) => {
             crate::api::facade::tests::cross_the_keyed_filters(CALLERS).await
         }
+        // These rows were added while this test target did not compile, and
+        // no driver crosses them yet (FIX-LIST T0I-RULE5-DRIVERS). They are
+        // named, not matched by a wildcard, so a newer row still fails to
+        // compile; until a driver lands, the test is red at the first of them.
+        LimitRow::ContextReads
+        | LimitRow::TaskWork
+        | LimitRow::RendererWork
+        | LimitRow::MediaReplyBytes
+        | LimitRow::ChatReplyBytes => {
+            unimplemented!("{}: no Rule-5 driver crosses this row yet", row.key())
+        }
     }
 }
 

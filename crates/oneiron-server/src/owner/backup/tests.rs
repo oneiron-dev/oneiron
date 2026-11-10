@@ -37,7 +37,7 @@ fn open_hosted(path: impl AsRef<Path>, keystore: &Arc<dyn DeviceKeystore>) -> Va
 
 /// The unsealed vault at `path` read off the disk, its backups opening with
 /// this install's keystore.
-fn disk_source(path: &Path, keystore: &Arc<dyn DeviceKeystore>) -> SideRestoreSource {
+fn disk_source(path: &Path, keystore: &Arc<dyn DeviceKeystore>) -> SideRestoreSource<'static> {
     SideRestoreSource::read(path, None)
         .unwrap()
         .with_keystore(Arc::clone(keystore))
