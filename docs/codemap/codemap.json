@@ -72215,15 +72215,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_record/codec.rs",
      "purpose": "Core half of `secret_record::codec`: its store-layer items live in `oneiron_store::secret_record::codec` and…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 1,
-      "re-export": 1
+      "crate-vis": 7,
+      "fn": 2
      }
     },
     {
@@ -72244,7 +72243,7 @@
      "purpose": "Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -72258,11 +72257,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SecretCustodyRecord"
+     ],
+     "path": "src/secret_record/types.rs",
+     "purpose": "Core half of `secret_record::types`: its store-layer items live in `oneiron_store::secret_record::types` and…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/secret_record/write_records.rs",
      "purpose": "Core half of `secret_record::write_records`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -81221,7 +81234,7 @@
      "path": "src/store/receipt_row.rs",
      "purpose": "Core half of `store::receipt_row`: its store-layer items live in `oneiron_store::receipt_row` and are…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 54,
       "fn": 11,
       "re-export": 1,
       "struct": 6
@@ -99358,6 +99371,38 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_boundaries.rs",
+     "purpose": "Store-split boundaries (FIX STORE-SPLIT-PUB-SCAN): items the store split (#5778) made `pub` whose docs…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_compilefail/a_receipt_key_is_engine_only.rs",
+     "purpose": "[RECEIPT-ROW-FIELD-CONSTS-PUBLIC]: the engine-only receipt keys (the proposal-outcome, amendment…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_compilefail/b_reserved_claim_door_is_engine_only.rs",
+     "purpose": "[RESERVED-PREDICATE-FLAG-PUBLIC]: `decode_claim_body` and `validate_predicate` take `allow_reserved` as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_compilefail/c_session_route_is_engine_only.rs",
+     "purpose": "[SESSION-OVERLAY-ROUTE-OVERLAY-PUBLIC]: `SessionWriteRoute::overlay` is `pub` in the store, but the engine…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100687,9 +100732,9 @@
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
     "secret_record": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are…"
     },
@@ -101088,8 +101133,8 @@
    },
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7250,
-   "test_files": 926
+   "source_files": 7251,
+   "test_files": 930
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -148153,7 +148198,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ReceiptKind"
@@ -148161,7 +148206,7 @@
      "path": "src/receipt_row.rs",
      "purpose": "Receipt row fields, query values, and deterministic ordering",
      "surface": {
-      "const": 83,
+      "const": 38,
       "enum": 1,
       "fn": 6
      }
@@ -148977,15 +149022,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "BodyValue"
-     ],
+     "notable": [],
      "path": "src/secret_record/codec.rs",
      "purpose": "MessagePack body codec for custody records, bands, floors, and bindings",
      "surface": {
       "const": 4,
-      "enum": 1,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -149003,7 +149045,7 @@
       "const": 9,
       "fn": 7,
       "mod": 4,
-      "re-export": 18,
+      "re-export": 16,
       "struct": 3,
       "trait": 1
      }
@@ -149013,17 +149055,16 @@
      "kind": "src",
      "notable": [
       "SecretCustodyMetadata",
-      "SecretCustodyRecord",
       "SecretCustodyStatus"
      ],
      "path": "src/secret_record/types.rs",
-     "purpose": "Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata",
+     "purpose": "Custody domain types: classes, tiers, bands, floors, bindings, status and metadata",
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 5,
+      "fn": 2,
       "re-export": 2,
-      "struct": 2
+      "struct": 1
      }
     },
     {
@@ -149045,7 +149086,7 @@
      "surface": {
       "const": 1,
       "enum": 4,
-      "fn": 6,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -152495,7 +152536,7 @@
     "receipt_row": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Receipt row fields, query values, and deterministic ordering"
     },
