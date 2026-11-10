@@ -541,6 +541,11 @@ mod tests {
     const PHRASE: &str =
         "legal winner thank year wave sausage worth useful legal winner thank yellow";
 
+    /// CONS-07 (owner ruling 2026-10-17, ARCH-0038 #export-credentials): the
+    /// typed export still reads JSON text through every member, so a token
+    /// hidden behind JSON escapes or duplicate keys never leaves a scoped or
+    /// contact export; the Owner's whole-vault export keeps those bytes
+    /// byte-equal to stored.
     #[test]
     fn typed_export_reads_json_text_through_every_member() -> Result<()> {
         let (_dir, vault) = vault_with_scan_off()?;
@@ -549,12 +554,64 @@ mod tests {
         let escaped = format!(r"gh\u0070_{suffix}");
         let scalar = format!(r#""{escaped}""#);
         let repeated = format!(r#"{{"note":"{escaped}","note":"kept"}}"#);
-        for body in [scalar, repeated] {
-            put_asset(&vault, body.as_bytes())?;
-            let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-            let document = String::from_utf8_lossy(export.bytes()).into_owned();
-            assert!(!document.contains(suffix), "{body}: {document}");
+        let bodies = [scalar, repeated];
+        let mut ids = Vec::new();
+        for body in &bodies {
+            ids.push(put_asset(&vault, body.as_bytes())?);
         }
+        // The Owner's whole-vault export keeps each body byte-equal to stored.
+        let export = vault.export_whole_vault(true)?;
+        export.manifest().validate()?;
+        assert!(export.manifest().secrets_included);
+        let document = vault.read_whole_vault_archive(export.bytes())?;
+        for (id, body) in ids.iter().zip(bodies.iter()) {
+            let row = document
+                .evidence_ledger
+                .entities
+                .iter()
+                .find(|row| row.id == id.to_hex())
+                .expect("exported row");
+            assert_eq!(
+                row.body,
+                crate::serialize::ExportBody::Utf8(body.clone()),
+                "the owner's archive keeps {body} byte-equal"
+            );
+        }
+        // A scoped export still nulls them: an ASSET the release filter would
+        // change leaves whole or not at all.
+        let top = crate::federation::Scope::top();
+        let scoped = vault.export_records_in_scope(&top, &top, &top)?;
+        for id in &ids {
+            for record in scoped.iter().filter(|record| record.id == *id) {
+                assert!(
+                    !String::from_utf8_lossy(&record.bytes).contains(suffix),
+                    "a scoped record carries no token"
+                );
+            }
+        }
+        let shipped: Vec<u8> = scoped
+            .iter()
+            .flat_map(|record| record.bytes.iter().copied())
+            .collect();
+        assert!(
+            !String::from_utf8_lossy(&shipped).contains(suffix),
+            "the scoped export carries no token"
+        );
+        // A contact's shareable bundle still nulls them.
+        let bundle: Value = serde_json::from_slice(&vault.export_entity_bundle_json(&ids)?)
+            .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
+        assert!(
+            !bundle.to_string().contains(suffix),
+            "contact bundle: {bundle}"
+        );
+        let entities = bundle["entities"].as_array().expect("bundle entities");
+        assert_eq!(entities.len(), 2);
+        assert!(
+            entities[0]["body"].is_null(),
+            "the scalar token is nulled: {}",
+            entities[0]["body"]
+        );
+        assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
         Ok(())
     }
 
@@ -595,9 +652,34 @@ mod tests {
         text.contains("sausage")
     }
 
+    /// Whether an output carries a custody handle (`sc` plus digits), as mask
+    /// on write leaves it where the secret was.
+    fn carries_handle(bytes: &[u8]) -> bool {
+        bytes
+            .windows(3)
+            .any(|window| window[0] == b's' && window[1] == b'c' && window[2].is_ascii_digit())
+    }
+
+    /// The vault's custody rows, by id.
+    fn custody_records(vault: &Vault) -> Result<Vec<EntityId>> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &vault.store,
+            &rtxn,
+            crate::registry::ENTITY_TYPE_SECRET_CUSTODY,
+            None,
+        )?
+        .collect::<Result<Vec<_>>>()?)
+    }
+
+    /// LABEL-04 (ARCH-0069 #mask-on-write, #handles-in-fields): a split
+    /// recovery phrase is masked on write — the write lands, never refused,
+    /// and the hit is sealed into custody with a handle — while read, export
+    /// and pack still withhold it (ARCH-0069 #readers-built).
     #[test]
     fn a_phrase_one_byte_word_per_item_leaves_by_no_release_door() -> Result<()> {
-        let (_dir, vault) = vault_with_scan_off()?;
+        // Mask on write applies: the default vault leaves the owner's scan switch on.
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
         let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
         // One word per item: MessagePack binary, MessagePack byte values, the
         // two mixed, byte values each in an array of its own, the phrase's
@@ -631,11 +713,6 @@ mod tests {
         for value in &values {
             let mut body = Vec::new();
             rmpv::encode::write_value(&mut body, value).unwrap();
-            // The write door refuses each in its raw bytes.
-            assert!(
-                crate::batch::secret_scan::scan_write_payload(&body).is_err(),
-                "{value}"
-            );
             // A reader that projects it to JSON redacts the projection.
             let mut projected = crate::serialize::msgpack_value_to_json(value);
             redact_credentials(&mut projected);
@@ -655,10 +732,21 @@ mod tests {
                     .map_err(|_| Error::InvariantViolation("fixture JSON"))?,
             );
         }
+        let custody_before = custody_records(&vault)?.len();
         for body in &bodies {
             assert!(carries_sausage(body));
-            let id = put_asset(&vault, body)?;
+            // The write lands, never refused; the hit is sealed into custody
+            // with a handle, and the stored body carries the handle, not the phrase.
+            let id = put_asset(&vault, body).expect("LABEL-04: a split-phrase write lands");
             let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
+            assert!(
+                !carries_sausage(&stored),
+                "the stored body carries the handle, not the phrase"
+            );
+            assert!(
+                carries_handle(&stored),
+                "the stored body carries the custody handle"
+            );
             let served = redacted_memory_payload(stored)?;
             assert!(!carries_sausage(&served), "raw serving: {served:?}");
             let typed =
@@ -675,8 +763,13 @@ mod tests {
                 "bundle export: {emitted}"
             );
         }
-        // The context writers read what hydration hands them: of a body the
-        // write door refuses, nothing, though a map gives it a field to
+        // The hits were sealed into custody, not dropped.
+        assert!(
+            custody_records(&vault)?.len() > custody_before,
+            "split-phrase hits are sealed into custody"
+        );
+        // The context writers read what hydration hands them: of a masked
+        // body, its handle, never the phrase. A map gives it a field to
         // hydrate (Wonder R1). The key ends in a stop, so the words after it
         // still stand alone in the raw bytes. A body it accepts still
         // hydrates.
@@ -684,11 +777,16 @@ mod tests {
             let mut body = Vec::new();
             let field = rmpv::Value::Map(vec![("notes:".into(), value)]);
             rmpv::encode::write_value(&mut body, &field).unwrap();
+            let id = put_asset(&vault, &body).expect("LABEL-04: a mapped split-phrase write lands");
+            let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
             assert!(
-                crate::batch::secret_scan::scan_write_payload(&body).is_err(),
-                "{field}"
+                !carries_sausage(&stored),
+                "the stored body carries the handle, not the phrase"
             );
-            put_asset(&vault, &body)?;
+            assert!(
+                carries_handle(&stored),
+                "the stored body carries the custody handle"
+            );
         }
         let mut kept = Vec::new();
         rmpv::encode::write_value(
