@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
-import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, type PairedActor, awaitPublic } from "./support/engine.ts";
 import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
 import { defineFile, redactor, secretHex } from "./support/run.ts";
-import { McpRpcError, PublicHttpError, PublicHttpClient, CliError, CliClient, McpClient, credentialParts, type SdkDriverResult } from "./support/clients.ts";
+import { McpRpcError, PublicHttpError, PublicHttpClient, CliError, CliClient, McpClient, credentialParts, type SdkDriverResult, type WireReply } from "./support/clients.ts";
 import { randomUUID } from "node:crypto";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 
@@ -114,6 +114,7 @@ type surfaces03Command = { [V in surfaces03Verb]: {
   refusal?: { code: "INVENTED_REFERENCE" | "FORBIDDEN"; message?: string };
 } }[surfaces03Verb];
 type surfaces03Grant = NonNullable<FacadeInput<"vault.gate.policy.put">["manifest"]["scoped_grants"]>[number];
+type surfaces03Ceiling = FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number];
 interface surfaces03Fixtures {
   ledger: { oldAt: number };
   cases: Array<{ id: string; fixture: {
@@ -144,9 +145,60 @@ function surfaces03Contains(value: unknown, forbidden: readonly string[]): boole
   const bytes = Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
   return forbidden.some(text => bytes.includes(Buffer.from(text)));
 }
+// Local diagnostic wrappers: a refusal names its door. The MCP refusal keeps
+// McpRpcError identity and its inspectable `.response`, so expected-refusal
+// branches below keep reading the JSON-RPC code, data and receipt ref.
+class surfaces03McpRefusal extends McpRpcError {
+  constructor(tool: string, response: McpRpcError["response"]) {
+    super(response);
+    const rpc = "error" in response ? response.error : undefined;
+    this.message = redactor.text(`MCP ${tool} refused ${rpc?.code}: ${rpc?.message}`);
+  }
+}
+async function surfaces03Mcp<T>(tool: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof McpRpcError) throw new surfaces03McpRefusal(tool, error.response);
+    if (error instanceof PublicHttpError) {
+      error.message = redactor.text(`MCP ${tool} refused HTTP ${error.reply.status}: ${error.error?.code ?? "no-code"}`);
+      throw error;
+    }
+    if (error instanceof Error) throw new Error(redactor.text(`MCP ${tool} failed: ${error.message}`));
+    throw error;
+  }
+}
+async function surfaces03Call<V extends FacadeVerb>(
+  client: PublicHttpClient, verb: V, input: FacadeInput<V>,
+): Promise<FacadeResult<V>> {
+  try {
+    return await client.call(verb, input);
+  } catch (error) {
+    if (error instanceof PublicHttpError)
+      error.message = redactor.text(`REST ${verb} refused HTTP ${error.reply.status}: ${error.error?.code ?? "no-code"}`);
+    throw error;
+  }
+}
+class surfaces03ScopeClient extends PublicHttpClient {
+  constructor(readonly source: PublicHttpClient) { super(source.url.href, source.options); }
+  override call<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+    return surfaces03Call(this.source, verb, input);
+  }
+}
+async function surfaces03Raw(
+  client: PublicHttpClient, verb: string, input: unknown, expectedStatus: number,
+): Promise<{ status: number; headers: Headers; body: unknown; raw: string }> {
+  const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input);
+  if (reply.status !== expectedStatus) {
+    const error = new PublicHttpError(reply);
+    error.message = redactor.text(`REST ${verb} refused HTTP ${reply.status}: ${error.error?.code ?? "no-code"}`);
+    throw error;
+  }
+  return reply;
+}
 async function surfaces03Versions(actor: PairedActor): Promise<ReadonlyMap<string, string>> {
-  await actor.mcp.initialize();
-  const catalog = surfaces03Object(await actor.mcp.listTools());
+  await surfaces03Mcp("initialize", () => actor.mcp.initialize());
+  const catalog = surfaces03Object(await surfaces03Mcp("tools/list", () => actor.mcp.listTools()));
   if (!Array.isArray(catalog.tools)) throw new Error("SURFACES-03 tools/list has no tools");
   const versions = new Map<string, string>();
   const required = ["vault.notes.author_brief", "vault.notes.follow_citation",
@@ -159,7 +211,10 @@ async function surfaces03Versions(actor: PairedActor): Promise<ReadonlyMap<strin
     const version = surfaces03Object(properties.schema_version).const;
     if (typeof version === "string") versions.set(tool.name, version);
   }
-  for (const verb of required) expect(versions.has(verb)).toBe(true);
+  for (const verb of required) {
+    const toolRegistered = `MCP tool-first registers ${verb}`;
+    expect({ check: toolRegistered, ok: versions.has(verb) }).toEqual({ check: toolRegistered, ok: true });
+  }
   return versions;
 }
 
@@ -180,32 +235,35 @@ async function surfaces03Run(
   };
   const remember = (ref: unknown, command: surfaces03Command, transport: "http_facade" | "mcp", code: string) => {
     const receiptRef = surfaces03String(ref);
-    expect(/^call:[a-f0-9]{32}$/.test(receiptRef)).toBe(true);
+    const receiptShape = `refusal receipt ref shape for ${command.verb} over ${transport}`;
+    expect({ check: receiptShape, ok: /^call:[a-f0-9]{32}$/.test(receiptRef) }).toEqual({ check: receiptShape, ok: true });
     receipts.push({ ref: receiptRef, verb: command.verb, actorRef: actor.principalRef, transport, code });
   };
   const refusal = (value: unknown, command: surfaces03Command) => {
     if (!command.refusal) throw new Error("SURFACES-03 unexpected refusal");
     const error = surfaces03Object(value);
-    expect(error.code).toBe(command.refusal.code);
+    expect({ verb: command.verb, code: error.code }).toEqual({ verb: command.verb, code: command.refusal.code });
     const message = surfaces03String(error.message);
     if (command.refusal.message !== undefined) expect(message).toBe(command.refusal.message);
-    expect(Array.isArray(error.suggestions) && error.suggestions.length > 0).toBe(true);
+    const refusalAdvice = `refusal for ${command.verb} carries suggestions`;
+    expect({ check: refusalAdvice, ok: Array.isArray(error.suggestions) && error.suggestions.length > 0 }).toEqual({ check: refusalAdvice, ok: true });
     return { code: error.code, message };
   };
   for (const [index, command] of commands.entries()) {
     const column = columns[index];
     if (!column) throw new Error("SURFACES-03 missing command column");
     if (command.refusal) {
-      const reply = await actor.client.raw("POST", `/v1/core/facade/${command.verb}`, inputFor(command, 0));
+      const reply = await surfaces03Raw(actor.client, command.verb, inputFor(command, 0), command.refusal.code === "INVENTED_REFERENCE" ? 422 : 403);
       observe(`REST ${command.verb}`, reply.raw);
-      expect(reply.status).toBe(command.refusal.code === "INVENTED_REFERENCE" ? 422 : 403);
+      expect({ verb: command.verb, status: reply.status }).toEqual({ verb: command.verb, status: command.refusal.code === "INVENTED_REFERENCE" ? 422 : 403 });
       const error = surfaces03Object(surfaces03Object(reply.body).error);
-      expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
+      const restRequestId = `REST refusal for ${command.verb} carries a request id`;
+      expect({ check: restRequestId, ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: restRequestId, ok: true });
       expect(error.receiptRef).toBe(reply.headers.get("x-oneiron-receipt-ref"));
       remember(error.receiptRef, command, "http_facade", command.refusal.code);
       column.push(refusal(error, command));
     } else {
-      const value = await actor.client.call(command.verb, inputFor(command, 0));
+      const value = await surfaces03Call(actor.client, command.verb, inputFor(command, 0));
       observe(`REST ${command.verb}`, value);
       column.push(value);
     }
@@ -216,35 +274,40 @@ async function surfaces03Run(
     const cliBody: unknown = JSON.parse(cli.stdout);
     if (command.refusal) {
       const error = surfaces03Object(surfaces03Object(cliBody).error);
-      expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
+      const cliRequestId = `CLI refusal for ${command.verb} carries a request id`;
+      expect({ check: cliRequestId, ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: cliRequestId, ok: true });
       remember(error.receiptRef, command, "http_facade", command.refusal.code);
       column.push(refusal(error, command));
     } else column.push(cliBody);
     const version = versions.get(command.verb);
     if (!version) throw new Error("SURFACES-03 missing tool schema_version");
     try {
-      const result = await actor.mcp.callTool(command.verb, {
+      const result = await surfaces03Mcp(command.verb, () => actor.mcp.callTool(command.verb, {
         schema_version: version,
         consent: { policy_ref: "policy:surfaces-03", purpose: "brief citation parity" },
         arguments: { spec: inputFor(command, 2) },
-      });
+      }));
       observe(`MCP ${command.verb}`, result);
-      expect(command.refusal === undefined).toBe(true);
+      const mcpGranted = `MCP success only for a granted ${command.verb} command`;
+      expect({ check: mcpGranted, ok: command.refusal === undefined }).toEqual({ check: mcpGranted, ok: true });
       const body = surfaces03Object(result);
-      expect(body.isError).toBe(false);
+      const mcpNoError = `MCP success envelope for ${command.verb} is not an error`;
+      expect({ check: mcpNoError, ok: body.isError }).toEqual({ check: mcpNoError, ok: false });
       const structured = surfaces03Object(body.structuredContent);
-      expect(Object.hasOwn(structured, "output")).toBe(true);
+      const mcpOutput = `MCP envelope for ${command.verb} carries structured output`;
+      expect({ check: mcpOutput, ok: Object.hasOwn(structured, "output") }).toEqual({ check: mcpOutput, ok: true });
       column.push(structured.output);
     } catch (error) {
       if (!(error instanceof McpRpcError) || !command.refusal) throw error;
       observe(`MCP ${command.verb} refusal`, error.response);
       if (!("error" in error.response)) throw new Error("SURFACES-03 missing RPC error");
       const rpc = error.response.error;
-      expect(rpc.code).toBe(command.refusal.code === "INVENTED_REFERENCE" ? -32602 : -32020);
+      expect({ verb: command.verb, code: rpc.code }).toEqual({ verb: command.verb, code: command.refusal.code === "INVENTED_REFERENCE" ? -32602 : -32020 });
       const data = surfaces03Object(rpc.data);
       expect(data.kind).toBe("facade_error");
       expect(data.error_code).toBe("facade_error");
-      expect(Array.isArray(data.recovery_suggestions) && data.recovery_suggestions.length > 0).toBe(true);
+      const mcpAdvice = `MCP refusal for ${command.verb} carries recovery suggestions`;
+      expect({ check: mcpAdvice, ok: Array.isArray(data.recovery_suggestions) && data.recovery_suggestions.length > 0 }).toEqual({ check: mcpAdvice, ok: true });
       remember(data.receipt_ref, command, "mcp", "facade_error");
       column.push({ code: command.refusal.code, message: rpc.message });
     }
@@ -260,7 +323,8 @@ async function surfaces03Run(
     const result = sdk.results[index];
     const column = columns[index];
     if (!result || !column) throw new Error("SURFACES-03 missing SDK operation result");
-    expect(result.ok).toBe(command.refusal === undefined);
+    const sdkGranted = `SDK op ${command.verb} ok matches its grant`;
+    expect({ check: sdkGranted, ok: result.ok }).toEqual({ check: sdkGranted, ok: command.refusal === undefined });
     if (result.ok) column.push(result.value);
     else {
       expect(surfaces03Object(result.error).name).toBe("OneironError");
@@ -286,8 +350,9 @@ function surfaces03Equal(values: readonly unknown[]): void {
  * Promise: shared briefs and their saved citations recheck live source grants,
  * hide inaccessible/deleted source text, and stop resolving after share revoke,
  * identically through REST, CLI, MCP tool-first and the remote TypeScript SDK.
- * Public setup: PERSON/pairing, research notes, claim upsert, human kind blessing,
- * owner policy CAS grants, author_brief/share create; public observation uses
+ * Public setup: PERSON/pairing, owner policy CAS agent MCP ceiling (ARCH-0040),
+ * research notes, claim upsert, human kind blessing, owner policy CAS grants,
+ * author_brief/share create; public observation uses
  * notes.read/defaults, claims.list/get, view/follow and call receipts. One restart.
  * No model, external HTTP, UI/link navigation, source-edit drift, exports/recall,
  * Python SDK or already-downloaded-copy erasure is claimed. Known prose leak is
@@ -312,34 +377,51 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
   try {
     const owner = engine.pairedActor;
     redactor.add(owner.credential, Buffer.from(owner.credential).toString("base64"));
-    const person = await engine.client.call("vault.structural.put", {
+    const person = await surfaces03Call(engine.client, "vault.structural.put", {
       kind: "PERSON", body: { name: spec.recipient }, occurred_at: data.ledger.oldAt,
     });
-    const personRead = await engine.client.call("vault.get", { entity_ref: person.id_hex });
+    const personRead = await surfaces03Call(engine.client, "vault.get", { entity_ref: person.id_hex });
     expect(personRead.value?.kind).toBe("PERSON");
     expect(personRead.value?.body).toMatchObject({ name: spec.recipient });
     const agent = await engine.pairActor({
       principalRef: person.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
     });
     redactor.add(agent.credential, Buffer.from(agent.credential).toString("base64"));
+    // ARCH-0040 mcp-actor-ceilings: a paired agent's MCP credential resolves
+    // only with a manifest ceiling row for (agent, principal). The owner writes
+    // one through the public policy door before the agent's first MCP call;
+    // "proposed" keeps the agent's Gate posture exactly as the no-row default.
+    const ceilingRow: surfaces03Ceiling = { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "proposed" };
+    const ceilingBefore = await surfaces03Call(engine.client, "vault.gate.policy.get", {});
+    const ceilingCurrent = ceilingBefore.manifests.find(row => row.manifest_ref === ceilingBefore.default_manifest_ref);
+    if (!ceilingCurrent) throw new Error("SURFACES-03 default policy is absent");
+    await surfaces03Call(engine.client, "vault.gate.policy.put", {
+      manifest_ref: ceilingCurrent.manifest_ref, expected_body_hash: ceilingCurrent.body_hash,
+      manifest: { ...ceilingCurrent.manifest, actor_ceilings: [...ceilingCurrent.manifest.actor_ceilings, ceilingRow] },
+    });
+    const ceilingAfter = await surfaces03Call(engine.client, "vault.gate.policy.get", { manifest_ref: ceilingCurrent.manifest_ref });
+    const ceilingSaved = ceilingAfter.manifests.find(row => row.manifest_ref === ceilingCurrent.manifest_ref);
+    const ceilingTrusted = "agent MCP ceiling readback is trusted";
+    expect({ check: ceilingTrusted, ok: ceilingSaved?.trusted }).toEqual({ check: ceilingTrusted, ok: true });
+    expect(ceilingSaved?.manifest.actor_ceilings).toContainEqual(ceilingRow);
     const agentVersions = await surfaces03Versions(agent);
     const ownerVersions = await surfaces03Versions(owner);
-    const source = await engine.client.call("vault.notes.create", { kind: "research", markdown: spec.loadBearingSentence });
-    const unrelated = await engine.client.call("vault.notes.create", { kind: "research", markdown: unrelatedText });
+    const source = await surfaces03Call(engine.client, "vault.notes.create", { kind: "research", markdown: spec.loadBearingSentence });
+    const unrelated = await surfaces03Call(engine.client, "vault.notes.create", { kind: "research", markdown: unrelatedText });
     for (const [noteRef, text] of [[source.id_hex, spec.loadBearingSentence], [unrelated.id_hex, unrelatedText]] as const)
-      expect((await engine.client.call("vault.notes.read", { note_ref: noteRef })).value?.markdown).toBe(text);
-    const scope = await ownerBaseClaimScope(engine.client, owner.principalRef);
-    const claim = await engine.client.call("vault.claims.upsert", {
+      expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: noteRef })).value?.markdown).toBe(text);
+    const scope = await ownerBaseClaimScope(new surfaces03ScopeClient(engine.client), owner.principalRef);
+    const claim = await surfaces03Call(engine.client, "vault.claims.upsert", {
       scope, subject_ref: source.id_hex, predicate: "identity.name", value: spec.sourceClaimValue,
       source: "user_stated", confidence: 1, occurred_at: data.ledger.oldAt,
     });
     expect(claim.approval).toBe("auto");
     if (!claim.claim) throw new Error("SURFACES-03 claim has no public reference");
     const claimRef = claim.claim.id;
-    const claimRows = await engine.client.call("vault.claims.list", { subject_ref: source.id_hex, limit: 10 });
+    const claimRows = await surfaces03Call(engine.client, "vault.claims.list", { subject_ref: source.id_hex, limit: 10 });
     expect(claimRows.value.map(row => ({ id: row.claim_ref, value: row.value, lifecycle: row.lifecycle, confidence: row.confidence })))
       .toEqual([{ id: claimRef, value: spec.sourceClaimValue, lifecycle: "active", confidence: 1 }]);
-    const stamp = await engine.client.call("vault.notes.bless_brief_kind", {});
+    const stamp = await surfaces03Call(engine.client, "vault.notes.bless_brief_kind", {});
     expect(stamp.person_ref).toBe(owner.principalRef);
     const scalars = Array.from(spec.loadBearingSentence);
     const quoteScalars = Array.from(spec.sourceClaimValue);
@@ -353,9 +435,9 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       ...authorInput, markdown: `# ${surface} brief\n\n${spec.briefMarkdown}`,
     }));
     for (const input of authorInputs) redactor.add(input.markdown, Buffer.from(input.markdown).toString("base64"));
-    const canonicalBrief = await engine.client.call("vault.notes.author_brief", authorInput);
-    expect((await engine.client.call("vault.notes.read", { note_ref: canonicalBrief.id_hex })).value?.markdown).toBe(spec.briefMarkdown);
-    const kind = await engine.client.call("vault.notes.defaults", { note_ref: canonicalBrief.id_hex });
+    const canonicalBrief = await surfaces03Call(engine.client, "vault.notes.author_brief", authorInput);
+    expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex })).value?.markdown).toBe(spec.briefMarkdown);
+    const kind = await surfaces03Call(engine.client, "vault.notes.defaults", { note_ref: canonicalBrief.id_hex });
     expect({ extraction: kind.defaults.extraction, context: kind.defaults.context, retention: kind.defaults.retention })
       .toEqual({ extraction: stamp.extraction, context: stamp.context, retention: stamp.retention });
 
@@ -374,33 +456,33 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const claimRead: surfaces03Grant = {
       ...noteRead, scope: { ...top, bands: { kind: "some", values: [0] }, verbs: { kind: "some", values: ["read"] } },
     };
-    const initialPolicy = await engine.client.call("vault.gate.policy.get", {});
+    const initialPolicy = await surfaces03Call(engine.client, "vault.gate.policy.get", {});
     const original = initialPolicy.manifests.find(row => row.manifest_ref === initialPolicy.default_manifest_ref);
     if (!original) throw new Error("SURFACES-03 default policy is absent");
     const originalGrants = original.manifest.scoped_grants ?? [];
     const setGrants = async (extra: surfaces03Grant[]) => {
-      const before = await engine.client.call("vault.gate.policy.get", {});
+      const before = await surfaces03Call(engine.client, "vault.gate.policy.get", {});
       const current = before.manifests.find(row => row.manifest_ref === before.default_manifest_ref);
       if (!current) throw new Error("SURFACES-03 default policy disappeared");
-      const written = await engine.client.call("vault.gate.policy.put", {
+      const written = await surfaces03Call(engine.client, "vault.gate.policy.put", {
         manifest_ref: current.manifest_ref, expected_body_hash: current.body_hash,
         manifest: { ...current.manifest, scoped_grants: [...originalGrants, ...extra] },
       });
-      const after = await engine.client.call("vault.gate.policy.get", { manifest_ref: current.manifest_ref });
+      const after = await surfaces03Call(engine.client, "vault.gate.policy.get", { manifest_ref: current.manifest_ref });
       const saved = after.manifests.find(row => row.manifest_ref === current.manifest_ref);
-      expect(saved?.trusted).toBe(true);
+      expect({ check: "policy CAS readback is trusted", ok: saved?.trusted }).toEqual({ check: "policy CAS readback is trusted", ok: true });
       expect(saved?.body_hash).toBe(written.manifest.body_hash);
       expect(saved?.manifest).toEqual(written.manifest.manifest);
       expect(saved?.manifest.scoped_grants?.length).toBe(originalGrants.length + extra.length);
       return written.manifest;
     };
     const positiveControl = async () => {
-      const note = await agent.client.call("vault.notes.read", { note_ref: unrelated.id_hex });
+      const note = await surfaces03Call(agent.client, "vault.notes.read", { note_ref: unrelated.id_hex });
       expect(note.value?.markdown).toBe(unrelatedText);
-      expect(surfaces03Contains(note, forbidden)).toBe(false);
+      expect({ check: "unrelated control note carries no source bytes", ok: surfaces03Contains(note, forbidden) }).toEqual({ check: "unrelated control note carries no source bytes", ok: false });
     };
     await setGrants([ownerShare, noteRead]);
-    expect((await agent.client.call("vault.notes.read", { note_ref: source.id_hex })).value?.markdown).toBe(spec.loadBearingSentence);
+    expect((await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex })).value?.markdown).toBe(spec.loadBearingSentence);
     const createInput = {
       recipient: agent.principalRef, brief_ref: canonicalBrief.id_hex,
       world_refs: [scope.world_id], facet_refs: [scope.scope_facet_id], include_unscoped: true,
@@ -411,7 +493,7 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       redactor.add(shareId, Buffer.from(shareId).toString("base64"));
       return { ...createInput, share_id: shareId };
     });
-    const canonicalShare = await engine.client.call("vault.shares.create", createInput);
+    const canonicalShare = await surfaces03Call(engine.client, "vault.shares.create", createInput);
     const viewInput = { share_ref: canonicalShare.share_id } satisfies FacadeInput<"vault.shares.view">;
     const deniedAuthor: surfaces03Command = {
       verb: "vault.notes.author_brief", input: authorInput,
@@ -423,14 +505,14 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       { verb: "vault.shares.view", input: viewInput }, deniedAuthor, deniedCreate,
     ], receipts, observe("without-source-grant", true));
     const redacted = (view: FacadeResult<"vault.shares.view">) => {
-      expect(view.value === null).toBe(false);
+      expect({ check: "valid share still renders a redacted view", ok: view.value === null }).toEqual({ check: "valid share still renders a redacted view", ok: false });
       if (!view.value) throw new Error("SURFACES-03 valid share must still render a redacted view");
       expect(view.value.share_ref).toBe(canonicalShare.share_id);
       expect(view.value.citations).toHaveLength(1);
       const citation = view.value.citations[0];
       if (!citation) throw new Error("SURFACES-03 redacted citation is absent");
       expect(citation.redacted).toBe(spec.expected.permissionNarrowed.redacted);
-      expect(citation.claim_ref === claimRef).toBe(false);
+      expect({ check: "redacted citation hides the real claim id", ok: citation.claim_ref === claimRef }).toEqual({ check: "redacted citation hides the real claim id", ok: false });
       expect({ quote: citation.quote, confidence: citation.confidence, lifecycle: citation.lifecycle,
         stale: citation.stale, drifted: citation.drifted })
         .toEqual({ quote: null, confidence: null, lifecycle: null, stale: false, drifted: false });
@@ -443,12 +525,12 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     await positiveControl();
 
     await setGrants([ownerShare, noteRead, claimRead, agentShare]);
-    const firstVisible = await agent.client.call("vault.shares.view", viewInput);
+    const firstVisible = await surfaces03Call(agent.client, "vault.shares.view", viewInput);
     const savedCitation = firstVisible.value?.citations[0];
     if (!firstVisible.value || !savedCitation) throw new Error("SURFACES-03 visible citation is absent");
     expect(savedCitation).toEqual({ claim_ref: claimRef, stale: spec.expected.visible.stale,
       drifted: false, redacted: spec.expected.visible.redacted, confidence: 1, lifecycle: "active", quote: spec.sourceClaimValue });
-    expect(surfaces03Contains(firstVisible.value.html, [spec.loadBearingSentence])).toBe(true);
+    expect({ check: "visible share renders the authored sentence", ok: surfaces03Contains(firstVisible.value.html, [spec.loadBearingSentence]) }).toEqual({ check: "visible share renders the authored sentence", ok: true });
     const followInput = {
       share_ref: firstVisible.value.share_ref, claim_ref: savedCitation.claim_ref,
     } satisfies FacadeInput<"vault.notes.follow_citation">;
@@ -470,18 +552,18 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const authored = surfaces03Values(visible, 2, "vault.notes.author_brief");
     expect(new Set(authored.map(row => row.id_hex)).size).toBe(4);
     for (const [index, brief] of authored.entries()) {
-      expect(brief.entity_ref.length > 0 && brief.receipt_ref.length > 0).toBe(true);
-      const resolved = await engine.client.call("vault.refs.resolve", { reference: brief.entity_ref });
+      expect({ check: "authored brief returns entity and receipt refs", ok: brief.entity_ref.length > 0 && brief.receipt_ref.length > 0 }).toEqual({ check: "authored brief returns entity and receipt refs", ok: true });
+      const resolved = await surfaces03Call(engine.client, "vault.refs.resolve", { reference: brief.entity_ref });
       expect(resolved.value.record.id).toBe(brief.id_hex);
       expect(resolved.value.record.kind).toBe("NOTE");
       if (brief.record) {
         expect(brief.record.id).toBe(brief.id_hex);
         expect(brief.record.kind).toBe("NOTE");
       }
-      expect((await engine.client.call("vault.notes.read", { note_ref: brief.id_hex })).value?.markdown).toBe(authorInputs[index]?.markdown);
+      expect((await surfaces03Call(engine.client, "vault.notes.read", { note_ref: brief.id_hex })).value?.markdown).toBe(authorInputs[index]?.markdown);
       // Reading text alone cannot prove each surface captured its citation pins.
-      const witnessShare = await engine.client.call("vault.shares.create", { ...createInput, brief_ref: brief.id_hex });
-      const witnessed = await agent.client.call("vault.shares.view", { share_ref: witnessShare.share_id });
+      const witnessShare = await surfaces03Call(engine.client, "vault.shares.create", { ...createInput, brief_ref: brief.id_hex });
+      const witnessed = await surfaces03Call(agent.client, "vault.shares.view", { share_ref: witnessShare.share_id });
       expect(witnessed.value?.share_ref).toBe(witnessShare.share_id);
       expect(witnessed.value?.citations).toEqual([savedCitation]);
     }
@@ -499,17 +581,17 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       expect(share.recipient).toBe(agent.principalRef);
       expect(share.brief_ref).toBe(canonicalBrief.id_hex);
       expect(share.travel).toEqual({ born_with: [] });
-      const view = await agent.client.call("vault.shares.view", { share_ref: share.share_id });
+      const view = await surfaces03Call(agent.client, "vault.shares.view", { share_ref: share.share_id });
       expect(view.value?.share_ref).toBe(share.share_id);
       expect(view.value?.citations).toEqual([savedCitation]);
     }
     // The refused revoke did not change the owner's share.
-    expect(await agent.client.call("vault.shares.view", viewInput)).toEqual(firstVisible);
+    expect(await surfaces03Call(agent.client, "vault.shares.view", viewInput)).toEqual(firstVisible);
 
     // Keep NOTE-only read matched: deleting the last read row falls back to the
     // resident credential and is NOT a valid CLAIM-grant revocation fixture.
     const narrowedPolicy = await setGrants([ownerShare, noteRead]);
-    await engine.client.call("vault.notes.set_overrides", { note_ref: source.id_hex, overrides: { context: "owner_only" } });
+    await surfaces03Call(engine.client, "vault.notes.set_overrides", { note_ref: source.id_hex, overrides: { context: "owner_only" } });
     const narrowed = await surfaces03Run(engine, agent, agentVersions, [
       { verb: "vault.shares.view", input: viewInput }, { verb: "vault.notes.follow_citation", input: followInput },
       deniedAuthor, deniedCreate,
@@ -518,21 +600,21 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     const narrowedFollows = surfaces03Values(narrowed, 1, "vault.notes.follow_citation");
     surfaces03Equal(narrowedViews); surfaces03Equal(narrowedFollows);
     for (const [index, view] of narrowedViews.entries()) expect(narrowedFollows[index]?.value).toEqual(redacted(view));
-    expect((await engine.client.call("vault.notes.defaults", { note_ref: source.id_hex })).overrides.context).toBe("owner_only");
-    const hiddenNote = await agent.client.call("vault.notes.read", { note_ref: source.id_hex });
+    expect((await surfaces03Call(engine.client, "vault.notes.defaults", { note_ref: source.id_hex })).overrides.context).toBe("owner_only");
+    const hiddenNote = await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex });
     expect(hiddenNote.value).toBeNull();
-    expect(surfaces03Contains(hiddenNote, forbidden)).toBe(false);
-    const hiddenClaims = await agent.client.call("vault.claims.list", { subject_ref: source.id_hex, limit: 10 });
+    expect({ check: "owner-only source note carries no source bytes", ok: surfaces03Contains(hiddenNote, forbidden) }).toEqual({ check: "owner-only source note carries no source bytes", ok: false });
+    const hiddenClaims = await surfaces03Call(agent.client, "vault.claims.list", { subject_ref: source.id_hex, limit: 10 });
     expect(hiddenClaims.value).toEqual([]);
-    expect(surfaces03Contains(hiddenClaims, forbidden)).toBe(false);
+    expect({ check: "withheld source claims carry no source bytes", ok: surfaces03Contains(hiddenClaims, forbidden) }).toEqual({ check: "withheld source claims carry no source bytes", ok: false });
     await positiveControl();
 
-    const deletion = await engine.client.call("vault.delete", { entity_ref: claimRef, reason: "user_hard_delete" });
-    expect(deletion.existed).toBe(true);
+    const deletion = await surfaces03Call(engine.client, "vault.delete", { entity_ref: claimRef, reason: "user_hard_delete" });
+    expect({ check: "source claim existed before delete", ok: deletion.existed }).toEqual({ check: "source claim existed before delete", ok: true });
     expect(["applied", "completion_pending"]).toContain(deletion.state);
-    await awaitPublic(() => engine.client.call("vault.get", { entity_ref: claimRef }), row => row.value === null,
+    await awaitPublic(() => surfaces03Call(engine.client, "vault.get", { entity_ref: claimRef }), row => row.value === null,
       { label: "SURFACES-03 source deletion readback" });
-    await awaitPublic(() => agent.client.call("vault.shares.view", viewInput),
+    await awaitPublic(() => surfaces03Call(agent.client, "vault.shares.view", viewInput),
       row => row.value !== null && row.value.citations.length === 0,
       { label: "SURFACES-03 erased citation readback" });
     const deleted = await surfaces03Run(engine, agent, agentVersions, [
@@ -556,10 +638,10 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       expect(revoke.status).toBe("revoked");
       expect(typeof revoke.revoked_at).toBe("number");
     }
-    expect((await agent.client.call("vault.shares.view", viewInput)).value).toBeNull();
-    expect((await agent.client.call("vault.notes.follow_citation", followInput)).value).toBeNull();
+    expect((await surfaces03Call(agent.client, "vault.shares.view", viewInput)).value).toBeNull();
+    expect((await surfaces03Call(agent.client, "vault.notes.follow_citation", followInput)).value).toBeNull();
     const readRefusalReceipt = async (expected: surfaces03RefusalReceipt) => {
-      const receipt = await awaitPublic(() => engine.client.call("vault.receipts.get", { receipt_ref: expected.ref }),
+      const receipt = await awaitPublic(() => surfaces03Call(engine.client, "vault.receipts.get", { receipt_ref: expected.ref }),
         row => row !== null, { label: "SURFACES-03 refusal receipt readback" });
       if (!receipt) throw new Error("SURFACES-03 refusal receipt is absent");
       expect(receipt.receipt_ref).toBe(expected.ref);
@@ -568,7 +650,7 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
       expect(receipt.actor_class).toBe("agent");
       expect(receipt.transport).toBe(expected.transport);
       expect(receipt.outcome).toEqual({ refused: { code: expected.code } });
-      expect(surfaces03Contains(receipt, forbidden)).toBe(false);
+      expect({ check: "refusal receipt carries no source bytes", ok: surfaces03Contains(receipt, forbidden) }).toEqual({ check: "refusal receipt carries no source bytes", ok: false });
       return receipt;
     };
     expect(receipts).toHaveLength(15);
@@ -587,18 +669,18 @@ suite.test(test, "SURFACES-03", "Shared briefs redact inaccessible citations acr
     for (const value of [...restartedViews, ...restartedFollows])
       expect(value.value !== null).toBe(spec.expected.shareRevoked.resolvesContent);
     expect(await readRefusalReceipt(wrongActorReceipt)).toEqual(savedReceipt);
-    expect((await engine.client.call("vault.get", { entity_ref: claimRef })).value).toBeNull();
-    expect((await agent.client.call("vault.notes.read", { note_ref: source.id_hex })).value).toBeNull();
-    expect((await engine.client.call("vault.notes.defaults", { note_ref: source.id_hex })).overrides.context).toBe("owner_only");
-    expect((await engine.client.call("vault.notes.read", { note_ref: canonicalBrief.id_hex })).value !== null).toBe(true);
-    const restartedPolicy = await engine.client.call("vault.gate.policy.get", { manifest_ref: narrowedPolicy.manifest_ref });
+    expect((await surfaces03Call(engine.client, "vault.get", { entity_ref: claimRef })).value).toBeNull();
+    expect((await surfaces03Call(agent.client, "vault.notes.read", { note_ref: source.id_hex })).value).toBeNull();
+    expect((await surfaces03Call(engine.client, "vault.notes.defaults", { note_ref: source.id_hex })).overrides.context).toBe("owner_only");
+    expect({ check: "canonical brief persists after restart", ok: (await surfaces03Call(engine.client, "vault.notes.read", { note_ref: canonicalBrief.id_hex })).value !== null }).toEqual({ check: "canonical brief persists after restart", ok: true });
+    const restartedPolicy = await surfaces03Call(engine.client, "vault.gate.policy.get", { manifest_ref: narrowedPolicy.manifest_ref });
     const persisted = restartedPolicy.manifests.find(row => row.manifest_ref === narrowedPolicy.manifest_ref);
     expect(persisted?.body_hash).toBe(narrowedPolicy.body_hash);
     expect(persisted?.manifest).toEqual(narrowedPolicy.manifest);
     await positiveControl();
     // Fixture promise, not today's renderer: report only labels, never private bytes.
-    expect(spec.expected.permissionNarrowed.sourceTextPresent).toBe(false);
-    expect(spec.expected.sourceDeleted.sourceTextPresent).toBe(false);
+    expect({ check: "fixture forbids source text after narrowing", ok: spec.expected.permissionNarrowed.sourceTextPresent }).toEqual({ check: "fixture forbids source text after narrowing", ok: false });
+    expect({ check: "fixture forbids source text after deletion", ok: spec.expected.sourceDeleted.sourceTextPresent }).toEqual({ check: "fixture forbids source text after deletion", ok: false });
     expect(leaks.filter(row => row.found).map(row => row.label)).toEqual([]);
   } finally {
     await engine.close();
@@ -800,10 +882,52 @@ function surfaces06Object(value: unknown): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-function surfaces06Absent(value: unknown, privateValues: readonly string[]): void {
+class surfaces06ScopeClient extends PublicHttpClient {
+  constructor(readonly source: PublicHttpClient) { super(source.url.href, source.options); }
+  override call<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+    return surfaces06Rest(`REST ${verb}`, () => this.source.call(verb, input));
+  }
+}
+function surfaces06HttpCode(body: unknown): string {
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const error = (body as Record<string, unknown>).error;
+    if (typeof error === "object" && error !== null && !Array.isArray(error)) {
+      const code = (error as Record<string, unknown>).code;
+      if (typeof code === "string") return code;
+    }
+  }
+  return "<no code>";
+}
+async function surfaces06Rest<T>(door: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      error.message = redactor.text(`SURFACES-06 ${door} refused HTTP ${error.reply.status}: ${surfaces06HttpCode(error.reply.body)}`);
+      throw error;
+    }
+    throw error;
+  }
+}
+async function surfaces06Mcp<T>(tool: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof McpRpcError && "error" in error.response) {
+      const rpc = error.response.error;
+      error.message = redactor.text(`SURFACES-06 MCP ${tool} refused ${rpc.code}: ${rpc.message}`);
+      throw error;
+    }
+    if (error instanceof PublicHttpError)
+      error.message = redactor.text(`SURFACES-06 MCP ${tool} refused HTTP ${error.reply.status}: ${surfaces06HttpCode(error.reply.body)}`);
+    throw error;
+  }
+}
+function surfaces06Absent(label: string, value: unknown, privateValues: readonly string[]): void {
   const bytes = Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
-  expect(privateValues.every(value => !bytes.includes(Buffer.from(value))
-    && !bytes.includes(Buffer.from(Buffer.from(value).toString("base64"))))).toBe(true);
+  expect({ check: label, ok: privateValues.every(value => !bytes.includes(Buffer.from(value))
+    && !bytes.includes(Buffer.from(Buffer.from(value).toString("base64"))) }))
+    .toEqual({ check: label, ok: true });
 }
 function surfaces06Content(value: FacadeResult<"vault.personas.preview">) {
   // Only compile time is volatile. Keep the stamp, ordered rows and citations.
@@ -820,22 +944,27 @@ function surfaces06McpArguments(input: FacadeInput<"vault.personas.preview">) {
 async function surfaces06Previews(
   engine: EngineFixture, input: FacadeInput<"vault.personas.preview">, privateValues: readonly string[],
 ): Promise<FacadeResult<"vault.personas.preview">> {
-  const rest = await engine.client.call("vault.personas.preview", input);
+  const rest = await surfaces06Rest("REST vault.personas.preview",
+    () => engine.client.call("vault.personas.preview", input));
   const cli = await engine.cli.run(["api", "call", "vault.personas.preview", "--data", "-"], JSON.stringify(input));
-  surfaces06Absent([rest, cli.stdout, cli.stderr], privateValues);
-  expect(cli.exitCode).toBe(0);
+  surfaces06Absent("owner CLI preview omits private values", [rest, cli.stdout, cli.stderr], privateValues);
+  expect({ check: "owner CLI preview exit", exitCode: cli.exitCode, ok: cli.exitCode === 0 })
+    .toEqual({ check: "owner CLI preview exit", exitCode: cli.exitCode, ok: true });
   const cliValue = JSON.parse(cli.stdout) as FacadeResult<"vault.personas.preview">;
-  const mcp = await engine.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input));
-  surfaces06Absent(mcp, privateValues);
-  expect(surfaces06Object(mcp).isError).toBe(false);
+  const mcp = await surfaces06Mcp("vault.personas.preview",
+    () => engine.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input)));
+  surfaces06Absent("owner MCP preview omits private values", mcp, privateValues);
+  expect({ check: "owner MCP preview is not an error", ok: surfaces06Object(mcp).isError })
+    .toEqual({ check: "owner MCP preview is not an error", ok: false });
   const structured = surfaces06Object(surfaces06Object(mcp).structuredContent);
   expect(structured.tool).toBe("vault.personas.preview");
   const mcpValue = structured.output as FacadeResult<"vault.personas.preview">;
   const sdk = await engine.sdk.run("typescript", {
     mode: "remote", url: engine.url, credential: engine.pairedActor.credential,
   }, [{ verb: "facade", path: "vault.personas.preview", input }]);
-  surfaces06Absent([sdk.process.stdout, sdk.process.stderr, sdk.results], privateValues);
-  expect(sdk.process.exitCode).toBe(0);
+  surfaces06Absent("owner SDK preview omits private values", [sdk.process.stdout, sdk.process.stderr, sdk.results], privateValues);
+  expect({ check: "owner SDK preview exit", exitCode: sdk.process.exitCode, ok: sdk.process.exitCode === 0 })
+    .toEqual({ check: "owner SDK preview exit", exitCode: sdk.process.exitCode, ok: true });
   expect(sdk.results).toHaveLength(1);
   const sdkRow = sdk.results[0];
   if (sdkRow === undefined || !sdkRow.ok) throw new Error("SURFACES-06 SDK persona preview failed");
@@ -849,17 +978,20 @@ async function surfaces06RefusalReceipt(
   engine: EngineFixture, reference: unknown, actor: PairedActor,
   transport: "http_facade" | "mcp", code: string, privateValues: readonly string[],
 ): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> {
-  expect(typeof reference === "string" && reference.startsWith("call:")).toBe(true);
+  expect({ check: "refusal receipt ref shape", ok: typeof reference === "string" && reference.startsWith("call:") })
+    .toEqual({ check: "refusal receipt ref shape", ok: true });
   if (typeof reference !== "string") throw new Error("SURFACES-06 refusal omitted its public receipt ref");
-  const read = await engine.client.call("vault.receipts.get", { receipt_ref: reference });
-  surfaces06Absent(read, privateValues);
+  const read = await surfaces06Rest("REST vault.receipts.get",
+    () => engine.client.call("vault.receipts.get", { receipt_ref: reference }));
+  surfaces06Absent("refusal receipt omits private values", read, privateValues);
   if (read === null) throw new Error("SURFACES-06 refusal receipt did not read back");
   expect({ ref: read.receipt_ref, actor: read.actor_ref, actorClass: read.actor_class,
     verb: read.verb, transport: read.transport, outcome: read.outcome }).toEqual({
     ref: reference, actor: actor.principalRef, actorClass: "agent",
     verb: "vault.personas.preview", transport, outcome: { refused: { code } },
   });
-  expect(read.request_digest.length > 0 && (read.result_digest?.length ?? 0) > 0).toBe(true);
+  expect({ check: "refusal receipt digests", ok: read.request_digest.length > 0 && (read.result_digest?.length ?? 0) > 0 })
+    .toEqual({ check: "refusal receipt digests", ok: true });
   return read;
 }
 
@@ -868,6 +1000,8 @@ async function surfaces06RefusalReceipt(
  * same through REST / CLI / tool-first MCP / TypeScript SDK, refuses a paired
  * agent, and survives restart. Claims and diary are written through public
  * verbs and read through vault.get; preview observes those writes separately.
+ * The agent holds a proposed actor ceiling (public policy door) so its MCP
+ * call reaches the verb's owner check instead of stopping at MCP admission.
  * No profile grant is exercised: owner persona acts and grant-gated psych
  * profiles are different doors. Populated facet access, approve/revoke, copy
  * strikes/export/edit and stale export consent remain unproved. Accepted-copy
@@ -887,15 +1021,18 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
   const engine = await EngineFixture.start({ id: "SURFACES-06", profile, surface: "tool-first" });
   try {
     const owner = engine.pairedActor.principalRef;
-    const scope = await ownerBaseClaimScope(engine.client, owner);
-    const readerPerson = await engine.client.call("vault.structural.put", {
-      kind: "PERSON", body: { name: data.requester }, occurred_at: fixtures.ledger.oldAt,
-    });
-    const otherPerson = await engine.client.call("vault.structural.put", {
-      kind: "PERSON", body: { name: data.profiles[1] }, occurred_at: fixtures.ledger.oldAt,
-    });
+    const scope = await ownerBaseClaimScope(new surfaces06ScopeClient(engine.client), owner);
+    const readerPerson = await surfaces06Rest("REST vault.structural.put",
+      () => engine.client.call("vault.structural.put", {
+        kind: "PERSON", body: { name: data.requester }, occurred_at: fixtures.ledger.oldAt,
+      }));
+    const otherPerson = await surfaces06Rest("REST vault.structural.put",
+      () => engine.client.call("vault.structural.put", {
+        kind: "PERSON", body: { name: data.profiles[1] }, occurred_at: fixtures.ledger.oldAt,
+      }));
     for (const person of [readerPerson, otherPerson]) {
-      const read = await engine.client.call("vault.get", { entity_ref: person.id_hex });
+      const read = await surfaces06Rest("REST vault.get",
+        () => engine.client.call("vault.get", { entity_ref: person.id_hex }));
       expect(read.value?.id_hex).toBe(person.id_hex);
       expect(read.value?.kind).toBe("PERSON");
       expect(surfaces06Object(read.value?.body).name).toBe(person === readerPerson ? data.requester : data.profiles[1]);
@@ -903,6 +1040,28 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     const reader = await engine.pairActor({
       principalRef: readerPerson.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
     });
+    // MCP resolves every caller against the gate actor ceilings first: without
+    // a ceiling row the agent's MCP call is refused at admission (-32001) and
+    // never reaches the verb's owner check (-32020). The ceiling admits the
+    // credential to the door; the owner check still refuses the preview.
+    const readerPolicies = await surfaces06Rest("REST vault.gate.policy.get",
+      () => engine.client.call("vault.gate.policy.get", {}));
+    const readerPolicy = readerPolicies.manifests.find(item => item.manifest_ref === readerPolicies.default_manifest_ref);
+    if (readerPolicy === undefined) throw new Error("SURFACES-06 default policy is missing");
+    const readerCeilings = readerPolicy.manifest.actor_ceilings.filter(row =>
+      !(row.actor_class === "agent" && row.actor_ref === readerPerson.id_hex));
+    readerCeilings.push({ actor_class: "agent", actor_ref: readerPerson.id_hex, ceiling: "proposed" });
+    const readerPolicyWrite = await surfaces06Rest("REST vault.gate.policy.put",
+      () => engine.client.call("vault.gate.policy.put", {
+        manifest_ref: readerPolicy.manifest_ref, expected_body_hash: readerPolicy.body_hash,
+        manifest: { ...readerPolicy.manifest, actor_ceilings: readerCeilings },
+      }));
+    expect(readerPolicyWrite.approval).toBe("auto");
+    await engine.awaitReceipt(readerPolicyWrite.receipt_ref);
+    const readerPolicyRead = await surfaces06Rest("REST vault.gate.policy.get",
+      () => engine.client.call("vault.gate.policy.get", { manifest_ref: readerPolicy.manifest_ref }));
+    expect(readerPolicyRead.manifests.find(item => item.manifest_ref === readerPolicy.manifest_ref)?.manifest.actor_ceilings)
+      .toEqual(readerCeilings);
     const claimInputs = [
       { subject: owner, predicate: "profile.name", value: data.identityLine, salience: 0.9 },
       { subject: owner, predicate: "profile.observation", value: data.includedFact, salience: 0.8 },
@@ -910,27 +1069,33 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
       { subject: otherPerson.id_hex, predicate: "profile.observation", value: privatePerson, salience: 0.8 },
     ];
     const claimIds: string[] = [];
-    for (const input of claimInputs) {
-      const result = await engine.client.call("vault.claims.upsert", {
-        subject_ref: input.subject, predicate: input.predicate, value: input.value,
-        confidence: 1, source: "user_stated", scope, salience: input.salience,
-        occurred_at: fixtures.ledger.oldAt, learned_at: fixtures.ledger.oldAt,
-      });
+    for (const [index, input] of claimInputs.entries()) {
+      const result = await surfaces06Rest("REST vault.claims.upsert",
+        () => engine.client.call("vault.claims.upsert", {
+          subject_ref: input.subject, predicate: input.predicate, value: input.value,
+          confidence: 1, source: "user_stated", scope, salience: input.salience,
+          occurred_at: fixtures.ledger.oldAt, learned_at: fixtures.ledger.oldAt,
+        }));
       expect(result.approval).toBe("auto");
       await engine.awaitReceipt(result.receipt_ref);
-      const read = await engine.client.call("vault.get", { entity_ref: result.claim_short_id });
+      const read = await surfaces06Rest("REST vault.get",
+        () => engine.client.call("vault.get", { entity_ref: result.claim_short_id }));
       if (read.value === null) throw new Error("SURFACES-06 written claim did not read back");
       expect(read.value.kind).toBe("CLAIM");
-      expect((JSON.stringify(read.value.body) ?? "").includes(input.value)).toBe(true);
+      expect({ check: "setup claim read-back contains its value", index, ok: (JSON.stringify(read.value.body) ?? "").includes(input.value) })
+        .toEqual({ check: "setup claim read-back contains its value", index, ok: true });
       claimIds.push(read.value.id_hex);
     }
     const [nameClaim, observationClaim, visitsClaim] = claimIds;
     if (nameClaim === undefined || observationClaim === undefined || visitsClaim === undefined) {
       throw new Error("SURFACES-06 missing setup claim refs");
     }
-    const diary = await engine.client.call("self.memory.diary", { content: privateDiary });
-    const diaryRead = await engine.client.call("vault.get", { entity_ref: diary.entry_ref });
-    expect((JSON.stringify(diaryRead.value?.body) ?? "").includes(privateDiary)).toBe(true);
+    const diary = await surfaces06Rest("REST self.memory.diary",
+      () => engine.client.call("self.memory.diary", { content: privateDiary }));
+    const diaryRead = await surfaces06Rest("REST vault.get",
+      () => engine.client.call("vault.get", { entity_ref: diary.entry_ref }));
+    expect({ check: "diary read-back contains its entry", ok: (JSON.stringify(diaryRead.value?.body) ?? "").includes(privateDiary) })
+      .toEqual({ check: "diary read-back contains its entry", ok: true });
 
     const input = { subject: owner } satisfies FacadeInput<"vault.personas.preview">;
     const preview = await surfaces06Previews(engine, input, privateValues);
@@ -942,71 +1107,79 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     if (identity === undefined || observation === undefined || visits === undefined) throw new Error("SURFACES-06 cited fixture rows missing");
     for (const [row, citation] of [[identity, nameClaim], [observation, observationClaim], [visits, visitsClaim]] as const) {
       expect(row.provenance_refs).toEqual([`claim:${citation}`]);
-      expect(row.struck).toBe(false);
+      expect({ check: "preview row unstruck", kind: row.kind, ok: row.struck })
+        .toEqual({ check: "preview row unstruck", kind: row.kind, ok: false });
     }
 
     const message = "vault.personas.preview is the vault owner's";
     const receipts: NonNullable<FacadeResult<"vault.receipts.get">>[] = [];
     let restError: PublicHttpError | undefined;
-    try { await reader.client.call("vault.personas.preview", input); }
+    try { await surfaces06Rest("REST vault.personas.preview", () => reader.client.call("vault.personas.preview", input)); }
     catch (error) { if (!(error instanceof PublicHttpError)) throw error; restError = error; }
     if (restError === undefined) throw new Error("SURFACES-06 agent preview unexpectedly succeeded");
-    surfaces06Absent(restError.reply.raw, privateValues);
-    expect(restError.reply.status).toBe(403);
+    surfaces06Absent("agent REST refusal omits private values", restError.reply.raw, privateValues);
     const error = surfaces06Object(surfaces06Object(restError.reply.body).error);
-    expect(error.code).toBe("FORBIDDEN");
-    expect(error.message).toBe(message);
-    expect(typeof error.requestId === "string" && error.requestId.length > 0).toBe(true);
-    expect(Array.isArray(error.suggestions) && error.suggestions.length > 0).toBe(true);
+    expect({ check: "agent REST preview refusal", status: restError.reply.status, code: error.code, message: error.message })
+      .toEqual({ check: "agent REST preview refusal", status: 403, code: "FORBIDDEN", message });
+    expect({ check: "agent REST refusal request id", ok: typeof error.requestId === "string" && error.requestId.length > 0 })
+      .toEqual({ check: "agent REST refusal request id", ok: true });
+    expect({ check: "agent REST refusal suggestions", ok: Array.isArray(error.suggestions) && error.suggestions.length > 0 })
+      .toEqual({ check: "agent REST refusal suggestions", ok: true });
     expect(restError.reply.headers.get("x-oneiron-receipt-ref")).toBe(error.receiptRef as string);
     receipts.push(await surfaces06RefusalReceipt(engine, error.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     const cli = await reader.cli.run(["api", "call", "vault.personas.preview", "--data", "-"], JSON.stringify(input));
-    surfaces06Absent([cli.stdout, cli.stderr], privateValues);
-    expect(cli.exitCode).not.toBe(0);
+    surfaces06Absent("agent CLI refusal omits private values", [cli.stdout, cli.stderr], privateValues);
+    expect({ check: "agent CLI preview refused", exitCode: cli.exitCode, ok: cli.exitCode !== 0 })
+      .toEqual({ check: "agent CLI preview refused", exitCode: cli.exitCode, ok: true });
     const cliError = surfaces06Object(surfaces06Object(JSON.parse(cli.stdout)).error);
-    expect(cliError.code).toBe("FORBIDDEN");
-    expect(cliError.message).toBe(message);
-    expect(typeof cliError.requestId === "string" && cliError.requestId.length > 0).toBe(true);
-    expect(Array.isArray(cliError.suggestions) && cliError.suggestions.length > 0).toBe(true);
+    expect({ check: "agent CLI preview refusal", code: cliError.code, message: cliError.message })
+      .toEqual({ check: "agent CLI preview refusal", code: "FORBIDDEN", message });
+    expect({ check: "agent CLI refusal request id", ok: typeof cliError.requestId === "string" && cliError.requestId.length > 0 })
+      .toEqual({ check: "agent CLI refusal request id", ok: true });
+    expect({ check: "agent CLI refusal suggestions", ok: Array.isArray(cliError.suggestions) && cliError.suggestions.length > 0 })
+      .toEqual({ check: "agent CLI refusal suggestions", ok: true });
     receipts.push(await surfaces06RefusalReceipt(engine, cliError.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     let rpc: McpRpcError | undefined;
-    try { await reader.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input)); }
+    try { await surfaces06Mcp("vault.personas.preview", () => reader.mcp.callTool("vault.personas.preview", surfaces06McpArguments(input))); }
     catch (error) { if (!(error instanceof McpRpcError)) throw error; rpc = error; }
     if (rpc === undefined || !("error" in rpc.response)) throw new Error("SURFACES-06 expected a JSON-RPC refusal, not a tool result");
-    surfaces06Absent(rpc.response, privateValues);
+    surfaces06Absent("agent MCP refusal omits private values", rpc.response, privateValues);
     const mcpError = rpc.response.error;
     const mcpData = surfaces06Object(mcpError.data);
-    expect(mcpError.code).toBe(-32020);
-    expect(mcpError.message).toBe(message);
-    expect(mcpData.kind).toBe("facade_error");
+    expect({ check: "agent MCP preview refusal", code: mcpError.code, kind: mcpData.kind, message: mcpError.message })
+      .toEqual({ check: "agent MCP preview refusal", code: -32020, kind: "facade_error", message });
     expect(mcpData.error_code).toBe("facade_error");
     expect(mcpData.human_message).toBe(message);
-    expect(typeof mcpData.request_id === "string" && mcpData.request_id.length > 0).toBe(true);
-    expect(Array.isArray(mcpData.recovery_suggestions) && mcpData.recovery_suggestions.length > 0).toBe(true);
+    expect({ check: "agent MCP refusal request id", ok: typeof mcpData.request_id === "string" && mcpData.request_id.length > 0 })
+      .toEqual({ check: "agent MCP refusal request id", ok: true });
+    expect({ check: "agent MCP refusal suggestions", ok: Array.isArray(mcpData.recovery_suggestions) && mcpData.recovery_suggestions.length > 0 })
+      .toEqual({ check: "agent MCP refusal suggestions", ok: true });
     receipts.push(await surfaces06RefusalReceipt(engine, mcpData.receipt_ref, reader, "mcp", "facade_error", privateValues));
 
     const sdk = await engine.sdk.run("typescript", {
       mode: "remote", url: engine.url, credential: reader.credential,
     }, [{ verb: "facade", path: "vault.personas.preview", input }]);
-    surfaces06Absent([sdk.process.stdout, sdk.process.stderr, sdk.results], privateValues);
+    surfaces06Absent("agent SDK refusal omits private values", [sdk.process.stdout, sdk.process.stderr, sdk.results], privateValues);
     expect(sdk.process.exitCode).toBe(0); // Driver catches the operation's exception.
     expect(sdk.results).toHaveLength(1);
     const sdkRow = sdk.results[0];
     if (sdkRow === undefined || sdkRow.ok) throw new Error("SURFACES-06 SDK agent preview did not refuse");
     const sdkError = surfaces06Object(sdkRow.error);
-    expect(sdkError.code).toBe("FORBIDDEN");
-    expect(sdkError.message).toBe(message);
-    expect(Array.isArray(sdkError.suggestions) && sdkError.suggestions.length > 0).toBe(true);
+    expect({ check: "agent SDK preview refusal", code: sdkError.code, message: sdkError.message })
+      .toEqual({ check: "agent SDK preview refusal", code: "FORBIDDEN", message });
+    expect({ check: "agent SDK refusal suggestions", ok: Array.isArray(sdkError.suggestions) && sdkError.suggestions.length > 0 })
+      .toEqual({ check: "agent SDK refusal suggestions", ok: true });
     receipts.push(await surfaces06RefusalReceipt(engine, sdkRow.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
 
     await engine.restart();
     const restarted = await surfaces06Previews(engine, input, privateValues);
     expect(surfaces06Content(restarted)).toEqual(surfaces06Content(preview));
     for (const receipt of receipts) {
-      const read = await engine.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref });
-      surfaces06Absent(read, privateValues);
+      const read = await surfaces06Rest("REST vault.receipts.get",
+        () => engine.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref }));
+      surfaces06Absent("restart receipt omits private values", read, privateValues);
       expect(read).toEqual(receipt);
     }
   } finally {
@@ -1022,6 +1195,7 @@ type surfaces07DeniedVerb = "vault.agents.update" | "vault.workflows.update";
 type surfaces07Denied = {
   [V in surfaces07DeniedVerb]: { verb: V; input: FacadeInput<V> }
 }[surfaces07DeniedVerb];
+type surfaces07Ceiling = FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number];
 interface surfaces07Fixtures {
   cases: { id: string; fixture?: {
     definitions: { name: string }[];
@@ -1040,6 +1214,61 @@ function surfaces07Id(): string {
   const value = secretHex(16);
   redactor.add(value, Buffer.from(value).toString("base64"));
   return value;
+}
+// Local diagnostic wrappers: a refusal names its door. The MCP refusal keeps
+// McpRpcError identity and its inspectable `.response`, so expected-refusal
+// branches below keep reading the JSON-RPC code, data and receipt ref.
+class surfaces07McpRefusal extends McpRpcError {
+  constructor(tool: string, response: McpRpcError["response"]) {
+    super(response);
+    const rpc = "error" in response ? response.error : undefined;
+    this.message = redactor.text(`MCP ${tool} refused ${rpc?.code}: ${rpc?.message}`);
+  }
+}
+async function surfaces07Mcp<T>(tool: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof McpRpcError) throw new surfaces07McpRefusal(tool, error.response);
+    if (error instanceof PublicHttpError) {
+      error.message = redactor.text(`MCP ${tool} refused HTTP ${error.reply.status}: ${error.error?.code ?? "no-code"}`);
+      throw error;
+    }
+    if (error instanceof Error) throw new Error(redactor.text(`MCP ${tool} failed: ${error.message}`));
+    throw error;
+  }
+}
+async function surfaces07Call<V extends FacadeVerb>(
+  client: PublicHttpClient, verb: V, input: FacadeInput<V>,
+): Promise<FacadeResult<V>> {
+  try {
+    return await client.call(verb, input);
+  } catch (error) {
+    if (error instanceof PublicHttpError)
+      error.message = redactor.text(`REST ${verb} refused HTTP ${error.reply.status}: ${error.error?.code ?? "no-code"}`);
+    throw error;
+  }
+}
+async function surfaces07Raw(
+  client: PublicHttpClient, verb: string, input: unknown, expectedStatus: number,
+): Promise<{ status: number; headers: Headers; body: unknown; raw: string }> {
+  const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input);
+  if (reply.status !== expectedStatus) {
+    const error = new PublicHttpError(reply);
+    error.message = redactor.text(`REST ${verb} refused HTTP ${reply.status}: ${error.error?.code ?? "no-code"}`);
+    throw error;
+  }
+  return reply;
+}
+async function surfaces07Cli<V extends FacadeVerb>(
+  client: CliClient, verb: V, input: FacadeInput<V>,
+): Promise<FacadeResult<V>> {
+  try {
+    return await client.call(verb, input);
+  } catch (error) {
+    if (error instanceof CliError) throw new Error(redactor.text(`CLI ${verb} exited ${error.result.exitCode}: ${error.result.stderr.slice(-300)}`));
+    throw error;
+  }
 }
 function surfaces07McpArguments(tools: unknown, verb: string, spec: unknown): Record<string, unknown> {
   const listing = surfaces07Object(tools);
@@ -1076,11 +1305,12 @@ function surfaces07AssertRun(
 }
 async function surfaces07Parity(engine: EngineFixture, tools: unknown, reads: readonly surfaces07Read[]): Promise<void> {
   for (const read of reads) {
-    expect(await engine.client.call(read.verb, read.input)).toEqual(read.expected);
-    expect(await engine.cli.call(read.verb, read.input)).toEqual(read.expected);
-    const reply = surfaces07Object(await engine.mcp.callTool(read.verb,
-      surfaces07McpArguments(tools, read.verb, read.input)));
-    expect(reply.isError).toBe(false);
+    expect(await surfaces07Call(engine.client, read.verb, read.input)).toEqual(read.expected);
+    expect(await surfaces07Cli(engine.cli, read.verb, read.input)).toEqual(read.expected);
+    const reply = surfaces07Object(await surfaces07Mcp(read.verb, () => engine.mcp.callTool(read.verb,
+      surfaces07McpArguments(tools, read.verb, read.input))));
+    const parityNoError = `MCP parity read for ${read.verb} is not an error`;
+    expect({ check: parityNoError, ok: reply.isError }).toEqual({ check: parityNoError, ok: false });
     const structured = surfaces07Object(reply.structuredContent);
     expect(structured.tool).toBe(read.verb);
     expect(structured.output).toEqual(read.expected);
@@ -1093,7 +1323,8 @@ async function surfaces07Parity(engine: EngineFixture, tools: unknown, reads: re
   for (const [index, read] of reads.entries()) {
     const result = sdk.results[index];
     if (!result) throw new Error("SURFACES-07 SDK omitted a read result");
-    expect(result.ok).toBe(true);
+    const sdkRead = `SDK parity read for ${read.verb} succeeds`;
+    expect({ check: sdkRead, ok: result.ok }).toEqual({ check: sdkRead, ok: true });
     if (!result.ok) throw new Error("SURFACES-07 SDK refused an owner read");
     expect(result.value).toEqual(read.expected);
   }
@@ -1106,7 +1337,7 @@ async function surfaces07RefusalReceipt(
     throw new Error("SURFACES-07 refusal must carry its real public call receipt; SDK driver must retain lastReceiptRef()");
   }
   const receipt = await awaitPublic(
-    () => engine.client.call("vault.receipts.get", { receipt_ref: ref }),
+    () => surfaces07Call(engine.client, "vault.receipts.get", { receipt_ref: ref }),
     row => row !== null, { label: "SURFACES-07 refusal receipt" },
   );
   if (receipt === null) throw new Error("SURFACES-07 refusal receipt did not persist");
@@ -1119,11 +1350,11 @@ async function surfaces07Refuse(
 ): Promise<NonNullable<FacadeResult<"vault.receipts.get">>[]> {
   const receipts: NonNullable<FacadeResult<"vault.receipts.get">>[] = [];
   const expectedErrors: Record<string, unknown>[] = [];
-  await actor.mcp.initialize();
+  await surfaces07Mcp("initialize", () => actor.mcp.initialize());
   for (const request of denied) {
     const message = `${request.verb} is the vault owner's`;
-    const http = await actor.client.raw("POST", `/v1/core/facade/${request.verb}`, request.input);
-    expect(http.status).toBe(403);
+    const http = await surfaces07Raw(actor.client, request.verb, request.input, 403);
+    expect({ verb: request.verb, status: http.status }).toEqual({ verb: request.verb, status: 403 });
     const error = surfaces07Object(surfaces07Object(http.body).error);
     expect(error).toMatchObject({ code: "FORBIDDEN", message,
       requestId: expect.any(String), suggestions: ["Present the owner's own verified, unattenuated credential."] });
@@ -1142,11 +1373,16 @@ async function surfaces07Refuse(
     receipts.push(await surfaces07RefusalReceipt(engine, cliError.receiptRef,
       request.verb, actor.principalRef, "http_facade", "FORBIDDEN"));
 
-    const mcp = await actor.mcp.rpc("tools/call", { name: request.verb,
-      arguments: surfaces07McpArguments(tools, request.verb, request.input),
-      _meta: { "oneiron/invocation": surfaces07Id() } });
-    if (!("error" in mcp)) throw new Error("SURFACES-07 MCP allowed an agent owner act");
-    expect(mcp.error.code).toBe(-32020);
+    let mcp: McpRpcError["response"] | undefined;
+    try {
+      await surfaces07Mcp(request.verb, () => actor.mcp.callTool(request.verb,
+        surfaces07McpArguments(tools, request.verb, request.input)));
+    } catch (error) {
+      if (!(error instanceof McpRpcError)) throw error;
+      mcp = error.response;
+    }
+    if (mcp === undefined || !("error" in mcp)) throw new Error("SURFACES-07 MCP allowed an agent owner act");
+    expect({ verb: request.verb, code: mcp.error.code }).toEqual({ verb: request.verb, code: -32020 });
     const data = surfaces07Object(mcp.error.data);
     expect(data).toMatchObject({ kind: "facade_error", error_code: "facade_error",
       human_message: message, request_id: expect.any(String), recovery_suggestions: expect.any(Array) });
@@ -1163,7 +1399,8 @@ async function surfaces07Refuse(
   for (const [index, request] of denied.entries()) {
     const result = sdk.results[index];
     if (!result) throw new Error("SURFACES-07 SDK omitted a refusal result");
-    expect(result.ok).toBe(false);
+    const sdkDenied = `SDK op ${request.verb} refuses the agent edit`;
+    expect({ check: sdkDenied, ok: result.ok }).toEqual({ check: sdkDenied, ok: false });
     if (result.ok) throw new Error("SURFACES-07 SDK allowed an agent owner act");
     const error = surfaces07Object(result.error);
     expect({ code: error.code, message: error.message, suggestions: error.suggestions }).toEqual<unknown>(expectedErrors[index]);
@@ -1183,7 +1420,8 @@ async function surfaces07Refuse(
  * Editing a definition/workflow changes the next run, never the earlier capture;
  * agents cannot perform the owner's edits, and state/refusal receipts survive restart.
  * Doors: typed agents.create/get/update and workflows.save/get/update/dispatch/status;
- * paired agent refusals through the same four public surfaces; receipts.get.
+ * owner policy CAS agent MCP ceiling (ARCH-0040); paired agent refusals through
+ * the same four public surfaces; receipts.get.
  * Unproved: executing both workers, common-world read/propose enforcement, TASK/funding,
  * installed skills, or delegated grants/revocation. The exercised controls are owner acts,
  * not grant-admitted agent substrate doors. No models, providers or private seed.
@@ -1215,19 +1453,19 @@ suite.test(test, "SURFACES-07", "Custom agent and saved workflow revisions agree
       ...readerSpec, agent_id: "surfaces07-proposer", desc: proposerName,
       instructions: "Propose a summary of the synthetic observations.",
     };
-    const readerCreated = await engine.client.call("vault.agents.create", { agent_def_ref: readerRef, definition: readerSpec });
-    const proposerCreated = await engine.client.call("vault.agents.create", { agent_def_ref: proposerRef, definition: proposerSpec });
-    const readerV1 = await engine.client.call("vault.agents.get", { agent_def_ref: readerRef });
-    const proposerV1 = await engine.client.call("vault.agents.get", { agent_def_ref: proposerRef });
+    const readerCreated = await surfaces07Call(engine.client, "vault.agents.create", { agent_def_ref: readerRef, definition: readerSpec });
+    const proposerCreated = await surfaces07Call(engine.client, "vault.agents.create", { agent_def_ref: proposerRef, definition: proposerSpec });
+    const readerV1 = await surfaces07Call(engine.client, "vault.agents.get", { agent_def_ref: readerRef });
+    const proposerV1 = await surfaces07Call(engine.client, "vault.agents.get", { agent_def_ref: proposerRef });
     expect(readerV1).toEqual(readerCreated);
     expect(proposerV1).toEqual(proposerCreated);
     expect(readerV1).toMatchObject({ agent_def_ref: readerRef, definition: readerSpec, approval_status: "approved", lifecycle_status: "active" });
     expect(proposerV1).toMatchObject({ agent_def_ref: proposerRef, definition: proposerSpec, approval_status: "approved", lifecycle_status: "active" });
 
-    const saved = await engine.client.call("vault.workflows.save", {
+    const saved = await surfaces07Call(engine.client, "vault.workflows.save", {
       workflow_ref: workflowRef, name: data.workflow.name, steps: [readerRef, proposerRef],
     });
-    const workflowV1 = await engine.client.call("vault.workflows.get", { workflow_ref: workflowRef });
+    const workflowV1 = await surfaces07Call(engine.client, "vault.workflows.get", { workflow_ref: workflowRef });
     expect(workflowV1).toEqual(saved);
     expect(workflowV1).toEqual({ workflow_ref: workflowRef, name: data.workflow.name,
       steps: [readerRef, proposerRef], revision: 1, forked_from: null });
@@ -1236,49 +1474,67 @@ suite.test(test, "SURFACES-07", "Custom agent and saved workflow revisions agree
       briefing: "Review synthetic observations without external tools.",
       context_spec: { layers: [], memory: { mode: "exclude" }, chat: { mode: "exclude" } },
     };
-    const admittedBefore = await engine.client.call("vault.workflows.dispatch", dispatch);
-    const before = await engine.client.call("vault.workflows.status", { root_attempt_ref: admittedBefore.root_attempt_ref });
+    const admittedBefore = await surfaces07Call(engine.client, "vault.workflows.dispatch", dispatch);
+    const before = await surfaces07Call(engine.client, "vault.workflows.status", { root_attempt_ref: admittedBefore.root_attempt_ref });
     expect(before).toEqual(admittedBefore);
     surfaces07AssertRun(before, workflowRef, 1, [readerV1, proposerV1]);
 
-    const readerUpdated = await engine.client.call("vault.agents.update", {
+    const readerUpdated = await surfaces07Call(engine.client, "vault.agents.update", {
       agent_def_ref: readerRef, expected_version: "1",
       definition: { ...readerV1.definition, version: String(data.edit.revision), scope: { kind: "base" } },
     });
-    const readerV2 = await engine.client.call("vault.agents.get", { agent_def_ref: readerRef });
+    const readerV2 = await surfaces07Call(engine.client, "vault.agents.get", { agent_def_ref: readerRef });
     expect(readerV2).toEqual(readerUpdated);
     expect(readerV2).toEqual({ ...readerV1,
       definition: { ...readerV1.definition, version: String(data.edit.revision), scope: { kind: "base" } } });
-    const workflowUpdated = await engine.client.call("vault.workflows.update", {
+    const workflowUpdated = await surfaces07Call(engine.client, "vault.workflows.update", {
       workflow_ref: workflowRef, expected_revision: workflowV1.revision,
       name: `${data.workflow.name} v2`, steps: [readerRef, proposerRef],
     });
-    const workflowV2 = await engine.client.call("vault.workflows.get", { workflow_ref: workflowRef });
+    const workflowV2 = await surfaces07Call(engine.client, "vault.workflows.get", { workflow_ref: workflowRef });
     expect(workflowV2).toEqual(workflowUpdated);
     expect(workflowV2).toEqual({ ...workflowV1, name: `${data.workflow.name} v2`, revision: 2 });
-    const admittedAfter = await engine.client.call("vault.workflows.dispatch", { ...dispatch, intent_key: "after-edit" });
-    const after = await engine.client.call("vault.workflows.status", { root_attempt_ref: admittedAfter.root_attempt_ref });
+    const admittedAfter = await surfaces07Call(engine.client, "vault.workflows.dispatch", { ...dispatch, intent_key: "after-edit" });
+    const after = await surfaces07Call(engine.client, "vault.workflows.status", { root_attempt_ref: admittedAfter.root_attempt_ref });
     expect(after).toEqual(admittedAfter);
     surfaces07AssertRun(after, workflowRef, 2, [readerV2, proposerV1]);
     expect(new Set([before.root_attempt_ref, before.active_attempt_ref, after.root_attempt_ref, after.active_attempt_ref]).size).toBe(4);
-    expect(await engine.client.call("vault.workflows.status", { root_attempt_ref: before.root_attempt_ref })).toEqual(before);
+    expect(await surfaces07Call(engine.client, "vault.workflows.status", { root_attempt_ref: before.root_attempt_ref })).toEqual(before);
 
     const actor = await engine.pairActor({ principalRef: readerRef, actorClass: "agent", scope: ["core:read", "core:write"] });
     redactor.add(actor.credential, Buffer.from(actor.credential).toString("base64"));
-    await engine.mcp.initialize();
-    const tools = await engine.mcp.listTools();
+    // ARCH-0040 mcp-actor-ceilings: a paired agent's MCP credential resolves
+    // only with a manifest ceiling row for (agent, principal). The owner writes
+    // one through the public policy door before the agent's first MCP call;
+    // "proposed" keeps the agent's Gate posture exactly as the no-row default.
+    const surfaces07CeilingRow: surfaces07Ceiling = { actor_class: "agent", actor_ref: actor.principalRef, ceiling: "proposed" };
+    const surfaces07CeilingBefore = await surfaces07Call(engine.client, "vault.gate.policy.get", {});
+    const surfaces07CeilingCurrent = surfaces07CeilingBefore.manifests.find(row => row.manifest_ref === surfaces07CeilingBefore.default_manifest_ref);
+    if (!surfaces07CeilingCurrent) throw new Error("SURFACES-07 default policy is absent");
+    await surfaces07Call(engine.client, "vault.gate.policy.put", {
+      manifest_ref: surfaces07CeilingCurrent.manifest_ref, expected_body_hash: surfaces07CeilingCurrent.body_hash,
+      manifest: { ...surfaces07CeilingCurrent.manifest,
+        actor_ceilings: [...surfaces07CeilingCurrent.manifest.actor_ceilings, surfaces07CeilingRow] },
+    });
+    const surfaces07CeilingAfter = await surfaces07Call(engine.client, "vault.gate.policy.get", { manifest_ref: surfaces07CeilingCurrent.manifest_ref });
+    const surfaces07CeilingSaved = surfaces07CeilingAfter.manifests.find(row => row.manifest_ref === surfaces07CeilingCurrent.manifest_ref);
+    const surfaces07CeilingTrusted = "agent MCP ceiling readback is trusted";
+    expect({ check: surfaces07CeilingTrusted, ok: surfaces07CeilingSaved?.trusted }).toEqual({ check: surfaces07CeilingTrusted, ok: true });
+    expect(surfaces07CeilingSaved?.manifest.actor_ceilings).toContainEqual(surfaces07CeilingRow);
+    await surfaces07Mcp("initialize", () => engine.mcp.initialize());
+    const tools = await surfaces07Mcp("tools/list", () => engine.mcp.listTools());
     const refused = await surfaces07Refuse(engine, actor, tools, [
       { verb: "vault.agents.update", input: { agent_def_ref: readerRef, expected_version: String(data.edit.revision),
         definition: { ...readerV2.definition, version: "3", scope: { kind: "all" } } } },
       { verb: "vault.workflows.update", input: { workflow_ref: workflowRef, expected_revision: workflowV2.revision,
         name: "Unapproved workflow edit", steps: [proposerRef, readerRef] } },
     ]);
-    expect(await engine.client.call("vault.agents.get", { agent_def_ref: readerRef })).toEqual(readerV2);
-    expect(await engine.client.call("vault.workflows.get", { workflow_ref: workflowRef })).toEqual(workflowV2);
+    expect(await surfaces07Call(engine.client, "vault.agents.get", { agent_def_ref: readerRef })).toEqual(readerV2);
+    expect(await surfaces07Call(engine.client, "vault.workflows.get", { workflow_ref: workflowRef })).toEqual(workflowV2);
 
     await engine.restart();
-    await engine.mcp.initialize();
-    const restartedTools = await engine.mcp.listTools();
+    await surfaces07Mcp("initialize", () => engine.mcp.initialize());
+    const restartedTools = await surfaces07Mcp("tools/list", () => engine.mcp.listTools());
     await surfaces07Parity(engine, restartedTools, [
       { verb: "vault.agents.get", input: { agent_def_ref: readerRef }, expected: readerV2 },
       { verb: "vault.agents.get", input: { agent_def_ref: proposerRef }, expected: proposerV1 },
@@ -1287,7 +1543,7 @@ suite.test(test, "SURFACES-07", "Custom agent and saved workflow revisions agree
       { verb: "vault.workflows.status", input: { root_attempt_ref: after.root_attempt_ref }, expected: after },
     ]);
     for (const receipt of refused) {
-      expect(await engine.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref })).toEqual(receipt);
+      expect(await surfaces07Call(engine.client, "vault.receipts.get", { receipt_ref: receipt.receipt_ref })).toEqual(receipt);
     }
   } finally {
     await engine.close();
@@ -1346,11 +1602,12 @@ function surfaces08Value(prefix: string): string {
   redactor.add(value, Buffer.from(value).toString("base64"));
   return value;
 }
-function surfaces08NoValues(value: unknown, hidden: readonly string[]): void {
+function surfaces08NoValues(value: unknown, hidden: readonly string[], label: string): void {
   const bytes = value instanceof Uint8Array ? Buffer.from(value)
     : Buffer.from(typeof value === "string" ? value : JSON.stringify(value) ?? "");
-  expect(hidden.every(text => !bytes.includes(Buffer.from(text))
-    && !bytes.includes(Buffer.from(Buffer.from(text).toString("base64"))))).toBe(true);
+  expect({ check: label, ok: hidden.every(text => !bytes.includes(Buffer.from(text))
+    && !bytes.includes(Buffer.from(Buffer.from(text).toString("base64")))) })
+    .toEqual({ check: label, ok: true });
 }
 function surfaces08Arguments(input: unknown) {
   return {
@@ -1358,6 +1615,128 @@ function surfaces08Arguments(input: unknown) {
     consent: { policy_ref: "policy:surfaces-08", purpose: "Compare reader-bound weave surfaces" },
     arguments: { spec: input },
   };
+}
+
+/** Triage diagnostics (job 1111-000621-0355): every MCP/HTTP/facade refusal
+ * throws with its static label, verb, status and engine code. Labels never
+ * carry values, refs or secrets, and every embedded engine sentence is
+ * scrubbed through the redactor. The original error stays inspectable on
+ * `surfaces08Cause` beside the extracted fields. */
+function surfaces08Record(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+function surfaces08ShortText(value: unknown, max = 160): string {
+  if (typeof value !== "string") return "(Detail withheld: not a sentence.)";
+  const flat = redactor.text(value.replace(/\s+/g, " ").trim());
+  if (flat.length === 0) return "(Detail withheld: empty.)";
+  return flat.length <= max ? flat : `${flat.slice(0, max)} ... (cut.)`;
+}
+function surfaces08BodyError(body: unknown): { code: string; message: string } {
+  const envelope = surfaces08Record(body);
+  const error = surfaces08Record(envelope?.error) ?? envelope;
+  if (error === null) return { code: "UNKNOWN", message: "(No JSON body.)" };
+  const code = typeof error.code === "string" && error.code.length > 0 ? error.code : "UNKNOWN";
+  return { code, message: surfaces08ShortText(error.message) };
+}
+function surfaces08RefusalText(label: string, verb: string, status: number, body: unknown,
+  thrown?: unknown): Error {
+  const error = surfaces08BodyError(body);
+  const failure = new Error(redactor.text(
+    `SURFACES-08 ${label}: ${verb} refused HTTP ${status} ${error.code}: ${error.message}`));
+  Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+    surfaces08Status: status, surfaces08Code: error.code, surfaces08Cause: thrown ?? null });
+  return failure;
+}
+function surfaces08Annotate(label: string, verb: string, thrown: unknown): Error {
+  if (thrown instanceof PublicHttpError) {
+    return surfaces08RefusalText(label, verb, thrown.reply.status, thrown.reply.body, thrown);
+  }
+  if (thrown instanceof McpRpcError) {
+    if ("error" in thrown.response) {
+      const failure = new Error(`SURFACES-08 ${label}: MCP ${verb} refused `
+        + `${thrown.response.error.code}: ${surfaces08ShortText(thrown.response.error.message)}`);
+      Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+        surfaces08Status: null, surfaces08Code: thrown.response.error.code, surfaces08Cause: thrown });
+      return failure;
+    }
+    const failure = new Error(
+      `SURFACES-08 ${label}: MCP ${verb} failed without a JSON-RPC error (transport detail withheld).`);
+    Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+      surfaces08Status: null, surfaces08Code: null, surfaces08Cause: thrown });
+    return failure;
+  }
+  if (thrown instanceof CliError) {
+    const failure = new Error(
+      `SURFACES-08 ${label}: ${verb}: ${surfaces08ShortText(thrown.message, 200)}`);
+    Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+      surfaces08Status: null, surfaces08Code: thrown.stage, surfaces08Cause: thrown });
+    return failure;
+  }
+  if (thrown instanceof Error) {
+    const failure = new Error(
+      `SURFACES-08 ${label}: ${verb} failed: ${surfaces08ShortText(thrown.message, 200)}`);
+    Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+      surfaces08Status: null, surfaces08Code: null, surfaces08Cause: thrown });
+    return failure;
+  }
+  const failure = new Error(`SURFACES-08 ${label}: ${verb} threw a non-error (detail withheld).`);
+  Object.assign(failure, { surfaces08Label: label, surfaces08Verb: verb,
+    surfaces08Status: null, surfaces08Code: null, surfaces08Cause: thrown });
+  return failure;
+}
+async function surfaces08Call<V extends FacadeVerb>(client: PublicHttpClient, verb: V,
+  input: FacadeInput<V>, label: string): Promise<FacadeResult<V>> {
+  try {
+    return await client.call(verb, input);
+  } catch (thrown) {
+    throw surfaces08Annotate(label, verb, thrown);
+  }
+}
+async function surfaces08Raw<T>(client: PublicHttpClient, method: string, path: string,
+  body: unknown, label: string): Promise<WireReply<T>> {
+  try {
+    return await client.raw<T>(method, path, body);
+  } catch (thrown) {
+    throw surfaces08Annotate(label, `${method} ${path}`, thrown);
+  }
+}
+async function surfaces08Request<T>(client: PublicHttpClient, method: string, path: string,
+  body: unknown, label: string): Promise<WireReply<T>> {
+  try {
+    return await client.request<T>(method, path, body);
+  } catch (thrown) {
+    throw surfaces08Annotate(label, `${method} ${path}`, thrown);
+  }
+}
+async function surfaces08Scope(client: PublicHttpClient,
+  ownerRef: string): Promise<Awaited<ReturnType<typeof ownerBaseClaimScope>>> {
+  try {
+    return await ownerBaseClaimScope(client, ownerRef);
+  } catch (thrown) {
+    throw surfaces08Annotate("claim scope setup", "vault.neighbors + vault.get", thrown);
+  }
+}
+async function surfaces08McpCall(mcp: McpClient, tool: string, args: unknown,
+  label: string): Promise<unknown> {
+  try {
+    return await mcp.callTool(tool, args);
+  } catch (thrown) {
+    const annotated = surfaces08Annotate(label, tool, thrown);
+    if (thrown instanceof McpRpcError) {
+      thrown.message = annotated.message;
+      throw thrown;
+    }
+    throw annotated;
+  }
+}
+type surfaces08RpcReply = Awaited<ReturnType<McpClient["rpc"]>>;
+function surfaces08CliJson(stdout: string, label: string, verb: string): unknown {
+  try {
+    return JSON.parse(stdout) as unknown;
+  } catch {
+    throw new Error(`SURFACES-08 ${label}: CLI ${verb} returned non-JSON stdout (body withheld).`);
+  }
 }
 function surfaces08Claims(report: FacadeResult<"vault.weave.report">) {
   return report.sections.flatMap(section => section.items.flatMap(item => item.item === "claim"
@@ -1373,30 +1752,39 @@ function surfaces08Links(report: FacadeResult<"vault.weave.report">): string[] {
     ? [`${item.source_ref}/${item.kind}/${item.target_ref}`] : [])).sort();
 }
 async function surfaces08ReportRead(actor: PairedActor, input: FacadeInput<"vault.weave.report">,
-  hidden: readonly string[]): Promise<FacadeResult<"vault.weave.report">> {
-  const reply = await actor.client.raw<FacadeResult<"vault.weave.report">>(
-    "POST", "/v1/core/facade/vault.weave.report", input);
-  surfaces08NoValues(reply.bytes, hidden);
-  expect(reply.status).toBe(200);
+  hidden: readonly string[], label: string): Promise<FacadeResult<"vault.weave.report">> {
+  const reply = await surfaces08Raw<FacadeResult<"vault.weave.report">>(
+    actor.client, "POST", "/v1/core/facade/vault.weave.report", input, label);
+  surfaces08NoValues(reply.bytes, hidden, `SURFACES-08 ${label} hides foreign markers`);
+  if (reply.status !== 200) {
+    throw surfaces08RefusalText(label, "vault.weave.report", reply.status, reply.body);
+  }
   return reply.body;
 }
 function surfaces08Error(body: unknown, code: string) {
   const error = surfaces08Object(surfaces08Object(body).error);
   expect(error.code).toBe(code);
-  expect(typeof error.message === "string" && error.message.length > 0).toBe(true);
+  expect({ check: "SURFACES-08 refusal message is a nonempty sentence",
+    ok: typeof error.message === "string" && error.message.length > 0 })
+    .toEqual({ check: "SURFACES-08 refusal message is a nonempty sentence", ok: true });
   expect(typeof error.requestId).toBe("string");
-  expect(Array.isArray(error.suggestions) && error.suggestions.length > 0
-    && error.suggestions.every((value: unknown) => typeof value === "string")).toBe(true);
+  expect({ check: "SURFACES-08 refusal carries nonempty string suggestions",
+    ok: Array.isArray(error.suggestions) && error.suggestions.length > 0
+      && error.suggestions.every((value: unknown) => typeof value === "string") })
+    .toEqual({ check: "SURFACES-08 refusal carries nonempty string suggestions", ok: true });
   return error;
 }
 async function surfaces08ReceiptRead(actor: PairedActor, reference: unknown, verb: string,
   code: string, transport: "http_facade" | "mcp", hidden: readonly string[]): Promise<surfaces08Receipt> {
   const receiptRef = surfaces08String(reference);
-  expect(/^call:[a-f0-9]{32}$/.test(receiptRef)).toBe(true);
-  const row = await awaitPublic(() => actor.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+  expect({ check: "SURFACES-08 refusal receipt ref shape", ok: /^call:[a-f0-9]{32}$/.test(receiptRef) })
+    .toEqual({ check: "SURFACES-08 refusal receipt ref shape", ok: true });
+  const row = await awaitPublic(
+    () => surfaces08Call(actor.client, "vault.receipts.get", { receipt_ref: receiptRef },
+      `refusal receipt read ${transport} ${verb}`),
     value => value !== null, { label: "SURFACES-08 refusal receipt" });
   if (row === null) throw new Error("SURFACES-08 refusal receipt did not become readable");
-  surfaces08NoValues(row, hidden);
+  surfaces08NoValues(row, hidden, "SURFACES-08 refusal receipt hides foreign markers");
   expect({ ref: row.receipt_ref, verb: row.verb, actor: row.actor_ref, actorClass: row.actor_class,
     transport: row.transport, outcome: row.outcome }).toEqual({
     ref: receiptRef, verb, actor: actor.principalRef, actorClass: actor.actorClass,
@@ -1408,26 +1796,33 @@ async function surfaces08ReceiptRead(actor: PairedActor, reference: unknown, ver
 /** Compare saved DTOs, not surface envelopes. Reports and existing labels have
  * no per-invocation volatile fields; retain every actor, item, scope and time. */
 async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
-  reads: readonly surfaces08Read[], hidden: readonly string[],
+  reads: readonly surfaces08Read[], hidden: readonly string[], label: string,
   refusals: readonly surfaces08Refusal[] = []): Promise<surfaces08Receipt[]> {
   for (const read of reads) {
     const cli = await actor.cli.run(["api", "call", read.verb, "--data", "-"], JSON.stringify(read.input));
-    surfaces08NoValues(cli.stdout, hidden);
-    surfaces08NoValues(cli.stderr, hidden);
-    expect(cli.exitCode).toBe(0);
-    expect(JSON.parse(cli.stdout)).toEqual(read.expected);
-    const mcp = await actor.mcp.callTool(read.verb, surfaces08Arguments(read.input));
-    surfaces08NoValues(mcp, hidden);
-    expect(surfaces08Object(mcp).isError === true).toBe(false);
+    surfaces08NoValues(cli.stdout, hidden, `SURFACES-08 CLI ${label} ${read.verb} stdout hides foreign markers`);
+    surfaces08NoValues(cli.stderr, hidden, `SURFACES-08 CLI ${label} ${read.verb} stderr hides foreign markers`);
+    if (cli.exitCode !== 0) {
+      throw new Error(`SURFACES-08 CLI ${label} ${read.verb} read exited ${cli.exitCode} (output withheld).`);
+    }
+    expect(surfaces08CliJson(cli.stdout, `CLI ${label}`, read.verb)).toEqual(read.expected);
+    const mcp = await surfaces08McpCall(actor.mcp, read.verb, surfaces08Arguments(read.input),
+      `${label} ${read.verb} read`);
+    surfaces08NoValues(mcp, hidden, `SURFACES-08 MCP ${label} ${read.verb} result hides foreign markers`);
+    expect({ check: `SURFACES-08 MCP ${label} ${read.verb} read is not an error`,
+      ok: surfaces08Object(mcp).isError === true })
+      .toEqual({ check: `SURFACES-08 MCP ${label} ${read.verb} read is not an error`, ok: false });
     const structured = surfaces08Object(surfaces08Object(mcp).structuredContent);
     expect(structured.output).toEqual(read.expected);
   }
   const receipts: surfaces08Receipt[] = [];
   const expectedErrors: Record<string, unknown>[] = [];
   for (const refusal of refusals) {
-    const rest = await actor.client.raw("POST", `/v1/core/facade/${refusal.verb}`, refusal.input);
-    surfaces08NoValues(rest.bytes, hidden);
-    expect(rest.status).toBe(refusal.status);
+    const rest = await surfaces08Raw(actor.client, "POST", `/v1/core/facade/${refusal.verb}`,
+      refusal.input, `REST ${label} ${refusal.verb} refusal`);
+    surfaces08NoValues(rest.bytes, hidden, `SURFACES-08 REST ${label} ${refusal.verb} refusal hides foreign markers`);
+    if (rest.status !== refusal.status)
+      throw surfaces08RefusalText(`REST ${label} refusal status`, refusal.verb, rest.status, rest.body);
     const error = surfaces08Error(rest.body, refusal.code);
     expect(rest.headers.get("x-oneiron-receipt-ref")).toBe<unknown>(error.receiptRef);
     receipts.push(await surfaces08ReceiptRead(actor, error.receiptRef, refusal.verb,
@@ -1435,27 +1830,40 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
     expectedErrors.push(error);
 
     const cli = await actor.cli.run(["api", "call", refusal.verb, "--data", "-"], JSON.stringify(refusal.input));
-    surfaces08NoValues(cli.stdout, hidden);
-    surfaces08NoValues(cli.stderr, hidden);
-    expect(cli.exitCode === 0).toBe(false);
-    const cliError = surfaces08Error(JSON.parse(cli.stdout), refusal.code);
+    surfaces08NoValues(cli.stdout, hidden, `SURFACES-08 CLI ${label} ${refusal.verb} refusal stdout hides foreign markers`);
+    surfaces08NoValues(cli.stderr, hidden, `SURFACES-08 CLI ${label} ${refusal.verb} refusal stderr hides foreign markers`);
+    expect({ check: `SURFACES-08 CLI ${label} ${refusal.verb} refusal exits nonzero`, ok: cli.exitCode === 0 })
+      .toEqual({ check: `SURFACES-08 CLI ${label} ${refusal.verb} refusal exits nonzero`, ok: false });
+    const cliError = surfaces08Error(surfaces08CliJson(cli.stdout, `CLI ${label}`, refusal.verb), refusal.code);
     expect({ code: cliError.code, message: cliError.message, suggestions: cliError.suggestions })
       .toEqual({ code: error.code, message: error.message, suggestions: error.suggestions });
     receipts.push(await surfaces08ReceiptRead(actor, cliError.receiptRef, refusal.verb,
       refusal.code, "http_facade", hidden));
 
-    const rpc = await actor.mcp.rpc("tools/call", {
-      name: refusal.verb, arguments: surfaces08Arguments(refusal.input),
-    });
-    surfaces08NoValues(rpc, hidden);
-    expect("error" in rpc).toBe(true);
+    let rpc: surfaces08RpcReply | undefined;
+    try {
+      await surfaces08McpCall(actor.mcp, refusal.verb, surfaces08Arguments(refusal.input),
+        `${label} ${refusal.verb} refusal`);
+    } catch (thrown) {
+      if (!(thrown instanceof McpRpcError)) throw thrown;
+      rpc = thrown.response;
+    }
+    if (rpc === undefined) throw new Error(`SURFACES-08 MCP ${label} ${refusal.verb} accepted a refused act`);
+    surfaces08NoValues(rpc, hidden, `SURFACES-08 MCP ${label} ${refusal.verb} refusal hides foreign markers`);
+    expect({ check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal carries a JSON-RPC error`, ok: "error" in rpc })
+      .toEqual({ check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal carries a JSON-RPC error`, ok: true });
     if (!("error" in rpc)) throw new Error("SURFACES-08 MCP accepted a refused act");
-    expect(rpc.error.code).toBe(refusal.rpcCode);
+    expect({ check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal code`, code: rpc.error.code,
+      message: redactor.text(rpc.error.message) }).toEqual({
+      check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal code`, code: refusal.rpcCode,
+      message: redactor.text(rpc.error.message) });
     const data = surfaces08Object(rpc.error.data);
     expect({ kind: data.kind, code: data.error_code, message: data.human_message })
       .toEqual({ kind: "facade_error", code: "facade_error", message: error.message });
     expect(typeof data.request_id).toBe("string");
-    expect(Array.isArray(data.recovery_suggestions) && data.recovery_suggestions.length > 0).toBe(true);
+    expect({ check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal carries recovery hints`,
+      ok: Array.isArray(data.recovery_suggestions) && data.recovery_suggestions.length > 0 })
+      .toEqual({ check: `SURFACES-08 MCP ${label} ${refusal.verb} refusal carries recovery hints`, ok: true });
     // MCP records its own machine kind, not the HTTP facade's code.
     receipts.push(await surfaces08ReceiptRead(actor, data.receipt_ref, refusal.verb,
       "facade_error", "mcp", hidden));
@@ -1463,23 +1871,30 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
   const operations = [...reads, ...refusals].map(call => ({
     verb: "facade" as const, path: call.verb, input: call.input,
   }));
-  const sdk = await engine.sdk.run("typescript", {
-    mode: "remote", url: engine.url, credential: actor.credential,
-  }, operations);
-  surfaces08NoValues(sdk.process.stdout, hidden);
-  surfaces08NoValues(sdk.process.stderr, hidden);
+  let sdk: SdkDriverResult;
+  try {
+    sdk = await engine.sdk.run("typescript", {
+      mode: "remote", url: engine.url, credential: actor.credential,
+    }, operations);
+  } catch (thrown) {
+    throw surfaces08Annotate(`SDK ${label} batch`, "facade batch", thrown);
+  }
+  surfaces08NoValues(sdk.process.stdout, hidden, `SURFACES-08 SDK ${label} stdout hides foreign markers`);
+  surfaces08NoValues(sdk.process.stderr, hidden, `SURFACES-08 SDK ${label} stderr hides foreign markers`);
   expect(sdk.process.exitCode).toBe(0);
   expect(sdk.results.length).toBe(operations.length);
   for (const [index, read] of reads.entries()) {
     const result = sdk.results[index];
-    if (result === undefined || !result.ok) throw new Error("SURFACES-08 SDK read failed");
+    if (result === undefined || !result.ok) {
+      throw new Error(`SURFACES-08 SDK ${label} ${read.verb} read failed (result withheld).`);
+    }
     expect(result.value).toEqual(read.expected);
   }
   for (const [index, refusal] of refusals.entries()) {
     const result = sdk.results[reads.length + index];
     const expectedError = expectedErrors[index];
     if (result === undefined || expectedError === undefined || result.ok) {
-      throw new Error("SURFACES-08 SDK did not return the expected refusal");
+      throw new Error(`SURFACES-08 SDK ${label} ${refusal.verb} did not return the expected refusal.`);
     }
     const error = surfaces08Object(result.error);
     expect({ code: error.code, message: error.message, suggestions: error.suggestions })
@@ -1507,8 +1922,10 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
   const [readerALabel, readerBLabel] = data.actors;
   if (readerALabel === undefined || readerBLabel === undefined) throw new Error("SURFACES-08 needs two reader labels");
   expect(data.expected.correctionActor).toBe(readerALabel);
-  expect(data.expected.foreignPrivateTextVisible).toBe(false);
-  expect(data.expected.wrongLabelDeletesEdge).toBe(false);
+  expect({ check: "SURFACES-08 fixture hides foreign private text", ok: data.expected.foreignPrivateTextVisible })
+    .toEqual({ check: "SURFACES-08 fixture hides foreign private text", ok: false });
+  expect({ check: "SURFACES-08 fixture keeps the corrected edge", ok: data.expected.wrongLabelDeletesEdge })
+    .toEqual({ check: "SURFACES-08 fixture keeps the corrected edge", ok: false });
   const ownerText = surfaces08Value(data.privateText);
   const otherText = surfaces08Value(`${readerBLabel} private observation.`);
   const projectText = surfaces08Value(data.commonText);
@@ -1522,60 +1939,68 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
   try {
     // Bind reader-a to the real owner, using its PERSON lens, NOT owner-global.
     const readerA = engine.pairedActor;
-    const initial = await readerA.client.call("vault.weave.report", { sections: [{ kind: "projects" }] });
+    const initial = await surfaces08Call(readerA.client, "vault.weave.report",
+      { sections: [{ kind: "projects" }] }, "initial projects report");
     const projectRefs = surfaces08Projects(initial);
     expect(projectRefs.length).toBe(1);
     const projectRef = projectRefs[0];
     if (projectRef === undefined) throw new Error("SURFACES-08 fresh root project is missing");
-    const root = await engine.client.call("vault.get", { entity_ref: projectRef });
+    const root = await surfaces08Call(engine.client, "vault.get", { entity_ref: projectRef },
+      "root project read");
     expect(root.value?.id_hex).toBe(projectRef);
     const rootBody = surfaces08Object(root.value?.body);
     expect(rootBody.parents).toEqual([]);
-    expect(Array.isArray(rootBody.board) && rootBody.board.includes(readerA.principalRef)).toBe(true);
+    expect({ check: "SURFACES-08 root board holds the owner",
+      ok: Array.isArray(rootBody.board) && rootBody.board.includes(readerA.principalRef) })
+      .toEqual({ check: "SURFACES-08 root board holds the owner", ok: true });
     const leaderRef = surfaces08String(rootBody.leader);
-    const leader = await engine.client.call("vault.get", { entity_ref: leaderRef });
+    const leader = await surfaces08Call(engine.client, "vault.get", { entity_ref: leaderRef },
+      "project leader read");
     expect(leader.value?.kind).toBe("AGENT_DEF");
 
     // MCP requires an owner-authored actor ceiling even for read-only use.
     // Add only this existing leader, at Proposed; this is not an AgentGrant.
-    const policies = await engine.client.call("vault.gate.policy.get", {});
+    const policies = await surfaces08Call(engine.client, "vault.gate.policy.get", {}, "policy manifest read");
     const policy = policies.manifests.find(row => row.manifest_ref === policies.default_manifest_ref);
     if (policy === undefined) throw new Error("SURFACES-08 default policy is missing");
     const actorCeiling = { actor_class: "agent", actor_ref: leaderRef, ceiling: "proposed" as const };
-    const installedPolicy = await engine.client.call("vault.gate.policy.put", {
+    const installedPolicy = await surfaces08Call(engine.client, "vault.gate.policy.put", {
       manifest_ref: policy.manifest_ref, expected_body_hash: policy.body_hash,
       manifest: { ...policy.manifest, actor_ceilings: [...policy.manifest.actor_ceilings, actorCeiling] },
-    });
-    const policyRead = await engine.client.call("vault.gate.policy.get", { manifest_ref: policy.manifest_ref });
+    }, "actor ceiling install");
+    const policyRead = await surfaces08Call(engine.client, "vault.gate.policy.get",
+      { manifest_ref: policy.manifest_ref }, "policy read-back");
     expect(policyRead.manifests[0]?.manifest).toEqual(installedPolicy.manifest.manifest);
     expect(policyRead.manifests[0]?.manifest.actor_ceilings).toContainEqual(actorCeiling);
 
-    const other = await engine.client.call("vault.structural.put", {
+    const other = await surfaces08Call(engine.client, "vault.structural.put", {
       kind: "PERSON", body: { name: otherName }, occurred_at: at,
       edges: [{ edge_kind: surfaces08EdgeKind, target_ref: readerA.principalRef }],
-    });
-    const place = await engine.client.call("vault.structural.put", {
+    }, "reader-b PERSON create");
+    const place = await surfaces08Call(engine.client, "vault.structural.put", {
       kind: "PLACE", body: { name: placeName }, occurred_at: at,
       edges: [{ edge_kind: surfaces08EdgeKind, target_ref: projectRef }],
-    });
-    expect((await engine.client.call("vault.get", { entity_ref: other.id_hex })).value?.body)
-      .toEqual({ name: otherName });
-    expect((await engine.client.call("vault.get", { entity_ref: place.id_hex })).value?.body)
-      .toEqual({ name: placeName });
+    }, "shared PLACE create");
+    expect((await surfaces08Call(engine.client, "vault.get", { entity_ref: other.id_hex },
+      "reader-b read-back")).value?.body).toEqual({ name: otherName });
+    expect((await surfaces08Call(engine.client, "vault.get", { entity_ref: place.id_hex },
+      "place read-back")).value?.body).toEqual({ name: placeName });
     const readerB = await engine.pairActor({ principalRef: other.id_hex, actorClass: "human", scope: ["core:read", "core:write"] });
     const agent = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
-    for (const actor of [readerA, readerB, agent]) {
-      const self = await actor.client.call("self.actor", {});
+    for (const [name, actor] of [["reader-a", readerA], ["reader-b", readerB], ["agent", agent]] as const) {
+      const self = await surfaces08Call(actor.client, "self.actor", {}, `self.actor ${name}`);
       expect({ ref: self.actor_ref, actorClass: self.actor_class })
         .toEqual({ ref: actor.principalRef, actorClass: actor.actorClass });
     }
-    const scope = await ownerBaseClaimScope(engine.client, readerA.principalRef);
+    const scope = await surfaces08Scope(engine.client, readerA.principalRef);
     const authored: { ref: string; subject: string; value: string }[] = [];
-    for (const [subject, value] of [[readerA.principalRef, ownerText], [readerB.principalRef, otherText],
-      [projectRef, projectText], [agent.principalRef, agentText]] as const) {
-      const written = await engine.client.call("vault.claims.upsert", {
+    for (const [name, subject, value] of [["owner", readerA.principalRef, ownerText],
+      ["other-person", readerB.principalRef, otherText],
+      ["project", projectRef, projectText],
+      ["agent", agent.principalRef, agentText]] as const) {
+      const written = await surfaces08Call(engine.client, "vault.claims.upsert", {
         scope, subject_ref: subject, predicate, value, confidence: 1, source: "user_stated", occurred_at: at,
-      });
+      }, `claim write ${name}`);
       const ref = written.claim?.id;
       if (ref === undefined) throw new Error("SURFACES-08 claim write returned no record reference");
       authored.push({ ref, subject, value });
@@ -1587,9 +2012,9 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
     const agentRecipe = { sections: [{ kind: "digest", predicates: [predicate] }] } satisfies FacadeInput<"vault.weave.report">;
     const ownerRecipe = { sections: [{ kind: "conflicts", predicates: [predicate] },
       { kind: "links", edge_kinds: [surfaces08EdgeKind] }, { kind: "budgets" }] } satisfies FacadeInput<"vault.weave.report">;
-    const reportA = await surfaces08ReportRead(readerA, personRecipe, [otherText, agentText]);
-    const reportB = await surfaces08ReportRead(readerB, personRecipe, [ownerText, projectText, agentText]);
-    const reportAgent = await surfaces08ReportRead(agent, agentRecipe, [ownerText, otherText]);
+    const reportA = await surfaces08ReportRead(readerA, personRecipe, [otherText, agentText], "reader-a person report");
+    const reportB = await surfaces08ReportRead(readerB, personRecipe, [ownerText, projectText, agentText], "reader-b person report");
+    const reportAgent = await surfaces08ReportRead(agent, agentRecipe, [ownerText, otherText], "agent digest report");
     expect(reportA.sections.map(section => section.kind)).toEqual(["changes", "projects", "links"]);
     expect(reportB.sections.map(section => section.kind)).toEqual(["changes", "projects", "links"]);
     expect(reportAgent.sections.map(section => section.kind)).toEqual(["digest"]);
@@ -1602,59 +2027,68 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
     const memberLink = `${place.id_hex}/${surfaces08EdgeKind}/${projectRef}`;
     expect(surfaces08Links(reportA)).toEqual([sharedLink, memberLink].sort());
     expect(surfaces08Links(reportB)).toEqual([sharedLink]);
-    const ownerReport = await engine.client.request<FacadeResult<"vault.weave.report">>("POST", "/v1/owner/weave/report", ownerRecipe);
+    const ownerReport = await surfaces08Request<FacadeResult<"vault.weave.report">>(
+      engine.client, "POST", "/v1/owner/weave/report", ownerRecipe, "owner-global report");
     expect(ownerReport.body.sections.map(section => section.kind)).toEqual(["conflicts", "links", "budgets"]);
     expect(surfaces08Claims(ownerReport.body)).toEqual(surfaces08ExpectedClaims(authored.map(row => row.subject)));
     expect(surfaces08Links(ownerReport.body)).toEqual([sharedLink, memberLink].sort());
 
     const link = { source_ref: readerB.principalRef, kind: surfaces08EdgeKind,
       target_ref: readerA.principalRef } satisfies FacadeInput<"vault.weave.link.wrong">;
-    expect(await readerA.client.call("vault.weave.link.corrections", link)).toEqual([]);
-    const label = await readerA.client.call("vault.weave.link.wrong", link);
-    const labels = await readerA.client.call("vault.weave.link.corrections", link);
+    expect(await surfaces08Call(readerA.client, "vault.weave.link.corrections", link,
+      "initial correction read")).toEqual([]);
+    const label = await surfaces08Call(readerA.client, "vault.weave.link.wrong", link, "human link correction");
+    const labels = await surfaces08Call(readerA.client, "vault.weave.link.corrections", link, "correction read-back");
     expect(labels).toEqual([label]);
     expect(labels[0]).toMatchObject({ ...link, actor_ref: readerA.principalRef });
-    expect(surfaces08Links(await surfaces08ReportRead(readerA, personRecipe, [otherText, agentText])))
-      .toEqual([sharedLink, memberLink].sort());
-    const neighbors = await readerB.client.call("vault.neighbors", {
+    expect(surfaces08Links(await surfaces08ReportRead(readerA, personRecipe, [otherText, agentText],
+      "reader-a report after correction"))).toEqual([sharedLink, memberLink].sort());
+    const neighbors = await surfaces08Call(readerB.client, "vault.neighbors", {
       entity_ref: readerB.principalRef, opts: { edge_kind: surfaces08EdgeKind, limit: 20 },
-    });
-    surfaces08NoValues(neighbors, [ownerText, projectText, agentText]);
-    expect(neighbors.value.some(row => row.record?.id === readerA.principalRef)).toBe(true);
+    }, "reader-b neighbors read");
+    surfaces08NoValues(neighbors, [ownerText, projectText, agentText], "SURFACES-08 neighbors hide foreign markers");
+    expect({ check: "SURFACES-08 reader-b still neighbors reader-a",
+      ok: neighbors.value.some(row => row.record?.id === readerA.principalRef) })
+      .toEqual({ check: "SURFACES-08 reader-b still neighbors reader-a", ok: true });
 
     await surfaces08Parity(engine, readerA, [
       { verb: "vault.weave.report", input: personRecipe, expected: reportA },
       { verb: "vault.weave.link.corrections", input: link, expected: labels },
-    ], [otherText, agentText]);
+    ], [otherText, agentText], "reader-a");
     await surfaces08Parity(engine, readerB, [
       { verb: "vault.weave.report", input: personRecipe, expected: reportB },
-    ], [ownerText, projectText, agentText]);
+    ], [ownerText, projectText, agentText], "reader-b");
     const receipts = await surfaces08Parity(engine, agent, [
       { verb: "vault.weave.report", input: agentRecipe, expected: reportAgent },
-    ], [ownerText, otherText], [
+    ], [ownerText, otherText], "agent", [
       { verb: "vault.weave.link.wrong", input: link, status: 403, code: "FORBIDDEN", rpcCode: -32020 },
       { verb: "vault.weave.report", input: { sections: [{ kind: "conflicts", predicates: [predicate] }] },
         status: 400, code: "BAD_REQUEST", rpcCode: -32602 },
     ]);
     // The refused label attempts, including the SDK call, created no extra label.
-    expect(await readerA.client.call("vault.weave.link.corrections", link)).toEqual(labels);
+    expect(await surfaces08Call(readerA.client, "vault.weave.link.corrections", link,
+      "correction re-read after refusals")).toEqual(labels);
     await engine.restart();
-    for (const [actor, recipe, expected, hidden] of [
-      [readerA, personRecipe, reportA, [otherText, agentText]],
-      [readerB, personRecipe, reportB, [ownerText, projectText, agentText]],
-      [agent, agentRecipe, reportAgent, [ownerText, otherText]],
+    for (const [name, actor, recipe, expected, hidden] of [
+      ["reader-a", readerA, personRecipe, reportA, [otherText, agentText]],
+      ["reader-b", readerB, personRecipe, reportB, [ownerText, projectText, agentText]],
+      ["agent", agent, agentRecipe, reportAgent, [ownerText, otherText]],
     ] as const) {
-      const persisted = await surfaces08ReportRead(actor, recipe, hidden);
+      const persisted = await surfaces08ReportRead(actor, recipe, hidden, `persisted ${name} report`);
       expect(persisted).toEqual(expected);
     }
-    expect((await engine.client.request<FacadeResult<"vault.weave.report">>("POST", "/v1/owner/weave/report", ownerRecipe)).body)
+    expect((await surfaces08Request<FacadeResult<"vault.weave.report">>(
+      engine.client, "POST", "/v1/owner/weave/report", ownerRecipe, "persisted owner-global report")).body)
       .toEqual(ownerReport.body);
-    expect(await readerA.client.call("vault.weave.link.corrections", link)).toEqual(labels);
-    expect((await engine.client.call("vault.gate.policy.get", { manifest_ref: policy.manifest_ref })).manifests[0]?.manifest)
+    expect(await surfaces08Call(readerA.client, "vault.weave.link.corrections", link,
+      "persisted correction read")).toEqual(labels);
+    expect((await surfaces08Call(engine.client, "vault.gate.policy.get",
+      { manifest_ref: policy.manifest_ref }, "persisted policy read")).manifests[0]?.manifest)
       .toEqual(installedPolicy.manifest.manifest);
     for (const receipt of receipts) {
-      const persisted = await receipt.actor.client.call("vault.receipts.get", { receipt_ref: receipt.row.receipt_ref });
-      surfaces08NoValues(persisted, [ownerText, otherText]);
+      const persisted = await surfaces08Call(receipt.actor.client, "vault.receipts.get",
+        { receipt_ref: receipt.row.receipt_ref }, "persisted refusal receipt read");
+      surfaces08NoValues(persisted, [ownerText, otherText], "SURFACES-08 persisted receipt hides foreign markers");
       expect(persisted).toEqual(receipt.row);
     }
   } finally {
@@ -1665,6 +2099,7 @@ suite.test(test, "SURFACES-08", "Reader-bound weave reports and human link corre
 type surfaces09Registration = FacadeResult<"vault.connectors.proxy.admit">;
 type surfaces09Verb = "ai.chat.completions" | "vault.connectors.proxy.admit" | "vault.connectors.proxy.revoke_write";
 interface surfaces09Fixtures {
+  ledger: { oldAt: number };
   cases: { id: string; fixture?: {
     connector: string; model: string; query: string; admittedMemory: string;
     privateMemory: string; assistantReply: string;
@@ -1691,28 +2126,91 @@ function surfaces09String(value: unknown): string {
     throw new Error("SURFACES-09 expected a public string");
   return value;
 }
-function surfaces09Absent(value: unknown, privateValue: string): void {
-  const bytes = Buffer.from(JSON.stringify(value) ?? "null");
-  expect(!bytes.includes(Buffer.from(privateValue)) &&
-    !bytes.includes(Buffer.from(Buffer.from(privateValue).toString("base64")))).toBe(true);
+class surfaces09ScopeClient extends PublicHttpClient {
+  constructor(readonly source: PublicHttpClient) { super(source.url.href, source.options); }
+  override call<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+    return surfaces09Rest(`REST ${verb}`, () => this.source.call(verb, input));
+  }
 }
-function surfaces09McpOutput(value: unknown): unknown {
+function surfaces09HttpCode(body: unknown): string {
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const error = (body as Record<string, unknown>).error;
+    if (typeof error === "object" && error !== null && !Array.isArray(error)) {
+      const code = (error as Record<string, unknown>).code;
+      if (typeof code === "string") return code;
+    }
+  }
+  return "<no code>";
+}
+async function surfaces09Rest<T>(door: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      error.message = redactor.text(`SURFACES-09 ${door} refused HTTP ${error.reply.status}: ${surfaces09HttpCode(error.reply.body)}`);
+      throw error;
+    }
+    throw error;
+  }
+}
+async function surfaces09Mcp<T>(tool: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof McpRpcError && "error" in error.response) {
+      const rpc = error.response.error;
+      error.message = redactor.text(`SURFACES-09 MCP ${tool} refused ${rpc.code}: ${rpc.message}`);
+      throw error;
+    }
+    if (error instanceof PublicHttpError)
+      error.message = redactor.text(`SURFACES-09 MCP ${tool} refused HTTP ${error.reply.status}: ${surfaces09HttpCode(error.reply.body)}`);
+    throw error;
+  }
+}
+async function surfaces09Cli<T>(verb: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof CliError) {
+      error.message = redactor.text(`SURFACES-09 CLI ${verb} refused (exit ${error.result.exitCode})`);
+      throw error;
+    }
+    throw error;
+  }
+}
+function surfaces09McpArguments(input: unknown): Record<string, unknown> {
+  return {
+    schema_version: "mcp_tool_args.v1",
+    consent: { policy_ref: "policy:surfaces-09", purpose: "proxy family parity" },
+    arguments: { spec: input },
+  };
+}
+function surfaces09Absent(label: string, value: unknown, privateValue: string): void {
+  const bytes = Buffer.from(JSON.stringify(value) ?? "null");
+  expect({ check: label, ok: !bytes.includes(Buffer.from(privateValue)) &&
+    !bytes.includes(Buffer.from(Buffer.from(privateValue).toString("base64"))) })
+    .toEqual({ check: label, ok: true });
+}
+function surfaces09McpOutput(label: string, value: unknown): unknown {
   const result = surfaces09Object(value);
-  expect(result.isError).toBe(false);
+  expect({ check: label, ok: result.isError }).toEqual({ check: label, ok: false });
   return surfaces09Object(result.structuredContent).output;
 }
-function surfaces09SdkValue(result: SdkDriverResult, index = 0): unknown {
-  expect(result.process.exitCode).toBe(0);
+function surfaces09SdkValue(label: string, result: SdkDriverResult, index = 0): unknown {
+  expect({ check: label, exitCode: result.process.exitCode, ok: result.process.exitCode === 0 })
+    .toEqual({ check: label, exitCode: result.process.exitCode, ok: true });
   const row = result.results[index];
-  if (row === undefined || !row.ok) throw new Error("SURFACES-09 SDK success was refused");
+  if (row === undefined || !row.ok) throw new Error(`SURFACES-09 SDK success was refused (${label})`);
   return row.value;
 }
-function surfaces09SdkFailure(result: SdkDriverResult, index = 0): surfaces09Failure {
-  expect(result.process.exitCode).toBe(0);
+function surfaces09SdkFailure(label: string, result: SdkDriverResult, index = 0): surfaces09Failure {
+  expect({ check: label, exitCode: result.process.exitCode, ok: result.process.exitCode === 0 })
+    .toEqual({ check: label, exitCode: result.process.exitCode, ok: true });
   const row = result.results[index];
-  if (row === undefined || row.ok) throw new Error("SURFACES-09 SDK refusal was not returned");
+  if (row === undefined || row.ok) throw new Error(`SURFACES-09 SDK refusal was not returned (${label})`);
   const error = surfaces09Object(row.error);
-  expect(typeof error.message === "string" && Array.isArray(error.suggestions)).toBe(true);
+  expect({ check: `${label} envelope`, code: error.code, ok: typeof error.message === "string" && Array.isArray(error.suggestions) })
+    .toEqual({ check: `${label} envelope`, code: error.code, ok: true });
   // The driver captures the public SDK receipt getter after success and refusal.
   return { code: surfaces09String(error.code), receipt: surfaces09String(row.receiptRef) };
 }
@@ -1720,12 +2218,15 @@ async function surfaces09HttpFailure<V extends surfaces09Verb>(
   client: PublicHttpClient, verb: V, input: FacadeInput<V>,
 ): Promise<surfaces09Failure> {
   let caught: unknown;
-  try { await client.call(verb, input); } catch (error) { caught = error; }
-  if (!(caught instanceof PublicHttpError)) throw new Error("SURFACES-09 expected an HTTP refusal");
-  expect(caught.reply.status).toBe(403);
+  try { await surfaces09Rest(`REST ${verb}`, () => client.call(verb, input)); } catch (error) { caught = error; }
+  if (caught === undefined) throw new Error(`SURFACES-09 expected an HTTP refusal for ${verb}, but the call succeeded`);
+  if (!(caught instanceof PublicHttpError)) throw caught;
   const error = surfaces09Object(surfaces09Object(caught.reply.body).error);
-  expect(typeof error.message === "string" && typeof error.requestId === "string" &&
-    Array.isArray(error.suggestions)).toBe(true);
+  expect({ check: `SURFACES-09 ${verb} HTTP refusal status`, status: caught.reply.status, code: error.code })
+    .toEqual({ check: `SURFACES-09 ${verb} HTTP refusal status`, status: 403, code: error.code });
+  expect({ check: `SURFACES-09 ${verb} HTTP refusal envelope`,
+    ok: typeof error.message === "string" && typeof error.requestId === "string" && Array.isArray(error.suggestions) })
+    .toEqual({ check: `SURFACES-09 ${verb} HTTP refusal envelope`, ok: true });
   const receipt = surfaces09String(error.receiptRef);
   expect(caught.reply.headers.get("x-oneiron-receipt-ref")).toBe(receipt);
   return { code: surfaces09String(error.code), receipt };
@@ -1734,34 +2235,40 @@ async function surfaces09CliFailure<V extends surfaces09Verb>(
   actor: PairedActor, verb: V, input: FacadeInput<V>,
 ): Promise<surfaces09Failure> {
   let caught: unknown;
-  try { await actor.cli.call(verb, input); } catch (error) { caught = error; }
-  if (!(caught instanceof CliError)) throw new Error("SURFACES-09 expected a CLI refusal");
-  expect(caught.result.exitCode).toBe(1);
-  expect(caught.result.stderr.length > 0).toBe(true);
+  try { await surfaces09Cli(verb, () => actor.cli.call(verb, input)); } catch (error) { caught = error; }
+  if (caught === undefined) throw new Error(`SURFACES-09 expected a CLI refusal for ${verb}, but the call succeeded`);
+  if (!(caught instanceof CliError)) throw caught;
   const error = surfaces09Object(surfaces09Object(JSON.parse(caught.result.stdout)).error);
-  expect(typeof error.message === "string" && typeof error.requestId === "string" &&
-    Array.isArray(error.suggestions)).toBe(true);
+  expect({ check: `SURFACES-09 ${verb} CLI refusal exit`, exitCode: caught.result.exitCode, code: error.code })
+    .toEqual({ check: `SURFACES-09 ${verb} CLI refusal exit`, exitCode: 1, code: error.code });
+  expect({ check: `SURFACES-09 ${verb} CLI refusal stderr`, ok: caught.result.stderr.length > 0 })
+    .toEqual({ check: `SURFACES-09 ${verb} CLI refusal stderr`, ok: true });
+  expect({ check: `SURFACES-09 ${verb} CLI refusal envelope`,
+    ok: typeof error.message === "string" && typeof error.requestId === "string" && Array.isArray(error.suggestions) })
+    .toEqual({ check: `SURFACES-09 ${verb} CLI refusal envelope`, ok: true });
   return { code: surfaces09String(error.code), receipt: surfaces09String(error.receiptRef) };
 }
 async function surfaces09McpFailure<V extends surfaces09Verb>(
   actor: PairedActor, verb: V, input: FacadeInput<V>,
 ): Promise<surfaces09Failure> {
   let caught: unknown;
-  try { await actor.mcp.callTool(verb, { spec: input }); } catch (error) { caught = error; }
-  if (!(caught instanceof McpRpcError) || !("error" in caught.response))
-    throw new Error("SURFACES-09 expected a JSON-RPC refusal");
+  try { await surfaces09Mcp(verb, () => actor.mcp.callTool(verb, surfaces09McpArguments(input))); } catch (error) { caught = error; }
+  if (caught === undefined) throw new Error(`SURFACES-09 expected a JSON-RPC refusal for ${verb}, but the call succeeded`);
+  if (!(caught instanceof McpRpcError) || !("error" in caught.response)) throw caught;
   const error = caught.response.error;
-  expect(error.code < 0).toBe(true);
   const data = surfaces09Object(error.data);
-  expect(typeof data.human_message === "string" && typeof data.request_id === "string" &&
-    Array.isArray(data.recovery_suggestions)).toBe(true);
+  expect({ check: `SURFACES-09 ${verb} MCP refusal code`, code: error.code, kind: data.error_code, ok: error.code < 0 })
+    .toEqual({ check: `SURFACES-09 ${verb} MCP refusal code`, code: error.code, kind: data.error_code, ok: true });
+  expect({ check: `SURFACES-09 ${verb} MCP refusal envelope`,
+    ok: typeof data.human_message === "string" && typeof data.request_id === "string" && Array.isArray(data.recovery_suggestions) })
+    .toEqual({ check: `SURFACES-09 ${verb} MCP refusal envelope`, ok: true });
   return { code: surfaces09String(data.error_code), receipt: surfaces09String(data.receipt_ref) };
 }
 async function surfaces09PairScoped(
   engine: EngineFixture, principalRef: string, world: string, facet: string, verbs: string[],
   privateValues: readonly string[],
 ): Promise<PairedActor> {
-  const reply = await engine.client.request<surfaces09PairingLink>("POST", "/v1/core/pairing/links", {
+  const reply = await surfaces09Rest("REST pairing links", () => engine.client.request<surfaces09PairingLink>("POST", "/v1/core/pairing/links", {
     scope: {
       worlds: { kind: "some", values: [world] }, facets: { kind: "some", values: [facet] },
       bands: { kind: "all" }, audience: { kind: "all" },
@@ -1769,7 +2276,7 @@ async function surfaces09PairScoped(
     },
     lifetime_secs: 3600,
     principal: { holder_ref: principalRef, actor_class: "agent", write_facet: facet },
-  });
+  }));
   const issued = reply.body;
   surfaces09Protect(issued.code);
   const pin = issued.pin;
@@ -1791,24 +2298,27 @@ async function surfaces09PairScoped(
     principalRef, actorClass: "agent", ...paired, client, cli, mcp: new McpClient(client, "tool-first"),
   };
   const readInput: FacadeInput<"vault.claims.list"> = { limit: 1 };
-  const scopedRead = await client.request<FacadeResult<"vault.claims.list">>(
-    "POST", "/v1/core/facade/vault.claims.list", readInput, { "x-oneiron-invocation": secretHex(16) });
+  const scopedRead = await surfaces09Rest("REST vault.claims.list scoped probe",
+    () => client.request<FacadeResult<"vault.claims.list">>(
+      "POST", "/v1/core/facade/vault.claims.list", readInput, { "x-oneiron-invocation": secretHex(16) }));
   expect(scopedRead.status).toBe(200);
   const receiptRef = surfaces09String(scopedRead.headers.get("x-oneiron-receipt-ref"));
-  expect(receiptRef.startsWith("call:")).toBe(true);
+  expect({ check: "scoped pairing receipt ref shape", ok: receiptRef.startsWith("call:") })
+    .toEqual({ check: "scoped pairing receipt ref shape", ok: true });
   const receipt = await awaitPublic(
-    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    () => surfaces09Rest("REST vault.receipts.get",
+      () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef })),
     row => row !== null, { label: "SURFACES-09 scoped pairing receipt" });
   if (receipt === null) throw new Error("SURFACES-09 scoped pairing receipt is missing");
   expect(receipt).toMatchObject({ actor_ref: principalRef, actor_class: "agent",
     verb: "vault.claims.list", transport: "http_facade", outcome: "ok" });
-  for (const privateValue of privateValues) surfaces09Absent([scopedRead.body, receipt], privateValue);
+  for (const privateValue of privateValues) surfaces09Absent("scoped pairing read omits private values", [scopedRead.body, receipt], privateValue);
   return actor;
 }
 async function surfaces09Setup(engine: EngineFixture, expected: surfaces09Registration): Promise<void> {
-  const reply = await engine.client.request<{
+  const reply = await surfaces09Rest("REST owner connectors setup", () => engine.client.request<{
     connector: string; key: surfaces09Registration["key"]; slate: surfaces09Registration["slate"] | null;
-  }>("GET", `/v1/owner/connectors/setup?connector=${encodeURIComponent(expected.connector)}`);
+  }>("GET", `/v1/owner/connectors/setup?connector=${encodeURIComponent(expected.connector)}`));
   expect({ connector: reply.body.connector, key: reply.body.key, slate: reply.body.slate }).toEqual(expected);
 }
 function surfaces09Setting(registration: surfaces09Registration, tool: string): string {
@@ -1821,6 +2331,9 @@ function surfaces09Setting(registration: surfaces09Registration, tool: string): 
  * Promise: the same proxy family on REST, CLI, MCP tool-first and the SDK keeps
  * admitted memory and Proposed exchanges inside the paired connector's ceiling;
  * owner-only controls refuse an agent, and selective write revocation survives restart.
+ * The agent principal is an owner-created PERSON (base agents are MACHINE
+ * grant-targets, not pairable agent principals). MCP calls use the generated
+ * tool envelope (schema_version/consent/arguments.spec).
  * Second doors: owner setup GET, claims.list/history, recall and receipts.get.
  * SDK result rows expose the actual per-operation Oneiron.lastReceiptRef().
  * Literal upload encoding is unproved: provider bodies are decoded. Native refusal-code parity remains asserted,
@@ -1847,6 +2360,7 @@ suite.test(test, "SURFACES-09",
       })),
     });
     let engine: EngineFixture | undefined;
+    let surfaces09BodyFailure: unknown;
     try {
       const modelOrigin = providers.urls.model;
       if (modelOrigin === undefined) throw new Error("SURFACES-09 model origin is missing");
@@ -1864,30 +2378,40 @@ enabled = false
 ` });
       const fixture = engine;
       surfaces09Protect(fixture.pairedActor.credential);
-      const base = await fixture.client.call("vault.agents.base", {});
-      const principal = base.agents.find(item => item.name === "coach");
-      if (principal === undefined) throw new Error("SURFACES-09 base agent is missing");
-      const principalRef = principal.id;
-      const policies = await fixture.client.call("vault.gate.policy.get", {});
+      // A MACHINE row (the base coach) cannot act as class agent; only a
+      // PERSON (or agent definition) can. Pair the proxy agent on a PERSON.
+      const agentPerson = await surfaces09Rest("REST vault.structural.put",
+        () => fixture.client.call("vault.structural.put", {
+          kind: "PERSON", body: { name: "surfaces09-proxy-agent" }, occurred_at: scenarios.ledger.oldAt,
+        }));
+      const agentPersonRead = await surfaces09Rest("REST vault.get",
+        () => fixture.client.call("vault.get", { entity_ref: agentPerson.id_hex }));
+      expect(agentPersonRead.value?.kind).toBe("PERSON");
+      const principalRef = agentPerson.id_hex;
+      const policies = await surfaces09Rest("REST vault.gate.policy.get",
+        () => fixture.client.call("vault.gate.policy.get", {}));
       const policy = policies.manifests.find(item => item.manifest_ref === policies.default_manifest_ref);
       if (policy === undefined) throw new Error("SURFACES-09 default policy is missing");
       const ceilings = policy.manifest.actor_ceilings.filter(row =>
         !(row.actor_class === "agent" && row.actor_ref === principalRef));
       ceilings.push({ actor_class: "agent", actor_ref: principalRef, ceiling: "proposed" });
-      const policyWrite = await fixture.client.call("vault.gate.policy.put", {
-        manifest_ref: policy.manifest_ref, expected_body_hash: policy.body_hash,
-        manifest: { ...policy.manifest, actor_ceilings: ceilings },
-      });
+      const policyWrite = await surfaces09Rest("REST vault.gate.policy.put",
+        () => fixture.client.call("vault.gate.policy.put", {
+          manifest_ref: policy.manifest_ref, expected_body_hash: policy.body_hash,
+          manifest: { ...policy.manifest, actor_ceilings: ceilings },
+        }));
       expect(policyWrite.approval).toBe("auto");
       await fixture.awaitReceipt(policyWrite.receipt_ref);
-      const policyRead = await fixture.client.call("vault.gate.policy.get", { manifest_ref: policy.manifest_ref });
+      const policyRead = await surfaces09Rest("REST vault.gate.policy.get",
+        () => fixture.client.call("vault.gate.policy.get", { manifest_ref: policy.manifest_ref }));
       expect(policyRead.manifests.find(item => item.manifest_ref === policy.manifest_ref)?.manifest.actor_ceilings)
         .toEqual(ceilings);
-      const facets = await fixture.client.call("vault.identity.facet", {
-        entity: fixture.pairedActor.principalRef,
-        facets: [{ label: "surfaces09-admitted" }, { label: "surfaces09-private" }], reassignment_map: [],
-        evidence: { refs: [], rationale: "Keep admitted and private proxy fixture memories separate" },
-      });
+      const facets = await surfaces09Rest("REST vault.identity.facet",
+        () => fixture.client.call("vault.identity.facet", {
+          entity: fixture.pairedActor.principalRef,
+          facets: [{ label: "surfaces09-admitted" }, { label: "surfaces09-private" }], reassignment_map: [],
+          evidence: { refs: [], rationale: "Keep admitted and private proxy fixture memories separate" },
+        }));
       if (facets.outcome !== "applied" || facets.receipt.action.op !== "facet")
         throw new Error("SURFACES-09 facet operation was not applied");
       expect(facets.receipt.action.facets).toHaveLength(2);
@@ -1895,11 +2419,12 @@ enabled = false
       if (admittedFacet === undefined || privateFacet === undefined) throw new Error("SURFACES-09 facets are missing");
       expect(admittedFacet).not.toBe(privateFacet);
       for (const [id, label] of [[admittedFacet, "surfaces09-admitted"], [privateFacet, "surfaces09-private"]] as const) {
-        const row = await fixture.client.call("vault.get", { entity_ref: id });
+        const row = await surfaces09Rest("REST vault.get",
+          () => fixture.client.call("vault.get", { entity_ref: id }));
         expect(row.value?.kind).toBe("FACET");
         expect(row.value?.body).toMatchObject({ label });
       }
-      const baseScope = await ownerBaseClaimScope(fixture.client, fixture.pairedActor.principalRef);
+      const baseScope = await ownerBaseClaimScope(new surfaces09ScopeClient(fixture.client), fixture.pairedActor.principalRef);
       const admittedScope = { ...baseScope, scope_facet_id: admittedFacet };
       const privateScope = { ...baseScope, scope_facet_id: privateFacet };
       const saved: { id: string; predicate: string; value: string; scope: typeof baseScope }[] = [];
@@ -1907,15 +2432,17 @@ enabled = false
         ["observation.opening_time", data.admittedMemory, admittedScope],
         ["observation.access_phrase", privateValue, privateScope],
       ] as const) {
-        const write = await fixture.client.call("vault.claims.upsert", {
-          subject_ref: fixture.pairedActor.principalRef, predicate, value, confidence: 1,
-          source: "user_stated", evidence_turn_refs: [], scope,
-        });
+        const write = await surfaces09Rest("REST vault.claims.upsert",
+          () => fixture.client.call("vault.claims.upsert", {
+            subject_ref: fixture.pairedActor.principalRef, predicate, value, confidence: 1,
+            source: "user_stated", evidence_turn_refs: [], scope,
+          }));
         if (write.claim == null) throw new Error("SURFACES-09 authored claim has no record reference");
         await fixture.awaitReceipt(write.receipt_ref);
-        const read = await fixture.client.call("vault.claims.list", {
-          subject_ref: fixture.pairedActor.principalRef, predicate, limit: 16,
-        });
+        const read = await surfaces09Rest("REST vault.claims.list",
+          () => fixture.client.call("vault.claims.list", {
+            subject_ref: fixture.pairedActor.principalRef, predicate, limit: 16,
+          }));
         expect(read.value.map(row => ({ id: row.claim_ref, value: row.value, scope: row.claim_scope })))
           .toEqual([{ id: write.claim.id, value, scope }]);
         saved.push({ id: write.claim.id, predicate, value, scope });
@@ -1933,9 +2460,11 @@ enabled = false
       const surfaces09ObserveRefusal = async (stage: string, carrier: string, verb: surfaces09Verb,
         failure: surfaces09Failure, expected: string): Promise<void> => {
         parity.push({ stage, carrier, actual: failure.code, expected });
-        expect(failure.receipt.startsWith("call:")).toBe(true);
+        expect({ check: `SURFACES-09 ${stage} ${carrier} refusal receipt ref shape`, ok: failure.receipt.startsWith("call:") })
+          .toEqual({ check: `SURFACES-09 ${stage} ${carrier} refusal receipt ref shape`, ok: true });
         const receipt = await awaitPublic(
-          () => fixture.client.call("vault.receipts.get", { receipt_ref: failure.receipt }),
+          () => surfaces09Rest("REST vault.receipts.get",
+            () => fixture.client.call("vault.receipts.get", { receipt_ref: failure.receipt })),
           row => row !== null, { label: "SURFACES-09 refusal receipt" });
         if (receipt === null) throw new Error("SURFACES-09 refusal receipt is missing");
         expect(receipt.actor_ref).toBe(principalRef);
@@ -1943,7 +2472,7 @@ enabled = false
         expect(receipt.verb).toBe(verb);
         expect(receipt.transport).toBe(carrier === "MCP" ? "mcp" : "http_facade");
         expect(receipt.outcome).toEqual({ refused: { code: failure.code } });
-        surfaces09Absent(receipt, privateValue);
+        surfaces09Absent(`${stage} ${carrier} refusal receipt omits private value`, receipt, privateValue);
         receiptSnapshots.push(receipt);
         const actual = typeof receipt.outcome === "object" ? receipt.outcome.refused.code : "ok";
         parity.push({ stage: `${stage} receipt`, carrier, actual, expected });
@@ -1959,28 +2488,34 @@ enabled = false
       const noGrantSdk = await fixture.sdk.run("typescript", { mode: "remote", url: fixture.url, credential: readOnly.credential },
         [{ verb: "facade", path: "ai.chat.completions", input: chat }]);
       await surfaces09ObserveRefusal("missing write grant", "SDK", "ai.chat.completions",
-        surfaces09SdkFailure(noGrantSdk), "FORBIDDEN");
+        surfaces09SdkFailure("missing write grant SDK refusal", noGrantSdk), "FORBIDDEN");
       expect(providers.seenFixtureCalls).toHaveLength(0);
       const exchangeInput: FacadeInput<"vault.claims.list"> = {
         subject_ref: principalRef, predicate: data.expected.exchangePredicate, limit: 16,
       };
-      expect((await fixture.client.call("vault.claims.list", exchangeInput)).value).toEqual([]);
+      const noExchange = await surfaces09Rest("REST vault.claims.list",
+        () => fixture.client.call("vault.claims.list", exchangeInput));
+      expect(noExchange.value).toEqual([]);
       const agent = await surfaces09PairScoped(fixture, principalRef, baseScope.world_id, admittedFacet,
         ["core:read", "core:write"], [privateValue, data.privateMemory]);
       const admitInput: FacadeInput<"vault.connectors.proxy.admit"> = { actor: principalRef };
-      const registration = await fixture.client.call("vault.connectors.proxy.admit", admitInput);
-      expect(registration.key.status).toBe("active");
-      expect(registration.key.consent_required).toBe(false);
-      expect(registration.slate.stamped).toBe(true);
+      const registration = await surfaces09Rest("REST vault.connectors.proxy.admit",
+        () => fixture.client.call("vault.connectors.proxy.admit", admitInput));
+      expect({ check: "proxy admission leaves key active without consent hold",
+        status: registration.key.status, consentRequired: registration.key.consent_required, stamped: registration.slate.stamped })
+        .toEqual({ check: "proxy admission leaves key active without consent hold",
+          status: "active", consentRequired: false, stamped: true });
       expect(surfaces09Setting(registration, "vault.recall")).toBe("auto");
       expect(surfaces09Setting(registration, "vault.remember")).toBe("auto");
       await surfaces09Setup(fixture, registration);
-      expect(await fixture.cli.call("vault.connectors.proxy.admit", admitInput)).toEqual(registration);
+      expect(await surfaces09Cli("vault.connectors.proxy.admit",
+        () => fixture.cli.call("vault.connectors.proxy.admit", admitInput))).toEqual(registration);
       await surfaces09Setup(fixture, registration);
-      expect(surfaces09McpOutput(await fixture.mcp.callTool("vault.connectors.proxy.admit", { spec: admitInput }))).toEqual(registration);
+      expect(surfaces09McpOutput("owner MCP admit is not an error", await surfaces09Mcp("vault.connectors.proxy.admit",
+        () => fixture.mcp.callTool("vault.connectors.proxy.admit", surfaces09McpArguments(admitInput))))).toEqual(registration);
       await surfaces09Setup(fixture, registration);
       const ownerTarget = { mode: "remote", url: fixture.url, credential: fixture.pairedActor.credential } as const;
-      expect(surfaces09SdkValue(await fixture.sdk.run("typescript", ownerTarget,
+      expect(surfaces09SdkValue("owner SDK admit", await fixture.sdk.run("typescript", ownerTarget,
         [{ verb: "facade", path: "vault.connectors.proxy.admit", input: admitInput }]))).toEqual(registration);
       await surfaces09Setup(fixture, registration);
       // This unrestricted instrument isolates actor kind from record-bound refusal.
@@ -2006,7 +2541,7 @@ enabled = false
       ]);
       for (const [index, verb] of (["vault.connectors.proxy.admit", "vault.connectors.proxy.revoke_write"] as const).entries())
         await surfaces09ObserveRefusal("agent cannot control grants", "SDK", verb,
-          surfaces09SdkFailure(controlsSdk, index), "FORBIDDEN");
+          surfaces09SdkFailure("agent cannot control grants SDK refusal", controlsSdk, index), "FORBIDDEN");
       await surfaces09Setup(fixture, registration);
       expect(providers.seenFixtureCalls).toHaveLength(0);
       const chatResults: FacadeResult<"ai.chat.completions">[] = [];
@@ -2014,15 +2549,19 @@ enabled = false
       const normalized: unknown[] = [];
       for (const [index, carrier] of carriers.entries()) {
         let reply: FacadeResult<"ai.chat.completions">;
-        if (carrier === "REST") reply = await agent.client.call("ai.chat.completions", chat);
-        else if (carrier === "CLI") reply = await agent.cli.call("ai.chat.completions", chat);
-        else if (carrier === "MCP") reply = surfaces09McpOutput(
-          await agent.mcp.callTool("ai.chat.completions", { spec: chat })) as FacadeResult<"ai.chat.completions">;
-        else reply = surfaces09SdkValue(await fixture.sdk.run("typescript", {
+        if (carrier === "REST") reply = await surfaces09Rest("REST ai.chat.completions",
+          () => agent.client.call("ai.chat.completions", chat));
+        else if (carrier === "CLI") reply = await surfaces09Cli("ai.chat.completions",
+          () => agent.cli.call("ai.chat.completions", chat));
+        else if (carrier === "MCP") reply = surfaces09McpOutput(`agent MCP chat ${carrier} is not an error`,
+          await surfaces09Mcp("ai.chat.completions",
+            () => agent.mcp.callTool("ai.chat.completions", surfaces09McpArguments(chat)))) as FacadeResult<"ai.chat.completions">;
+        else reply = surfaces09SdkValue(`agent SDK chat ${carrier}`, await fixture.sdk.run("typescript", {
           mode: "remote", url: fixture.url, credential: agent.credential,
         }, [{ verb: "facade", path: "ai.chat.completions", input: chat }])) as FacadeResult<"ai.chat.completions">;
         expect(reply.id).toMatch(/^chatcmpl-[a-f0-9]{32}$/);
-        expect(Number.isInteger(reply.created)).toBe(true);
+        expect({ check: `agent ${carrier} chat created is an integer`, ok: Number.isInteger(reply.created) })
+          .toEqual({ check: `agent ${carrier} chat created is an integer`, ok: true });
         const remembered = reply.oneiron.remembered;
         if (!("claim" in remembered)) throw new Error("SURFACES-09 proxy did not save its exchange");
         expect(remembered.approval).toBe(data.expected.approval);
@@ -2034,7 +2573,8 @@ enabled = false
           usage: data.usage, oneiron: { injected: true },
         });
         expect(reply.choices).toHaveLength(1);
-        expect(reply.oneiron.recall_skipped == null).toBe(true);
+        expect({ check: `agent ${carrier} chat recall ran`, ok: reply.oneiron.recall_skipped == null })
+          .toEqual({ check: `agent ${carrier} chat recall ran`, ok: true });
         if (normalized.length > 0) expect(semantic).toEqual<unknown>(normalized[0]);
         normalized.push(semantic); chatResults.push(reply); exchangeRefs.push(remembered.claim);
         const calls = providers.seenFixtureCalls;
@@ -2044,10 +2584,17 @@ enabled = false
         expect(call.fixtureId).toBe(`surfaces09-${carrier}`);
         expect(call.method).toBe("POST"); expect(call.path).toBe("/v1/chat/completions");
         const bytes = Buffer.from(JSON.stringify(call.body));
-        expect(bytes.includes(Buffer.from(data.admittedMemory)) && bytes.includes(Buffer.from(data.query))).toBe(true);
-        surfaces09Absent(call.body, privateValue); surfaces09Absent(call.body, data.privateMemory);
-        expect(call.headers?.authorization === undefined && call.headers?.["x-oneiron-binding"] === undefined).toBe(true);
-        const rows = await awaitPublic(() => fixture.client.call("vault.claims.list", exchangeInput),
+        expect({ check: `agent ${carrier} downstream call carries admitted memory and query`,
+          ok: bytes.includes(Buffer.from(data.admittedMemory)) && bytes.includes(Buffer.from(data.query)) })
+          .toEqual({ check: `agent ${carrier} downstream call carries admitted memory and query`, ok: true });
+        surfaces09Absent(`agent ${carrier} downstream call omits private value`, call.body, privateValue);
+        surfaces09Absent(`agent ${carrier} downstream call omits private memory`, call.body, data.privateMemory);
+        expect({ check: `agent ${carrier} downstream call carries no client credential`,
+          ok: call.headers?.authorization === undefined && call.headers?.["x-oneiron-binding"] === undefined })
+          .toEqual({ check: `agent ${carrier} downstream call carries no client credential`, ok: true });
+        const rows = await awaitPublic(
+          () => surfaces09Rest("REST vault.claims.list",
+            () => fixture.client.call("vault.claims.list", exchangeInput)),
           page => page.value.some(row => row.short_ref === remembered.claim), { label: "SURFACES-09 proposed exchange" });
         const row = rows.value.find(item => item.short_ref === remembered.claim);
         if (row === undefined) throw new Error("SURFACES-09 stored exchange is missing");
@@ -2057,19 +2604,28 @@ enabled = false
         expect(row.claim_scope).toEqual(admittedScope);
         expect(row.made_by?.process.actor).toBe(principalRef);
         expect(row.made_by?.process.identity).toBe("ai.chat.completions");
-        expect(row.made_by?.inputs.some(input => input.row === admitted.id && input.role === "prompt")).toBe(true);
-        expect(row.made_by?.inputs.some(input => input.row === privateClaim.id)).toBe(false);
-        surfaces09Absent(row, privateValue);
-        const history = await agent.client.call("vault.claims.history", { claim_ref: remembered.claim });
-        expect(history.value.some(item => item.claim_ref === row.claim_ref && item.approval === "proposed")).toBe(true);
+        expect({ check: `agent ${carrier} exchange cites admitted memory as prompt`,
+          ok: row.made_by?.inputs.some(input => input.row === admitted.id && input.role === "prompt") })
+          .toEqual({ check: `agent ${carrier} exchange cites admitted memory as prompt`, ok: true });
+        expect({ check: `agent ${carrier} exchange omits private memory`, ok: row.made_by?.inputs.some(input => input.row === privateClaim.id) })
+          .toEqual({ check: `agent ${carrier} exchange omits private memory`, ok: false });
+        surfaces09Absent(`agent ${carrier} stored exchange omits private value`, row, privateValue);
+        const history = await surfaces09Rest("REST vault.claims.history",
+          () => agent.client.call("vault.claims.history", { claim_ref: remembered.claim }));
+        expect({ check: `agent ${carrier} exchange history stays proposed`,
+          ok: history.value.some(item => item.claim_ref === row.claim_ref && item.approval === "proposed") })
+          .toEqual({ check: `agent ${carrier} exchange history stays proposed`, ok: true });
       }
       expect(new Set(chatResults.map(reply => reply.id)).size).toBe(4);
       expect(new Set(exchangeRefs).size).toBe(4);
-      const before = (await fixture.client.call("vault.claims.list", exchangeInput)).value;
+      const before = (await surfaces09Rest("REST vault.claims.list",
+        () => fixture.client.call("vault.claims.list", exchangeInput))).value;
       expect(before).toHaveLength(4);
-      const revoked = await fixture.client.call("vault.connectors.proxy.revoke_write", revokeInput);
+      const revoked = await surfaces09Rest("REST vault.connectors.proxy.revoke_write",
+        () => fixture.client.call("vault.connectors.proxy.revoke_write", revokeInput));
       expect(revoked.key.id).toBe(registration.key.id);
-      expect(revoked.key.status).toBe("active"); expect(revoked.slate.stamped).toBe(true);
+      expect({ check: "proxy revoke keeps key active and stamped", status: revoked.key.status, stamped: revoked.slate.stamped })
+        .toEqual({ check: "proxy revoke keeps key active and stamped", status: "active", stamped: true });
       expect(revoked.slate.revision).toBeGreaterThan(registration.slate.revision);
       expect(revoked.key.accepted_slate_revision).toBe(revoked.slate.revision);
       expect(surfaces09Setting(revoked, "vault.remember")).toBe("never_allow");
@@ -2077,11 +2633,13 @@ enabled = false
         .toEqual(registration.slate.rows.find(row => row.draft.tool === "vault.recall"));
       await surfaces09Setup(fixture, revoked);
       const currentRevoke = { ...revokeInput, revision: revoked.slate.revision };
-      expect(await fixture.cli.call("vault.connectors.proxy.revoke_write", currentRevoke)).toEqual(revoked);
+      expect(await surfaces09Cli("vault.connectors.proxy.revoke_write",
+        () => fixture.cli.call("vault.connectors.proxy.revoke_write", currentRevoke))).toEqual(revoked);
       await surfaces09Setup(fixture, revoked);
-      expect(surfaces09McpOutput(await fixture.mcp.callTool("vault.connectors.proxy.revoke_write", { spec: currentRevoke }))).toEqual(revoked);
+      expect(surfaces09McpOutput("owner MCP revoke is not an error", await surfaces09Mcp("vault.connectors.proxy.revoke_write",
+        () => fixture.mcp.callTool("vault.connectors.proxy.revoke_write", surfaces09McpArguments(currentRevoke))))).toEqual(revoked);
       await surfaces09Setup(fixture, revoked);
-      expect(surfaces09SdkValue(await fixture.sdk.run("typescript", ownerTarget,
+      expect(surfaces09SdkValue("owner SDK revoke", await fixture.sdk.run("typescript", ownerTarget,
         [{ verb: "facade", path: "vault.connectors.proxy.revoke_write", input: currentRevoke }]))).toEqual(revoked);
       await surfaces09Setup(fixture, revoked);
       const afterRevoke = [
@@ -2094,21 +2652,28 @@ enabled = false
       const revokedSdk = await fixture.sdk.run("typescript", { mode: "remote", url: fixture.url, credential: agent.credential },
         [{ verb: "facade", path: "ai.chat.completions", input: chat }]);
       await surfaces09ObserveRefusal("write grant revoked", "SDK", "ai.chat.completions",
-        surfaces09SdkFailure(revokedSdk), "connector_grant_revoked");
+        surfaces09SdkFailure("write grant revoked SDK refusal", revokedSdk), "connector_grant_revoked");
       expect(providers.seenFixtureCalls).toHaveLength(4);
       const surfaces09ReadAndCheck = async (): Promise<void> => {
-        const rows = await fixture.client.call("vault.claims.list", exchangeInput);
+        const rows = await surfaces09Rest("REST vault.claims.list",
+          () => fixture.client.call("vault.claims.list", exchangeInput));
         expect(rows.value.map(row => row.claim_ref).sort()).toEqual(before.map(row => row.claim_ref).sort());
         for (const row of rows.value) {
           const original = before.find(item => item.claim_ref === row.claim_ref);
-          expect(row).toEqual<unknown>(original); surfaces09Absent(row, privateValue);
+          expect(row).toEqual<unknown>(original);
+          surfaces09Absent("stored exchange reread omits private value", row, privateValue);
         }
-        const recall = await agent.client.call("vault.recall", { query: data.query, effort: "light", limit: 8, format: "md" });
-        expect(Buffer.from(JSON.stringify(recall)).includes(Buffer.from(data.admittedMemory))).toBe(true);
-        surfaces09Absent(recall, privateValue); surfaces09Absent(recall, data.privateMemory);
-        const privateRows = await fixture.client.call("vault.claims.list", {
-          subject_ref: fixture.pairedActor.principalRef, predicate: privateClaim.predicate, limit: 16,
-        });
+        const recall = await surfaces09Rest("REST vault.recall",
+          () => agent.client.call("vault.recall", { query: data.query, effort: "light", limit: 8, format: "md" }));
+        expect({ check: "scoped recall still injects admitted memory",
+          ok: Buffer.from(JSON.stringify(recall)).includes(Buffer.from(data.admittedMemory)) })
+          .toEqual({ check: "scoped recall still injects admitted memory", ok: true });
+        surfaces09Absent("scoped recall omits private value", recall, privateValue);
+        surfaces09Absent("scoped recall omits private memory", recall, data.privateMemory);
+        const privateRows = await surfaces09Rest("REST vault.claims.list",
+          () => fixture.client.call("vault.claims.list", {
+            subject_ref: fixture.pairedActor.principalRef, predicate: privateClaim.predicate, limit: 16,
+          }));
         expect(privateRows.value.map(row => ({ id: row.claim_ref, value: row.value, scope: row.claim_scope })))
           .toEqual([{ id: privateClaim.id, value: privateValue, scope: privateScope }]);
       };
@@ -2117,17 +2682,31 @@ enabled = false
       await surfaces09Setup(fixture, revoked);
       await surfaces09ReadAndCheck();
       for (const receipt of receiptSnapshots)
-        expect(await fixture.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref })).toEqual(receipt);
+        expect(await surfaces09Rest("REST vault.receipts.get",
+          () => fixture.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref }))).toEqual(receipt);
       await surfaces09ObserveRefusal("revocation after restart", "REST", "ai.chat.completions",
         await surfaces09HttpFailure(agent.client, "ai.chat.completions", chat), "connector_grant_revoked");
       expect(providers.seenFixtureCalls).toHaveLength(4);
-      expect((await fixture.client.call("vault.claims.list", exchangeInput)).value.map(row => row.claim_ref).sort())
+      const afterRestart = await surfaces09Rest("REST vault.claims.list",
+        () => fixture.client.call("vault.claims.list", exchangeInput));
+      expect(afterRestart.value.map(row => row.claim_ref).sort())
         .toEqual(before.map(row => row.claim_ref).sort());
       // Delay known parity reds until every state/readback/restart leg has run.
       expect(parity.map(row => ({ stage: row.stage, carrier: row.carrier, code: row.actual })))
         .toEqual(parity.map(row => ({ stage: row.stage, carrier: row.carrier, code: row.expected })));
+    } catch (error) {
+      surfaces09BodyFailure = error;
+      throw error;
     } finally {
       try { if (engine !== undefined) await engine.close(); }
-      finally { await providers.close(); }
+      finally {
+        try { await providers.close(); }
+        catch (cleanupError) {
+          if (surfaces09BodyFailure !== undefined)
+            throw new AggregateError([surfaces09BodyFailure, cleanupError], redactor.text(
+              `SURFACES-09 body failed: ${surfaces09BodyFailure instanceof Error ? surfaces09BodyFailure.message : "non-Error failure"}; provider cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : "non-Error failure"}`));
+          throw cleanupError;
+        }
+      }
     }
   });
