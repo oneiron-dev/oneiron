@@ -449,22 +449,19 @@ fn guard_erased_author_body(
     Ok(())
 }
 
-/// The target of an exact reply by the landing writer, backed by a stored
-/// scope SUMMARY and its MACHINE-signed merge.summary landing. The room,
-/// text and complete door-stamped body shape must match; mere possession of
-/// a summary id is not authority. Used on local and replicated puts/edges.
-/// The append door's thread-local landing permit remains an additional check.
-fn landing_reply(
-    store: &impl ManifestDbs,
-    authority: &Store,
-    txn: &heed::RoTxn<'_>,
-    room: Option<EntityId>,
-    body: &[u8],
-    author: EntityId,
-) -> Result<Option<EntityId>> {
-    if author != crate::scope_summary::landing_writer_id()? {
-        return Ok(None);
-    }
+/// The parsed parts of a landing-writer reply body: its summary, text and
+/// target turn. Shared by [`landing_reply`] and [`landing_reply_waits_in`]
+/// so both agree on which bodies pass the field checks.
+struct LandingReplyParts {
+    summary: EntityId,
+    text: String,
+    target: EntityId,
+}
+
+/// Field checks for a landing-writer reply body: the exact door-stamped
+/// shape `land_in_txn` writes. Malformed bodies refuse as invalid. The
+/// caller checks the author.
+fn landing_reply_parts(body: &[u8]) -> Result<LandingReplyParts> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
         return Err(invalid("invalid landing reply body"));
@@ -473,7 +470,14 @@ fn landing_reply(
     // these seven fields. No session, project, thread, MESSAGE or quote rides
     // the canonical trunk reply, including inside its reply pointer.
     let keys = [
-        "txt", "dag_kind", "actor", "actor_class", "addr", "reply_to", "summary", "to",
+        "txt",
+        "dag_kind",
+        "actor",
+        "actor_class",
+        "addr",
+        "reply_to",
+        "summary",
+        "to",
     ];
     if !bytes.is_empty()
         || fields.len() != keys.len()
@@ -527,25 +531,115 @@ fn landing_reply(
     let text = get("txt")
         .and_then(rmpv::Value::as_str)
         .ok_or_else(|| invalid("invalid landing reply text"))?;
+    Ok(LandingReplyParts {
+        summary,
+        text: text.to_owned(),
+        target,
+    })
+}
+
+/// The target of an exact reply by the landing writer, backed by a stored
+/// scope SUMMARY and its MACHINE-signed merge.summary landing. The room,
+/// text and complete door-stamped body shape must match; mere possession of
+/// a summary id is not authority. Used on local and replicated puts/edges.
+/// The append door's thread-local landing permit remains an additional check.
+///
+/// A verdict of Waits refuses here with its own message, so nothing is ever
+/// admitted on Waits; the edge pass defers those edges instead (see
+/// [`landing_reply_waits_in`]).
+fn landing_reply(
+    store: &impl ManifestDbs,
+    authority: &Store,
+    txn: &heed::RoTxn<'_>,
+    room: Option<EntityId>,
+    body: &[u8],
+    author: EntityId,
+) -> Result<Option<EntityId>> {
+    if author != crate::scope_summary::landing_writer_id()? {
+        return Ok(None);
+    }
+    let parts = landing_reply_parts(body)?;
     // A mismatch is the remote row's fault and refuses as invalid. A local
     // storage fault stays itself, so replay aborts instead of quarantining
-    // a true reply as a forgery.
-    crate::scope_summary::validate_landing_reply_in(
-        store, authority, txn, &summary, room, text, target,
-    )
-    .map_err(|err| match err {
-        Error::Record(_) | Error::Claim(_) | Error::EntityNotFound => {
-            invalid("landing reply does not match a stored signed landing")
+    // a true reply as a forgery. Waits refuses here with its own message,
+    // so nothing is ever admitted on Waits.
+    match crate::scope_summary::validate_landing_reply_in(
+        store,
+        authority,
+        txn,
+        &parts.summary,
+        room,
+        &parts.text,
+        parts.target,
+    ) {
+        Ok(crate::scope_summary::LandingReplyVerdict::Bound) => Ok(Some(parts.target)),
+        Ok(crate::scope_summary::LandingReplyVerdict::Waits) => {
+            Err(invalid("landing reply waits for its signed landing"))
         }
-        local => local,
-    })?;
-    Ok(Some(target))
+        Err(err) => Err(match err {
+            Error::Record(_) | Error::Claim(_) | Error::EntityNotFound => {
+                invalid("landing reply does not match a stored signed landing")
+            }
+            local => local,
+        }),
+    }
+}
+
+/// Whether `record` is a landing-writer reply that waits for its signed
+/// landing: a stored TURN by the landing writer whose body passes the field
+/// checks and whose verdict is Waits. Anything else, including a refusal,
+/// is false; storage faults propagate. The edge pass defers such edges
+/// instead of terminally quarantining them.
+pub(crate) fn landing_reply_waits_in(
+    store: &impl ManifestDbs,
+    authority: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.port_entity_raw(txn, record)? else {
+        return Ok(false);
+    };
+    if raw.first() != Some(&ENTITY_TYPE_TURN) {
+        return Ok(false);
+    }
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("landing reply TURN header"))?;
+    let Ok(Some(author)) = turn_person(body) else {
+        return Ok(false);
+    };
+    if author != crate::scope_summary::landing_writer_id()? {
+        return Ok(false);
+    }
+    let parts = match landing_reply_parts(body) {
+        Ok(parts) => parts,
+        Err(Error::Record(_) | Error::Claim(_) | Error::EntityNotFound) => return Ok(false),
+        Err(local) => return Err(local),
+    };
+    let room = room_turn_owner(store, txn, record)?;
+    match crate::scope_summary::validate_landing_reply_in(
+        store,
+        authority,
+        txn,
+        &parts.summary,
+        room,
+        &parts.text,
+        parts.target,
+    ) {
+        Ok(crate::scope_summary::LandingReplyVerdict::Bound) => Ok(false),
+        Ok(crate::scope_summary::LandingReplyVerdict::Waits) => Ok(true),
+        Err(Error::Record(_) | Error::Claim(_) | Error::EntityNotFound) => Ok(false),
+        Err(local) => Err(local),
+    }
 }
 
 /// Binds a landing writer TURN's edges to its signed landing: every stored
 /// or proposed RepliesTo names the landing's turn, and a ChildOf waits for
 /// the landing (a conversation ChildOf also checks the room through
-/// [`guard_erased_author_body`]).
+/// [`guard_erased_author_body`]). A reply whose landing has not arrived yet
+/// waits: [`landing_reply`] refuses it here with a waits message, and the
+/// edge pass defers its edges (see [`landing_reply_waits_in`]) instead of
+/// terminally quarantining them.
 ///
 /// At a body put (`at_put`), a TURN that no ChildOf or RepliesTo places yet
 /// joins nothing, so its first edge checks it instead. Replay applies every
@@ -600,7 +694,11 @@ fn guard_landing_reply_edges(
     let Some(target) = landing_reply(store, authority, txn, room, body, author)? else {
         return Ok(());
     };
-    if proposed.into_iter().chain(replies).any(|reply| reply != target) {
+    if proposed
+        .into_iter()
+        .chain(replies)
+        .any(|reply| reply != target)
+    {
         return Err(invalid("landing reply RepliesTo differs from its landing"));
     }
     Ok(())

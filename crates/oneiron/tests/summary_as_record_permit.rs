@@ -249,8 +249,8 @@ fn generated_claim(fixture: &Fixture, actor: WriteActor) -> TestResult<(EntityId
 /// A TURN body as its map entries, with no trailing bytes.
 fn body_entries(body: &[u8]) -> TestResult<Vec<(Value, Value)>> {
     let mut cursor = body;
-    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor)
-        .map_err(|err| format!("invalid TURN body: {err}"))?
+    let Value::Map(entries) =
+        rmpv::decode::read_value(&mut cursor).map_err(|err| format!("invalid TURN body: {err}"))?
     else {
         return Err("TURN body is not a map".into());
     };
@@ -327,7 +327,9 @@ fn turn_revision(vault: &Vault, turn: &EntityId) -> TestResult<String> {
 fn assert_dag_refusal(err: Error, needle: &str) -> TestResult {
     match &err {
         Error::Record(RecordError::InvalidConversationDag(msg)) if msg.contains(needle) => Ok(()),
-        _ => Err(format!("expected InvalidConversationDag containing {needle:?}, got {err:?}").into()),
+        _ => Err(
+            format!("expected InvalidConversationDag containing {needle:?}, got {err:?}").into(),
+        ),
     }
 }
 
@@ -592,15 +594,10 @@ fn a_copied_landing_reply_to_another_turn_is_refused() -> TestResult {
     assert!(vault.get(&retargeted_reply)?.is_none(), "nothing landed");
     assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
     // Edge-only: the real landing reply gains no second RepliesTo.
-    let edge_refusal = apply_raw_landing_reply_edges(
-        vault,
-        &reply,
-        fixture.conversation,
-        None,
-        Some(last),
-    )
-    .err()
-    .ok_or("a landing reply gains a second RepliesTo")?;
+    let edge_refusal =
+        apply_raw_landing_reply_edges(vault, &reply, fixture.conversation, None, Some(last))
+            .err()
+            .ok_or("a landing reply gains a second RepliesTo")?;
     assert_dag_refusal(edge_refusal, LANDING_REPLY_REFUSAL)?;
     assert!(
         !vault.edge_exists(&reply, EdgeKind::RepliesTo, &last)?,
@@ -658,5 +655,256 @@ fn the_real_landing_reply_still_lands_and_reapplies() -> TestResult {
         rmp_serde::from_slice(&vault.get(&reply)?.ok_or("the reply is stored")?)?;
     assert_eq!(again["summary"], summary.to_hex());
     assert_eq!(again["txt"].as_str(), Some("The plan, and its first step."));
+    Ok(())
+}
+
+/// A reply under a header signed by an unbound key is refused: the provisional row's key
+/// proves nothing about the landing writer, so neither a coherent copied TURN nor an
+/// independently staged one gains its ChildOf/RepliesTo.
+#[cfg(feature = "sync")]
+#[test]
+fn a_reply_under_a_header_signed_by_an_unbound_key_is_refused() -> TestResult {
+    let fixture = open(false)?;
+    let vault = &fixture.vault;
+    let [asking, last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        vault,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = vault.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // A second header naming (last, summary) by the writer, signed with a fresh key the
+    // fold does not bind, through the replicated put path.
+    let forged_header =
+        oneiron::test_doors::scope_summary::put_unbound_landing_header(vault, &summary, &last)?;
+    // The door returns only after its replicated put commits; the ClaimOf in the same
+    // batch proves the header row landed. No claim/history/raw-readable read here: H2 is
+    // deliberately provisional.
+    assert!(
+        vault.edge_exists(&forged_header, EdgeKind::ClaimOf, &last)?,
+        "the forged ClaimOf is stored"
+    );
+    // Coherent retarget: body's reply_to matches its edge, so admission must check the
+    // fold-bound landing target, not coherence.
+    let original_body = vault.get(&reply)?.ok_or("the reply is stored")?;
+    let revision = turn_revision(vault, &last)?;
+    let forged_body = body_with_reply_to(&original_body, last, &revision)?;
+    let forged = EntityId::now();
+    let refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &forged,
+        &forged_body,
+        fixture.conversation,
+        Some(reply),
+        Some(last),
+    )
+    .err()
+    .ok_or("a reply under an unbound key lands")?;
+    assert_dag_refusal(refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(vault.get(&forged)?.is_none(), "nothing landed");
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // Edge-only: an independently staged TURN gains no ChildOf/RepliesTo under the
+    // unbound header either.
+    let staged = EntityId::now();
+    let now = vault.now_recorded_at();
+    vault
+        .batch()
+        .put(
+            &staged,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &forged_body,
+        )
+        .commit()?;
+    assert!(vault.get(&staged)?.is_some(), "the staged body is stored");
+    let edge_refusal = apply_raw_landing_reply_edges(
+        vault,
+        &staged,
+        fixture.conversation,
+        Some(reply),
+        Some(last),
+    )
+    .err()
+    .ok_or("a staged reply gains edges under an unbound key")?;
+    assert_dag_refusal(edge_refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(
+        !vault.edge_exists(&staged, EdgeKind::ChildOf, &fixture.conversation)?,
+        "no ChildOf landed"
+    );
+    assert!(
+        !vault.edge_exists(&staged, EdgeKind::RepliesTo, &last)?,
+        "no RepliesTo landed"
+    );
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    assert!(
+        vault.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "the landing RepliesTo stands"
+    );
+    Ok(())
+}
+
+/// A reply whose ChildOf/RepliesTo replay before its landing's ClaimOf still lands
+/// after it in the same page: the edge pass defers the early edges with their replay
+/// marker and retries them once the landing arrives, whatever the map's key order.
+#[cfg(feature = "sync")]
+#[test]
+fn a_reply_placed_before_its_landing_edge_lands_after_it() -> TestResult {
+    let fixture = open(false)?;
+    let source = &fixture.vault;
+    let [asking, _last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        source,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = source.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let header = landed.claim;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    // A receiving vault sharing the source's authority, so the header's vault-bound
+    // signature verifies there as it does here.
+    let receiver_dir = tempfile::tempdir()?;
+    let receiver = Vault::open_owned(receiver_dir.path(), VaultConfig::default())?;
+    receiver.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    // One window, R's edges before H's ClaimOf.
+    let (window, _count) = oneiron::test_doors::scope_summary::replay_landing_edges_in_order(
+        source,
+        &receiver,
+        &reply,
+        &[fixture.conversation, asking, summary, header, reply],
+        &[
+            (reply, EdgeKind::ChildOf, fixture.conversation),
+            (reply, EdgeKind::RepliesTo, asking),
+            (asking, EdgeKind::ChildOf, fixture.conversation),
+            (header, EdgeKind::ClaimOf, asking),
+        ],
+    )?;
+    assert!(!window.is_empty(), "a window key is returned");
+    // The reply is in the receiver's room under T, not merely stored.
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&receiver.get(&reply)?.ok_or("the reply replayed")?)?;
+    assert_eq!(body["summary"], summary.to_hex());
+    assert_eq!(body["reply_to"]["record"], asking.to_hex());
+    assert!(
+        receiver.edge_exists(&reply, EdgeKind::ChildOf, &fixture.conversation)?,
+        "R's ChildOf is placed"
+    );
+    assert!(
+        receiver.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "R's RepliesTo is placed under T"
+    );
+    assert!(
+        receiver.edge_exists(&header, EdgeKind::ClaimOf, &asking)?,
+        "H's ClaimOf is placed"
+    );
+    let quarantined = oneiron::sync::quarantined_records(&receiver)?;
+    assert!(
+        quarantined.is_empty(),
+        "R's edges were not quarantined: {quarantined:?}"
+    );
+    Ok(())
+}
+
+/// A reply whose landing has not arrived yet waits: it is neither admitted nor
+/// terminally refused. Its edges keep the source's replay marker, and after H and its
+/// ClaimOf replay and the window is walked again the reply is placed.
+#[cfg(feature = "sync")]
+#[test]
+fn a_reply_whose_landing_has_not_arrived_waits() -> TestResult {
+    let fixture = open(false)?;
+    let source = &fixture.vault;
+    let [asking, _last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        source,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = source.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let header = landed.claim;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    let receiver_dir = tempfile::tempdir()?;
+    let receiver = Vault::open_owned(receiver_dir.path(), VaultConfig::default())?;
+    receiver.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    // First walk: R and its edges, no header H at all.
+    let (window, _first) = oneiron::test_doors::scope_summary::replay_landing_edges_in_order(
+        source,
+        &receiver,
+        &reply,
+        &[fixture.conversation, asking, summary, reply],
+        &[
+            (reply, EdgeKind::ChildOf, fixture.conversation),
+            (reply, EdgeKind::RepliesTo, asking),
+            (asking, EdgeKind::ChildOf, fixture.conversation),
+        ],
+    )?;
+    assert!(
+        receiver.get(&reply)?.is_some(),
+        "R's body is stored by the entity pass"
+    );
+    assert!(
+        !receiver.edge_exists(&reply, EdgeKind::ChildOf, &fixture.conversation)?,
+        "R's ChildOf waits, not placed"
+    );
+    assert!(
+        !receiver.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "R's RepliesTo waits, not placed"
+    );
+    let quarantined = oneiron::sync::quarantined_records(&receiver)?;
+    assert!(
+        quarantined.is_empty(),
+        "waiting edges are not quarantined: {quarantined:?}"
+    );
+    let marker = format!("rm:w:{window}:{}", reply.to_hex());
+    assert!(
+        receiver.sync_state_get(&marker)?.is_some(),
+        "the source keeps its replay marker"
+    );
+    // Second walk: H and its ClaimOf arrive, the window is walked again, the reply lands.
+    let (_window2, _second) = oneiron::test_doors::scope_summary::replay_landing_edges_in_order(
+        source,
+        &receiver,
+        &reply,
+        &[fixture.conversation, asking, summary, header, reply],
+        &[
+            (header, EdgeKind::ClaimOf, asking),
+            (reply, EdgeKind::ChildOf, fixture.conversation),
+            (reply, EdgeKind::RepliesTo, asking),
+            (asking, EdgeKind::ChildOf, fixture.conversation),
+        ],
+    )?;
+    assert!(
+        receiver.edge_exists(&reply, EdgeKind::ChildOf, &fixture.conversation)?,
+        "R's ChildOf is placed after its landing"
+    );
+    assert!(
+        receiver.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "R's RepliesTo is placed under T after its landing"
+    );
+    let quarantined = oneiron::sync::quarantined_records(&receiver)?;
+    assert!(
+        quarantined.is_empty(),
+        "still not quarantined: {quarantined:?}"
+    );
     Ok(())
 }
