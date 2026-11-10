@@ -164,8 +164,6 @@ fn genesis_entry(seed: u8) -> AuthorityLogEntry {
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: 86_400,
         },
         signer: AuthoritySignature {
             suite: key.suite(),
@@ -1090,13 +1088,20 @@ mod staged_content_gc {
                 &WindowKey::new("2026-01"),
                 &valid,
                 FederationAdmissionRole::Guest,
+                None,
             ),
-            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            Err(Error::InvalidClaimBody(
+                "FACET cannot carry PERSON identity"
+            ))
         ));
-        assert!(matches!(
-            stage_prebuilt_update(&vault, 0x7F, &valid),
-            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
-        ));
+        let staged = stage_prebuilt_update(&vault, 0x7F, &valid)
+            .expect("an identity-shaped FACET receives a terminal refusal receipt");
+        assert_eq!(staged.receipt.status, VaultImportStageStatus::Failed);
+        assert_eq!(
+            staged.receipt.failure,
+            Some(VaultImportFailure::AdmissionRejected)
+        );
+        assert!(staged.admitted_update.is_empty());
         assert!(vault.get(&test_entity_id(0x7E)).unwrap().is_none());
     }
 
