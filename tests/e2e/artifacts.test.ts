@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, type PairedActor } from "./support/engine.ts";
-import { PublicHttpError, WsRpcError } from "./support/clients.ts";
+import { PublicHttpError } from "./support/clients.ts";
 import { defineFile, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -420,30 +420,6 @@ async function museLoop07WsCall<V extends FacadeVerb>(
   }
 }
 
-async function museLoop07WsRefusedReceiptRef<V extends FacadeVerb>(
-  engine: EngineFixture,
-  actor: PairedActor,
-  verb: V,
-  input: FacadeInput<V>,
-): Promise<string> {
-  const socket = await engine.websocket(actor);
-  try {
-    await socket.call(verb, input);
-    throw new Error(`WS ${verb} unexpectedly succeeded for the wrong actor`);
-  } catch (error) {
-    if (error instanceof WsRpcError) {
-      const receiptRef = error.frames.find(
-        frame => frame.envelope.receipt_ref != null && frame.envelope.receipt_ref !== "",
-      )?.envelope.receipt_ref;
-      if (!receiptRef) throw new Error(`Refused WS ${verb} left no receipt_ref frame`);
-      return receiptRef;
-    }
-    throw error;
-  } finally {
-    socket.close();
-  }
-}
-
 async function museLoop07CallReceipt(
   client: museLoop07Client,
   receiptRef: string,
@@ -520,8 +496,15 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   const museLoop07Registered = await engine.client.call("vault.artifacts.put", {
     name: `muse-loop-07-${museLoop07Marker}.txt`, media_type: "text/plain", occurred_at: museLoop07T0 + 1,
   });
-  await engine.awaitReceipt(museLoop07Registered.receipt_ref);
   const museLoop07ArtifactRef = museLoop07Registered.entity_ref;
+  const museLoop07RegisteredArtifact = await engine.client.call("vault.get", {
+    entity_ref: museLoop07ArtifactRef,
+  });
+  expect(museLoop07RegisteredArtifact.value?.kind).toBe("BLOB_ARTIFACT");
+  expect(museLoop07RegisteredArtifact.value?.id_hex).toBe(museLoop07Registered.id_hex);
+  expect(museLoop07RegisteredArtifact.value?.body).toEqual(expect.objectContaining({
+    name: `muse-loop-07-${museLoop07Marker}.txt`, media_type: "text/plain",
+  }));
   const museLoop07First = await engine.client.call("vault.artifacts.append", {
     artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07LiveV1), occurred_at: museLoop07T0 + 2,
   });
@@ -584,9 +567,10 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
     "Proposer Keep of its own proposal",
   );
   museLoop07ExpectHttpRefusal(museLoop07ProposerKeepRefusal, 403);
-  const museLoop07RefusedKeepReceiptRef = await museLoop07WsRefusedReceiptRef(
-    engine, museLoop07Agent, "vault.artifacts.keep", museLoop07Settle1,
-  );
+  const museLoop07RefusedKeepReceiptRef = museLoop07ProposerKeepRefusal.error?.receiptRef;
+  if (typeof museLoop07RefusedKeepReceiptRef !== "string" || !museLoop07RefusedKeepReceiptRef) {
+    throw new Error("The HTTP proposer Keep refusal carried no receiptRef");
+  }
   const museLoop07RefusedKeepReceipt = await museLoop07CallReceipt(engine.client, museLoop07RefusedKeepReceiptRef);
   expect(museLoop07RefusedKeepReceipt.verb).toBe("vault.artifacts.keep");
   expect(museLoop07RefusedKeepReceipt.actor_ref).toBe(museLoop07AgentSelf.actor_ref);

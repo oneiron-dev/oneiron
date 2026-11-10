@@ -4,7 +4,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
-import { PublicHttpClient, PublicHttpError, WsRpcError } from "./support/clients.ts";
+import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { defineFile, LIMITS, redactor, secretHex } from "./support/run.ts";
@@ -1958,6 +1958,31 @@ async function museLoop01CreatePerson(
   return created;
 }
 
+async function museLoopClaimEvidence(
+  client: PublicHttpClient,
+  conversationRef: string,
+  content: string,
+  occurredAt: number,
+): Promise<string> {
+  const conversation = await client.call("vault.get", { entity_ref: conversationRef });
+  expect(conversation.value?.kind).toBe("CONVERSATION");
+  const witnessed = await client.call("vault.witness", {
+    conversation_ref: conversationRef,
+    occurred_at: occurredAt,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0, content }],
+  });
+  const turn = await client.call("vault.get", { entity_ref: witnessed.turn_id });
+  expect(turn.value?.kind).toBe("TURN");
+  expect(turn.value?.id_hex).toBe(witnessed.turn_id);
+  expect(witnessed.message_short_ids).toHaveLength(1);
+  const messageRef = witnessed.message_short_ids[0];
+  if (!messageRef) throw new Error("Claim evidence witness returned no message reference");
+  const message = await client.call("vault.get", { entity_ref: messageRef });
+  expect(message.value?.kind).toBe("MESSAGE");
+  expect(message.value?.body).toEqual(expect.objectContaining({ content }));
+  return witnessed.turn_id;
+}
+
 async function museLoop01ReceiptRows(
   client: PublicHttpClient,
 ): Promise<museLoop01ReceiptRow[]> {
@@ -2070,6 +2095,14 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   const subject2 = await museLoop01CreatePerson(
     engine.client, "Loop Subject Two", occurred);
   const scope = await ownerBaseClaimScope(engine.client, ownerRef);
+  const evidenceConversation = await engine.client.call("vault.conversations.create", {
+    body: { members: [ownerRef, proposer.principalRef] },
+    occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+  });
+  const evidenceTurn = await museLoopClaimEvidence(
+    engine.client, evidenceConversation.id,
+    `Owner learning goals: ${proposedValue1}; ${proposedValue2}.`, occurred,
+  );
   const baselinePending = new Set((
     await engine.client.call("vault.writes.pending", { limit: 1000 })
   ).map(row => row.claim_ref));
@@ -2078,7 +2111,7 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   // the refusal lands nothing in the review queue or the claim list.
   const noGrantInput: FacadeInput<"vault.claims.upsert"> = {
     predicate, subject_ref: subject1.id_hex, value: noGrantValue,
-    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+    confidence: 0.8, source: "inferred", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred,
   };
   const noGrant = await readOnlyAgent.client.raw<{
     error: { code: string; message: string };
@@ -2094,7 +2127,7 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   // proposes an inferred claim. Canon maps inferred sources to proposed.
   const proposalInput1: FacadeInput<"vault.claims.upsert"> = {
     predicate, subject_ref: subject1.id_hex, value: proposedValue1,
-    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+    confidence: 0.8, source: "inferred", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred,
   };
   const receipt1 = await proposer.client.call("vault.claims.upsert", proposalInput1);
   expect(receipt1.receipt_ref.length).toBeGreaterThan(0);
@@ -2130,35 +2163,20 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   expect(review1.claim.value).toBe(proposedValue1);
   expect(review1.claim.approval.toLowerCase()).toBe("proposed");
 
-  // Wrong actor kind: the proposer may not settle its own proposal. The
-  // HTTP leg checks the standard typed envelope; the WS leg reads back
-  // the receipt the refusal leaves.
+  // Wrong actor kind: the proposer may not settle its own proposal. Read
+  // the HTTP refusal's call receipt without opening an owner-grade sync socket.
   const settleApprove1: FacadeInput<"vault.claims.settle"> = {
     claim_ref: pending1.claim_ref, review_id: review1.review_id, decision: "approve",
   };
   const deniedHttp = await proposer.client.raw<{
-    error: { code: string; message: string; suggestions?: readonly string[] };
+    error: { code: string; message: string; suggestions?: readonly string[]; receiptRef?: string };
   }>("POST", "/v1/core/facade/vault.claims.settle", settleApprove1);
   expect(deniedHttp.status).toBe(403);
   expect(deniedHttp.body.error.code.length).toBeGreaterThan(0);
   expect(deniedHttp.body.error.message.length).toBeGreaterThan(0);
-
-  const socket = await engine.websocket(proposer);
-  let deniedReceiptRef: string | undefined;
-  try {
-    await socket.call("vault.claims.settle", settleApprove1);
-    throw new Error("MUSE-LOOP-01: proposer agent settled its own claim over WS");
-  } catch (error) {
-    if (!(error instanceof WsRpcError)) throw error;
-    expect(error.frames.some(frame => frame.envelope.type === "rpc.err")).toBe(true);
-    deniedReceiptRef = error.frames.find(frame =>
-      typeof frame.envelope.receipt_ref === "string"
-      && frame.envelope.receipt_ref.length > 0)?.envelope.receipt_ref ?? undefined;
-  } finally {
-    socket.close();
-  }
+  const deniedReceiptRef = deniedHttp.body.error.receiptRef;
   if (!deniedReceiptRef) {
-    throw new Error("MUSE-LOOP-01: refused WS settle left no receipt_ref on its rpc.err frame");
+    throw new Error("MUSE-LOOP-01: refused HTTP settle left no receiptRef");
   }
   const deniedReceipt = await museLoop01ReceiptActor(engine.client, deniedReceiptRef);
   expect(deniedReceipt.actorRef).toBe(proposer.principalRef);
@@ -2202,7 +2220,7 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   // this time for the owner to refuse.
   const proposalInput2: FacadeInput<"vault.claims.upsert"> = {
     predicate, subject_ref: subject2.id_hex, value: proposedValue2,
-    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+    confidence: 0.8, source: "inferred", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred,
   };
   const committed2 = await proposer.client.call("vault.commit", {
     claims: [proposalInput2],
@@ -2314,7 +2332,7 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
   }
   const afterRevokeInput: FacadeInput<"vault.claims.upsert"> = {
     predicate, subject_ref: subject1.id_hex, value: afterRevokeValue,
-    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+    confidence: 0.8, source: "inferred", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred,
   };
   const afterRevoke = await proposer.client.raw<{
     error: { code: string; message: string };
@@ -2408,7 +2426,7 @@ async function museLoop02TrustRow(
 // Canon: ARCH-0056 #graduation-h (the three answers, manual_pinned and the
 // trust table) and ARCH-0055 section 7 (the scope tuple, outcome receipts,
 // "the system offers, the owner taps", and persistence across sessions).
-// Doors used, all through engine.client.call / engine.websocket:
+// Doors used, all through engine.client.call:
 // vault.consent.graduation.policy (setup read of the effective threshold),
 // .outcome (owner records untouched approvals), .offers, .stats and
 // .trust_table (independent read-backs), .answer (auto / not-now /
@@ -2502,9 +2520,10 @@ suite.test(test, "MUSE-LOOP-02", "A graduation offer gives go auto, not now and 
     expect(trustRow.grant_ref == null).toBe(true);
   }
 
-  // The wrong actor: the scoped agent cannot answer its own offer. The HTTP
-  // call carries the standard refusal envelope.
+  // The wrong actor: the scoped agent cannot answer its own offer. The
+  // HTTP refusal carries both the standard envelope and a call receipt.
   let deniedCode = "";
+  let deniedReceiptRef: string | undefined;
   try {
     await agent.client.call("vault.consent.graduation.answer", {
       scope: manualScope,
@@ -2518,45 +2537,26 @@ suite.test(test, "MUSE-LOOP-02", "A graduation offer gives go auto, not now and 
     deniedCode = error.error?.code ?? "";
     expect(deniedCode.length).toBeGreaterThan(0);
     expect((error.error?.message ?? "").length).toBeGreaterThan(0);
+    const receiptRef = error.error?.receiptRef;
+    if (typeof receiptRef === "string") deniedReceiptRef = receiptRef;
   }
   expect(deniedCode.length).toBeGreaterThan(0);
-
-  // The same refusal over WS leaves a call receipt; the owner reads that
-  // receipt back through vault.receipts.get.
-  let deniedReceiptRef: string | undefined;
-  const agentSocket = await engine.websocket(agent);
-  try {
-    try {
-      await agentSocket.call("vault.consent.graduation.answer", {
-        scope: manualScope,
-        answer: "auto",
-      });
-      throw new Error("The agent was allowed to answer its own graduation offer over WS");
-    } catch (error) {
-      if (!(error instanceof WsRpcError)) throw error;
-      deniedReceiptRef = error.frames
-        .map((frame) => frame.envelope.receipt_ref)
-        .find((ref): ref is string => typeof ref === "string" && ref.length > 0);
-    }
-  } finally {
-    agentSocket.close();
-  }
   if (!deniedReceiptRef) {
-    throw new Error("The WS graduation-answer refusal carried no receipt_ref");
+    throw new Error("The HTTP graduation-answer refusal carried no receiptRef");
   }
   const deniedReceipt = await engine.client.call("vault.receipts.get", {
     receipt_ref: deniedReceiptRef,
   });
-  if (!deniedReceipt) throw new Error("The WS refusal receipt is not readable by the owner");
+  if (!deniedReceipt) throw new Error("The HTTP refusal receipt is not readable by the owner");
   expect(deniedReceipt.verb).toBe("vault.consent.graduation.answer");
   expect(deniedReceipt.actor_class).toBe("agent");
-  expect(deniedReceipt.transport).toBe("ws");
+  expect(deniedReceipt.transport).toBe("http_facade");
   if (typeof deniedReceipt.outcome === "string") {
-    throw new Error("The WS refusal receipt outcome is ok, not refused");
+    throw new Error("The HTTP refusal receipt outcome is ok, not refused");
   }
-  expect(deniedReceipt.outcome.refused.code.length).toBeGreaterThan(0);
+  expect(deniedReceipt.outcome.refused.code).toBe(deniedCode);
 
-  // Both refusals changed nothing: the manual scope is still on offer.
+  // The refusal changed nothing: the manual scope is still on offer.
   expect(museLoop02OfferFor(
     await engine.client.call("vault.consent.graduation.offers", {}),
     manualScope,
@@ -2825,7 +2825,11 @@ suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask,
       content: museLoop03QuestionText,
     }],
   } satisfies FacadeInput<"vault.witness">);
-  await engine.awaitReceipt(questionWitness.receipt_ref);
+  const savedQuestionTurn = await engine.client.call("vault.get", {
+    entity_ref: questionWitness.turn_id,
+  });
+  expect(savedQuestionTurn.value?.kind).toBe("TURN");
+  expect(savedQuestionTurn.value?.id_hex).toBe(questionWitness.turn_id);
   const questionMessageRef = questionWitness.message_short_ids[0];
   if (!questionMessageRef) throw new Error("Witness returned no question message reference");
   const savedQuestion = await engine.client.call("vault.get", {
@@ -2909,7 +2913,11 @@ suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask,
       content: museLoop03RulingText,
     }],
   } satisfies FacadeInput<"vault.witness">);
-  await engine.awaitReceipt(rulingWitness.receipt_ref);
+  const savedRulingTurn = await engine.client.call("vault.get", {
+    entity_ref: rulingWitness.turn_id,
+  });
+  expect(savedRulingTurn.value?.kind).toBe("TURN");
+  expect(savedRulingTurn.value?.id_hex).toBe(rulingWitness.turn_id);
   const rulingMessageRef = rulingWitness.message_short_ids[0];
   if (!rulingMessageRef) throw new Error("Witness returned no ruling message reference");
   const savedRuling = await engine.client.call("vault.get", {
@@ -3266,8 +3274,7 @@ suite.test(
         "request_compression = false",
         "",
         `[models.roles.${museLoop04Role}]`,
-        'provider = "loop04_incumbent"',
-        `model = "${museLoop04IncumbentModel}"`,
+        `model = "loop04_incumbent:${museLoop04IncumbentModel}"`,
       ].join("\n"),
     });
     const owner = engine.client;
@@ -3921,8 +3928,15 @@ suite.test(test, "MUSE-LOOP-05", "A human-time ask survives restart and resumes 
         occurred_at: occurred,
         messages: [{ author: "user", message_type: "text", is_visible: true, order: 0, content }],
       } satisfies FacadeInput<"vault.witness">);
-      await engine.awaitReceipt(witnessed.receipt_ref);
+      const savedTurn = await engine.client.call("vault.get", { entity_ref: witnessed.turn_id });
+      expect(savedTurn.value?.kind).toBe("TURN");
+      expect(savedTurn.value?.id_hex).toBe(witnessed.turn_id);
       expect(witnessed.message_short_ids).toHaveLength(1);
+      const messageRef = witnessed.message_short_ids[0];
+      if (!messageRef) throw new Error("Witness returned no message reference");
+      const savedMessage = await engine.client.call("vault.get", { entity_ref: messageRef });
+      expect(savedMessage.value?.kind).toBe("MESSAGE");
+      expect(savedMessage.value?.body).toEqual(expect.objectContaining({ content }));
       return witnessed;
     };
     const q1Turn = await museLoop05WitnessTurn(q1Text);
@@ -4160,7 +4174,6 @@ async function museLoop06FileQuotingProposal(args: {
       content: `Vault note: ${args.sentinel}`,
     }],
   } satisfies FacadeInput<"vault.witness">);
-  await args.engine.awaitReceipt(witnessed.receipt_ref);
   const messageShortId = witnessed.message_short_ids[0];
   if (!messageShortId) throw new Error("Witness returned no message reference");
   const message = await args.engine.client.call("vault.get", {
@@ -4464,6 +4477,10 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
     } satisfies FacadeInput<"vault.conversations.create">);
     const subjectRef = conversation.id;
+    const evidenceTurn = await museLoopClaimEvidence(
+      owner, conversation.id,
+      `Reviewed values: alpha=${alphaValue}; beta=${betaValueOne}; gamma=${gammaValue}.`, occurred,
+    );
 
     const readerRecord = await owner.call("vault.structural.put", {
       kind: "PERSON", body: { name: "Loop08 Reader Person" }, occurred_at: occurred,
@@ -4479,14 +4496,14 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     });
 
     // An agent paired without write scope cannot propose through the seed door.
-    const readerSeed = { claims: [{ predicate: readerPredicate, subject_ref: subjectRef, value: readerValue, confidence: 1, source: "generated", scope, occurred_at: occurred }] } satisfies FacadeInput<"vault.claims.seed">;
+    const readerSeed = { claims: [{ predicate: readerPredicate, subject_ref: subjectRef, value: readerValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred }] } satisfies FacadeInput<"vault.claims.seed">;
     const readerRefused = await reader.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", readerSeed);
 
     // The agent proposes three independent claims; the seed door forces Proposed.
     const seeded = await proposer.client.call("vault.claims.seed", { claims: [
-      { predicate: alphaPredicate, subject_ref: subjectRef, value: alphaValue, confidence: 1, source: "generated", scope, occurred_at: occurred },
-      { predicate: betaPredicate, subject_ref: subjectRef, value: betaValueOne, confidence: 1, source: "generated", scope, occurred_at: occurred },
-      { predicate: gammaPredicate, subject_ref: subjectRef, value: gammaValue, confidence: 1, source: "generated", scope, occurred_at: occurred },
+      { predicate: alphaPredicate, subject_ref: subjectRef, value: alphaValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred },
+      { predicate: betaPredicate, subject_ref: subjectRef, value: betaValueOne, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred },
+      { predicate: gammaPredicate, subject_ref: subjectRef, value: gammaValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred },
     ] } satisfies FacadeInput<"vault.claims.seed">);
     expect(seeded).toHaveLength(3);
     for (const outcome of seeded) {
@@ -4632,7 +4649,7 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       });
     }
     const auditFinal = await museLoop08AuditRows(owner);
-    const deadSeed = { claims: [{ predicate: deadPredicate, subject_ref: subjectRef, value: deadValue, confidence: 1, source: "generated", scope, occurred_at: occurred + 120 }] } satisfies FacadeInput<"vault.claims.seed">;
+    const deadSeed = { claims: [{ predicate: deadPredicate, subject_ref: subjectRef, value: deadValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred + 120 }] } satisfies FacadeInput<"vault.claims.seed">;
     const dead = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", deadSeed);
 
     await engine.artifacts.json("muse-loop08-outcome.json", {
