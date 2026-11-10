@@ -175,16 +175,13 @@ impl<'a> BatchBuilder<'a> {
     }
 
     /// Holds each AGENT_DEF this batch creates to `actor`'s slice when
-    /// `actor` is an agent writing through `door`, its verb name
-    /// (ARCH-0053:20): in the transaction that applies the batch, before any
-    /// put lands, the author writer bounds the body, so a definition inside
-    /// the slice is active and a wider one is a proposal. Any other actor's
-    /// batch writes as staged.
-    pub(crate) fn authored_through(
-        mut self,
-        actor: &crate::WriteActor,
-        door: &'static str,
-    ) -> Self {
+    /// `actor` is an agent writing through `door`, the name its provenance
+    /// records (ARCH-0053:20): in the transaction that applies the batch,
+    /// before any put lands, the author writer bounds the body, so a
+    /// definition inside the slice is active and a wider one is a proposal.
+    /// Any other actor's batch writes as staged. Every door that commits an
+    /// agent's own puts names its writer here.
+    pub fn authored_through(mut self, actor: &crate::WriteActor, door: &'static str) -> Self {
         self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door);
         self
     }

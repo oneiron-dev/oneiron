@@ -81,26 +81,60 @@ impl AgentAuthoring {
     }
 }
 
-fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> bool {
-    let scope_within = match (&request.scope, &author.scope) {
+/// Marks `definition` as authored by the agent `author` through `door`: a
+/// generated record, live at rest, whose provenance names both. Its approval
+/// is the caller's to set.
+fn mark_agent_authored(definition: &mut AgentDefinition, author: &EntityId, door: &'static str) {
+    definition.source = crate::claim::ClaimSource::Generated;
+    definition.generated = true;
+    definition.human_authored = false;
+    definition.provenance = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("author"),
+            rmpv::Value::from(author.to_hex()),
+        ),
+        (rmpv::Value::from("definedVia"), rmpv::Value::from(door)),
+    ]);
+    definition.lifecycle_status = ClaimLifecycleStatus::Active;
+}
+
+/// Whether every grant `request` names is one `holder` holds: its scope, its
+/// skills, its connectors and its code-mode MCPs.
+fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
+    let scope_within = match (&request.scope, &holder.scope) {
         (_, AgentScope::All) | (AgentScope::Base, AgentScope::Base | AgentScope::World(_)) => true,
         (AgentScope::World(child), AgentScope::World(parent)) => child == parent,
         _ => false,
     };
     scope_within
-        && !request.ceiling.widens_beyond(author.ceiling)
         && request
             .skills
             .iter()
-            .all(|skill| author.skills.iter().any(|allowed| allowed == skill))
+            .all(|skill| holder.skills.iter().any(|allowed| allowed == skill))
         && request
             .connectors
             .iter()
-            .all(|connector| author.connectors.contains(connector))
+            .all(|connector| holder.connectors.contains(connector))
         && request
             .code_mode_mcps
             .iter()
-            .all(|mcp| author.code_mode_mcps.contains(mcp))
+            .all(|mcp| holder.code_mode_mcps.contains(mcp))
+}
+
+/// Whether a definition is one its agent runs under: active, approved and
+/// switched on.
+fn stands(definition: &AgentDefinition) -> bool {
+    definition.lifecycle_status == ClaimLifecycleStatus::Active
+        && definition.enabled
+        && matches!(
+            definition.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+}
+
+fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> bool {
+    grants_within(request, author)
+        && !request.ceiling.widens_beyond(author.ceiling)
         // The owner's model choices hold as they are (FIX 4472): an authored
         // put cannot change them. `request` has already taken every choice it
         // left out from the author (FIX 9557), so each resolved choice is
@@ -655,13 +689,15 @@ impl Vault {
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
-    /// The body an agent's generic row put of a new definition stores
-    /// (ARCH-0053:20): the one the author writer prepares for it, so
-    /// `vault.structural.put` and `vault.batch` land what `vault.agents.put`
-    /// lands. Inside the author's slice it is active at the author's
-    /// approval; wider, it is a proposal no dispatch runs. `None` leaves the
-    /// put as written: `id` holds a live row, which the update rules judge,
-    /// or the writer holds no definition of its own to bound the put by.
+    /// The body an agent's generic put of a definition stores (ARCH-0053:20):
+    /// the one the author writer gives it, so every door an agent's own handle
+    /// writes rows through lands what `vault.agents.put` lands. A new
+    /// definition inside the author's slice is active at the author's
+    /// approval; wider, it is a proposal no dispatch runs. An agent that holds
+    /// no definition of its own (a PERSON bound as an agent) has no slice to
+    /// lend, so what it authors is a proposal. A put over a stored definition
+    /// answers to [`Self::agent_authored_update_body_in_txn`]. `None` leaves
+    /// the put as written.
     ///
     /// # Errors
     ///
@@ -675,37 +711,141 @@ impl Vault {
         id: &EntityId,
         body: &[u8],
     ) -> Result<Option<Vec<u8>>> {
+        match live_entity_row_in_txn(&self.store, txn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                body: stored,
+            } => {
+                return self.agent_authored_update_body_in_txn(txn, authoring, id, &stored, body);
+            }
+            // Another entity type at the id is the put arm's to refuse.
+            LiveEntityRow::Live { .. } => return Ok(None),
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {}
+        }
+        let requested = decode_agent_definition(body)?;
+        let author = &authoring.author;
         let author_holds_definition = matches!(
-            live_entity_row_in_txn(&self.store, txn, &authoring.author)?,
+            live_entity_row_in_txn(&self.store, txn, author)?,
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
                 ..
             }
         );
-        if !author_holds_definition
-            || matches!(
-                live_entity_row_in_txn(&self.store, txn, id)?,
-                LiveEntityRow::Live { .. }
+        let definition = if author_holds_definition {
+            self.prepare_agent_definition_for_author_in_txn(
+                txn,
+                author,
+                id,
+                &requested,
+                false,
+                authoring.door,
+            )?
+            .0
+        } else {
+            self.ensure_new_authored_definition_in_txn(txn, id, &requested)?;
+            let mut definition = requested;
+            mark_agent_authored(&mut definition, author, authoring.door);
+            definition.approval_status = ClaimApprovalStatus::Proposed;
+            definition
+        };
+        encode_agent_definition(&definition).map(Some)
+    }
+
+    /// The body an agent's generic put over the stored definition `stored`
+    /// stores at `id`. A put that names no grant the row does not hold (its
+    /// scope, skills, connectors and code-mode MCPs) stays as written, for
+    /// the update rules to judge: the id pin holds its ceiling, and the
+    /// owner-only widening rule its three switches and its models. A put that
+    /// grants the row more answers to the author's slice, as a new definition
+    /// does (ARCH-0053:20): inside the slice of an author other than the row
+    /// itself it stays as written; beyond it, the row is held as a proposal
+    /// no dispatch runs until the owner approves it. A put that already
+    /// stands below approved stays as written.
+    ///
+    /// # Errors
+    ///
+    /// A body, or a stored row, that does not decode.
+    fn agent_authored_update_body_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: AgentAuthoring,
+        id: &EntityId,
+        stored: &[u8],
+        body: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let requested = decode_agent_definition(body)?;
+        if grants_within(&requested, &decode_agent_definition(stored)?)
+            || !matches!(
+                requested.approval_status,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
             )
         {
             return Ok(None);
         }
-        let requested = decode_agent_definition(body)?;
-        let (definition, _) = self.prepare_agent_definition_for_author_in_txn(
-            txn,
-            &authoring.author,
-            id,
-            &requested,
-            false,
-            authoring.door,
-        )?;
-        encode_agent_definition(&definition).map(Some)
+        let author = &authoring.author;
+        if author != id
+            && let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                body: author_body,
+            } = live_entity_row_in_txn(&self.store, txn, author)?
+        {
+            let author_def = decode_agent_definition(&author_body)?;
+            if stands(&author_def) {
+                let slice = self.policy_bounded_author_in_txn(txn, author, &author_def)?;
+                if grants_within(&requested, &slice)
+                    && !requested.ceiling.widens_beyond(slice.ceiling)
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        let mut proposal = requested;
+        proposal.approval_status = ClaimApprovalStatus::Proposed;
+        encode_agent_definition(&proposal).map(Some)
     }
 
-    /// Holds each definition `ops` creates to `authoring`'s slice, read in
-    /// the transaction that applies them: the generic row doors' share of
-    /// the author writer ([`Self::agent_authored_definition_body_in_txn`]).
-    /// With no `authoring`, `ops` stay as staged.
+    /// `author_def` at the ceiling policy leaves the agent `author`: the
+    /// slice it lends what it authors.
+    fn policy_bounded_author_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        author: &EntityId,
+        author_def: &AgentDefinition,
+    ) -> Result<AgentDefinition> {
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let mut bounded = author_def.clone();
+        bounded.ceiling = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
+            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
+            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
+        };
+        Ok(bounded)
+    }
+
+    /// What every agent-authored create answers to before its slice is read:
+    /// `id` holds no row, and the request asserts no lineage.
+    fn ensure_new_authored_definition_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        requested: &AgentDefinition,
+    ) -> Result<()> {
+        if self.store.port_entity_record(txn, id)?.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agents.put creates a new definition; use the update door for an existing row",
+            )));
+        }
+        if requested.forked_from.is_some() || requested.logical_id.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
+            )));
+        }
+        Ok(())
+    }
+
+    /// Holds each definition `ops` put to `authoring`'s slice, read in the
+    /// transaction that applies them: the generic put doors' share of the
+    /// author writer ([`Self::agent_authored_definition_body_in_txn`]). With
+    /// no `authoring`, `ops` stay as staged.
     ///
     /// # Errors
     ///
@@ -748,47 +888,16 @@ impl Vault {
         door: &'static str,
     ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
         let author_def = self.read_agent_definition_in_txn(txn, author)?;
-        if author_def.lifecycle_status != ClaimLifecycleStatus::Active
-            || !author_def.enabled
-            || !matches!(
-                author_def.approval_status,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
+        if !stands(&author_def) {
             return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "author definition is not active and approved",
             )));
         }
-        if self.store.port_entity_record(txn, id)?.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agents.put creates a new definition; use the update door for an existing row",
-            )));
-        }
-        if requested.forked_from.is_some() || requested.logical_id.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
-            )));
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-        let effective = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
-            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
-            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
-        };
-        let mut bounded_author = author_def.clone();
-        bounded_author.ceiling = effective;
+        self.ensure_new_authored_definition_in_txn(txn, id, requested)?;
+        let bounded_author = self.policy_bounded_author_in_txn(txn, author, &author_def)?;
         let mut definition = inherit_model_choices(requested, &bounded_author);
         let within = !scope_widens && within_author_slice(&definition, &bounded_author);
-        definition.source = crate::claim::ClaimSource::Generated;
-        definition.generated = true;
-        definition.human_authored = false;
-        definition.provenance = rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("author"),
-                rmpv::Value::from(author.to_hex()),
-            ),
-            (rmpv::Value::from("definedVia"), rmpv::Value::from(door)),
-        ]);
-        definition.lifecycle_status = ClaimLifecycleStatus::Active;
+        mark_agent_authored(&mut definition, author, door);
         let disposition = if within {
             definition.approval_status = author_def.approval_status;
             AgentDefinitionPutDisposition::Active

@@ -129,15 +129,18 @@ impl Vault {
         self.write_core_batch_in_lane_as(input, commit, announcement, lane, None)
     }
 
-    /// [`Self::write_core_batch_in_lane`] for the handle `writer` is bound
-    /// to. An agent's batch holds each AGENT_DEF it creates to that agent's
-    /// slice (ARCH-0053:20; [`BatchBuilder::authored_through`]): inside the
-    /// slice it is active, wider it is a proposal. With no `writer`, every
-    /// body is written as staged.
+    /// [`Self::write_core_batch_in_lane`] for the actor `writer` its caller
+    /// is bound to: a `Memory`'s, or a served credential's. An agent's batch
+    /// holds each AGENT_DEF it puts to that agent's slice (ARCH-0053:20;
+    /// [`BatchBuilder::authored_through`]): a new definition inside the slice
+    /// is active and a wider one is a proposal, and a put that grants a
+    /// stored definition more than the slice holds leaves it a proposal.
+    /// With no `writer`, or one that is no agent, every body is written as
+    /// staged.
     /// # Errors
     /// As [`Self::write_core_batch_in_lane`], and the author writer's
     /// refusal of a definition it would refuse at `vault.agents.put`.
-    pub(crate) fn write_core_batch_in_lane_as(
+    pub fn write_core_batch_in_lane_as(
         &self,
         input: &CoreBatchWriteInput,
         commit: CoreBatchCommit,
