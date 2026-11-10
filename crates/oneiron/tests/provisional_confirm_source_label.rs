@@ -387,6 +387,28 @@ impl Fixture {
             "FIXTURE: the confirmed entity is a stored row"
         );
     }
+
+    /// The body of the PERSON confirmed from the name only the R MESSAGE
+    /// holds, which names R's audience (main names none, so a test that
+    /// copies it stops here on main).
+    fn confirmed_body_named_only_in_r(&self) -> Vec<u8> {
+        let mirela = self.minted_in(self.hidden_message);
+        self.confirm(&mirela);
+        let body = self
+            .vault
+            .get(&mirela)
+            .expect("read")
+            .expect("FIXTURE: the confirmed PERSON's body");
+        let fields = rmpv::decode::read_value(&mut body.as_slice())
+            .expect("FIXTURE: the PERSON's body is msgpack");
+        assert!(
+            fields.as_map().is_some_and(|fields| fields
+                .iter()
+                .any(|(key, _)| key.as_str() == Some("source_audience"))),
+            "FIXTURE: the confirmed PERSON's body names its source audience: {fields}"
+        );
+        body
+    }
 }
 
 /// A provisional entity named only in the R MESSAGE, once confirmed, is a
@@ -602,18 +624,11 @@ fn an_off_record_raw_put_does_not_drop_a_confirmed_persons_audience() {
 
     let mirela = fixture.minted_in(fixture.hidden_message);
     fixture.confirm(&mirela);
-    let put = stage(fixture.insider, &mirela, "Mirela");
-    let outsider_in_room = fixture
-        .vault
-        .memory(fixture.outsider, EdgeActorClass::Human)
-        .in_off_record_session(room.session_ref())
-        .get_entity(&mirela.to_hex())
-        .map(|read| read.value.is_some());
-    let refusal = put.expect_err(&format!(
+    let refusal = stage(fixture.insider, &mirela, "Mirela").expect_err(
         "LEAK: a member of R staged in an off-record room a rewrite of the PERSON named only \
-         in R's MESSAGE without its audience (the outsider reads it in the room: \
-         {outsider_in_room:?})"
-    ));
+         in R's MESSAGE without its audience, which the room's views would serve to a member \
+         outside R",
+    );
     assert_eq!(
         refusal.code, "FORBIDDEN",
         "the owner's act, refused: {refusal:?}"
@@ -629,6 +644,10 @@ fn an_off_record_raw_put_does_not_drop_a_confirmed_persons_audience() {
 /// does not read, must answer that participant's put as missing, as base
 /// does (FIX 6068). A refusal as the owner's act would tell it that the row
 /// exists and names an audience; a staged put would rewrite it unread.
+///
+/// A member's `get_entity` bound to the room reads base, not the room's
+/// overlay (only the room's composed views read staged rows), so this test
+/// judges the room's row by the answers its puts get.
 #[test]
 fn an_off_record_raw_put_over_a_room_person_the_writer_does_not_read_answers_as_missing() {
     let fixture = tagged_fixture();
@@ -654,23 +673,7 @@ fn an_off_record_raw_put_over_a_room_person_the_writer_does_not_read_answers_as_
                 data: body,
             })
     };
-    let reads_in_room = |reader: EntityId, id: &EntityId| {
-        matches!(
-            fixture
-                .vault
-                .memory(reader, EdgeActorClass::Human)
-                .in_off_record_session(room.session_ref())
-                .get_entity(&id.to_hex()),
-            Ok(read) if read.value.is_some()
-        )
-    };
-    let mirela = fixture.minted_in(fixture.hidden_message);
-    fixture.confirm(&mirela);
-    let named = fixture
-        .vault
-        .get(&mirela)
-        .expect("read")
-        .expect("FIXTURE: the confirmed PERSON's body");
+    let named = fixture.confirmed_body_named_only_in_r();
     // A PERSON only the room holds, named under R's audience.
     let staged = EntityId::now();
     stage(fixture.insider, &staged, named.as_slice())
@@ -678,14 +681,6 @@ fn an_off_record_raw_put_over_a_room_person_the_writer_does_not_read_answers_as_
     assert!(
         fixture.vault.get(&staged).expect("read").is_none(),
         "FIXTURE: base does not hold the staged PERSON"
-    );
-    assert!(
-        reads_in_room(fixture.insider, &staged),
-        "FIXTURE: the member of R reads the staged PERSON in the room"
-    );
-    assert!(
-        !reads_in_room(fixture.outsider, &staged),
-        "FIXTURE: a member outside R does not read the staged PERSON in the room"
     );
     let plain = rmp_serde::to_vec_named(&serde_json::json!({ "name": "Mirela" })).expect("body");
     stage(fixture.outsider, &EntityId::now(), plain.as_slice())
@@ -701,8 +696,43 @@ fn an_off_record_raw_put_over_a_room_person_the_writer_does_not_read_answers_as_
         "LEAK: a room row the writer does not read answers as missing, never as the owner's \
          act: {missing:?}"
     );
-    assert!(
-        reads_in_room(fixture.insider, &staged),
-        "the member of R still reads the staged PERSON in the room"
+}
+
+/// The other side of the round-2 fix: the member of R who staged a PERSON
+/// under R's audience in a room reads it there, so its own rewrite that
+/// keeps that audience stages; the read check refuses only a writer who does
+/// not read the row.
+#[test]
+fn an_off_record_raw_put_keeping_the_audience_of_a_room_person_the_writer_reads_stages() {
+    let fixture = tagged_fixture();
+    let room = fixture
+        .vault
+        .off_record_session_vault()
+        .enter("opus-leaks-7006-room-read", OffRecordBackendClass::Local)
+        .expect("FIXTURE: an off-record room");
+    let stage = |writer: EntityId, id: &EntityId, body: &[u8]| {
+        let now = fixture.vault.now_recorded_at();
+        fixture
+            .vault
+            .memory(writer, EdgeActorClass::Human)
+            .in_off_record_session(room.session_ref())
+            .raw_put_entity(RawEntityPut {
+                id: *id,
+                entity_type: ENTITY_TYPE_PERSON,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: body,
+            })
+    };
+    let named = fixture.confirmed_body_named_only_in_r();
+    let staged = EntityId::now();
+    stage(fixture.insider, &staged, named.as_slice())
+        .expect("FIXTURE: a member of R stages in the room a PERSON under R's audience");
+
+    stage(fixture.insider, &staged, named.as_slice()).expect(
+        "the member of R rewrites in the room, under the same audience, the PERSON it staged there",
     );
 }
