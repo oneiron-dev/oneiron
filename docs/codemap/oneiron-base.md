@@ -33,7 +33,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 2 fn · 28 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
 | `src/limits.rs` | src | s | 1 re-export | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/live_rows.rs` | src | m | 5 struct · 1 enum · 1 trait · 7 fn · 1 type · 4 const | LiveLine, LivePermit, LiveRow, LiveRows, LiveRowsCell, LiveRowsHolder, LiveWaitedOut | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
-| `src/live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
 | `src/machine_destination.rs` | src | s | 3 enum | Destination, EffectiveRead, PeerMachine | Machine destinations and folded read-location values |
 | `src/message_body_fields.rs` | src | s | 1 struct · 3 fn | MessageFields | An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no… |
 | `src/msgpack_shape.rs` | src | s | 1 struct · 1 enum · 1 fn | OverBudget, ShapeBudget | A budget check of untrusted MessagePack before it is decoded |
