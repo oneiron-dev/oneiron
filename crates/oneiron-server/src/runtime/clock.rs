@@ -12,7 +12,7 @@
 //! vault's clock is also the clock the HTTP idempotency layer judges its
 //! entries' age by; the server's other host timers stay on the host clock.
 
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,8 +48,10 @@ pub enum RuntimeClock {
 /// host's clock. Config validation refuses a file it cannot read before a
 /// server starts ([`Self::read`]).
 ///
-/// The file belongs on a local filesystem, writable only by whoever may set
-/// the vault's time: the vault reads it inside its write transactions.
+/// The file and its directory belong on a local filesystem, writable only by
+/// whoever may set the vault's time: whoever can write the file, or replace
+/// it in its directory, sets that time. The vault reads it inside its write
+/// transactions.
 #[derive(Debug)]
 pub struct ManualClockFile {
     path: PathBuf,
@@ -84,21 +86,24 @@ impl ManualClockFile {
         std::fs::rename(&staged, path)
     }
 
-    /// The Unix milliseconds the regular file at `path` holds. A FIFO or a
-    /// device is refused before it is opened, so a read never waits on a
-    /// writer.
+    /// The Unix milliseconds the regular file at `path` holds. The open does
+    /// not wait for a writer, and the handle it opens is refused unless it is
+    /// a regular file, so a FIFO or a device never makes a read wait, even
+    /// one renamed into place between two reads.
     ///
     /// # Errors
     /// The file is missing, is not a regular file, or does not hold Unix
     /// milliseconds. The error names the path, never the file's contents.
     pub fn read(path: &Path) -> io::Result<u64> {
-        if !std::fs::metadata(path)?.is_file() {
+        let mut file = open_without_waiting(path)?;
+        if !file.metadata()?.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("{} is not a regular file", path.display()),
             ));
         }
-        let text = std::fs::read_to_string(path)?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
         text.trim().parse().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -125,6 +130,22 @@ impl ManualClockFile {
     pub fn store_clock(self: &Arc<Self>) -> StoreClock {
         StoreClock::new(self.clone(), ManualClock::new(0))
     }
+}
+
+/// `path` opened to read. On Unix the open does not wait for a FIFO's writer
+/// (`O_NONBLOCK`, under which a regular file reads as it always does).
+#[cfg(unix)]
+fn open_without_waiting(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_without_waiting(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::open(path)
 }
 
 impl Clock for ManualClockFile {
