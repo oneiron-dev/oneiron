@@ -8,11 +8,16 @@
 //! `vault.agents.put` applies that rule. An agent's code-mode run also reaches
 //! the generic `vault.structural.put` and `vault.batch` rows: a pumped run's
 //! `RunHostDoor` answers them on the agent's own Agent-class `Memory`
-//! (crates/oneiron-server/src/server/run_host_door.rs:830-876). These tests
-//! call those same generated rows on that Memory for a fresh AGENT_DEF of a
-//! Base, ceiling-Proposed author. A definition wider than the author lands as
-//! a proposal no dispatch runs; one inside the author's slice lands active.
-//! Neither is refused.
+//! (crates/oneiron-server/src/server/run_host_door.rs:830-876), and that
+//! `Memory` also holds the raw entity put. These tests write an AGENT_DEF
+//! through each of those doors on an Agent-class `Memory`.
+//!
+//! A new definition wider than its Base, ceiling-Proposed author lands as a
+//! proposal no dispatch runs; one inside the author's slice lands active. An
+//! agent that holds no definition of its own has no slice to lend, so what it
+//! authors is a proposal. A put that grants a stored definition more than its
+//! author's slice holds leaves that definition a proposal; an edit that
+//! grants nothing new stays active. None of these is refused.
 
 use std::sync::Arc;
 
@@ -23,7 +28,7 @@ use oneiron::agent_dispatch::{
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 
@@ -92,7 +97,7 @@ fn json_of(value: &RmpValue) -> Value {
     }
 }
 
-/// How the candidate stands against its Base, ceiling-Proposed author.
+/// How a new candidate stands against its Base, ceiling-Proposed author.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Slice {
     /// Scope All, ceiling Auto.
@@ -101,33 +106,46 @@ enum Slice {
     Within,
 }
 
-/// The candidate's body as JSON, made by the engine's own codec: Approved,
-/// Active, enabled, at the scope and ceiling `slice` names.
-fn candidate_body(slice: Slice) -> Value {
+/// A new candidate: Approved, Active, enabled, at the scope and ceiling
+/// `slice` names.
+fn candidate(slice: Slice) -> AgentDefinition {
     let (scope, ceiling) = match slice {
         Slice::Wider => (AgentScope::All, AgentCeiling::Auto),
         Slice::Within => (AgentScope::Base, AgentCeiling::Proposed),
     };
-    let bytes = encode_agent_definition(&definition(
+    definition(
         "conformance.candidate",
         scope,
         ceiling,
         ClaimSource::Generated,
         true,
         false,
-    ))
-    .expect("valid candidate");
-    json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("candidate MessagePack"))
+    )
 }
 
-fn run_case(verb: &str, candidate_seed: u8, slice: Slice) {
+/// A personal vault whose owner created one Base, ceiling-Proposed agent.
+struct Fixture {
+    vault: Vault,
+    /// The embedded owner's PERSON row.
+    owner_person: EntityId,
+    /// The agent the owner created.
+    author: EntityId,
+    _dir: tempfile::TempDir,
+}
+
+fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("personal vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing().expect("install signing");
-    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner_person = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault
-        .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+        .authenticate_owner(
+            owner_person,
+            &owner_person.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
         .expect("owner proof");
     let author = EntityId::from_bytes([AUTHOR; 16]).expect("author id");
     vault
@@ -149,48 +167,104 @@ fn run_case(verb: &str, candidate_seed: u8, slice: Slice) {
             NOW,
         )
         .expect("owner creates the Base, ceiling-Proposed author");
-    let candidate = EntityId::from_bytes([candidate_seed; 16]).expect("candidate id");
-    assert!(
-        vault
-            .get_agent_definition(&candidate)
-            .expect("fresh id")
-            .is_none()
-    );
+    Fixture {
+        vault,
+        owner_person,
+        author,
+        _dir: dir,
+    }
+}
 
-    let input = match verb {
-        "vault.structural.put" => json!({
-            "id": candidate.to_hex(),
+/// A door an Agent-class `Memory` writes an AGENT_DEF row through.
+#[derive(Clone, Copy)]
+enum Door {
+    /// The generated `vault.structural.put` row.
+    StructuralPut,
+    /// The generated `vault.batch` row.
+    Batch,
+    /// `Memory::raw_put_entity`.
+    RawPut,
+}
+
+impl Door {
+    fn name(self) -> &'static str {
+        match self {
+            Self::StructuralPut => "vault.structural.put",
+            Self::Batch => "vault.batch",
+            Self::RawPut => "memory.raw_put_entity",
+        }
+    }
+}
+
+/// Puts `def` at `id` through `door` on the Agent-class `Memory` of `writer`,
+/// as the run host door binds it.
+fn put(
+    vault: &Vault,
+    writer: EntityId,
+    door: Door,
+    id: EntityId,
+    def: &AgentDefinition,
+    at: u64,
+) -> Result<(), String> {
+    let memory = vault.memory(writer, EdgeActorClass::Agent);
+    let bytes = encode_agent_definition(def).expect("valid definition");
+    let input = match door {
+        Door::RawPut => {
+            return memory
+                .raw_put_entity(RawEntityPut {
+                    id,
+                    entity_type: ENTITY_TYPE_AGENT_DEF,
+                    occurred: TimeRange { start: at, end: at },
+                    learned_at: at,
+                    data: &bytes,
+                })
+                .map_err(|error| format!("{error:?}"));
+        }
+        Door::StructuralPut => json!({
+            "id": id.to_hex(),
             "kind": "AGENT_DEF",
-            "body": candidate_body(slice),
-            "occurred_at": NOW + 1,
-            "learned_at": NOW + 1,
+            "body": json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("MessagePack")),
+            "occurred_at": at,
+            "learned_at": at,
         }),
-        "vault.batch" => json!({"entities": [{
-            "id": candidate.to_hex(),
+        Door::Batch => json!({"entities": [{
+            "id": id.to_hex(),
             "entity_type": ENTITY_TYPE_AGENT_DEF,
-            "occurred_start": NOW + 1,
-            "occurred_end": NOW + 1,
-            "learned_at": NOW + 1,
-            "body": candidate_body(slice),
+            "occurred_start": at,
+            "occurred_end": at,
+            "learned_at": at,
+            "body": json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("MessagePack")),
         }]}),
-        other => panic!("no fixture for {other}"),
     };
+    let verb = door.name();
     assert!(
         oneiron::task_verb::sdk::code_mode_verb_names().any(|name| name == verb),
         "{verb} is a code-mode row"
     );
-    // The author's own Memory, as the run host door binds it.
-    let memory = vault.memory(author, EdgeActorClass::Agent);
-    let write = oneiron::task_verb::sdk::invoke(&memory, verb, input);
-    let stored = vault
-        .get_agent_definition(&candidate)
-        .expect("read candidate");
-    let dispatch = match AgentDispatcher::new(&vault).dispatch(DispatchAgent {
-        target: AgentDispatchTarget::Custom(candidate),
+    oneiron::task_verb::sdk::invoke(&memory, verb, input)
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"))
+}
+
+/// What ARCH-0053:20 says a put left at its id.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lands {
+    /// A proposal: stored, never dispatched.
+    Proposal,
+    /// Active at the author's approval, and dispatchable.
+    Active,
+}
+
+/// Reads `id` back after `write`, tries one dispatch of it, prints one
+/// `CONFORMANCE` line and holds the row to `lands`.
+fn assert_lands(case: &str, write: &Result<(), String>, vault: &Vault, id: EntityId, lands: Lands) {
+    let stored = vault.get_agent_definition(&id).expect("read the row");
+    let dispatch = match AgentDispatcher::new(vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(id),
         parent_attempt: None,
         dedupe_key: None,
         run_id: None,
-        now: NOW + 2,
+        now: NOW + 9,
     }) {
         Ok(AgentDispatchOutcome::Dispatched(_)) => "dispatched".to_owned(),
         Ok(AgentDispatchOutcome::Existing(_)) => "existing".to_owned(),
@@ -198,15 +272,16 @@ fn run_case(verb: &str, candidate_seed: u8, slice: Slice) {
         Ok(_) => "workflow".to_owned(),
         Err(error) => format!("refused: {error}"),
     };
-    let write_label = match &write {
-        Ok(_) => "landed".to_owned(),
-        Err(error) => format!("refused: {error:?}"),
+    let write_label = match write {
+        Ok(()) => "landed".to_owned(),
+        Err(error) => format!("refused: {error}"),
     };
     let standing = stored.as_ref().map_or_else(
         || "absent".to_owned(),
         |def| {
             format!(
-                "approval={:?} lifecycle={:?} enabled={} scope={:?} ceiling={:?} source={:?}",
+                "version={} approval={:?} lifecycle={:?} enabled={} scope={:?} ceiling={:?} source={:?}",
+                def.version,
                 def.approval_status,
                 def.lifecycle_status,
                 def.enabled,
@@ -216,66 +291,257 @@ fn run_case(verb: &str, candidate_seed: u8, slice: Slice) {
             )
         },
     );
-    let slice_label = match slice {
-        Slice::Wider => "wider",
-        Slice::Within => "within",
-    };
-    println!(
-        "CONFORMANCE path=agent-memory/{verb} slice={slice_label} write={write_label} stored=[{standing}] dispatch={dispatch}"
-    );
+    println!("CONFORMANCE case={case} write={write_label} stored=[{standing}] dispatch={dispatch}");
     assert!(
         write.is_ok(),
-        "ARCH-0053:20: {verb} refused a {slice_label} definition: {write_label}"
+        "ARCH-0053:20: {case}: the put was refused: {write_label}"
     );
-    let def = stored.expect("the put landed a definition");
+    let def = stored.expect("the put left a definition");
     assert_eq!(
         def.lifecycle_status,
         ClaimLifecycleStatus::Active,
-        "{verb} {slice_label}: a saved definition is live at rest"
+        "{case}: a saved definition is live at rest"
     );
-    match slice {
-        Slice::Wider => {
+    match lands {
+        Lands::Proposal => {
             assert_eq!(
                 def.approval_status,
                 ClaimApprovalStatus::Proposed,
-                "ARCH-0053:20: {verb} stored a definition wider than its author's slice as other than a proposal"
+                "ARCH-0053:20: {case}: a definition wider than its author's slice is stored as other than a proposal"
             );
             assert_ne!(
                 dispatch, "dispatched",
-                "ARCH-0053:20: {verb} left a definition wider than its author's slice dispatchable"
+                "ARCH-0053:20: {case}: a definition wider than its author's slice is dispatchable"
             );
         }
-        Slice::Within => {
+        Lands::Active => {
             assert_eq!(
                 def.approval_status,
                 ClaimApprovalStatus::Approved,
-                "ARCH-0053:20: {verb} did not land a definition inside its author's slice at the author's approval"
+                "ARCH-0053:20: {case}: a definition inside its author's slice is not at the author's approval"
             );
-            assert!(def.enabled, "{verb} within: the definition stays enabled");
+            assert!(def.enabled, "{case}: the definition stays enabled");
             assert_eq!(
                 dispatch, "dispatched",
-                "ARCH-0053:20: {verb} left a definition inside its author's slice undispatchable"
+                "ARCH-0053:20: {case}: a definition inside its author's slice is undispatchable"
             );
         }
     }
 }
 
+/// The author puts a new candidate through `door`.
+fn run_new_definition(door: Door, candidate_seed: u8, slice: Slice) {
+    let fixture = fixture();
+    let id = EntityId::from_bytes([candidate_seed; 16]).expect("candidate id");
+    assert!(
+        fixture
+            .vault
+            .get_agent_definition(&id)
+            .expect("fresh id")
+            .is_none()
+    );
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        door,
+        id,
+        &candidate(slice),
+        NOW + 1,
+    );
+    let (slice_label, lands) = match slice {
+        Slice::Wider => ("wider", Lands::Proposal),
+        Slice::Within => ("within", Lands::Active),
+    };
+    assert_lands(
+        &format!("agent-memory/{}/new/{slice_label}", door.name()),
+        &write,
+        &fixture.vault,
+        id,
+        lands,
+    );
+}
+
+/// The author creates a child inside its own slice through `vault.batch`,
+/// and the child stands active.
+fn author_creates_child(fixture: &Fixture, child_seed: u8) -> (EntityId, AgentDefinition) {
+    let id = EntityId::from_bytes([child_seed; 16]).expect("child id");
+    put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &candidate(Slice::Within),
+        NOW + 1,
+    )
+    .expect("the author creates a child inside its slice");
+    let child = fixture
+        .vault
+        .get_agent_definition(&id)
+        .expect("read the child")
+        .expect("the child row");
+    assert_eq!(
+        child.approval_status,
+        ClaimApprovalStatus::Approved,
+        "a child inside its author's slice starts active"
+    );
+    (id, child)
+}
+
 #[test]
 fn agent_structural_put_stores_no_active_definition_wider_than_its_slice() {
-    run_case("vault.structural.put", 0x72, Slice::Wider);
+    run_new_definition(Door::StructuralPut, 0x72, Slice::Wider);
 }
 
 #[test]
 fn agent_batch_stores_no_active_definition_wider_than_its_slice() {
-    run_case("vault.batch", 0x73, Slice::Wider);
+    run_new_definition(Door::Batch, 0x73, Slice::Wider);
 }
 
 #[test]
 fn agent_structural_put_stores_a_definition_inside_its_slice_active() {
-    run_case("vault.structural.put", 0x74, Slice::Within);
+    run_new_definition(Door::StructuralPut, 0x74, Slice::Within);
 }
 
 #[test]
 fn agent_batch_stores_a_definition_inside_its_slice_active() {
-    run_case("vault.batch", 0x75, Slice::Within);
+    run_new_definition(Door::Batch, 0x75, Slice::Within);
+}
+
+#[test]
+fn agent_raw_put_stores_no_active_definition_wider_than_its_slice() {
+    run_new_definition(Door::RawPut, 0x76, Slice::Wider);
+}
+
+#[test]
+fn agent_raw_put_stores_a_definition_inside_its_slice_active() {
+    run_new_definition(Door::RawPut, 0x77, Slice::Within);
+}
+
+/// A PERSON bound as an agent holds no definition, so it has no slice to
+/// lend: even the narrowest definition it authors is a proposal.
+#[test]
+fn agent_without_a_definition_stores_a_new_definition_as_a_proposal() {
+    let fixture = fixture();
+    let id = EntityId::from_bytes([0x78; 16]).expect("candidate id");
+    let write = put(
+        &fixture.vault,
+        fixture.owner_person,
+        Door::Batch,
+        id,
+        &candidate(Slice::Within),
+        NOW + 1,
+    );
+    assert_lands(
+        "person-as-agent-memory/vault.batch/new/narrowest",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+#[test]
+fn agent_batch_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
+    let fixture = fixture();
+    let mut wider = fixture
+        .vault
+        .get_agent_definition(&fixture.author)
+        .expect("read the author")
+        .expect("the author row");
+    wider.scope = AgentScope::All;
+    wider.version = "2".to_owned();
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        fixture.author,
+        &wider,
+        NOW + 5,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/own-row/scope-base-to-all",
+        &write,
+        &fixture.vault,
+        fixture.author,
+        Lands::Proposal,
+    );
+}
+
+#[test]
+fn agent_raw_put_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
+    let fixture = fixture();
+    let mut wider = fixture
+        .vault
+        .get_agent_definition(&fixture.author)
+        .expect("read the author")
+        .expect("the author row");
+    wider.scope = AgentScope::All;
+    wider.version = "2".to_owned();
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::RawPut,
+        fixture.author,
+        &wider,
+        NOW + 5,
+    );
+    assert_lands(
+        "agent-memory/memory.raw_put_entity/own-row/scope-base-to-all",
+        &write,
+        &fixture.vault,
+        fixture.author,
+        Lands::Proposal,
+    );
+}
+
+#[test]
+fn agent_batch_widening_the_scope_of_a_definition_it_authored_leaves_a_proposal() {
+    let fixture = fixture();
+    let (id, mut wider) = author_creates_child(&fixture, 0x79);
+    wider.scope = AgentScope::All;
+    wider.version = "2".to_owned();
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &wider,
+        NOW + 5,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/authored-row/scope-base-to-all",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+#[test]
+fn agent_batch_edit_that_grants_a_stored_definition_nothing_new_stays_active() {
+    let fixture = fixture();
+    let (id, mut edited) = author_creates_child(&fixture, 0x7A);
+    edited.instructions = Some("Count twice.\n".to_owned());
+    edited.version = "2".to_owned();
+    let write = put(
+        &fixture.vault,
+        fixture.author,
+        Door::Batch,
+        id,
+        &edited,
+        NOW + 5,
+    );
+    assert_lands(
+        "agent-memory/vault.batch/authored-row/instructions-only",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Active,
+    );
+    let stored = fixture
+        .vault
+        .get_agent_definition(&id)
+        .expect("read the child")
+        .expect("the child row");
+    assert_eq!(stored.version, "2", "the edit landed");
 }

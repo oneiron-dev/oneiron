@@ -159,7 +159,10 @@ pub(crate) async fn vault_batch(
 /// is held to the bounds of what it may write to, and its CLAIMs commit as
 /// before. A batch carries no byline: the bound action's `vault.batch` door
 /// is this one, so a caller no action binds commits as a bound one does
-/// (FIX 9154).
+/// (FIX 9154). The actor `auth` binds, when it binds one, is the batch's
+/// writer: an agent's credential holds each AGENT_DEF the batch puts to that
+/// agent's own slice (ARCH-0053:20), as the agent's own `Memory` does. A
+/// credential that binds no actor writes as before.
 pub(crate) async fn write_core_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -171,12 +174,15 @@ pub(crate) async fn write_core_batch(
         CoreBatchCommit::BelowOwner
     };
     let announcement = crate::api::announcement_authority(server, auth);
+    let writer = super::facade_actor(server, auth)
+        .ok()
+        .map(|(actor, class)| WriteActor::new(actor, class));
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
     clock_ingress::run_blocking(move || {
         let lane = core_write_lane(&vault, &auth)
             .map_err(|refused| super::FacadeApiError::from(refused).into_memory_error())?;
-        vault.write_core_batch_in_lane(&input, commit, announcement, &lane)
+        vault.write_core_batch_in_lane_as(&input, commit, announcement, &lane, writer.as_ref())
     })
     .await
     .map_err(|_| internal("vault.batch"))?
