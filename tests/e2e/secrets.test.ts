@@ -352,16 +352,15 @@ interface secrets03Consented {
 interface secrets03Tools {
   tools: { name: string; inputSchema: { properties: { schema_version: { const: string } } } }[];
 }
-interface secrets03McpResult {
-  isError?: boolean;
-  structuredContent: { output: FacadeResult<"self.use">; meta: { end: string } };
-}
 type secrets03Scan = (value: unknown) => void;
 type secrets03Ceiling = FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number];
 
-function secrets03Object(value: unknown): Record<string, unknown> {
+function secrets03JsonType(value: unknown): string {
+  return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+}
+function secrets03Object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("SECRETS-03 expected a public JSON object; body withheld");
+    throw new Error(`SECRETS-03 ${label} expected a public JSON object; received ${secrets03JsonType(value)}; body withheld`);
   }
   return value as Record<string, unknown>;
 }
@@ -506,7 +505,7 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const secrets03Refuse = async <V extends FacadeVerb>(client: PublicHttpClient, verb: V, input: FacadeInput<V>, status: number, code: string, noRecord = false) => {
       const reply = await client.raw("POST", `/v1/core/facade/${verb}`, input);
       secrets03ObserveWire(reply, secrets03ScanBytes);
-      const error = secrets03Object(secrets03Object(reply.body).error);
+      const error = secrets03Object(secrets03Object(reply.body, `${verb} refusal body`).error, `${verb} refusal error`);
       const secrets03ActualCode = typeof error.code === "string" ? redactor.text(error.code) : "no-code";
       expect({ check: `SECRETS-03 ${verb} refusal envelope`, status: reply.status, code: secrets03ActualCode,
         ok: reply.status === status && error.code === code && typeof error.message === "string"
@@ -617,7 +616,7 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const secrets03Held = async (client: PublicHttpClient, marker: string) => {
       const before = providers.seenFixtureCalls.length;
       const answer = await secrets03Facade(client, "self.use", secrets03Input(marker));
-      const result = secrets03Object(answer.result);
+      const result = secrets03Object(answer.result, "REST held self.use result");
       expect({ check: "SECRETS-03 unconsented use is held", status: secrets03SafeText(answer.status), outcome: secrets03SafeText(result.outcome),
         ok: answer.status === "failed" && result.outcome === "held" && Array.isArray(result.reasons)
           && result.reasons.includes("standing_grant_required") }).toEqual({ check: "SECRETS-03 unconsented use is held",
@@ -638,26 +637,38 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     }, 403, "FORBIDDEN");
     if (!wrongActorReceipt) throw new Error("SECRETS-03 value-free refusal has no call receipt");
 
-    const secrets03UseResult = async (answer: FacadeResult<"self.use">, generation: number) => {
-      const result = secrets03Object(answer.result);
-      const toolResult = secrets03Object(result.result);
+    const secrets03UseResult = async (value: unknown, generation: number, surface: "REST" | "MCP") => {
+      const answer = secrets03Object(value, `${surface} self.use answer`);
+      // MCP completion describes the carrier, not the operation's delivery.
+      expect({ check: `SECRETS-03 ${surface} self.use answers the operation`,
+        status: secrets03SafeText(answer.status), ok: answer.status === "answered" }).toEqual({
+        check: `SECRETS-03 ${surface} self.use answers the operation`, status: "answered", ok: true });
+      const result = secrets03Object(answer.result, `${surface} self.use answer.result`);
+      expect({ check: `SECRETS-03 ${surface} self.use delivers the connector reply`,
+        outcome: secrets03SafeText(result.outcome), ok: result.outcome === "delivered" }).toEqual({
+        check: `SECRETS-03 ${surface} self.use delivers the connector reply`, outcome: "delivered", ok: true });
+      const toolResult = secrets03Object(result.result, `${surface} self.use answer.result.result`);
       expect({ check: "SECRETS-03 use delivers foreign tool result with sentinel", status: secrets03SafeText(answer.status), outcome: secrets03SafeText(result.outcome),
         ok: answer.status === "answered" && result.outcome === "delivered" && toolResult.foreign === true
           && toolResult.is_error === false && (JSON.stringify(toolResult) ?? "").includes(sentinel) }).toEqual({
         check: "SECRETS-03 use delivers foreign tool result with sentinel", status: "answered", outcome: "delivered", ok: true });
-      expect({ check: "SECRETS-03 use receipt names handle generation effector", generation: answer.receipt.generation,
-        presented: answer.receipt.presented_generation, ok: answer.receipt.handle === handle && answer.receipt.generation === generation
-          && answer.receipt.presented_generation === generation && answer.receipt.effector === "connector:secrets_probe"
-          && answer.receipt.operation === "connector.call" }).toEqual({
+      const receipt = secrets03Object(answer.receipt, `${surface} self.use receipt`);
+      expect({ check: "SECRETS-03 use receipt names handle generation effector",
+        generation: typeof receipt.generation === "number" ? receipt.generation : secrets03JsonType(receipt.generation),
+        presented: typeof receipt.presented_generation === "number" ? receipt.presented_generation : secrets03JsonType(receipt.presented_generation),
+        ok: receipt.handle === handle && receipt.generation === generation
+          && receipt.presented_generation === generation && receipt.effector === "connector:secrets_probe"
+          && receipt.operation === "connector.call" }).toEqual({
         check: "SECRETS-03 use receipt names handle generation effector", generation, presented: generation, ok: true });
-      await secrets03Gate(answer.receipt.decision);
+      if (typeof receipt.decision !== "string") throw new Error(`SECRETS-03 ${surface} self.use receipt.decision expected string; received ${secrets03JsonType(receipt.decision)}`);
+      await secrets03Gate(receipt.decision);
     };
     for (const step of secrets03Exchange("generation-0", false, "generation-0", {
       content: [{ type: "text", text: `${sentinel}:${value0}` }],
       structuredContent: { reflected: value0, [value0]: "reflected-key" }, isError: false,
     })) providers.enqueue(step);
     const generation0 = await secrets03Facade(agent.client, "self.use", secrets03Input("generation-0"));
-    await secrets03UseResult(generation0, 0);
+    await secrets03UseResult(generation0, 0, "REST");
     expect({ check: "SECRETS-03 delivered result carries the handle placeholder",
       ok: (JSON.stringify(generation0.result) ?? "").includes(`[secret ${handle}]`) }).toEqual({
       check: "SECRETS-03 delivered result carries the handle placeholder", ok: true });
@@ -726,12 +737,18 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       schema_version: useTool.inputSchema.properties.schema_version.const,
       consent: { policy_ref: "policy:secrets03-custody", purpose: "Use a T0 custody credential without disclosure" },
       arguments: { spec: secrets03Input("generation-1") },
-    }), secrets03ScanBytes) as secrets03McpResult;
+    }), secrets03ScanBytes);
     secrets03ScanBytes(mcpReply);
-    expect({ check: "SECRETS-03 MCP use completes without error", end: secrets03SafeText(mcpReply.structuredContent.meta.end),
-      ok: mcpReply.isError === false && mcpReply.structuredContent.meta.end === "Complete" }).toEqual({
+    const secrets03McpReply = secrets03Object(mcpReply, "MCP self.use reply");
+    const secrets03McpStructured = secrets03Object(secrets03McpReply.structuredContent, "MCP self.use structuredContent");
+    const secrets03McpMeta = secrets03Object(secrets03McpStructured.meta, "MCP self.use structuredContent.meta");
+    expect({ check: "SECRETS-03 MCP use completes without error", end: secrets03SafeText(secrets03McpMeta.end),
+      ok: secrets03McpReply.isError === false && secrets03McpMeta.end === "Complete" }).toEqual({
       check: "SECRETS-03 MCP use completes without error", end: "Complete", ok: true });
-    await secrets03UseResult(mcpReply.structuredContent.output, fixture.expected.nextLeaseGeneration);
+    await secrets03UseResult(secrets03McpStructured.output, fixture.expected.nextLeaseGeneration, "MCP");
+    expect({ check: "SECRETS-03 MCP delivered result carries the handle placeholder",
+      ok: (JSON.stringify(secrets03McpStructured.output) ?? "").includes(`[secret ${handle}]`) }).toEqual({
+      check: "SECRETS-03 MCP delivered result carries the handle placeholder", ok: true });
 
     const calls = providers.seenFixtureCalls;
     expect({ check: "SECRETS-03 sink sees twelve scripted POSTs", calls: calls.length, ok: calls.length === 12 }).toEqual({
@@ -890,6 +907,29 @@ suite.test(test, "SECRETS-06",
         const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
         return typeof code === "string" ? code : "no-error-code";
       };
+      // Stable refusal tokens first (gate.* codes, never content); the redacted
+      // message follows because a gate rejection carries its reasons only there:
+      // the facade drops the typed gate_denial on the wire. The job-4 403 that
+      // named only FORBIDDEN hid which gate rule refused the owner settle.
+      const secrets06RefusalDetail = (body: unknown): string => {
+        const codes: string[] = [];
+        const collect = (value: unknown): void => {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (typeof item === "string") codes.push(item);
+            }
+          }
+        };
+        const error = (body as { error?: { message?: unknown; reasonCodes?: unknown; gateDenial?: { outcome?: unknown; reasonCodes?: unknown } } } | null)?.error;
+        collect(error?.reasonCodes);
+        collect(error?.gateDenial?.reasonCodes);
+        const outcome = error?.gateDenial?.outcome;
+        const message = error?.message;
+        const rendered = codes.length > 0 ? codes.map(code => redactor.text(code)).join(",") : "none";
+        const outcomeText = typeof outcome === "string" ? ` outcome=${redactor.text(outcome)}` : "";
+        const messageText = typeof message === "string" ? ` msg=${redactor.text(message)}` : "";
+        return `reasons=${rendered}${outcomeText}${messageText}`;
+      };
       const secrets06Call = async <V extends FacadeVerb>(
         client: PublicHttpClient, verb: V, input: FacadeInput<V>,
       ): Promise<FacadeResult<V>> => {
@@ -897,7 +937,7 @@ suite.test(test, "SECRETS-06",
         secrets06Scan(verb, reply.bytes);
         secrets06ScanJson(`${verb}:headers`, Object.fromEntries(reply.headers));
         if (reply.status !== 200) {
-          throw new Error(`SECRETS-06 facade ${verb} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))}`);
+          throw new Error(`SECRETS-06 facade ${verb} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))} ${secrets06RefusalDetail(reply.body)}`);
         }
         return reply.body;
       };
@@ -905,7 +945,7 @@ suite.test(test, "SECRETS-06",
         if (reply.status === 200) return;
         secrets06Scan(`${label}:error`, reply.bytes);
         secrets06ScanJson(`${label}:error:headers`, Object.fromEntries(reply.headers));
-        throw new Error(`SECRETS-06 ${label} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))}`);
+        throw new Error(`SECRETS-06 ${label} HTTP ${reply.status}: ${redactor.text(secrets06ErrorCode(reply.body))} ${secrets06RefusalDetail(reply.body)}`);
       };
       const secrets06Mcp = async (method: "tools/list" | "tools/call", params: unknown = {}, tool = "") => {
         const label = tool === "" ? `MCP ${method}` : `MCP ${method} ${tool}`;
@@ -917,7 +957,7 @@ suite.test(test, "SECRETS-06",
           if (reply.bytes !== undefined) secrets06Scan(`${label}:error`, reply.bytes);
           if (reply.body !== undefined) secrets06ScanJson(`${label}:error:body`, reply.body);
           if (reply.headers !== undefined) secrets06ScanJson(`${label}:error:headers`, Object.fromEntries(reply.headers));
-          throw new Error(`SECRETS-06 ${label} HTTP ${String(reply.status ?? "unknown")}: ${reply.body === undefined ? "no-reply-body" : redactor.text(secrets06ErrorCode(reply.body))}`);
+          throw new Error(`SECRETS-06 ${label} HTTP ${String(reply.status ?? "unknown")}: ${reply.body === undefined ? "no-reply-body" : redactor.text(secrets06ErrorCode(reply.body))} ${secrets06RefusalDetail(reply.body)}`);
         }
       };
       const secrets06Receipt = async (ref: string): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> => {
