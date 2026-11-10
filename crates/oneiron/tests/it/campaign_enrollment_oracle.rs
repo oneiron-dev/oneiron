@@ -22,11 +22,11 @@ use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent,
     CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate,
-    CampaignProgram, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft,
-    DetectEnrollment, EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
+    CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment,
+    EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
     campaign_enrollment_event, campaign_home_node_designation, create_campaign_program,
-    derive_enrollment_outbound_request, elect_campaign_home_node_designation,
-    encode_enrollment_attempt_payload, enrollment_dedupe_key, require_campaign_home_node,
+    elect_campaign_home_node_designation, encode_enrollment_attempt_payload,
+    require_campaign_home_node,
 };
 use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{
@@ -38,7 +38,7 @@ use oneiron::dreamer_runner::DreamerRunnerStore;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::saved_query::{
     SAVED_QUERY_SCHEMA_VERSION, commit_membership_plan, create_saved_query, derived_member_value,
-    membership_events, next_membership_epoch, sweep_owner_read, update_saved_query,
+    next_membership_epoch, sweep_owner_read, update_saved_query,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EdgeKind,

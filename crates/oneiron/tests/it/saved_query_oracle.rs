@@ -22,10 +22,9 @@ use oneiron::campaign::surface::{
 };
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::error::RegistryError;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::saved_query::{
-    SAVED_QUERY_SCHEMA_VERSION, commit_membership_plan, membership_events, next_membership_epoch,
+    SAVED_QUERY_SCHEMA_VERSION, commit_membership_plan, next_membership_epoch,
     put_pack_migration_map, repair_pack_drift, sweep_owner_read,
 };
 use oneiron::{
@@ -581,43 +580,6 @@ fn write_plan(
         value: oneiron::saved_query::derived_member_value(&event, state, vec![member_channel()]),
         event,
     }
-}
-
-/// Reads one key out of an encoded `campaign.member` map. The decoder itself is
-/// CA-01-private, so the oracle reads the wire shape the CA-01 encoder produced.
-fn member_field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
-    value
-        .as_map()?
-        .iter()
-        .find_map(|(candidate, inner)| (candidate.as_str() == Some(key)).then_some(inner))
-}
-
-/// Live `campaign.member` claims on `subject` derived from `query`, projected to
-/// `(state kind, epoch)`.
-fn live_member_heads(vault: &Vault, subject: EntityId, query: EntityId) -> Vec<(String, u64)> {
-    vault
-        .claims_for_subject(&subject)
-        .unwrap()
-        .into_iter()
-        .filter_map(|id| vault.get_claim(&id).unwrap())
-        .filter(|body| {
-            body.predicate == PREDICATE_CAMPAIGN_MEMBER
-                && body.lifecycle == ClaimLifecycleStatus::Active
-        })
-        .filter_map(|body| {
-            let derivation = member_field(&body.value, "derivation")?;
-            let source = member_field(derivation, "source_query")?
-                .as_str()?
-                .to_owned();
-            if source != query.to_hex() {
-                return None;
-            }
-            let state = member_field(member_field(&body.value, "state")?, "kind")?
-                .as_str()?
-                .to_owned();
-            Some((state, member_field(derivation, "epoch")?.as_u64()?))
-        })
-        .collect()
 }
 
 /// The epoch floor is replica-convergent. A node holding replicated

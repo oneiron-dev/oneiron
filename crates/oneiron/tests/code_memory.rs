@@ -12,10 +12,10 @@ use oneiron::claim::{ScopedReadActorKey, base_world_id};
 use oneiron::code_document::CodeSpanAnchor;
 use oneiron::code_memory::{
     AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AttachCodeMemory,
-    BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CODE_MEMORY_MAX_VALUES_PER_SLOT,
-    CodeMemoryAnchor, CodeMemoryContractKind, CodeMemoryLocator, CodeMemoryPayloadRef,
-    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemorySlotName, CodeMemorySlotValue,
-    ProvenanceMaterialKind, SlotInsertOutcome,
+    BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CodeMemoryAnchor,
+    CodeMemoryContractKind, CodeMemoryLocator, CodeMemoryPayloadRef, CodeMemoryPullRequest,
+    CodeMemoryPullResult, CodeMemorySlotName, CodeMemorySlotValue, ProvenanceMaterialKind,
+    SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
 use oneiron::error::{CodeError, RegistryError};

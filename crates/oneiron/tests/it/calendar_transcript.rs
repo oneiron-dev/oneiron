@@ -8,7 +8,6 @@ use oneiron::calendar::transcript::{
     ingest_file_drop_transcript_fail_after_turns_for_test, seed_file_drop_machine_fixture,
 };
 use oneiron::claim::ClaimApprovalStatus;
-use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::edge::{EdgeActorClass, EdgeKind};
 use oneiron::ingest::{self};
 use oneiron::write_envelope::WriteActor;
@@ -69,66 +68,6 @@ fn uploaded_blob(vault: &Vault, at: u64) -> EntityId {
         )
         .unwrap();
     blob
-}
-
-/// A CONVERSATION for pre-existing (non-imported) dirty turns to hang from.
-fn seed_conversation(vault: &Vault, at: u64) -> EntityId {
-    let id = EntityId::now();
-    vault
-        .put_entity(
-            &id,
-            oneiron::registry::ENTITY_TYPE_CONVERSATION,
-            oneiron::TimeRange { start: at, end: at },
-            at,
-            b"\x80",
-        )
-        .unwrap();
-    id
-}
-
-/// One pre-existing admissible dirty TURN in the shape the production scan
-/// admits: a GATE-10 role key plus the structural ChildOf conversation edge.
-fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> EntityId {
-    let turn = EntityId::now();
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![
-            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
-            (
-                rmpv::Value::from("txt"),
-                rmpv::Value::from("pre-existing turn"),
-            ),
-        ]),
-    )
-    .unwrap();
-    vault
-        .batch()
-        .put(
-            &turn,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &body,
-        )
-        .edge(&turn, EdgeKind::ChildOf, conversation, 1.0)
-        .commit()
-        .unwrap();
-    turn
-}
-
-fn meso_partition_attempt_count(vault: &Vault) -> usize {
-    AttemptQueue::new(vault)
-        .list()
-        .unwrap()
-        .into_iter()
-        .filter(|attempt| attempt.kind == oneiron::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
-        .map(|attempt| decode_dreamer_attempt_payload(&attempt.payload).unwrap())
-        .filter(|payload| payload.attempt_type == "meso")
-        .count()
 }
 
 #[test]

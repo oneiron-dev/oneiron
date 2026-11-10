@@ -29,21 +29,17 @@ use std::sync::Mutex;
 
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::{
-    CalendarPassportPresence, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
+    CalendarPassportPresence, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_STATUS,
 };
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedPollConfig, IcsFeedPollPayload,
     IcsFetchResponse, IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
-    ics_feed_cursor_snapshot, ics_feed_poll_dedupe_key, run_ics_feed_poll,
+    ics_feed_cursor_snapshot, run_ics_feed_poll,
 };
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
 use oneiron::ingest::ICS_FEED_SOURCE_ID;
 use oneiron::registry::ENTITY_TYPE_EVENT;
-use oneiron::{
-    AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, Vault, VaultConfig,
-    attempt_queue::AttemptState,
-};
+use oneiron::{AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, Vault, VaultConfig};
 
 /// Fixed poll times.
 const T0: u64 = 1_800_000_000;
@@ -258,23 +254,6 @@ fn live_status(vault: &Vault, event: &EntityId) -> Option<(String, String, u64)>
         }
         _ => panic!("at most one live calendar.status claim per EVENT"),
     }
-}
-
-/// Every `calendar.ics.poll` attempt row in one state bucket.
-fn poll_rows_in(vault: &Vault, pending: bool) -> Vec<oneiron::attempt_queue::AttemptRecord> {
-    AttemptQueue::new(vault)
-        .list()
-        .expect("list attempts")
-        .into_iter()
-        .filter(|record| record.kind == oneiron::calendar::ingest::ICS_POLL_ATTEMPT_KIND)
-        .filter(|record| {
-            let is_pending = matches!(
-                record.state,
-                AttemptState::Queued | AttemptState::Leased | AttemptState::Scheduled
-            );
-            is_pending == pending
-        })
-        .collect()
 }
 
 #[test]
@@ -752,65 +731,4 @@ fn production_fetcher_uses_secret_door_and_if_none_match() {
         denied_transport.calls().is_empty(),
         "no egress without a binding"
     );
-}
-
-// ---------------------------------------------------------------------------
-// VERDICT-FIX oracles (ONE-1784 finder/verdict round): each test below pins
-// one adjudicated REAL finding and was verified red against the pre-fix tree.
-// ---------------------------------------------------------------------------
-
-/// The `source_record_id` an admitted claim carries through its write
-/// envelope's imported-evidence candidate.
-fn claim_source_record_id(body: &oneiron::ClaimBody) -> &str {
-    let evidence = body.evidence.as_ref().expect("write envelope evidence");
-    let candidate = value_field(evidence, "candidate_evidence").expect("candidate evidence");
-    value_field(candidate, "source_record_id")
-        .and_then(rmpv::Value::as_str)
-        .expect("source_record_id")
-}
-
-/// The EVENT body's `name` field, read straight off the entity row.
-fn event_name(vault: &Vault, event: &EntityId) -> Option<String> {
-    let body = vault.get(event).expect("entity read")?;
-    let mut cursor = std::io::Cursor::new(&body);
-    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
-        return None;
-    };
-    entries.into_iter().find_map(|(key, value)| {
-        (key.as_str() == Some("name")).then(|| value.as_str().map(str::to_owned))?
-    })
-}
-
-/// Probes the vault write lock from inside the HTTP call: if the door still
-/// holds its custody read txn when egress runs, the probe cannot acquire a
-/// write txn and the fetch fails instead of stalling every vault write for
-/// the fetch's duration.
-struct WriteLockProbeTransport {
-    vault: std::sync::Arc<Vault>,
-}
-
-impl IcsHttpTransport for WriteLockProbeTransport {
-    fn get(&self, _url: &str, _if_none_match: Option<&str>) -> Result<IcsHttpResponse, String> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let vault = self.vault.clone();
-        std::thread::spawn(move || {
-            let probe = EntityId::now();
-            let _ = vault.put_entity(
-                &probe,
-                oneiron::registry::ENTITY_TYPE_MACHINE,
-                oneiron::temporal::TimeRange { start: 0, end: 0 },
-                0,
-                b"write-lock probe",
-            );
-            let _ = tx.send(());
-        });
-        if rx.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
-            return Err("vault write lock held across HTTP egress".to_owned());
-        }
-        Ok(IcsHttpResponse {
-            status: 304,
-            etag: None,
-            body: Vec::new(),
-        })
-    }
 }

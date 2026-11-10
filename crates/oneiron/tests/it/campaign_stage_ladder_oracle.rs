@@ -27,22 +27,19 @@
 use crate::common::entity as test_id;
 use oneiron::calendar::outcome::{
     EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, PREDICATE_CALENDAR_EVENT_OUTCOME,
-    project_event_outcome, read_event_outcome, record_event_outcome,
+    record_event_outcome,
 };
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CrmStageValue, EvidenceBasis, PREDICATE_CAMPAIGN_MEMBER, PREDICATE_CRM_STAGE,
-    StageEvidenceClass, StageKey, claim_class_descriptors, decode_campaign_member_value,
-    decode_crm_stage_value, encode_campaign_member_value, encode_crm_stage_value,
-};
-use oneiron::campaign::enrollment::{
-    CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CampaignEnrollmentAttemptPayload,
+    StageEvidenceClass, StageKey, claim_class_descriptors, decode_crm_stage_value,
+    encode_campaign_member_value, encode_crm_stage_value,
 };
 use oneiron::campaign::stage::{
     CodedCommReply, ExternalStageEvidenceHook, NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule,
-    PromotionMode, ReentryPlan, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition,
-    StageEvidence, StageLadderDefinition, StageProjectResult, StageTransitionRule, WakeCondition,
-    apply_coded_reply, apply_event_outcome, apply_external_stage_evidence, snooze_with_wake,
+    PromotionMode, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition, StageEvidence,
+    StageLadderDefinition, StageProjectResult, StageTransitionRule, apply_coded_reply,
+    apply_event_outcome, apply_external_stage_evidence,
 };
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
@@ -63,12 +60,6 @@ const LEDGER_SEED: u8 = 0x58;
 const BASIS_SEED: u8 = 0x59;
 const SENDER_SEED: u8 = 0x5A;
 const QUERY_SEED: u8 = 0x5B;
-const PLANTED_SEED: u8 = 0x5D;
-const PROGRAM_SEED: u8 = 0x5E;
-const STEP_SEED: u8 = 0x5F;
-const MISSING_EVENT_SEED: u8 = 0x60;
-const OTHER_EVENT_SEED: u8 = 0x62;
-const PLANTED_OUTCOME_SEED: u8 = 0x63;
 
 const CHANNEL: &str = "email";
 const REPLY_AT: u64 = 1_754_400_000;
@@ -350,15 +341,6 @@ fn only_live_claim(vault: &Vault, subject: EntityId, predicate: &str) -> (Entity
         claims.len()
     );
     claims.pop().unwrap()
-}
-
-fn all_claims(vault: &Vault, subject: EntityId) -> Vec<ClaimBody> {
-    vault
-        .claims_for_subject(&subject)
-        .unwrap()
-        .into_iter()
-        .filter_map(|id| vault.get_claim(&id).unwrap())
-        .collect()
 }
 
 fn advanced(result: StageProjectResult) -> EntityId {

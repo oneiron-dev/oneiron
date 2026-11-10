@@ -19,38 +19,31 @@
 //!    public API executes a verb directly.
 
 use crate::common::entity as test_id;
-use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
+use oneiron::calendar::CalendarPassportValue;
+use oneiron::calendar::passport::live_passports_for_event;
 use oneiron::calendar::query::read_event;
-use oneiron::calendar::{CalendarPassportDirection, CalendarPassportValue};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, DreamerHomeNodeCandidate,
-    DreamerRunnerStore, EntityId, TimeRange, Vault, VaultConfig,
-    booking::BOOKING_BOOKER_CONTACT_PREDICATE, booking::BOOKING_EVENT_TYPE_REF_PREDICATE,
-    booking::BOOKING_LIFECYCLE_ATTEMPT_KIND, booking::BOOKING_LIFECYCLE_PREDICATES,
-    booking::BOOKING_PASSPORT_SYSTEM, booking::BOOKING_SOURCE_PAGE_PREDICATE,
-    booking::BOOKING_STATUS_PREDICATE, booking::BOOKING_VERBS, booking::BookingBookerContactValue,
-    booking::BookingError, booking::BookingEventTypeRefValue,
-    booking::BookingLifecycleConsumerInput, booking::BookingLifecycleTurn, booking::BookingSolver,
-    booking::BookingSourcePageValue, booking::BookingStatus, booking::BookingStatusValue,
-    booking::BookingVerb, booking::BookingVerbReceipt, booking::BookingVerbRequest,
-    booking::CancelSpec, booking::ConfirmReceipt, booking::ConfirmSpec,
-    booking::DEFAULT_HOLD_TTL_SECS, booking::DEFAULT_INTRO_DURATION_MIN, booking::EventTypeConfig,
-    booking::EventTypeKey, booking::HoldLeaseSpec, booking::HoldReceipt, booking::HoldSpec,
+    ClaimLifecycleStatus, DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault,
+    VaultConfig, booking::BOOKING_LIFECYCLE_ATTEMPT_KIND, booking::BOOKING_STATUS_PREDICATE,
+    booking::BookingError, booking::BookingLifecycleConsumerInput, booking::BookingLifecycleTurn,
+    booking::BookingSolver, booking::BookingStatus, booking::BookingStatusValue,
+    booking::BookingVerbReceipt, booking::BookingVerbRequest, booking::CancelSpec,
+    booking::ConfirmReceipt, booking::ConfirmSpec, booking::DEFAULT_HOLD_TTL_SECS,
+    booking::DEFAULT_INTRO_DURATION_MIN, booking::EventTypeConfig, booking::EventTypeKey,
+    booking::HoldLeaseSpec, booking::HoldReceipt, booking::HoldSpec,
     booking::HostAvailabilityConfig, booking::MAX_CHECKOUT_HOLD_TTL_SECS,
     booking::OpaqueCheckoutLeaseToken, booking::OpaqueLifecycleToken, booking::RankedSlot,
     booking::RevisionReceipt, booking::RoutingMode, booking::SessionKey, booking::SlotOracle,
     booking::SolveRequest, booking::VaultActiveHoldSource, booking::WeeklyWallWindow,
-    booking::enqueue_booking_verb, booking::is_booking_family_claim_predicate,
-    booking::is_booking_lifecycle_claim_predicate, booking::issue_checkout_lease,
-    booking::run_booking_lifecycle_once, booking::validate_booking_family_claim,
+    booking::enqueue_booking_verb, booking::issue_checkout_lease,
+    booking::run_booking_lifecycle_once,
 };
 use rmpv::Value;
 
 mod busy_event;
 mod caps;
 mod proposals;
-use busy_event::store_busy_event;
 
 /// `2026-03-02T00:00:00Z`, a Monday well clear of any northern DST transition.
 const MONDAY: u64 = 1_772_409_600;
@@ -655,26 +648,6 @@ fn hold_ttls_are_server_capped_and_checkout_extension_requires_server_lease() {
 // Confirm
 // -------------------------------------------------------------------------
 
-/// Re-holds `slot` for `session_key` and returns the fresh credential.
-///
-/// A hold replaces its session's prior row, so this is how a test re-acquires a
-/// credential it needs to present twice.
-fn latest_hold_token(
-    fixture: &Fixture,
-    session_key: SessionKey,
-    slot: TimeRange,
-) -> OpaqueLifecycleToken {
-    expect_held(
-        fixture
-            .run(
-                BookingVerbRequest::Hold(hold_spec(fixture, session_key, slot)),
-                NOW,
-            )
-            .expect("re-hold"),
-    )
-    .token
-}
-
 #[test]
 fn two_serialized_confirms_for_same_slot_only_one_commits() {
     let fixture = Fixture::open();
@@ -712,18 +685,6 @@ fn two_serialized_confirms_for_same_slot_only_one_commits() {
     assert!(!alternatives.iter().any(|ranked| slot_of(ranked) == slot));
     assert_eq!(fixture.event_count(), 1, "exactly one confirm committed");
     assert!(fixture.event_exists(confirmed.calendar.event_ref));
-}
-
-/// An oracle that fails every solve, for the rollback half of the atomicity
-/// oracle.
-struct RefusingOracle;
-
-impl SlotOracle for RefusingOracle {
-    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::booking::SolveResult, BookingError> {
-        Err(BookingError::SlotOracle(
-            "injected solve failure".to_owned(),
-        ))
-    }
 }
 
 // -------------------------------------------------------------------------

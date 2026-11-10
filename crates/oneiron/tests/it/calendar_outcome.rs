@@ -27,18 +27,15 @@
 
 use crate::common::entity as test_id;
 use oneiron::calendar::outcome::{
-    CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis,
-    EventOutcomeClaimValue, MachineOutcomeEvidence, MeetingClassSignals,
-    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, check_in_recording_artifact_id,
+    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
+    MachineOutcomeEvidence, MeetingClassSignals, PREDICATE_CALENDAR_EVENT_OUTCOME,
     outcome_from_machine_evidence, project_event_outcome, read_event_outcome, record_event_outcome,
-    resolve_owner_check_in,
 };
 use oneiron::error::GateError;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
-    blob_artifact::BlobArtifactBody, blob_artifact::BlobVersionProvenance,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    Error, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
 
@@ -47,7 +44,6 @@ const EVENT_SEED: u8 = 0x61;
 const SECOND_EVENT_SEED: u8 = 0x62;
 const PERSON_SEED: u8 = 0x63;
 const EVIDENCE_SEED: u8 = 0x64;
-const ACTOR_SEED: u8 = 0x71;
 
 const EVENT_START: u64 = 1_754_400_000;
 const EVENT_END: u64 = EVENT_START + 3_600;
