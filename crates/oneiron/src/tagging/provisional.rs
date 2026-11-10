@@ -357,12 +357,19 @@ pub(crate) fn confirm_in_txn(
     let Some(entity) = sourced_in_txn(vault, txn, id)? else {
         return Ok(false);
     };
+    let mut fields = vec![("name".into(), entity.name.as_str().into())];
+    // Born under the audience of the words that name it (OPUS-LEAKS): a name
+    // read only in a relationship's or a private MESSAGE is read only where
+    // one of those MESSAGEs is.
+    if let Some(audience) = naming_audience_in_txn(vault, txn, id, &entity.name)? {
+        fields.push((
+            crate::claim::IDENTITY_SOURCE_AUDIENCE_KEY.into(),
+            audience,
+        ));
+    }
     let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![("name".into(), entity.name.as_str().into())]),
-    )
-    .map_err(|_| Error::InvariantViolation("provisional entity encoding"))?;
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
+        .map_err(|_| Error::InvariantViolation("provisional entity encoding"))?;
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let at = TimeRange {
         start: entity.minted_at,
@@ -385,6 +392,60 @@ pub(crate) fn confirm_in_txn(
         )?;
     }
     Ok(true)
+}
+
+/// Who may read the words that name the provisional entity `id` by `name`
+/// (its own name, not a pronoun or a coreferent), as the source audience its
+/// confirmed row carries. `None` when an open MESSAGE names it, so the row
+/// is read as any entity row is. Otherwise a map of the relationships whose
+/// members read one of the naming MESSAGEs (`rel`, the union of their sets)
+/// and whether every naming MESSAGE is private (`private`). A MESSAGE whose
+/// audience does not resolve counts as private.
+fn naming_audience_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    name: &str,
+) -> Result<Option<rmpv::Value>> {
+    use crate::claim::RelationshipRead;
+    let digest = crate::ingest::identity_hint_digest(name);
+    let messages = tags::naming_messages_in_txn(vault, txn, id, &digest)?;
+    if messages.is_empty() {
+        return Ok(None);
+    }
+    let mut relationships = std::collections::BTreeSet::new();
+    let mut private = true;
+    for message in &messages {
+        let Some(raw) = vault.get_raw_in(txn, message)? else {
+            continue;
+        };
+        match crate::claim::relationship_read(&vault.store, txn, message, &raw)? {
+            RelationshipRead::Decided(true)
+            | RelationshipRead::Gated {
+                space: None,
+                private: false,
+                ..
+            } => return Ok(None),
+            RelationshipRead::Gated {
+                space: Some(space),
+                private: false,
+                ..
+            } => {
+                relationships.extend(space);
+                private = false;
+            }
+            RelationshipRead::Decided(false) | RelationshipRead::Gated { private: true, .. } => {}
+        }
+    }
+    let set: crate::write_envelope::claim_body::RelationshipSet =
+        relationships.into_iter().collect();
+    Ok(Some(rmpv::Value::Map(vec![
+        (
+            "rel".into(),
+            crate::write_envelope::claim_body::encode_relationship_scope(Some(&set)),
+        ),
+        ("private".into(), rmpv::Value::Boolean(private)),
+    ])))
 }
 
 /// Mints a provisional entity named `name` from the turn `origin`, for a
