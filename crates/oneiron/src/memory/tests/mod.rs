@@ -132,6 +132,7 @@ pub(super) fn claim_input(
         occurred_at: Some(100),
         learned_at: Some(100),
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -151,6 +152,8 @@ pub(super) fn witness_message(order: u32, author: WitnessAuthor, content: &str) 
         metadata: None,
         is_visible: true,
         order,
+        parts: None,
+        quote: None,
     }
 }
 
@@ -180,8 +183,11 @@ pub(super) fn meso_partition_attempt_count(vault: &crate::Vault) -> usize {
 
 /// The production close's planning trio, run exactly as the driver runs it:
 /// `read_watermark` -> `scan_dirty_turns` -> `plan_partitions`, folded into
-/// the `end_session_with_wake` payload.
-pub(super) fn production_close_wake(vault: &crate::Vault) -> crate::SessionEndWake {
+/// the `end_session_with_wake` payload for the sitting `session` closes.
+pub(super) fn production_close_wake(
+    vault: &crate::Vault,
+    session: EntityId,
+) -> crate::SessionEndWake {
     let scope = DreamerConsolidationScope::Meso;
     let watermark = crate::read_watermark(vault, scope).expect("watermark");
     let dirty = crate::scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
@@ -189,6 +195,7 @@ pub(super) fn production_close_wake(vault: &crate::Vault) -> crate::SessionEndWa
     let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
     let plans = crate::plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     crate::SessionEndWake {
+        session,
         plans,
         planned_watermark: watermark.last_learned_at,
         planned_turn_ids,
@@ -196,8 +203,9 @@ pub(super) fn production_close_wake(vault: &crate::Vault) -> crate::SessionEndWa
     }
 }
 
-pub(super) fn mint_open_session(vault: &crate::Vault, at: u64) -> EntityId {
-    match vault.mint_session(at).expect("mint session") {
+pub(super) fn mint_open_session(vault: &crate::Vault, actor: EntityId, at: u64) -> EntityId {
+    let key = vault.local_session_key(actor).expect("session key");
+    match vault.mint_session(key, at).expect("mint session") {
         crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
         other => panic!("expected a fresh mint, got {other:?}"),
     }
@@ -373,8 +381,6 @@ pub(super) fn authority_root(
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),
@@ -706,6 +712,8 @@ fn every_memory_read_verb_returns_a_receipt() {
                 "receipted solar panels",
             )],
             occurred_at: 100,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness");
     let refs = vec![claim.claim_short_id.clone()];
@@ -891,6 +899,8 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "Shelly waves")],
             occurred_at: 100,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness");
     let message = resolve_entity_ref(&vault, &witnessed.message_short_ids[0]).expect("message id");
@@ -1086,6 +1096,8 @@ fn witness_and_session_witness_run_one_program() {
             turn_ref,
             messages: vec![message],
             occurred_at: AT,
+            thread_audience: None,
+            assertions: Default::default(),
         }
     };
 
@@ -1093,7 +1105,7 @@ fn witness_and_session_witness_run_one_program() {
     let (_room_dir, room_vault) = open_pinned();
     let (session, actor) = session_witness_fixture(&room_vault, ROOM, 0x6A);
     let receipt = facade_for(&room_vault, actor)
-        .witness_into_session(&session, &turn_in(String::new(), None), None)
+        .witness_into_session(&session, &turn_in(String::new(), None), None, None)
         .expect("session witness");
     let turn_id = EntityId::from_hex(
         receipt
