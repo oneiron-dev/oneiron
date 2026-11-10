@@ -31,14 +31,16 @@ use std::collections::BTreeSet;
 
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
-use oneiron::error::GateError;
+use oneiron::error::{GateError, RecordError};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_POLICY_MANIFEST};
-use oneiron::test_doors::scope_summary::mint_scope_summary;
+use oneiron::test_doors::scope_summary::{
+    apply_raw_landing_reply, apply_raw_landing_reply_edges, mint_scope_summary,
+};
 use oneiron::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    Error, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
+    EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -58,6 +60,12 @@ const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor
 
 /// The landing writer's refusal of an append that is not a landing's reply.
 const NOT_A_LANDING: &str = "only a scope summary landing writes as its landing writer";
+
+/// The landing reply rule's refusal contains this.
+const LANDING_REPLY_REFUSAL: &str = "landing reply";
+
+/// The pin refusal of an exact local re-put.
+const APPEND_ONLY_REFUSAL: &str = "DAG records are append-only";
 
 /// A rooted default vault, its owner and a two-record trunk the owner wrote.
 /// The vault closes before its directory goes.
@@ -238,6 +246,91 @@ fn generated_claim(fixture: &Fixture, actor: WriteActor) -> TestResult<(EntityId
     Ok((id, refusal))
 }
 
+/// A TURN body as its map entries, with no trailing bytes.
+fn body_entries(body: &[u8]) -> TestResult<Vec<(Value, Value)>> {
+    let mut cursor = body;
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor)
+        .map_err(|err| format!("invalid TURN body: {err}"))?
+    else {
+        return Err("TURN body is not a map".into());
+    };
+    if !cursor.is_empty() {
+        return Err("trailing TURN body bytes".into());
+    }
+    Ok(entries)
+}
+
+/// Map entries encoded as a TURN body.
+fn encode_entries(entries: Vec<(Value, Value)>) -> TestResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .map_err(|err| format!("TURN body encode failed: {err}"))?;
+    Ok(bytes)
+}
+
+/// Copies `body` with its `txt` replaced by `text`.
+fn body_with_text(body: &[u8], text: &str) -> TestResult<Vec<u8>> {
+    let mut entries = body_entries(body)?;
+    let mut replaced = false;
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("txt") {
+            *value = Value::from(text);
+            replaced = true;
+        }
+    }
+    if !replaced {
+        return Err("TURN body has no txt".into());
+    }
+    encode_entries(entries)
+}
+
+/// Copies `body` with its `reply_to` pointer answering `target` at
+/// `revision`. Other pointer fields stay as they are.
+fn body_with_reply_to(body: &[u8], target: EntityId, revision: &str) -> TestResult<Vec<u8>> {
+    let mut entries = body_entries(body)?;
+    let mut replaced = false;
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("reply_to") {
+            let Value::Map(pointer) = value else {
+                return Err("reply pointer is not a map".into());
+            };
+            let mut saw_record = false;
+            let mut saw_revision = false;
+            for (pkey, pvalue) in pointer.iter_mut() {
+                if pkey.as_str() == Some("record") {
+                    *pvalue = Value::from(target.to_hex());
+                    saw_record = true;
+                } else if pkey.as_str() == Some("revision") {
+                    *pvalue = Value::from(revision);
+                    saw_revision = true;
+                }
+            }
+            if !saw_record || !saw_revision {
+                return Err("reply pointer lacks record or revision".into());
+            }
+            replaced = true;
+        }
+    }
+    if !replaced {
+        return Err("TURN body has no reply_to".into());
+    }
+    encode_entries(entries)
+}
+
+/// The revision a reply captures of `turn`: the blake3 of its body.
+fn turn_revision(vault: &Vault, turn: &EntityId) -> TestResult<String> {
+    let body = vault.get(turn)?.ok_or("the reply target is stored")?;
+    Ok(blake3::hash(&body).to_hex().to_string())
+}
+
+/// Asserts `err` is a DAG refusal whose message contains `needle`.
+fn assert_dag_refusal(err: Error, needle: &str) -> TestResult {
+    match &err {
+        Error::Record(RecordError::InvalidConversationDag(msg)) if msg.contains(needle) => Ok(()),
+        _ => Err(format!("expected InvalidConversationDag containing {needle:?}, got {err:?}").into()),
+    }
+}
+
 #[test]
 fn the_owners_summary_as_record_lands_its_header_and_reply_under_the_landing_writer() -> TestResult
 {
@@ -332,5 +425,238 @@ fn a_caller_that_names_the_landing_writer_is_refused() -> TestResult {
     let (id, _refusal) =
         generated_claim(&fixture, WriteActor::new(writer, EdgeActorClass::System))?;
     assert!(vault.get_claim(&id)?.is_none(), "nothing landed");
+    Ok(())
+}
+
+/// A copied landing reply with other words is not its landing's reply.
+#[test]
+fn a_copied_landing_reply_with_other_text_is_refused() -> TestResult {
+    let fixture = open(false)?;
+    let vault = &fixture.vault;
+    let [asking, _last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        vault,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = vault.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    let original_body = vault.get(&reply)?.ok_or("the reply is stored")?;
+    let forged_body = body_with_text(&original_body, "forged words")?;
+    let forged = EntityId::now();
+    let refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &forged,
+        &forged_body,
+        fixture.conversation,
+        Some(reply),
+        Some(asking),
+    )
+    .err()
+    .ok_or("a copied landing reply with other text lands")?;
+    assert_dag_refusal(refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(vault.get(&forged)?.is_none(), "nothing landed");
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&reply)?.ok_or("the reply is stored")?)?;
+    assert_eq!(body["txt"].as_str(), Some("The plan, and its first step."));
+    Ok(())
+}
+
+/// A copied landing reply in another room is not its landing's reply.
+#[test]
+fn a_copied_landing_reply_in_another_room_is_refused() -> TestResult {
+    let fixture = open(false)?;
+    let vault = &fixture.vault;
+    let [asking, _last] = fixture.trunk;
+    let other_conversation = {
+        let host = vault.memory(fixture.owner, EdgeActorClass::Human);
+        let receipt = host.conversations_create(&ConversationCreateInput {
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({}),
+            text: None,
+        })?;
+        let conversation = EntityId::from_hex(&receipt.id)?;
+        let first =
+            host.conversations_records_append(&trunk_record(conversation, None, "other plan"))?;
+        let _second = host.conversations_records_append(&trunk_record(
+            conversation,
+            Some(&first.id),
+            "other step",
+        ))?;
+        conversation
+    };
+    let other_head = vault
+        .head(&other_conversation)?
+        .ok_or("the other room has a head")?;
+    let summary = mint_scope_summary(
+        vault,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = vault.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // Room mismatch alone: the unchanged body still answers its landing's turn.
+    let original_body = vault.get(&reply)?.ok_or("the reply is stored")?;
+    let forged = EntityId::now();
+    let refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &forged,
+        &original_body,
+        other_conversation,
+        Some(other_head),
+        Some(asking),
+    )
+    .err()
+    .ok_or("a copied landing reply in another room lands")?;
+    assert_dag_refusal(refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(vault.get(&forged)?.is_none(), "nothing landed");
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    assert_eq!(vault.head(&other_conversation)?, Some(other_head));
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&reply)?.ok_or("the reply is stored")?)?;
+    assert_eq!(body["summary"], summary.to_hex());
+    Ok(())
+}
+
+/// A copied landing reply to another turn is not its landing's reply.
+#[test]
+fn a_copied_landing_reply_to_another_turn_is_refused() -> TestResult {
+    let fixture = open(false)?;
+    let vault = &fixture.vault;
+    let [asking, last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        vault,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = vault.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // Primary: unchanged real body, wrong RepliesTo edge.
+    let original_body = vault.get(&reply)?.ok_or("the reply is stored")?;
+    let forged = EntityId::now();
+    let refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &forged,
+        &original_body,
+        fixture.conversation,
+        Some(reply),
+        Some(last),
+    )
+    .err()
+    .ok_or("a copied landing reply to another turn lands")?;
+    assert_dag_refusal(refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(vault.get(&forged)?.is_none(), "nothing landed");
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // Coherent retarget: body's reply_to matches its malicious edge, so
+    // admission must check the signed landing target, not coherence.
+    let revision = turn_revision(vault, &last)?;
+    let forged_body = body_with_reply_to(&original_body, last, &revision)?;
+    let retargeted_reply = EntityId::now();
+    let retarget_refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &retargeted_reply,
+        &forged_body,
+        fixture.conversation,
+        Some(reply),
+        Some(last),
+    )
+    .err()
+    .ok_or("a coherent retarget to another turn lands")?;
+    assert_dag_refusal(retarget_refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(vault.get(&retargeted_reply)?.is_none(), "nothing landed");
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    // Edge-only: the real landing reply gains no second RepliesTo.
+    let edge_refusal = apply_raw_landing_reply_edges(
+        vault,
+        &reply,
+        fixture.conversation,
+        None,
+        Some(last),
+    )
+    .err()
+    .ok_or("a landing reply gains a second RepliesTo")?;
+    assert_dag_refusal(edge_refusal, LANDING_REPLY_REFUSAL)?;
+    assert!(
+        !vault.edge_exists(&reply, EdgeKind::RepliesTo, &last)?,
+        "no second RepliesTo landed"
+    );
+    assert!(
+        vault.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "the landing RepliesTo stands"
+    );
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    Ok(())
+}
+
+/// The real landing reply still lands, and its exact re-put still pins.
+#[test]
+fn the_real_landing_reply_still_lands_and_reapplies() -> TestResult {
+    let fixture = open(false)?;
+    let vault = &fixture.vault;
+    let [asking, last] = fixture.trunk;
+    let summary = mint_scope_summary(
+        vault,
+        &canonical(fixture.conversation),
+        "The plan, and its first step.",
+    )?;
+    let landed = vault.land_header(
+        &summary,
+        &asking,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    let writer = landing_writer()?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&reply)?.ok_or("the reply is stored")?)?;
+    assert_eq!(body["actor"], writer.to_hex());
+    assert_eq!(body["summary"], summary.to_hex());
+    assert_eq!(body["reply_to"]["record"], asking.to_hex());
+    // Its exact re-put refuses as append-only, as before, changing nothing.
+    let original_body = vault.get(&reply)?.ok_or("the reply is stored")?;
+    let refusal = apply_raw_landing_reply(
+        vault,
+        &reply,
+        &reply,
+        &original_body,
+        fixture.conversation,
+        Some(last),
+        Some(asking),
+    )
+    .err()
+    .ok_or("an exact re-put lands")?;
+    assert_dag_refusal(refusal, APPEND_ONLY_REFUSAL)?;
+    assert_eq!(vault.head(&fixture.conversation)?, Some(reply));
+    let again: serde_json::Value =
+        rmp_serde::from_slice(&vault.get(&reply)?.ok_or("the reply is stored")?)?;
+    assert_eq!(again["summary"], summary.to_hex());
+    assert_eq!(again["txt"].as_str(), Some("The plan, and its first step."));
     Ok(())
 }
