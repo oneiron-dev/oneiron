@@ -44,7 +44,11 @@ impl Date {
     #[must_use]
     pub fn days(self) -> i64 {
         // Howard Hinnant's days_from_civil.
-        let year = if self.month <= 2 { self.year - 1 } else { self.year };
+        let year = if self.month <= 2 {
+            self.year - 1
+        } else {
+            self.year
+        };
         let era = year.div_euclid(400);
         let year_of_era = year - era * 400;
         let month = i64::from(self.month);
@@ -97,8 +101,9 @@ pub fn load(root: &Path) -> Result<Vec<Entry>, String> {
             };
             let date = |name: &str| {
                 let text = field(name)?;
-                Date::parse(&text)
-                    .ok_or_else(|| format!("quarantine entry {}: `{name}` is not YYYY-MM-DD", index + 1))
+                Date::parse(&text).ok_or_else(|| {
+                    format!("quarantine entry {}: `{name}` is not YYYY-MM-DD", index + 1)
+                })
             };
             Ok(Entry {
                 filter: field("filter")?,
@@ -148,7 +153,11 @@ pub fn check(root: &Path, today: Option<Date>) -> Vec<String> {
             if today > entry.expires {
                 problems.push(format!(
                     "quarantine {:?} ({}) expired on {:04}-{:02}-{:02}: fix or delete the test",
-                    entry.filter, entry.issue, entry.expires.year, entry.expires.month, entry.expires.day
+                    entry.filter,
+                    entry.issue,
+                    entry.expires.year,
+                    entry.expires.month,
+                    entry.expires.day
                 ));
             }
         }
@@ -156,8 +165,10 @@ pub fn check(root: &Path, today: Option<Date>) -> Vec<String> {
     let path = root.join(".config/nextest.toml");
     let config: toml::Table = match fs::read_to_string(&path)
         .map_err(|error| error.to_string())
-        .and_then(|text| text.parse().map_err(|error: toml::de::Error| error.to_string()))
-    {
+        .and_then(|text| {
+            text.parse()
+                .map_err(|error: toml::de::Error| error.to_string())
+        }) {
         Ok(config) => config,
         Err(error) => {
             problems.push(format!("{}: {error}", path.display()));
@@ -175,8 +186,12 @@ pub fn check(root: &Path, today: Option<Date>) -> Vec<String> {
     for name in RETRY_FREE_PROFILES {
         match profile_of(name) {
             None => problems.push(format!(".config/nextest.toml: no [profile.{name}]")),
-            Some(profile) if profile.get("retries").and_then(toml::Value::as_integer) != Some(0) => {
-                problems.push(format!("[profile.{name}]: retries must be 0 (a retry hides a flake)"));
+            Some(profile)
+                if profile.get("retries").and_then(toml::Value::as_integer) != Some(0) =>
+            {
+                problems.push(format!(
+                    "[profile.{name}]: retries must be 0 (a retry hides a flake)"
+                ));
             }
             Some(_) => {}
         }
@@ -196,7 +211,11 @@ pub fn check(root: &Path, today: Option<Date>) -> Vec<String> {
             filter.ends_with(&exclusion)
         };
         if !agrees {
-            let wanted = if name == "quarantine" { &union } else { &exclusion };
+            let wanted = if name == "quarantine" {
+                &union
+            } else {
+                &exclusion
+            };
             problems.push(format!(
                 "[profile.{name}]: default-filter must {} {wanted:?} to match .config/test-quarantine.toml; it is {filter:?}",
                 if name == "quarantine" { "be" } else { "end with" }

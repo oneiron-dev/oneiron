@@ -127,7 +127,9 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
             length = value.parse::<usize>().ok();
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             chunked = value.to_ascii_lowercase().contains("chunked");
-        } else if name.eq_ignore_ascii_case("content-encoding") && !value.eq_ignore_ascii_case("identity") {
+        } else if name.eq_ignore_ascii_case("content-encoding")
+            && !value.eq_ignore_ascii_case("identity")
+        {
             content_encoding = Some(value.to_owned());
         }
     }

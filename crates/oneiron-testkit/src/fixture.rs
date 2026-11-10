@@ -91,7 +91,9 @@ pub struct FixtureCache {
 #[macro_export]
 macro_rules! fixture_cache {
     () => {
-        $crate::fixture::FixtureCache::new(::std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("oneiron-testkit-fixtures"))
+        $crate::fixture::FixtureCache::new(
+            ::std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("oneiron-testkit-fixtures"),
+        )
     };
 }
 
@@ -143,7 +145,13 @@ fn fixture_key(name: &str) -> String {
 
 fn safe_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -267,7 +275,12 @@ impl FixtureVault {
                     record["beside"]
                 )));
             }
-            None => return Err(FixtureError::Record(format!("{}: no beside", dir.display()))),
+            None => {
+                return Err(FixtureError::Record(format!(
+                    "{}: no beside",
+                    dir.display()
+                )));
+            }
         }
         Ok(Some(Self {
             dir: dir.to_path_buf(),
@@ -316,13 +329,21 @@ pub struct SeedRecord {
 ///
 /// # Errors
 /// `dir` holds something, the vault cannot be opened, or the seed fails.
-pub fn seed_into<C, F>(dir: &Path, name: &str, config: C, seed: F) -> Result<SeedRecord, FixtureError>
+pub fn seed_into<C, F>(
+    dir: &Path,
+    name: &str,
+    config: C,
+    seed: F,
+) -> Result<SeedRecord, FixtureError>
 where
     C: FnOnce(&FakeClock) -> VaultConfig,
     F: FnOnce(&Vault, &FakeClock) -> Result<(), SeedError>,
 {
     if dir.exists() && fs::read_dir(dir)?.next().is_some() {
-        return Err(FixtureError::Record(format!("{} is not empty", dir.display())));
+        return Err(FixtureError::Record(format!(
+            "{} is not empty",
+            dir.display()
+        )));
     }
     fs::create_dir_all(dir.join(VAULT_DIR))?;
     let clock = FakeClock::at(FAKE_EPOCH);
@@ -367,7 +388,10 @@ pub fn jsonl_seed(text: &str) -> impl FnOnce(&Vault, &FakeClock) -> Result<(), S
             if let Some(secs) = step.get("advance_secs").and_then(serde_json::Value::as_u64) {
                 clock.advance(secs);
             } else if let Some(verb) = step.get("verb").and_then(serde_json::Value::as_str) {
-                let input = step.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
+                let input = step
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
                 crate::door::invoke(&owner, verb, input)
                     .map_err(|error| format!("seed line {at} ({verb}): {error}"))?;
             } else {
@@ -391,7 +415,10 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("{}: a vault holds only files and directories", entry.path().display()),
+                format!(
+                    "{}: a vault holds only files and directories",
+                    entry.path().display()
+                ),
             ));
         }
     }
@@ -493,7 +520,10 @@ impl TestVault {
     ///
     /// # Errors
     /// The engine refuses the open.
-    pub fn open_with(&self, config: impl FnOnce(&FakeClock) -> VaultConfig) -> oneiron::Result<Vault> {
+    pub fn open_with(
+        &self,
+        config: impl FnOnce(&FakeClock) -> VaultConfig,
+    ) -> oneiron::Result<Vault> {
         Vault::open(&self.path, config(&self.clock))
     }
 

@@ -97,7 +97,11 @@ pub struct Finding {
 
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}: {}: {}", self.path, self.line, self.rule, self.excerpt)
+        write!(
+            f,
+            "{}:{}: {}: {}",
+            self.path, self.line, self.rule, self.excerpt
+        )
     }
 }
 
@@ -175,9 +179,13 @@ fn classify(source: &str) -> Vec<Class> {
                     .map_or(bytes.len(), |n| i + n);
                 (Class::Comment, end)
             }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => (Class::Comment, block_comment_end(bytes, i)),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                (Class::Comment, block_comment_end(bytes, i))
+            }
             b'"' => (Class::Str, string_end(bytes, i)),
-            b'r' if (i == 0 || !is_ident(bytes[i - 1]) || (bytes[i - 1] == b'b' && (i < 2 || !is_ident(bytes[i - 2]))))
+            b'r' if (i == 0
+                || !is_ident(bytes[i - 1])
+                || (bytes[i - 1] == b'b' && (i < 2 || !is_ident(bytes[i - 2]))))
                 && raw_string_start(bytes, i).is_some() =>
             {
                 let hashes = raw_string_start(bytes, i).unwrap_or(0);
@@ -242,7 +250,14 @@ fn raw_string_start(bytes: &[u8], r: usize) -> Option<usize> {
 fn raw_string_end(bytes: &[u8], quote: usize, hashes: usize) -> usize {
     let mut i = quote + 1;
     while i < bytes.len() {
-        if bytes[i] == b'"' && bytes[i + 1..].iter().take(hashes).filter(|&&b| b == b'#').count() == hashes {
+        if bytes[i] == b'"'
+            && bytes[i + 1..]
+                .iter()
+                .take(hashes)
+                .filter(|&&b| b == b'#')
+                .count()
+                == hashes
+        {
             return i + 1 + hashes;
         }
         i += 1;
@@ -325,7 +340,9 @@ fn test_items(source: &str, classes: &[Class]) -> Vec<Range<usize>> {
         if classes[at] != Class::Code || ranges.last().is_some_and(|last| last.contains(&at)) {
             continue;
         }
-        let Some(close) = source[at..].find(']') else { break };
+        let Some(close) = source[at..].find(']') else {
+            break;
+        };
         if !gates_on_test(&source[at..=at + close]) {
             continue;
         }
@@ -407,7 +424,8 @@ fn line_rules(code: &str, code_and_strings: &str) -> Vec<Rule> {
     let sleeps = SLEEP_CALLS.iter().any(|call| {
         code.match_indices(call).any(|(at, _)| {
             let before = at.checked_sub(1).map(|b| code_bytes[b]);
-            !before.is_some_and(|b| is_ident(b) || b == b'.') && !code[..at].trim_end().ends_with("fn")
+            !before.is_some_and(|b| is_ident(b) || b == b'.')
+                && !code[..at].trim_end().ends_with("fn")
         })
     });
     if sleeps {
@@ -432,7 +450,10 @@ fn line_rules(code: &str, code_and_strings: &str) -> Vec<Rule> {
             if host.is_empty() || host.contains('{') || host.contains('$') {
                 continue;
             }
-            if MODEL_HOSTS.iter().any(|model| host == *model || host.ends_with(&format!(".{model}"))) {
+            if MODEL_HOSTS
+                .iter()
+                .any(|model| host == *model || host.ends_with(&format!(".{model}")))
+            {
                 real_model = true;
             } else if !is_local_or_reserved(host) {
                 network = true;
@@ -469,9 +490,10 @@ fn line_rules(code: &str, code_and_strings: &str) -> Vec<Rule> {
 fn host_of(authority: &str) -> &str {
     let authority = authority.rsplit('@').next().unwrap_or(authority);
     if let Some(rest) = authority.strip_prefix('[') {
-        return rest.split(']').next().map_or(authority, |host| {
-            if host == "::1" { "[::1]" } else { host }
-        });
+        return rest
+            .split(']')
+            .next()
+            .map_or(authority, |host| if host == "::1" { "[::1]" } else { host });
     }
     authority.split(':').next().unwrap_or(authority)
 }
@@ -517,7 +539,9 @@ pub fn scan_source(path: &str, source: &str) -> Vec<Finding> {
         let end = starts.get(index + 1).map_or(source.len(), |next| next - 1);
         let line = &source[start..end.max(start)];
         let here_allows = allows(line);
-        let in_test = ranges.iter().any(|range| range.start < end.max(start + 1) && start < range.end);
+        let in_test = ranges
+            .iter()
+            .any(|range| range.start < end.max(start + 1) && start < range.end);
         if in_test {
             let mut code = String::with_capacity(line.len());
             let mut code_and_strings = String::with_capacity(line.len());
@@ -539,7 +563,11 @@ pub fn scan_source(path: &str, source: &str) -> Vec<Finding> {
             }
         }
         // An allow on a line of its own covers the next line.
-        previous_allows = if line.trim_start().starts_with("//") { here_allows } else { Vec::new() };
+        previous_allows = if line.trim_start().starts_with("//") {
+            here_allows
+        } else {
+            Vec::new()
+        };
     }
     findings
 }
@@ -554,7 +582,8 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
         let kind = entry.file_type()?;
         if kind.is_dir() {
             let relative = relative_path(root, &path);
-            if SKIPPED_DIRS.contains(&name.as_ref()) || SKIPPED_CRATES.contains(&relative.as_str()) {
+            if SKIPPED_DIRS.contains(&name.as_ref()) || SKIPPED_CRATES.contains(&relative.as_str())
+            {
                 continue;
             }
             walk(root, &path, out)?;
@@ -646,12 +675,15 @@ impl Baseline {
             let rule = Rule::parse(fields[0]).ok_or_else(bad)?;
             match fields.as_slice() {
                 [_, total] => {
-                    baseline.totals.insert(rule, total.parse().map_err(|_| bad())?);
+                    baseline
+                        .totals
+                        .insert(rule, total.parse().map_err(|_| bad())?);
                 }
                 [_, path, count] => {
-                    baseline
-                        .files
-                        .insert((rule, (*path).to_owned()), count.parse().map_err(|_| bad())?);
+                    baseline.files.insert(
+                        (rule, (*path).to_owned()),
+                        count.parse().map_err(|_| bad())?,
+                    );
                 }
                 _ => return Err(bad()),
             }
@@ -668,7 +700,10 @@ impl Baseline {
              # Regenerate (fleet only): ONEIRON_TESTKIT_LINT=write cargo test -p oneiron-testkit --test test_lint\n",
         );
         for rule in Rule::ALL {
-            out.push_str(&format!("{rule} {}\n", self.totals.get(&rule).copied().unwrap_or(0)));
+            out.push_str(&format!(
+                "{rule} {}\n",
+                self.totals.get(&rule).copied().unwrap_or(0)
+            ));
         }
         for ((rule, path), count) in &self.files {
             out.push_str(&format!("{rule} {path} {count}\n"));
@@ -737,13 +772,19 @@ impl LintReport {
 impl fmt::Display for LintReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (rule, was, is, grown) in &self.failures {
-            writeln!(f, "test lint: {rule}: {is} findings, the baseline allows {was}. In files that grew:")?;
+            writeln!(
+                f,
+                "test lint: {rule}: {is} findings, the baseline allows {was}. In files that grew:"
+            )?;
             for finding in grown {
                 writeln!(f, "  {finding}")?;
             }
         }
         for (rule, was, is) in &self.fallen {
-            writeln!(f, "test lint: {rule}: {is} findings, below the baseline's {was}; lower it")?;
+            writeln!(
+                f,
+                "test lint: {rule}: {is} findings, below the baseline's {was}; lower it"
+            )?;
         }
         Ok(())
     }

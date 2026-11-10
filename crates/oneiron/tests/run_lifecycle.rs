@@ -10,13 +10,13 @@
 
 use std::collections::HashSet;
 
+use oneiron::Vault;
 use oneiron::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
     AttemptResumePoint, AttemptState, BUDGET_HOLD_ACTOR, ClaimAttempt, ClaimOutcome,
     CleanupAttemptLeases, EnqueueAttempt, EnqueueOutcome, HoldAttemptForBudget, InterveneAttempt,
     InterveneOutcome, RetryAttempt, RetryOutcome,
 };
-use oneiron::Vault;
 use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
 const KIND: &str = "test.run_lifecycle";
