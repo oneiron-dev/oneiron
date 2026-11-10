@@ -1333,7 +1333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope_stamp.rs` | src | m | 1 trait · 3 fn · 1 re-export · 3 crate-vis | ClaimRecordScope | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
 | `src/claim/scoped_read/access_class.rs` | src | m | 2 crate-vis | — | FIX 11915 stage B: a CLAIM row's admission judged once per access class |
-| `src/claim/scoped_read/access_gate.rs` | src | m | 1 fn · 23 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
+| `src/claim/scoped_read/access_gate.rs` | src | m | 1 fn · 26 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | L | 1 struct · 10 fn · 1 re-export · 52 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/actor_key/weave_admin.rs` | src | s | 1 crate-vis | — | The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key… |
 | `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 29 crate-vis | — | — |
@@ -7239,7 +7239,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tagging/save.rs` | src | m | 9 crate-vis | — | Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger) |
 | `src/tagging/save_tests.rs` | test | L | — | — | Save mode end to end, observed through the read doors (ARCH-0036, serving the tagger): a tagged turn's… |
 | `src/tagging/tables.rs` | src | s | — | — | The side tables `tagging` keeps (core split slice 1): each row declares one, and the crate's build script… |
-| `src/tagging/tags.rs` | src | L | 5 struct · 2 enum · 7 fn · 22 crate-vis | DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags | The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the… |
+| `src/tagging/tags.rs` | src | L | 5 struct · 2 enum · 7 fn · 23 crate-vis | DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags | The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the… |
 | `src/tagging/tests.rs` | test | XL | — | — | Laws of the tagging marker and its drain, observed through the job tables, the traces and the vault's stored… |
 | `src/tagging/trace.rs` | src | s | 1 struct · 4 enum · 3 crate-vis | HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace | One trace per settled marker attempt |
 | `src/tagging/verbs.rs` | src | L | 15 struct · 5 enum · 4 fn · 2 crate-vis | DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView, TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState +12 | Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over… |
@@ -8153,6 +8153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/owner_reverts_dreamer_claim.rs` | test | s | — | — | The owner takes back what the Dreamer landed (owner ruling 18 Oct: "autoapply + revert rather than holdout"… |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
 | `tests/primitive_a_evidence_spans.rs` | test | s | — | — | Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text… |
+| `tests/provisional_confirm_source_label.rs` | test | m | — | — | A provisional entity named only in a relationship-scoped MESSAGE, once confirmed, stays inside that… |
 | `tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs` | test | s | — | — | — |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
