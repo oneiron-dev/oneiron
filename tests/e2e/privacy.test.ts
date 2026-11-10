@@ -4,16 +4,15 @@ import { resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { decode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
-import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { PairedActor } from "./support/engine.ts";
 import { PublicHttpError } from "./support/clients.ts";
-import type { PublicHttpClient } from "./support/clients.ts";
-import type { McpClient } from "./support/clients.ts";
+import type { PublicHttpClient, McpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
-import { defineFile, redactor } from "./support/run.ts";
+import { BlockedDoor, defineFile, redactor, secretHex } from "./support/run.ts";
 
 const recipeDefaults = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text());
 const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
@@ -1468,3 +1467,2141 @@ enabled = false
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
+
+type museLabel01ClaimRow = FacadeResult<"vault.claims.list">["value"][number];
+type museLabel01Scope = FacadeInput<"vault.claims.upsert">["scope"];
+type museLabel01AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+
+interface museLabel01ErrorBody {
+  error?: { code?: unknown; message?: unknown };
+}
+
+interface museLabel01FacetRow {
+  idHex: string;
+  bodyKind: string | null;
+}
+
+function museLabel01Omit(value: object, key: string): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  delete copy[key];
+  return copy;
+}
+
+function museLabel01ExpectErrorEnvelope(body: museLabel01ErrorBody): void {
+  const code = body.error?.code;
+  const message = body.error?.message;
+  expect(typeof code === "string" && code.length > 0).toBe(true);
+  expect(typeof message === "string" && message.length > 0).toBe(true);
+}
+
+async function museLabel01Facets(
+  client: PublicHttpClient,
+  personRef: string,
+): Promise<museLabel01FacetRow[]> {
+  const neighbors = await client.call("vault.neighbors", {
+    entity_ref: personRef,
+    opts: { edge_kind: "has_facet", limit: 100 },
+  });
+  const rows: museLabel01FacetRow[] = [];
+  for (const hit of neighbors.value) {
+    const got = await client.call("vault.get", { entity_ref: hit.short_id });
+    const row = got.value;
+    if (!row || row.kind !== "FACET") continue;
+    let bodyKind: string | null = null;
+    const body = row.body;
+    if (typeof body === "object" && body !== null && "kind" in body) {
+      const kind = (body as { kind: unknown }).kind;
+      if (typeof kind === "string") bodyKind = kind;
+    }
+    rows.push({ idHex: row.id_hex, bodyKind });
+  }
+  return rows;
+}
+
+async function museLabel01ListClaims(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+): Promise<museLabel01ClaimRow[]> {
+  const list = await client.call("vault.claims.list", {
+    subject_ref: subjectRef,
+    predicate,
+    limit: 100,
+  });
+  return list.value;
+}
+
+async function museLabel01ReadOnlyClaim(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+  value: string,
+): Promise<museLabel01ClaimRow> {
+  const rows = await museLabel01ListClaims(client, subjectRef, predicate);
+  const matches = rows.filter((row) => row.value === value);
+  expect(matches).toHaveLength(1);
+  const row = matches[0]!;
+  expect(row.subject_ref).toBe(subjectRef);
+  expect(row.predicate).toBe(predicate);
+  expect(row.value).toBe(value);
+  return row;
+}
+
+function museLabel01ExpectScope(row: museLabel01ClaimRow, scope: museLabel01Scope): void {
+  expect(row.claim_scope.world_id).toBe(scope.world_id);
+  expect(row.claim_scope.scope_facet_id).toBe(scope.scope_facet_id);
+  expect(row.claim_scope.scope_relationship_id).toEqual(scope.scope_relationship_id);
+  expect(row.claim_scope.scope_project_id).toBe(scope.scope_project_id);
+}
+
+async function museLabel01FacetOf(
+  client: PublicHttpClient,
+  claimIdHex: string,
+): Promise<string> {
+  const neighbors = await client.call("vault.neighbors", {
+    entity_ref: claimIdHex,
+    opts: { edge_kind: "facet_of", limit: 10 },
+  });
+  expect(neighbors.value).toHaveLength(1);
+  const hit = neighbors.value[0]!;
+  expect(hit.edge_kind).toBe("facet_of");
+  expect(hit.kind).toBe("FACET");
+  const got = await client.call("vault.get", { entity_ref: hit.short_id });
+  if (!got.value) throw new Error("facet_of target is not readable through vault.get");
+  expect(got.value.kind).toBe("FACET");
+  return got.value.id_hex;
+}
+
+async function museLabel01AuditRows(client: PublicHttpClient): Promise<museLabel01AuditRow[]> {
+  const rows: museLabel01AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = {
+      limit: 500,
+      ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function museLabel01MintedSlipId(
+  before: readonly museLabel01AuditRow[],
+  after: readonly museLabel01AuditRow[],
+  holderRef: string,
+): string {
+  const existing = new Set(before.map((row) => row.entry_hash));
+  const minted = after.filter(
+    (row) =>
+      !existing.has(row.entry_hash) &&
+      row.source_op === "slip_mint" &&
+      row.holder_ref === holderRef,
+  );
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  const slipId = row.subject_ref;
+  if (!slipId) throw new Error("Minted slip audit row has no subject_ref slip id");
+  expect(slipId).toMatch(/^[a-f0-9]{64}$/);
+  return slipId;
+}
+
+// MUSE-LABEL-01 (PARTIAL) - promises and doors.
+// P-LABEL-001: a claim write missing any required world, facet, relationship or
+// project scope is rejected. Driven as malformed raw bodies on the existing
+// POST /v1/core/facade/vault.claims.upsert door, plus one vault.commit batch
+// whose facet key names a PERSON instead of a FACET.
+// P-LABEL-004: a record keeps the facet stamp it received at birth. Driven for
+// one CLAIM: vault.claims.upsert writes it, vault.claims.list reads
+// claim_scope back, vault.get / vault.hydrate read the entity, and
+// vault.neighbors reads its one facet_of edge. The stamp is re-read after a
+// wrong-actor attempt, after an agent grant is minted and revoked, and after
+// engine.restart().
+// P-LABEL-007, in part only: vault.agents.grants.mint grants a base named
+// agent read verbs inside a Scope naming the claim facet, then
+// vault.agents.grants.revoke removes that Grant; the stamp is re-read after
+// each act. No typed door was found that shares one named record through a
+// Grant, and no deterministic door was found that makes that resident agent
+// use the Grant, so single-record sharing and the agent next-use after this
+// AgentGrant revoke stay unproved.
+// Unproved: P-LABEL-005 (no deterministic public derivation door was found
+// that stamps a derived record from its source without the caller supplying
+// the scope) and P-LABEL-023 (no typed facet read or facet-mint door was found
+// that exposes a facet exposure of public/private). vault.get also returns an
+// EntityView with no typed facet or scope field, so the stamp itself is read
+// through ClaimView.claim_scope, not through getEntity alone.
+suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope keys is rejected and lands nothing, and a complete claim keeps its birth facet through read-backs, an agent grant, wrong-actor attempts and a restart", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LABEL-01", profile });
+  try {
+    const occurred = 1769947200;
+    const ownerRef = engine.pairedActor.principalRef;
+    const predicate = "decision.practical";
+    const sentinel = `muse-label-01-${secretHex(8)}`;
+    redactor.add(sentinel);
+    const personName = `Muse Label Person ${sentinel}`;
+    redactor.add(personName);
+
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: {},
+      occurred_start: occurred,
+      occurred_end: occurred,
+      learned_at: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const witness = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: occurred,
+      messages: [{
+        author: "user",
+        message_type: "text",
+        content: `This distinct person is ${personName}.`,
+        is_visible: true,
+        order: 0,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    await engine.awaitReceipt(witness.receipt_ref);
+    const turn = await engine.client.call("vault.get", {
+      entity_ref: witness.turn_short_id,
+    } satisfies FacadeInput<"vault.get">);
+    if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
+      throw new Error("Witnessed TURN is not readable through vault.get");
+    }
+    const createdPerson = await engine.client.call("vault.people.create", {
+      identity: { name: personName },
+      identity_evidence_refs: [turn.value.id_hex],
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.people.create">);
+    const subjectRef = createdPerson.person.id_hex;
+    expect(subjectRef).not.toBe(ownerRef);
+    const subjectEntity = await engine.client.call("vault.get", {
+      entity_ref: createdPerson.person.entity_ref,
+    } satisfies FacadeInput<"vault.get">);
+    expect(subjectEntity.value?.kind).toBe("PERSON");
+
+    const baseScope = await ownerBaseClaimScope(engine.client, ownerRef);
+    const ownerFacets = await museLabel01Facets(engine.client, ownerRef);
+    expect(ownerFacets.length).toBeGreaterThan(0);
+    const namedFacet = ownerFacets.find((row) => row.idHex !== baseScope.scope_facet_id);
+    const birthScope: museLabel01Scope = {
+      ...baseScope,
+      scope_facet_id: namedFacet?.idHex ?? baseScope.scope_facet_id,
+    };
+    await engine.artifacts.json("muse-label-01-facets.json", {
+      ownerFacets,
+      namedFacetFound: namedFacet !== undefined,
+      birthScope,
+    });
+
+    const completeInput = {
+      predicate,
+      subject_ref: subjectRef,
+      value: sentinel,
+      confidence: 1,
+      source: "user_stated",
+      scope: birthScope,
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.claims.upsert">;
+
+    // P-LABEL-001: each missing axis, then the whole scope object, is refused.
+    const missingKeys = [
+      "world_id",
+      "scope_facet_id",
+      "scope_relationship_id",
+      "scope_project_id",
+    ] as const;
+    for (const missingKey of missingKeys) {
+      const missingValue = `${sentinel}-missing-${missingKey}`;
+      redactor.add(missingValue);
+      const reply = await engine.client.raw<museLabel01ErrorBody>(
+        "POST",
+        "/v1/core/facade/vault.claims.upsert",
+        {
+          ...completeInput,
+          value: missingValue,
+          scope: museLabel01Omit(birthScope, missingKey),
+        },
+      );
+      expect(reply.status).toBeGreaterThanOrEqual(400);
+      expect(reply.status).toBeLessThan(600);
+      museLabel01ExpectErrorEnvelope(reply.body);
+    }
+    const noScopeValue = `${sentinel}-missing-scope`;
+    redactor.add(noScopeValue);
+    const noScopeReply = await engine.client.raw<museLabel01ErrorBody>(
+      "POST",
+      "/v1/core/facade/vault.claims.upsert",
+      { ...museLabel01Omit(completeInput, "scope"), value: noScopeValue },
+    );
+    expect(noScopeReply.status).toBeGreaterThanOrEqual(400);
+    expect(noScopeReply.status).toBeLessThan(600);
+    museLabel01ExpectErrorEnvelope(noScopeReply.body);
+
+    // The batch door answers a gate refusal as a typed outcome with a receipt.
+    // A PERSON id is a real entity id in facet format, but it is no FACET.
+    const inventedFacetValue = `${sentinel}-person-as-facet`;
+    redactor.add(inventedFacetValue);
+    const commitOutcomes = await engine.client.call("vault.commit", {
+      claims: [{
+        ...completeInput,
+        value: inventedFacetValue,
+        scope: { ...birthScope, scope_facet_id: subjectRef },
+      }],
+    } satisfies FacadeInput<"vault.commit">);
+    expect(commitOutcomes).toHaveLength(1);
+    const commitOutcome = commitOutcomes[0]!;
+    expect(commitOutcome.outcome).toBe("refused");
+    if (commitOutcome.outcome !== "refused") {
+      throw new Error("vault.commit landed a claim whose facet key names a PERSON");
+    }
+    const refusalReceipt = commitOutcome.receipt_ref;
+    expect(typeof refusalReceipt === "string" && refusalReceipt.length > 0).toBe(true);
+    if (!refusalReceipt) throw new Error("Refused commit outcome has no receipt_ref");
+    await engine.awaitReceipt(refusalReceipt);
+
+    // None of the refused writes above landed on this fresh subject.
+    expect(await museLabel01ListClaims(engine.client, subjectRef, predicate)).toHaveLength(0);
+
+    // Positive control: the same input with all four keys lands once.
+    const written = await engine.client.call("vault.claims.upsert", completeInput);
+    expect(written.claim_short_id.length).toBeGreaterThan(0);
+    expect(written.receipt_ref.length).toBeGreaterThan(0);
+    await engine.awaitReceipt(written.receipt_ref);
+
+    // P-LABEL-004 read-back through doors other than the writing door.
+    const bornRow = await museLabel01ReadOnlyClaim(
+      engine.client,
+      subjectRef,
+      predicate,
+      sentinel,
+    );
+    museLabel01ExpectScope(bornRow, birthScope);
+    const bornEntity = await engine.client.call("vault.get", {
+      entity_ref: written.claim_short_id,
+    } satisfies FacadeInput<"vault.get">);
+    if (!bornEntity.value) throw new Error("Born claim is not readable through vault.get");
+    expect(bornEntity.value.kind).toBe("CLAIM");
+    const claimIdHex = bornEntity.value.id_hex;
+    expect(claimIdHex.length).toBeGreaterThan(0);
+    const hydrated = await engine.client.call("vault.hydrate", {
+      refs: [claimIdHex],
+    } satisfies FacadeInput<"vault.hydrate">);
+    expect(hydrated.value).toHaveLength(1);
+    expect(hydrated.value[0]!.id_hex).toBe(claimIdHex);
+    expect(hydrated.value[0]!.kind).toBe("CLAIM");
+    expect(await museLabel01FacetOf(engine.client, claimIdHex)).toBe(
+      birthScope.scope_facet_id,
+    );
+
+    // P-LABEL-007 in part: share read access inside this facet through a
+    // named-agent Grant, then revoke it. The record stamp must not move.
+    const baseAgents = await engine.client.call("vault.agents.base", {});
+    expect(baseAgents.agents.length).toBeGreaterThan(0);
+    const namedAgent = baseAgents.agents[0]!;
+    const mintedGrant = await engine.client.call("vault.agents.grants.mint", {
+      agent: namedAgent.id,
+      authority_scope: {
+        worlds: { kind: "some", values: [birthScope.world_id] },
+        facets: { kind: "some", values: [birthScope.scope_facet_id] },
+        bands: { kind: "all" },
+        verbs: { kind: "some", values: ["vault.get", "vault.claims.list"] },
+        sensitivity: { kind: "all" },
+      },
+    } satisfies FacadeInput<"vault.agents.grants.mint">);
+    expect(mintedGrant.grant.grant_ref.length).toBeGreaterThan(0);
+    museLabel01ExpectScope(
+      await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
+      birthScope,
+    );
+    const revokedGrant = await engine.client.call("vault.agents.grants.revoke", {
+      grant_ref: mintedGrant.grant.grant_ref,
+    } satisfies FacadeInput<"vault.agents.grants.revoke">);
+    expect(revokedGrant.grant_ref).toBe(mintedGrant.grant.grant_ref);
+    expect(revokedGrant.changed).toBe(true);
+    museLabel01ExpectScope(
+      await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
+      birthScope,
+    );
+
+    // Wrong actor kind: an externally paired agent held only to core:read.
+    // It can name itself, cannot write the claim, and loses even that use
+    // when the owner revokes its slip through the public revoke route.
+    const agentName = `Muse Label Agent ${sentinel}`;
+    redactor.add(agentName);
+    const agentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON",
+      body: { name: agentName },
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const auditBeforePair = await museLabel01AuditRows(engine.client);
+    const readOnlyAgent = await engine.pairActor({
+      principalRef: agentRecord.id_hex,
+      actorClass: "agent",
+      scope: ["core:read"],
+    });
+    const agentSelf = await readOnlyAgent.client.call("self.actor", {});
+    expect(agentSelf.actor_ref.length).toBeGreaterThan(0);
+    expect(agentSelf.actor_class).toBe("agent");
+
+    const wrongActorValue = `${sentinel}-wrong-actor`;
+    redactor.add(wrongActorValue);
+    const wrongActorReply = await readOnlyAgent.client.raw<museLabel01ErrorBody>(
+      "POST",
+      "/v1/core/facade/vault.claims.upsert",
+      { ...completeInput, value: wrongActorValue },
+    );
+    expect(wrongActorReply.status === 202 || wrongActorReply.status >= 400).toBe(true);
+    museLabel01ExpectErrorEnvelope(wrongActorReply.body);
+    const afterWrongActor = await museLabel01ListClaims(
+      engine.client,
+      subjectRef,
+      predicate,
+    );
+    expect(afterWrongActor.some((row) => row.value === wrongActorValue)).toBe(false);
+    museLabel01ExpectScope(
+      await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
+      birthScope,
+    );
+
+    const agentSlipId = museLabel01MintedSlipId(
+      auditBeforePair,
+      await museLabel01AuditRows(engine.client),
+      agentRecord.id_hex,
+    );
+    const slipRevoked = await engine.client.request<{ revoked: boolean }>(
+      "POST",
+      "/v1/core/slips/revoke",
+      { slip_id: Array.from(Buffer.from(agentSlipId, "hex")) },
+    );
+    expect(slipRevoked.status).toBe(200);
+    expect(slipRevoked.body.revoked).toBe(true);
+    const deniedAgent = await readOnlyAgent.client.raw<museLabel01ErrorBody>(
+      "POST",
+      "/v1/core/facade/self.actor",
+      {},
+    );
+    expect(deniedAgent.status).toBe(401);
+    museLabel01ExpectErrorEnvelope(deniedAgent.body);
+    const auditAfterRevoke = await museLabel01AuditRows(engine.client);
+    expect(
+      auditAfterRevoke.some(
+        (row) =>
+          row.source_op === "slip_revoke" &&
+          row.subject_ref === agentSlipId &&
+          row.fold_valid,
+      ),
+    ).toBe(true);
+
+    // The stamp, the facet_of edge and the revoked slip survive a restart.
+    await engine.restart();
+    museLabel01ExpectScope(
+      await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
+      birthScope,
+    );
+    const afterRestartEntity = await engine.client.call("vault.get", {
+      entity_ref: claimIdHex,
+    } satisfies FacadeInput<"vault.get">);
+    expect(afterRestartEntity.value?.kind).toBe("CLAIM");
+    expect(afterRestartEntity.value?.id_hex).toBe(claimIdHex);
+    expect(await museLabel01FacetOf(engine.client, claimIdHex)).toBe(
+      birthScope.scope_facet_id,
+    );
+    const deniedAfterRestart = await readOnlyAgent.client.raw<museLabel01ErrorBody>(
+      "POST",
+      "/v1/core/facade/self.actor",
+      {},
+    );
+    expect(deniedAfterRestart.status).toBe(401);
+    museLabel01ExpectErrorEnvelope(deniedAfterRestart.body);
+
+    await engine.artifacts.json("muse-label-01-result.json", {
+      claimShortId: written.claim_short_id,
+      writeReceipt: written.receipt_ref,
+      commitRefusalReceipt: refusalReceipt,
+      birthScope,
+      grantRef: mintedGrant.grant.grant_ref,
+      namedAgent: namedAgent.name,
+      revokedSlipAuditSubject: agentSlipId,
+    });
+  } finally {
+    await engine.close();
+  }
+});
+
+//
+// MUSE-LABEL-02 — P-LABEL-002, P-LABEL-003, P-LABEL-008, P-LABEL-011.
+// Doors used: vault.claims.upsert (act), vault.claims.list / vault.get /
+// vault.neighbors (second-door reads), vault.recall and vault.hydrate (the
+// register doors), vault.authority.audit and POST /v1/core/slips/revoke
+// (grant loss read back), EngineFixture.restart (survival).
+// Unproved here: MCP parity for the same credential, a room-carried facet
+// limit, and pairing's refusal of a facet limit on an owner credential.
+// Those need doors/shapes the allowed typed surface does not name; see the
+// report. The facet-limited pairing below also needs the small harness
+// option described at its call site and in the report under HARNESS NEEDS.
+
+type museLabel02Facet = { idHex: string; substrate: boolean };
+type museLabel02AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+type museLabel02ClaimView = FacadeResult<"vault.claims.list">["value"][number];
+
+async function museLabel02OwnerFacets(
+  client: PublicHttpClient,
+  ownerRef: string,
+): Promise<museLabel02Facet[]> {
+  const neighbors = await client.call("vault.neighbors", {
+    entity_ref: ownerRef, opts: { edge_kind: "has_facet", limit: 100 },
+  });
+  const facets: museLabel02Facet[] = [];
+  for (const hit of neighbors.value) {
+    const row = (await client.call("vault.get", { entity_ref: hit.short_id })).value;
+    if (!row || row.kind !== "FACET") continue;
+    const body = row.body;
+    const classified = typeof body === "object" && body !== null && "kind" in body;
+    if (!classified) continue;
+    facets.push({
+      idHex: row.id_hex,
+      substrate: (body as { kind: unknown }).kind === "substrate",
+    });
+  }
+  facets.sort((a, b) => a.idHex.localeCompare(b.idHex));
+  return facets;
+}
+
+async function museLabel02AuditRows(client: PublicHttpClient): Promise<museLabel02AuditRow[]> {
+  const rows: museLabel02AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = {
+      limit: 500, ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function museLabel02MintedSlipId(
+  before: readonly museLabel02AuditRow[],
+  after: readonly museLabel02AuditRow[],
+  holder: string,
+): string {
+  const existing = new Set(before.map((row) => row.entry_hash));
+  const minted = after.filter((row) => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  expect(minted).toHaveLength(1);
+  const row = minted[0]!;
+  return row.subject_ref!;
+}
+
+async function museLabel02Recall(
+  client: PublicHttpClient,
+  query: string,
+  facetId?: string,
+): Promise<FacadeResult<"vault.recall">> {
+  const input: FacadeInput<"vault.recall"> = facetId
+    ? { query, effort: "light", limit: 20, scope: { facet: facetId } }
+    : { query, effort: "light", limit: 20 };
+  return client.call("vault.recall", input);
+}
+
+function museLabel02PackHas(
+  pack: FacadeResult<"vault.recall">,
+  sentinel: string,
+): boolean {
+  return pack.items.some((item) => item.value_text.includes(sentinel)
+    || (item.cited_messages?.some((message) => message.value_text.includes(sentinel)) ?? false));
+}
+
+async function museLabel02ListSharedClaims(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+  shared: string,
+): Promise<museLabel02ClaimView[]> {
+  const page = await client.call("vault.claims.list", {
+    subject_ref: subjectRef, predicate, limit: 20,
+  });
+  return page.value.filter((view) => typeof view.value === "string"
+    && view.value.includes(shared));
+}
+
+function museLabel02ExpectNoSentinels(
+  value: unknown,
+  sentinels: readonly string[],
+): void {
+  const text = JSON.stringify(value) ?? "";
+  for (const sentinel of sentinels) expect(text.includes(sentinel)).toBe(false);
+}
+
+function museLabel02ErrorCode(body: unknown): unknown {
+  if (typeof body !== "object" || body === null) return undefined;
+  const record = body as Record<string, unknown>;
+  const nested = record.error;
+  if (typeof nested === "object" && nested !== null && "code" in nested) {
+    return (nested as { code: unknown }).code;
+  }
+  return record.code;
+}
+
+async function museLabel02MakeAgentPerson(
+  engine: EngineFixture,
+  name: string,
+  occurredAt: number,
+): Promise<string> {
+  const created = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name }, occurred_at: occurredAt,
+  });
+  const got = await engine.client.call("vault.get", { entity_ref: created.entity_ref });
+  expect(got.value?.kind).toBe("PERSON");
+  return created.id_hex;
+}
+
+suite.test(test, "MUSE-LABEL-02", "Strict facet recall stays in the mask, a facet-limited agent reads only its facet, and the owner reads every facet", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LABEL-02", profile });
+  try {
+    const occurred = 1769947200;
+    const predicate = "decision.social";
+    const ownerRef = engine.pairedActor.principalRef;
+    const shared = `ml02shared${secretHex(6)}`;
+    redactor.add(shared);
+    const sentinelA = `ml02alpha${secretHex(6)}`;
+    redactor.add(sentinelA);
+    const sentinelB = `ml02beta${secretHex(6)}`;
+    redactor.add(sentinelB);
+    const sentinelCore = `ml02core${secretHex(6)}`;
+    redactor.add(sentinelCore);
+    const allSentinels = [sentinelA, sentinelB, sentinelCore];
+
+    // Setup: the owner's own facets, read through public graph doors. The
+    // case needs the substrate (core, no mask) plus two named masks. No
+    // typed door in the allowed surface mints a named mask for a person,
+    // so a fresh vault without two masks blocks honestly instead of a
+    // guessed structural body standing in for that door.
+    const facets = await museLabel02OwnerFacets(engine.client, ownerRef);
+    const substrate = facets.find((facet) => facet.substrate);
+    const masks = facets.filter((facet) => !facet.substrate);
+    if (!substrate || masks.length < 2) {
+      throw new BlockedDoor(
+        "waits on a public door to mint named FACET masks for a person",
+      );
+    }
+    const facetA = masks[0]!;
+    const facetB = masks[1]!;
+    const baseScope = await ownerBaseClaimScope(engine.client, ownerRef);
+    expect(baseScope.scope_facet_id).toBe(substrate.idHex);
+
+    // ACT: three owner claims that differ only in facet stamp and sentinel.
+    const specs = [
+      { facetId: facetA.idHex, sentinel: sentinelA },
+      { facetId: facetB.idHex, sentinel: sentinelB },
+      { facetId: substrate.idHex, sentinel: sentinelCore },
+    ];
+    const written: { facetId: string; sentinel: string; shortId: string }[] = [];
+    for (const spec of specs) {
+      const receipt = await engine.client.call("vault.claims.upsert", {
+        predicate,
+        subject_ref: ownerRef,
+        value: `${shared} ${spec.sentinel}`,
+        confidence: 1,
+        source: "user_stated",
+        scope: { ...baseScope, scope_facet_id: spec.facetId },
+        occurred_at: occurred,
+      });
+      await engine.awaitReceipt(receipt.receipt_ref);
+      written.push({ ...spec, shortId: receipt.claim_short_id });
+    }
+    const shortA = written[0]!.shortId;
+    const shortB = written[1]!.shortId;
+    const allShortIds = written.map((row) => row.shortId);
+
+    // OBSERVE through a second door: claims.list reads the writes back and
+    // shows each claim under the facet it was stamped with.
+    const ownerListed = await museLabel02ListSharedClaims(
+      engine.client, ownerRef, predicate, shared,
+    );
+    expect(ownerListed).toHaveLength(3);
+    for (const row of written) {
+      expect(ownerListed.some((view) => view.value === `${shared} ${row.sentinel}`
+        && view.claim_scope.scope_facet_id === row.facetId)).toBe(true);
+    }
+
+    // P-LABEL-011 and P-LABEL-003, owner side: with no mask requested, the
+    // owner recalling alone and hydrating by ref reads every facet.
+    const ownerPack = await awaitPublic(
+      () => museLabel02Recall(engine.client, shared),
+      (pack) => museLabel02PackHas(pack, sentinelA)
+        && museLabel02PackHas(pack, sentinelB)
+        && museLabel02PackHas(pack, sentinelCore),
+      { label: "owner recall returns all facet claims" },
+    );
+    expect(museLabel02PackHas(ownerPack, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(ownerPack, sentinelB)).toBe(true);
+    expect(museLabel02PackHas(ownerPack, sentinelCore)).toBe(true);
+    const ownerHydrated = await engine.client.call("vault.hydrate", { refs: allShortIds });
+    expect(ownerHydrated.value).toHaveLength(3);
+
+    // P-LABEL-008, mask half: strict recall under one named mask keeps that
+    // mask's claim and the core (substrate, no-mask) claim, and excludes
+    // the claim stamped with the other mask. Both directions.
+    const ownerPackA = await museLabel02Recall(engine.client, shared, facetA.idHex);
+    expect(museLabel02PackHas(ownerPackA, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(ownerPackA, sentinelCore)).toBe(true);
+    expect(museLabel02PackHas(ownerPackA, sentinelB)).toBe(false);
+    const ownerPackB = await museLabel02Recall(engine.client, shared, facetB.idHex);
+    expect(museLabel02PackHas(ownerPackB, sentinelB)).toBe(true);
+    expect(museLabel02PackHas(ownerPackB, sentinelCore)).toBe(true);
+    expect(museLabel02PackHas(ownerPackB, sentinelA)).toBe(false);
+
+    // Actors: one read agent whose credential opted in to facet A only,
+    // and one write-only agent with no read grant at all.
+    const auditBefore = await museLabel02AuditRows(engine.client);
+    const limitedPerson = await museLabel02MakeAgentPerson(
+      engine, "Muse Label 02 Limited Agent", occurred,
+    );
+    // HARNESS NEED: PairActorOptions needs facetRefs (FACET id_hex values)
+    // passed to the real pairing door so the minted slip carries the
+    // opt-in facet limit and its write facet. See the report.
+    const limited = await engine.pairActor({
+      principalRef: limitedPerson, actorClass: "agent",
+      scope: ["core:read"], facetRefs: [facetA.idHex],
+    });
+    const auditAfterPair = await museLabel02AuditRows(engine.client);
+    const limitedSlip = museLabel02MintedSlipId(auditBefore, auditAfterPair, limitedPerson);
+    const wrongPerson = await museLabel02MakeAgentPerson(
+      engine, "Muse Label 02 Write Only Agent", occurred,
+    );
+    const wrong = await engine.pairActor({
+      principalRef: wrongPerson, actorClass: "agent", scope: ["core:write"],
+    });
+
+    // P-LABEL-008, credential half, and P-LABEL-002: the limited agent
+    // reads facet A's claim through three read doors and nothing stamped
+    // with facet B or the substrate. Naming facet B in the request mask
+    // cannot widen the credential limit, and a leaked ref hydrates as
+    // missing.
+    const limitedListed = await museLabel02ListSharedClaims(
+      limited.client, ownerRef, predicate, shared,
+    );
+    expect(limitedListed).toHaveLength(1);
+    expect(limitedListed[0]!.value).toBe(`${shared} ${sentinelA}`);
+    expect(limitedListed[0]!.claim_scope.scope_facet_id).toBe(facetA.idHex);
+    const limitedPack = await museLabel02Recall(limited.client, shared);
+    expect(museLabel02PackHas(limitedPack, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(limitedPack, sentinelB)).toBe(false);
+    expect(museLabel02PackHas(limitedPack, sentinelCore)).toBe(false);
+    const limitedPackMaskB = await museLabel02Recall(limited.client, shared, facetB.idHex);
+    expect(museLabel02PackHas(limitedPackMaskB, sentinelB)).toBe(false);
+    expect(museLabel02PackHas(limitedPackMaskB, sentinelA)).toBe(false);
+    expect(museLabel02PackHas(limitedPackMaskB, sentinelCore)).toBe(false);
+    const limitedPackMaskA = await museLabel02Recall(limited.client, shared, facetA.idHex);
+    expect(museLabel02PackHas(limitedPackMaskA, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(limitedPackMaskA, sentinelB)).toBe(false);
+    expect(museLabel02PackHas(limitedPackMaskA, sentinelCore)).toBe(false);
+    const limitedHydrated = await limited.client.call("vault.hydrate", { refs: allShortIds });
+    expect(limitedHydrated.value).toHaveLength(1);
+    museLabel02ExpectNoSentinels(limitedHydrated, [sentinelB, sentinelCore]);
+    const limitedGetB = await limited.client.call("vault.get", { entity_ref: shortB });
+    expect(limitedGetB.value).toBeNull();
+    const limitedGetA = await limited.client.call("vault.get", { entity_ref: shortA });
+    expect(limitedGetA.value).not.toBeNull();
+    const ownerGetB = await engine.client.call("vault.get", { entity_ref: shortB });
+    expect(ownerGetB.value).not.toBeNull();
+
+    // REFUSE the wrong actor: a facet named in the request grants nothing
+    // to an agent with no read grant. Standard error envelope, no data,
+    // on both register doors.
+    const wrongRecallInput: FacadeInput<"vault.recall"> = {
+      query: shared, effort: "light", limit: 20, scope: { facet: facetA.idHex },
+    };
+    const wrongRecall = await wrong.client.raw(
+      "POST", "/v1/core/facade/vault.recall", wrongRecallInput,
+    );
+    expect([401, 403]).toContain(wrongRecall.status);
+    expect(typeof museLabel02ErrorCode(wrongRecall.body)).toBe("string");
+    museLabel02ExpectNoSentinels(wrongRecall.body, allSentinels);
+    const wrongHydrateInput: FacadeInput<"vault.hydrate"> = { refs: allShortIds };
+    const wrongHydrate = await wrong.client.raw(
+      "POST", "/v1/core/facade/vault.hydrate", wrongHydrateInput,
+    );
+    expect([401, 403]).toContain(wrongHydrate.status);
+    expect(typeof museLabel02ErrorCode(wrongHydrate.body)).toBe("string");
+    museLabel02ExpectNoSentinels(wrongHydrate.body, allSentinels);
+
+    // The refusals changed nothing the owner reads back through a second
+    // door.
+    const ownerListedAfterRefusals = await museLabel02ListSharedClaims(
+      engine.client, ownerRef, predicate, shared,
+    );
+    expect(ownerListedAfterRefusals).toHaveLength(3);
+
+    // SURVIVE a restart: each actor reads exactly what it read before.
+    await engine.restart();
+    const ownerPackAfter = await awaitPublic(
+      () => museLabel02Recall(engine.client, shared),
+      (pack) => museLabel02PackHas(pack, sentinelA)
+        && museLabel02PackHas(pack, sentinelB)
+        && museLabel02PackHas(pack, sentinelCore),
+      { label: "owner recall after restart returns all facet claims" },
+    );
+    expect(museLabel02PackHas(ownerPackAfter, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(ownerPackAfter, sentinelB)).toBe(true);
+    expect(museLabel02PackHas(ownerPackAfter, sentinelCore)).toBe(true);
+    const limitedPackAfter = await museLabel02Recall(limited.client, shared);
+    expect(museLabel02PackHas(limitedPackAfter, sentinelA)).toBe(true);
+    expect(museLabel02PackHas(limitedPackAfter, sentinelB)).toBe(false);
+    expect(museLabel02PackHas(limitedPackAfter, sentinelCore)).toBe(false);
+    const limitedHydratedAfter = await limited.client.call("vault.hydrate", { refs: allShortIds });
+    expect(limitedHydratedAfter.value).toHaveLength(1);
+    museLabel02ExpectNoSentinels(limitedHydratedAfter, [sentinelB, sentinelCore]);
+
+    // LOSES the grant mid-flow: the owner revokes the limited agent's slip
+    // through the public revoke door, its next recall is refused, the
+    // authority audit reads the revoke back, and the owner is unaffected.
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST", "/v1/core/slips/revoke",
+      { slip_id: Array.from(Buffer.from(limitedSlip, "hex")) },
+    );
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.revoked).toBe(true);
+    const revokedRecallInput: FacadeInput<"vault.recall"> = {
+      query: shared, effort: "light", limit: 20, scope: { facet: facetA.idHex },
+    };
+    const revokedRecall = await limited.client.raw(
+      "POST", "/v1/core/facade/vault.recall", revokedRecallInput,
+    );
+    expect(revokedRecall.status).toBe(401);
+    expect(typeof museLabel02ErrorCode(revokedRecall.body)).toBe("string");
+    museLabel02ExpectNoSentinels(revokedRecall.body, allSentinels);
+    const finalAudit = await museLabel02AuditRows(engine.client);
+    expect(finalAudit.some((row) => row.source_op === "slip_revoke"
+      && row.subject_ref === limitedSlip && row.fold_valid)).toBe(true);
+    const ownerListedFinal = await museLabel02ListSharedClaims(
+      engine.client, ownerRef, predicate, shared,
+    );
+    expect(ownerListedFinal).toHaveLength(3);
+  } finally {
+    await engine.close();
+  }
+});
+
+
+type museLabel03AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+type museLabel03ClaimView = FacadeResult<"vault.claims.list">["value"][number];
+
+function museLabel03Object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a public JSON object (body withheld)");
+  }
+  return value as Record<string, unknown>;
+}
+
+function museLabel03Includes(value: unknown, sentinel: string): boolean {
+  // Boolean use keeps generated sentinels out of assertion diagnostics.
+  return (JSON.stringify(value) ?? "").includes(sentinel);
+}
+
+async function museLabel03Recall(
+  client: PublicHttpClient,
+  query: string,
+  publicOnly: boolean,
+): Promise<FacadeResult<"vault.recall">> {
+  const input: FacadeInput<"vault.recall"> = publicOnly
+    ? { query, effort: "light", limit: 20, filter: { max_sensitivity_band: 0 } }
+    : { query, effort: "light", limit: 20 };
+  return client.call("vault.recall", input);
+}
+
+async function museLabel03AuditRows(
+  client: PublicHttpClient,
+): Promise<museLabel03AuditRow[]> {
+  const rows: museLabel03AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = {
+      limit: 500,
+      ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    cursors.add(page.next_after);
+    after = page.next_after;
+  }
+}
+
+function museLabel03MintedSlipId(
+  before: readonly museLabel03AuditRow[],
+  after: readonly museLabel03AuditRow[],
+  holder: string,
+): string {
+  const existing = new Set(before.map((row) => row.entry_hash));
+  const minted = after.filter((row) => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  if (minted.length !== 1) throw new Error("Reader slip mint row is not unique");
+  const row = minted[0];
+  if (!row || !row.fold_valid) throw new Error("Reader slip mint row is missing or invalid");
+  const slipId = row.subject_ref;
+  if (!slipId || !/^[a-f0-9]{64}$/.test(slipId)) {
+    throw new Error("Reader slip mint row has no slip id");
+  }
+  return slipId;
+}
+
+function museLabel03OnlyClaim(
+  claims: FacadeResult<"vault.claims.list">,
+  expectedValue: string,
+): museLabel03ClaimView {
+  expect(claims.value).toHaveLength(1);
+  const claim = claims.value[0];
+  if (!claim) throw new Error("Claim list read returned no claim");
+  expect(claim.value).toBe(expectedValue);
+  return claim;
+}
+
+// MUSE-LABEL-03 (PARTIAL) — promises P-LABEL-013, P-LABEL-014, P-LABEL-022.
+// P-LABEL-013: a derived claim inherits the most restrictive exposure of its
+// source turns. P-LABEL-014: private provenance cannot become public merely
+// because its exposure stamp is missing. P-LABEL-022: relevance ranking never
+// overrides the disclosure check.
+// Doors used: vault.conversations.create, vault.witness, vault.claims.upsert
+// (with evidence_turn_refs), then as separate read doors vault.get,
+// vault.claims.list, vault.claims.read_filtered, vault.recall, vault.hydrate
+// and vault.export.scoped. Refusals go through the raw facade routes, the
+// refusal receipt through self.admission.status, and slip loss through
+// POST /v1/core/slips/revoke read back in vault.authority.audit.
+// What stays unproved, and why: the room/interlocutor disclosure clamp of
+// POST /v1/core/context-pack (the door named for P-LABEL-022) has no typed
+// request or roster shape in the SDK snapshot given to this writer, and no
+// public door was found that stamps a source turn with a facet or sensitivity
+// or that runs Dreamer extraction from source turns deterministically. So
+// this case proves the failure-closed default at the typed read doors: an
+// unstamped claim that cites an owner-only turn must stay out of every
+// public-only view, however exact its match, while a positively stamped
+// public claim in the same views proves the doors are not simply empty.
+// Sensitivity bands are used as the generated types present them: a request
+// for max_sensitivity_band 0 is the public-only request, and sensitivity 2
+// is the sensitive control that no non-owner may be shown.
+suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn stays out of public-only recall, hydrate and scoped export", async () => {
+  const occurred = 1769947200;
+  const queryToken = `label03query${secretHex(6)}`;
+  const turnSentinel = `label03turn${secretHex(6)}`;
+  const sourceSentinel = `label03source${secretHex(6)}`;
+  const derivedSentinel = `label03derived${secretHex(6)}`;
+  const publicSentinel = `label03public${secretHex(6)}`;
+  const forbiddenSentinel = `label03forbidden${secretHex(6)}`;
+  redactor.add(
+    queryToken,
+    turnSentinel,
+    sourceSentinel,
+    derivedSentinel,
+    publicSentinel,
+    forbiddenSentinel,
+  );
+  const publicValue = `${queryToken} public rehearsal room note ${publicSentinel}`;
+  const sourceValue = `${queryToken} sensitive rehearsal note ${sourceSentinel} from ${turnSentinel}`;
+  const derivedValue = `${queryToken} ${queryToken} derived rehearsal summary ${derivedSentinel} from ${turnSentinel}`;
+  const forbiddenValue = `${queryToken} forbidden rehearsal note ${forbiddenSentinel}`;
+
+  const engine = await EngineFixture.start({ id: "MUSE-LABEL-03", profile });
+  try {
+    const scope = await ownerBaseClaimScope(
+      engine.client,
+      engine.pairedActor.principalRef,
+    );
+
+    // Two agents through the public pairing door: one may write but may not
+    // read, one may read but may not write.
+    const writeOnlyRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON",
+      body: { name: "MUSE LABEL 03 write only agent" },
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const writeOnly = await engine.pairActor({
+      principalRef: writeOnlyRecord.id_hex,
+      actorClass: "agent",
+      scope: ["core:write"],
+    });
+    const readerRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON",
+      body: { name: "MUSE LABEL 03 reader agent" },
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const auditBeforeReader = await museLabel03AuditRows(engine.client);
+    const reader = await engine.pairActor({
+      principalRef: readerRecord.id_hex,
+      actorClass: "agent",
+      scope: ["core:read"],
+    });
+
+    // Act: an owner-only conversation and one witnessed turn in it.
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: { members: [engine.pairedActor.principalRef] },
+      occurred_start: occurred,
+      occurred_end: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const witnessed = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: occurred,
+      messages: [{
+        author: "user",
+        message_type: "text",
+        is_visible: true,
+        order: 0,
+        content: `Owner-only note ${turnSentinel} for a private rehearsal plan.`,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    await engine.awaitReceipt(witnessed.receipt_ref);
+    const messageRef = witnessed.message_short_ids[0];
+    if (!messageRef) throw new Error("Witness returned no message reference");
+    const savedMessage = await engine.client.call("vault.get", {
+      entity_ref: messageRef,
+    } satisfies FacadeInput<"vault.get">);
+    if (!savedMessage.value) throw new Error("Witnessed message is not readable by the owner");
+    expect(museLabel03Includes(savedMessage, turnSentinel)).toBe(true);
+    const turn = await engine.client.call("vault.get", {
+      entity_ref: witnessed.turn_short_id,
+    } satisfies FacadeInput<"vault.get">);
+    if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
+      throw new Error("Witnessed TURN is not readable by the owner");
+    }
+    const turnHex = turn.value.id_hex;
+
+    // Act: three claims about the same conversation. The public control is
+    // positively stamped public. The source control is stamped sensitive and
+    // cites the turn. The derived claim cites the same turn, is the most
+    // relevant text for the query, and carries no sensitivity stamp at all.
+    const sourceClaim = await engine.client.call("vault.claims.upsert", {
+      predicate: "label03.source_note",
+      subject_ref: conversation.id,
+      value: sourceValue,
+      confidence: 1,
+      source: "user_stated",
+      scope,
+      sensitivity: 2,
+      evidence_turn_refs: [turnHex],
+      occurred_at: occurred,
+      salience: 1,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(sourceClaim.receipt_ref);
+    const publicClaim = await engine.client.call("vault.claims.upsert", {
+      predicate: "label03.public_note",
+      subject_ref: conversation.id,
+      value: publicValue,
+      confidence: 1,
+      source: "user_stated",
+      scope,
+      sensitivity: 0,
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(publicClaim.receipt_ref);
+    const derivedClaim = await engine.client.call("vault.claims.upsert", {
+      predicate: "label03.derived_note",
+      subject_ref: conversation.id,
+      value: derivedValue,
+      confidence: 1,
+      source: "user_stated",
+      scope,
+      // No sensitivity key: the derived claim is deliberately unstamped.
+      evidence_turn_refs: [turnHex],
+      occurred_at: occurred,
+      salience: 1,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(derivedClaim.receipt_ref);
+
+    // Observe through a second door: exact claim reads by subject/predicate.
+    const sourceClaimView = museLabel03OnlyClaim(
+      await engine.client.call("vault.claims.list", {
+        subject_ref: conversation.id,
+        predicate: "label03.source_note",
+        limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">),
+      sourceValue,
+    );
+    const publicClaimView = museLabel03OnlyClaim(
+      await engine.client.call("vault.claims.list", {
+        subject_ref: conversation.id,
+        predicate: "label03.public_note",
+        limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">),
+      publicValue,
+    );
+    const derivedClaimView = museLabel03OnlyClaim(
+      await engine.client.call("vault.claims.list", {
+        subject_ref: conversation.id,
+        predicate: "label03.derived_note",
+        limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">),
+      derivedValue,
+    );
+
+    // Owner-alone control: an unfiltered ranked recall as the owner finds
+    // all three, and the derived item still cites its source turn.
+    const ownerRecall = await museLabel03Recall(engine.client, queryToken, false);
+    expect(museLabel03Includes(ownerRecall, publicSentinel)).toBe(true);
+    expect(museLabel03Includes(ownerRecall, sourceSentinel)).toBe(true);
+    expect(museLabel03Includes(ownerRecall, derivedSentinel)).toBe(true);
+    const derivedItem = ownerRecall.items.find(
+      (item) => item.value_text.includes(derivedSentinel),
+    );
+    if (!derivedItem) throw new Error("Derived claim is missing from owner recall");
+    expect(derivedItem.provenance.evidence_turn_ids.length).toBeGreaterThan(0);
+
+    // Public-only claim reads: the positively public claim is served, the
+    // stamped-sensitive claim and the unstamped derived claim are not.
+    const publicFiltered = await engine.client.call("vault.claims.read_filtered", {
+      claim_ref: publicClaimView.claim_ref,
+      filter: { max_sensitivity_band: 0 },
+    } satisfies FacadeInput<"vault.claims.read_filtered">);
+    expect(publicFiltered.value?.value).toBe(publicValue);
+    const sourceFiltered = await engine.client.call("vault.claims.read_filtered", {
+      claim_ref: sourceClaimView.claim_ref,
+      filter: { max_sensitivity_band: 0 },
+    } satisfies FacadeInput<"vault.claims.read_filtered">);
+    expect(sourceFiltered.value).toBeNull();
+    const derivedFiltered = await engine.client.call("vault.claims.read_filtered", {
+      claim_ref: derivedClaimView.claim_ref,
+      filter: { max_sensitivity_band: 0 },
+    } satisfies FacadeInput<"vault.claims.read_filtered">);
+    expect(derivedFiltered.value).toBeNull();
+    expect(museLabel03Includes(derivedFiltered, derivedSentinel)).toBe(false);
+
+    // Public-only ranked recall: relevance does not pull the private-derived
+    // item in, while the less salient public control is still found.
+    const publicRecall = await museLabel03Recall(engine.client, queryToken, true);
+    expect(museLabel03Includes(publicRecall, publicSentinel)).toBe(true);
+    expect(museLabel03Includes(publicRecall, sourceSentinel)).toBe(false);
+    expect(museLabel03Includes(publicRecall, derivedSentinel)).toBe(false);
+    expect(museLabel03Includes(publicRecall, turnSentinel)).toBe(false);
+
+    // Hydrate is the next door in both directions.
+    const hydratedAll = await engine.client.call("vault.hydrate", {
+      refs: [
+        derivedClaim.claim_short_id,
+        sourceClaim.claim_short_id,
+        publicClaim.claim_short_id,
+      ],
+    } satisfies FacadeInput<"vault.hydrate">);
+    expect(museLabel03Includes(hydratedAll, derivedSentinel)).toBe(true);
+    expect(museLabel03Includes(hydratedAll, publicSentinel)).toBe(true);
+    const hydratedPublic = await engine.client.call("vault.hydrate", {
+      refs: [
+        derivedClaim.claim_short_id,
+        sourceClaim.claim_short_id,
+        publicClaim.claim_short_id,
+      ],
+      filter: { max_sensitivity_band: 0 },
+    } satisfies FacadeInput<"vault.hydrate">);
+    expect(museLabel03Includes(hydratedPublic, publicSentinel)).toBe(true);
+    expect(museLabel03Includes(hydratedPublic, sourceSentinel)).toBe(false);
+    expect(museLabel03Includes(hydratedPublic, derivedSentinel)).toBe(false);
+    expect(museLabel03Includes(hydratedPublic, turnSentinel)).toBe(false);
+
+    // Scoped export through a public channel is the export door.
+    const scopedExport = await engine.client.call("vault.export.scoped", {
+      selector: {},
+      channel: {
+        channel_ref: "muse-label-03-public",
+        scope: {
+          bands: { kind: "some", values: [0] },
+          sensitivity: { kind: "at_most", value: "public" },
+        },
+      },
+    } satisfies FacadeInput<"vault.export.scoped">);
+    const exportText = scopedExport.records
+      .map((record) => Buffer.from(record.bytes).toString("utf8"))
+      .join("\n");
+    expect(exportText.includes(publicSentinel)).toBe(true);
+    expect(exportText.includes(sourceSentinel)).toBe(false);
+    expect(exportText.includes(derivedSentinel)).toBe(false);
+    expect(exportText.includes(turnSentinel)).toBe(false);
+
+    // Survive a restart, then repeat the public-only checks through recall,
+    // the filtered claim read, and the second (reader agent) actor.
+    await engine.restart();
+    museLabel03OnlyClaim(
+      await engine.client.call("vault.claims.list", {
+        subject_ref: conversation.id,
+        predicate: "label03.derived_note",
+        limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">),
+      derivedValue,
+    );
+    const derivedAfterRestart = await engine.client.call("vault.claims.read_filtered", {
+      claim_ref: derivedClaimView.claim_ref,
+      filter: { max_sensitivity_band: 0 },
+    } satisfies FacadeInput<"vault.claims.read_filtered">);
+    expect(derivedAfterRestart.value).toBeNull();
+    const publicAfterRestart = await museLabel03Recall(engine.client, queryToken, true);
+    expect(museLabel03Includes(publicAfterRestart, publicSentinel)).toBe(true);
+    expect(museLabel03Includes(publicAfterRestart, derivedSentinel)).toBe(false);
+    const readerRecall = await museLabel03Recall(reader.client, queryToken, true);
+    expect(museLabel03Includes(readerRecall, publicSentinel)).toBe(true);
+    expect(museLabel03Includes(readerRecall, derivedSentinel)).toBe(false);
+    expect(museLabel03Includes(readerRecall, sourceSentinel)).toBe(false);
+
+    // Refuse the wrong actor kind for a read: the write-only agent has no
+    // core:read grant behind vault.hydrate, and learns no claim text.
+    const refusedHydrate = await writeOnly.client.raw(
+      "POST",
+      "/v1/core/facade/vault.hydrate",
+      { refs: [publicClaim.claim_short_id] } satisfies FacadeInput<"vault.hydrate">,
+    );
+    expect(refusedHydrate.status).toBe(403);
+    const refusedHydrateError = museLabel03Object(
+      museLabel03Object(refusedHydrate.body).error,
+    );
+    expect(typeof refusedHydrateError.code).toBe("string");
+    expect(typeof refusedHydrateError.message).toBe("string");
+
+    // Refuse the wrong actor kind for a write, and read the refusal receipt
+    // back under the invocation id this case supplied for that one raw call.
+    const invocation = secretHex(16);
+    redactor.add(invocation);
+    const refusedWrite = await reader.client.raw(
+      "POST",
+      "/v1/core/facade/vault.claims.upsert",
+      {
+        predicate: "label03.forbidden_note",
+        subject_ref: conversation.id,
+        value: forbiddenValue,
+        confidence: 1,
+        source: "user_stated",
+        scope,
+        sensitivity: 0,
+        evidence_turn_refs: [turnHex],
+        occurred_at: occurred,
+      } satisfies FacadeInput<"vault.claims.upsert">,
+      { "x-oneiron-invocation": invocation },
+    );
+    expect(refusedWrite.status).toBe(403);
+    const refusedWriteError = museLabel03Object(
+      museLabel03Object(refusedWrite.body).error,
+    );
+    expect(typeof refusedWriteError.code).toBe("string");
+    expect(typeof refusedWriteError.message).toBe("string");
+    const admission = await reader.client.call("self.admission.status", {
+      intent_key: invocation,
+    } satisfies FacadeInput<"self.admission.status">);
+    expect(admission?.verb).toBe("vault.claims.upsert");
+    expect(admission?.state.status).toBe("refused");
+    const forbiddenClaims = await engine.client.call("vault.claims.list", {
+      subject_ref: conversation.id,
+      predicate: "label03.forbidden_note",
+      limit: 10,
+    } satisfies FacadeInput<"vault.claims.list">);
+    expect(forbiddenClaims.value).toHaveLength(0);
+
+    // Lose the grant mid-flow: the owner revokes the reader's slip through
+    // the public revoke door, the reader's next recall is refused, and the
+    // revocation is read back in the authority audit.
+    const auditBeforeRevoke = await museLabel03AuditRows(engine.client);
+    const readerSlipId = museLabel03MintedSlipId(
+      auditBeforeReader,
+      auditBeforeRevoke,
+      reader.principalRef,
+    );
+    redactor.add(readerSlipId);
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST",
+      "/v1/core/slips/revoke",
+      { slip_id: Array.from(Buffer.from(readerSlipId, "hex")) },
+    );
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.revoked).toBe(true);
+    const refusedRecall = await reader.client.raw(
+      "POST",
+      "/v1/core/facade/vault.recall",
+      {
+        query: queryToken,
+        effort: "light",
+        limit: 1,
+      } satisfies FacadeInput<"vault.recall">,
+    );
+    expect(refusedRecall.status).toBe(401);
+    const refusedRecallError = museLabel03Object(
+      museLabel03Object(refusedRecall.body).error,
+    );
+    expect(museLabel03Includes(refusedRecall.body, publicSentinel)).toBe(false);
+    const finalAudit = await museLabel03AuditRows(engine.client);
+    expect(finalAudit.some((row) => row.source_op === "slip_revoke"
+      && row.subject_ref === readerSlipId && row.fold_valid)).toBe(true);
+
+    // Control: the refusal above is the lost slip, not a dead server.
+    museLabel03OnlyClaim(
+      await engine.client.call("vault.claims.list", {
+        subject_ref: conversation.id,
+        predicate: "label03.derived_note",
+        limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">),
+      derivedValue,
+    );
+    await engine.artifacts.json("muse-label-03-receipts.json", {
+      turn: witnessed.turn_short_id,
+      writeReceipt: witnessed.receipt_ref,
+      claims: {
+        source: sourceClaim.claim_short_id,
+        sourceReceipt: sourceClaim.receipt_ref,
+        public: publicClaim.claim_short_id,
+        publicReceipt: publicClaim.receipt_ref,
+        derived: derivedClaim.claim_short_id,
+        derivedReceipt: derivedClaim.receipt_ref,
+      },
+      readerSlipRevoked: revoked.body.revoked,
+    });
+  } finally {
+    await engine.close();
+  }
+});
+
+
+// MUSE-LABEL-04 (PARTIAL) — P-LABEL-025 subset only.
+// P-LABEL-025: Guest federation capabilities cannot widen access to the host
+// vault. This case proves the mint-side slice a user would recognise: an
+// owner can mint an inert Connect guest grant for exactly one named local
+// WORLD with only the "read"/"propose" verbs, the resolved scope is not
+// widened to base reality or to any other verb, wider grants are refused,
+// a paired agent cannot mint one, and a revoked guest grant mints no new
+// slip. Doors used: vault.federation.connect.identity, vault.structural.put,
+// vault.get, vault.federation.status, vault.federation.connect.grants.mint,
+// vault.guests.mint_slip, vault.guests.revoke, vault.receipts.get, owner
+// pairing and agent pairing.
+// P-LABEL-024 stays UNPROVED here: no typed door in the generated facade
+// returns the window_key vault.federation.connect.export and
+// vault.guests.share require, privacy.test.ts is a one-slot file (a second
+// live peer vault needs two slots), and the harness has no way to turn a
+// minted guest slip into a guest client. The report names the missing
+// doors. Nothing in this case ships a federated slice or reads an edge on
+// a guest vault.
+const museLabel04OccurredAt = 1769947200;
+const museLabel04SlipExpiresAt = 1893456000;
+const museLabel04WorldName = "Muse Label 04 Named World";
+const museLabel04AgentName = "Muse Label 04 Agent";
+
+interface museLabel04ErrorEnvelope {
+  error: {
+    code: string;
+    message: string;
+    requestId: string;
+    receiptRef?: string;
+  };
+}
+
+type museLabel04MintInput = FacadeInput<"vault.federation.connect.grants.mint">;
+type museLabel04ResolvedScope =
+  FacadeResult<"vault.federation.connect.grants.mint">["resolved_scope"];
+
+function museLabel04Mint(
+  peerVault: string,
+  worldId: string,
+  facetId: string,
+  verbs: readonly string[],
+): museLabel04MintInput {
+  return {
+    peer_vault: peerVault,
+    authority_scope: {
+      worlds: { kind: "some", values: [worldId] },
+      facets: { kind: "some", values: [facetId] },
+      bands: { kind: "all" },
+      verbs: { kind: "some", values: [...verbs] },
+    },
+  };
+}
+
+function museLabel04AxisValues(
+  axis: museLabel04ResolvedScope["worlds"],
+): string[] {
+  if (axis === undefined || axis.kind === "bottom") return [];
+  if (axis.kind === "all") {
+    throw new Error("MUSE-LABEL-04 resolved guest scope widened an axis to all");
+  }
+  return [...axis.values];
+}
+
+// One refused facade call, checked three ways: an expected HTTP status, the
+// standard {error:{code,message,...}} envelope, and the call receipt the
+// refusal leaves, read back by the owner through vault.receipts.get.
+async function museLabel04Refused(
+  actor: PublicHttpClient,
+  owner: PublicHttpClient,
+  verb: string,
+  input: unknown,
+  statuses: readonly number[],
+): Promise<string> {
+  const denied = await actor.raw<museLabel04ErrorEnvelope>(
+    "POST", `/v1/core/facade/${verb}`, input,
+  );
+  expect(statuses).toContain(denied.status);
+  const error = denied.body?.error;
+  if (!error || typeof error.code !== "string" || error.code.length === 0
+    || typeof error.message !== "string" || error.message.length === 0
+    || typeof error.requestId !== "string" || error.requestId.length === 0) {
+    throw new Error(`MUSE-LABEL-04 refusal for ${verb} has no standard error envelope`);
+  }
+  const receiptRef = error.receiptRef && error.receiptRef.length > 0
+    ? error.receiptRef : `call:${error.requestId}`;
+  const receipt = await awaitPublic(
+    () => owner.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null,
+    { label: `MUSE-LABEL-04 refusal receipt for ${verb}` },
+  );
+  if (!receipt) throw new Error(`MUSE-LABEL-04 refusal for ${verb} left no call receipt`);
+  expect(receipt.verb).toBe(verb);
+  if (receipt.outcome === "ok") {
+    throw new Error(`MUSE-LABEL-04 call receipt for ${verb} does not record a refusal`);
+  }
+  expect(receipt.outcome.refused.code).toBe(error.code);
+  return error.code;
+}
+
+suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its named-world read/propose ceiling and a revoked guest grant mints no new slip", async () => {
+  redactor.add(museLabel04WorldName, museLabel04AgentName);
+
+  // A real second vault identity, read before this one-slot file starts the
+  // host vault (the SECRETS-01 sequential-vault pattern). No peers option,
+  // no concurrent second server.
+  const peer = await EngineFixture.start({ id: "MUSE-LABEL-04-peer", profile });
+  let peerVault = "";
+  try {
+    const peerIdentity = await peer.client.call("vault.federation.connect.identity", {});
+    expect(peerIdentity.vault.length).toBeGreaterThan(0);
+    peerVault = peerIdentity.vault;
+  } finally {
+    await peer.close();
+  }
+  if (peerVault.length === 0) throw new Error("MUSE-LABEL-04 peer vault has no identity");
+
+  const engine = await EngineFixture.start({ id: "MUSE-LABEL-04", profile });
+  try {
+    const hostIdentity = await engine.client.call("vault.federation.connect.identity", {});
+    expect(hostIdentity.vault.length).toBeGreaterThan(0);
+    expect(hostIdentity.vault).not.toBe(peerVault);
+
+    // The owner's base claim scope supplies the reserved base world id and
+    // the owner's substrate facet; the guest grant must name neither base
+    // nor any facet but the one named.
+    const baseScope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+
+    // Act: create one named local WORLD, then read it back through vault.get.
+    const world = await engine.client.call("vault.structural.put", {
+      kind: "WORLD",
+      body: { name: museLabel04WorldName, kind: "fictional" },
+      occurred_at: museLabel04OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const worldRead = await engine.client.call("vault.get", { entity_ref: world.entity_ref });
+    expect(worldRead.value?.kind).toBe("WORLD");
+    expect(worldRead.value?.id_hex).toBe(world.id_hex);
+    expect(world.id_hex).not.toBe(baseScope.world_id);
+
+    // An inert guest grant activates no pact on its own.
+    expect((await engine.client.call("vault.federation.status", {})).pacts).toEqual([]);
+
+    // Act: the owner mints a Connect guest grant for the peer vault over
+    // exactly this named world and facet, with only "read"/"propose".
+    const validMint = museLabel04Mint(
+      peerVault, world.id_hex, baseScope.scope_facet_id, ["read", "propose"],
+    );
+    const grant = await engine.client.call("vault.federation.connect.grants.mint", validMint);
+    expect(grant.grant.length).toBeGreaterThan(0);
+    // The resolved ceiling is not widened: exactly the named world (never
+    // the reserved base world), no facet but the named substrate, and no
+    // verb but "read"/"propose" — with "read" actually granted.
+    expect(museLabel04AxisValues(grant.resolved_scope.worlds)).toEqual([world.id_hex]);
+    for (const facet of museLabel04AxisValues(grant.resolved_scope.facets)) {
+      expect(facet).toBe(baseScope.scope_facet_id);
+    }
+    const resolvedVerbs = museLabel04AxisValues(grant.resolved_scope.verbs);
+    expect(resolvedVerbs).toContain("read");
+    for (const verb of resolvedVerbs) expect(["read", "propose"]).toContain(verb);
+    // Observe through a second door: minting the inert grant alone still
+    // leaves this vault with no pact.
+    expect((await engine.client.call("vault.federation.status", {})).pacts).toEqual([]);
+
+    // Observe the live grant through a different verb: it mints a guest
+    // slip. The slip is a generated capability value; it is redacted as
+    // soon as it exists and is never written to an artifact.
+    const slipInput = {
+      grant_ref: grant.grant, expires_at: museLabel04SlipExpiresAt,
+    } satisfies FacadeInput<"vault.guests.mint_slip">;
+    const slip = await engine.client.call("vault.guests.mint_slip", slipInput);
+    redactor.add(slip.slip, slip.slip_id);
+    expect(slip.slip.length).toBeGreaterThan(0);
+
+    // Refuse a widened grant: a verb outside "read"/"propose" is rejected,
+    // and so is a grant that names the reserved base world. Each refusal
+    // leaves a call receipt the owner reads back.
+    await museLabel04Refused(engine.client, engine.client,
+      "vault.federation.connect.grants.mint",
+      museLabel04Mint(peerVault, world.id_hex, baseScope.scope_facet_id,
+        ["read", "propose", "write"]),
+      [400, 403, 422]);
+    await museLabel04Refused(engine.client, engine.client,
+      "vault.federation.connect.grants.mint",
+      museLabel04Mint(peerVault, baseScope.world_id, baseScope.scope_facet_id,
+        ["read", "propose"]),
+      [400, 403, 422]);
+
+    // Refuse the wrong actor kind: a paired agent with ordinary read/write
+    // credential scope cannot mint a guest grant on the host.
+    const agentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: museLabel04AgentName },
+      occurred_at: museLabel04OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const agent = await engine.pairActor({
+      principalRef: agentRecord.id_hex, actorClass: "agent",
+      scope: ["core:read", "core:write"],
+    });
+    await museLabel04Refused(agent.client, engine.client,
+      "vault.federation.connect.grants.mint", validMint, [403]);
+    // The refused mints changed nothing observable: still no pact.
+    expect((await engine.client.call("vault.federation.status", {})).pacts).toEqual([]);
+
+    // Survive a restart: the named world and the no-pact state read back
+    // unchanged, and the grant is still live enough to revoke below.
+    await engine.restart();
+    const worldAfterRestart = await engine.client.call("vault.get", { entity_ref: world.entity_ref });
+    expect(worldAfterRestart.value?.kind).toBe("WORLD");
+    expect(worldAfterRestart.value?.id_hex).toBe(world.id_hex);
+    expect((await engine.client.call("vault.federation.status", {})).pacts).toEqual([]);
+
+    // The owner revokes the guest grant through its public door; the next
+    // use of that grant — minting another slip — is refused with a receipt.
+    const revoked = await engine.client.call("vault.guests.revoke", {
+      grant_ref: grant.grant,
+    } satisfies FacadeInput<"vault.guests.revoke">);
+    expect(revoked.grant_ref).toBe(grant.grant);
+    expect(revoked.changed).toBe(true);
+    await museLabel04Refused(engine.client, engine.client,
+      "vault.guests.mint_slip", slipInput, [400, 403, 422]);
+  } finally {
+    await engine.close();
+  }
+});
+
+
+// MUSE-LABEL-05 — labels, widening. PARTIAL case, written from promise text only.
+// Promises:
+// - P-LABEL-015 (MUST): widening clearance or promoting private content requires
+//   owner-expressed intent or an owner decision. Proved here only in its negative
+//   half: neither a read-only agent nor a read/write agent can fork a claim to
+//   another facet, and an agent-filed clearance offer changes no stored or
+//   effective sharing scope until the owner applies it. The positive widening
+//   paths (private -> public promotion, owner application of a clearance offer)
+//   stay unproved: the typed surface has no facet-exposure/promotion door and
+//   vault.companions.sharing.set carries an opaque `expected_delta` string whose
+//   contract no canon page or facade doc states, so it is never guessed here.
+// - P-LABEL-016 (MUST): disclosure-widening decisions are recorded in the ledger.
+//   Proved for the facet-fork decision class: the topology event reads back
+//   through vault.identity.events.get and a new owner governance receipt reads
+//   back through vault.receipts, both again after a restart.
+// - P-LABEL-006 (MUST): moving a record to another facet creates a linked fork
+//   rather than changing its original stamp. Proved for a CLAIM through
+//   vault.identity.facet (substrate mask -> newly minted mask): the fork is a
+//   new claim under the new facet, the origin keeps its ClaimScope and its
+//   scope position, and the fork carries a derived_from neighbour link.
+// Doors used: vault.conversations.create, vault.witness, vault.people.create,
+// vault.structural.put, vault.get, vault.claims.upsert, vault.claims.list,
+// vault.claims.history, vault.scope.position, vault.identity.resolve,
+// vault.identity.facet, vault.identity.events.get, vault.neighbors,
+// vault.receipts, vault.authority.audit, self.actor, vault.disclosure.offer,
+// vault.companions.sharing.get, POST /v1/core/slips/revoke, raw facade POSTs
+// for refusal envelopes, EngineFixture pairActor/restart.
+// Unproved: private -> public promotion and invariant promotion (no door);
+// owner application of a clearance offer (expected_delta unspecified); a model
+// proposal lane for facet forks (vault.identity.propose is owner-worded);
+// NOTE/ASSET facet forks (identity facet forks claims only); Dreamer or
+// behavioural-inference widening (no inference door exercised); facet forks by
+// restamp-style upsert (ScopedClaimInput.id semantics unspecified).
+
+type MuseLabel05Receipt = FacadeResult<"vault.receipts">["receipts"][number];
+type MuseLabel05AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+type MuseLabel05ClaimRow = FacadeResult<"vault.claims.list">["value"][number];
+
+const museLabel05ReceiptKinds: string[] = [
+  "outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle",
+  "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook",
+  "reference_refusal", "task_lifecycle",
+];
+
+async function museLabel05Receipts(client: PublicHttpClient): Promise<MuseLabel05Receipt[]> {
+  const rows: MuseLabel05Receipt[] = [];
+  let after: string | undefined;
+  do {
+    const page = await client.call("vault.receipts", {
+      limit: 100, kinds: [...museLabel05ReceiptKinds],
+      ...(after === undefined ? {} : { after }),
+    });
+    rows.push(...page.receipts);
+    after = page.next_after ?? undefined;
+  } while (after !== undefined);
+  return rows;
+}
+
+async function museLabel05AuditRows(client: PublicHttpClient): Promise<MuseLabel05AuditRow[]> {
+  const rows: MuseLabel05AuditRow[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = {
+      limit: 500, ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    const nextAfter = page.next_after;
+    if (!nextAfter) return rows;
+    cursors.add(nextAfter);
+    after = nextAfter;
+  }
+}
+
+function museLabel05MintedSlip(
+  before: readonly MuseLabel05AuditRow[],
+  after: readonly MuseLabel05AuditRow[],
+  holder: string,
+): MuseLabel05AuditRow {
+  const existing = new Set(before.map(row => row.entry_hash));
+  const minted = after.filter(row => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  const row = minted[0]!;
+  return row;
+}
+
+function museLabel05ClaimRowFor(
+  rows: readonly MuseLabel05ClaimRow[], claimId: string,
+): MuseLabel05ClaimRow | undefined {
+  return rows.find(row => row.claim_ref === claimId || row.claim?.id === claimId);
+}
+
+suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is owner-only, never restamps the original, and is ledgered", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LABEL-05", profile });
+  let primaryFailed = false;
+  let primary: unknown;
+  try {
+    const occurred = 1769947200;
+    const suffix = secretHex(4);
+    const sentinel = `label05-private-sentinel-${secretHex(8)}`;
+    redactor.add(sentinel);
+    const predicate = "privacy.label05_private_note";
+    const ownerPrincipal = engine.pairedActor.principalRef;
+    const ownerActorRef = (await engine.client.call("self.actor", {})).actor_ref;
+
+    // People and actors, all through public doors. The subject PERSON follows
+    // the witness-then-create pattern; the agent and contact PERSON records
+    // follow the structural create pattern. Pairing never creates a person.
+    const subjectName = `Label05 Subject ${suffix}`;
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const witnessed = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: occurred,
+      messages: [{
+        author: "user", message_type: "text",
+        content: `This distinct person is ${subjectName}.`,
+        is_visible: true, order: 0,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    const turn = await engine.client.call("vault.get", { entity_ref: witnessed.turn_short_id });
+    if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
+      throw new Error("Witnessed TURN missing");
+    }
+    const turnIdHex = turn.value.id_hex;
+    const subject = await engine.client.call("vault.people.create", {
+      identity: { name: subjectName },
+      identity_evidence_refs: [turnIdHex],
+      occurred_at: occurred,
+    } satisfies FacadeInput<"vault.people.create">);
+    const subjectId = subject.person.id_hex;
+    const subjectRead = await engine.client.call("vault.get", {
+      entity_ref: subject.person.entity_ref,
+    });
+    expect(subjectRead.value?.kind).toBe("PERSON");
+
+    const agentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: `Label05 Agent ${suffix}` }, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const agentPersonId = agentRecord.id_hex;
+    const contactRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: `Label05 Contact ${suffix}` }, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const contactId = contactRecord.id_hex;
+
+    // One agent person, two slips: read-only (without the write grant) and
+    // read/write. The read/write slip is captured from the authority audit so
+    // the owner can revoke exactly it mid-flow.
+    const agentRead = await engine.pairActor({
+      principalRef: agentPersonId, actorClass: "agent", scope: ["core:read"],
+    });
+    const auditBeforeWritePair = await museLabel05AuditRows(engine.client);
+    const agentWrite = await engine.pairActor({
+      principalRef: agentPersonId, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+    const writeSlip = museLabel05MintedSlip(
+      auditBeforeWritePair, await museLabel05AuditRows(engine.client), agentPersonId,
+    );
+    const writeSlipId = writeSlip.subject_ref!;
+    const agentActorRef = (await agentWrite.client.call("self.actor", {})).actor_ref;
+
+    // The owner authors the origin claim under the substrate mask, then reads
+    // it back through doors that did not write it.
+    const scope = await ownerBaseClaimScope(engine.client, ownerPrincipal);
+    const originCommit = await engine.client.call("vault.claims.upsert", {
+      subject_ref: subjectId, predicate, value: sentinel,
+      confidence: 1, source: "user_stated", scope, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    expect(originCommit.approval).toBe("auto");
+    if (!originCommit.claim) throw new Error("Origin claim has no typed record reference");
+    const originId = originCommit.claim.id;
+    await engine.awaitReceipt(originCommit.receipt_ref);
+
+    const listSubjectClaims = async (): Promise<MuseLabel05ClaimRow[]> =>
+      (await engine.client.call("vault.claims.list", {
+        subject_ref: subjectId, predicate, limit: 10,
+      } satisfies FacadeInput<"vault.claims.list">)).value;
+    const positionOf = async (recordRef: string) => {
+      const read = await engine.client.call("vault.scope.position", { record_ref: recordRef });
+      const value = read.value;
+      if (!value) throw new Error("Record has no stamped scope position");
+      return value;
+    };
+
+    const beforeRows = await listSubjectClaims();
+    expect(beforeRows).toHaveLength(1);
+    const originBefore = museLabel05ClaimRowFor(beforeRows, originId);
+    if (!originBefore) throw new Error("Origin claim does not read back by subject");
+    expect(originBefore.value).toBe(sentinel);
+    expect(originBefore.claim_scope.scope_facet_id).toBe(scope.scope_facet_id);
+    const originClaimScopeBefore = originBefore.claim_scope;
+    const originShort = originBefore.short_ref ?? originCommit.claim_short_id;
+    const originPositionBefore = await positionOf(originId);
+    expect(originPositionBefore.kind).toBe("position");
+    const resolvedBefore = await engine.client.call("vault.identity.resolve", {
+      entity: subjectId,
+    });
+    const facetsBefore = resolvedBefore.facets;
+    const baselineReceiptRefs = new Set(
+      (await museLabel05Receipts(engine.client)).map(row => row.receipt_ref),
+    );
+
+    const facetLabel = `label05 mask ${suffix}`;
+    const facetInput = {
+      entity: subjectId,
+      facets: [{ label: facetLabel }],
+      reassignment_map: [{
+        item: { kind: "claim", claim: originId },
+        target: { kind: "facet", index: 0 },
+      }],
+      evidence: {
+        refs: [turnIdHex],
+        rationale: "Owner separates this generated claim under a new mask.",
+      },
+    } satisfies FacadeInput<"vault.identity.facet">;
+
+    // Wrong actors first, with the exact input the owner uses below. A facet
+    // fork is a move only the owner may apply; neither agent slip may do it,
+    // and the read/write refusal leaves a governance receipt.
+    const readDenied = await agentRead.client.raw<{ error: { code: string; message: string } }>(
+      "POST", "/v1/core/facade/vault.identity.facet", facetInput,
+    );
+    expect(readDenied.status).toBe(403);
+    expect(readDenied.body.error?.code?.length ?? 0).toBeGreaterThan(0);
+    const writeDenied = await agentWrite.client.raw<{ error: { code: string; message: string } }>(
+      "POST", "/v1/core/facade/vault.identity.facet", facetInput,
+    );
+    expect(writeDenied.status).toBe(403);
+    expect(writeDenied.body.error?.code?.length ?? 0).toBeGreaterThan(0);
+    const refusalReceipts = await awaitPublic(
+      () => museLabel05Receipts(engine.client),
+      rows => rows.some(row => !baselineReceiptRefs.has(row.receipt_ref)
+        && (row.actor_ref === agentActorRef || row.actor_ref === agentPersonId)),
+      { label: "agent facet-fork refusal receipt", timeoutMs: 5_000 },
+    );
+    const refusalReceipt = refusalReceipts.find(row => !baselineReceiptRefs.has(row.receipt_ref)
+      && (row.actor_ref === agentActorRef || row.actor_ref === agentPersonId));
+    if (!refusalReceipt) throw new Error("Agent facet-fork refusal left no receipt");
+
+    // Nothing moved: still one claim, same stamp, no new facet on the subject.
+    const afterRefusalRows = await listSubjectClaims();
+    expect(afterRefusalRows).toHaveLength(1);
+    expect(museLabel05ClaimRowFor(afterRefusalRows, originId)?.claim_scope)
+      .toEqual(originClaimScopeBefore);
+    expect((await positionOf(originId)).scope).toEqual(originPositionBefore.scope);
+    expect((await engine.client.call("vault.identity.resolve", { entity: subjectId })).facets)
+      .toEqual(facetsBefore);
+
+    // The owner applies the same fork. Read every effect back elsewhere.
+    const forkResult = await engine.client.call("vault.identity.facet", facetInput);
+    expect(forkResult.outcome).toBe("applied");
+    if (forkResult.outcome !== "applied") throw new Error("Owner facet fork did not apply");
+    const topologyReceipt = forkResult.receipt;
+    const topologyAction = topologyReceipt.action;
+    expect(topologyAction.op).toBe("facet");
+    if (topologyAction.op !== "facet") {
+      throw new Error("Owner facet fork recorded a different topology action");
+    }
+    expect(topologyAction.forked).toHaveLength(1);
+    expect(topologyAction.facets).toHaveLength(1);
+    const forkId = topologyAction.forked[0];
+    const newFacetId = topologyAction.facets[0];
+    if (!forkId || !newFacetId) throw new Error("Owner facet fork named no fork or facet");
+    const topologyEvent = topologyReceipt.event;
+    expect(forkId).not.toBe(originId);
+    expect(newFacetId).not.toBe(scope.scope_facet_id);
+
+    const afterForkRows = await listSubjectClaims();
+    const forkRow = museLabel05ClaimRowFor(afterForkRows, forkId);
+    if (!forkRow) throw new Error("Facet fork does not read back by subject");
+    expect(forkRow.claim_scope.scope_facet_id).toBe(newFacetId);
+    expect(forkRow.subject_ref).toBe(subjectId);
+    expect(forkRow.predicate).toBe(predicate);
+    expect(forkRow.value).toBe(sentinel);
+    // The fork may supersede the origin; if the origin still lists, its stamp
+    // must be the original one. Its timeline must start with the original too.
+    const originAfter = museLabel05ClaimRowFor(afterForkRows, originId);
+    if (originAfter) expect(originAfter.claim_scope).toEqual(originClaimScopeBefore);
+    const historyRows = (await engine.client.call("vault.claims.history", {
+      claim_ref: originId,
+    })).value;
+    expect(historyRows.length).toBeGreaterThanOrEqual(1);
+    expect(historyRows[0]?.claim_scope).toEqual(originClaimScopeBefore);
+    expect((await positionOf(originId)).scope).toEqual(originPositionBefore.scope);
+
+    const forkNeighbours = await engine.client.call("vault.neighbors", {
+      entity_ref: forkId, opts: { edge_kind: "derived_from", limit: 10 },
+    });
+    const neighbourIds = forkNeighbours.value.flatMap(hit => [
+      hit.short_id, hit.record?.id ?? "", hit.record?.short_id ?? "",
+    ]);
+    expect(neighbourIds.some(id => id === originId || id === originShort)).toBe(true);
+    expect((await engine.client.call("vault.identity.resolve", { entity: subjectId })).facets)
+      .toContain(newFacetId);
+
+    // The decision is in the ledger, read through doors that did not write it.
+    const recordedEvent = await engine.client.call("vault.identity.events.get", {
+      event: topologyEvent,
+    });
+    expect(recordedEvent.event).toBe(topologyEvent);
+    expect(recordedEvent.seen).toBe(topologyReceipt.seen);
+    const recordedAction = recordedEvent.action;
+    expect(recordedAction.op).toBe("facet");
+    if (recordedAction.op !== "facet") {
+      throw new Error("Recorded topology event is not the facet fork");
+    }
+    expect(recordedAction.forked).toContain(forkId);
+    expect(recordedAction.facets).toContain(newFacetId);
+    const forkLedgerRows = await awaitPublic(
+      () => museLabel05Receipts(engine.client),
+      rows => rows.some(row => !baselineReceiptRefs.has(row.receipt_ref)
+        && row.kind === "identity_lifecycle"
+        && (row.actor_ref === ownerActorRef || row.actor_ref === ownerPrincipal)),
+      { label: "owner facet-fork governance receipt", timeoutMs: 5_000 },
+    );
+    const forkReceipt = forkLedgerRows.find(row => !baselineReceiptRefs.has(row.receipt_ref)
+      && row.kind === "identity_lifecycle"
+      && (row.actor_ref === ownerActorRef || row.actor_ref === ownerPrincipal));
+    if (!forkReceipt) throw new Error("Owner facet fork left no governance receipt");
+    await engine.artifacts.json("muse-label05-ledger.json", {
+      subjectId, originId, forkId, newFacetId, topologyEvent,
+      refusalReceiptRef: refusalReceipt.receipt_ref,
+      forkReceiptRef: forkReceipt.receipt_ref,
+    });
+
+    // Clearance widening, negative half: the read/write agent files a
+    // clearance offer for the contact over the new private mask. Filing alone
+    // stores no sharing scope and moves no effective scope; the owner's
+    // application door is not guessed, so the positive path stays unproved.
+    const sharingInput = {
+      companion_ref: agentPersonId, contact_ref: contactId,
+    } satisfies FacadeInput<"vault.companions.sharing.get">;
+    const sharingBefore = await engine.client.call("vault.companions.sharing.get", sharingInput);
+    expect(sharingBefore.stored ?? null).toBeNull();
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const offered = await agentWrite.client.call("vault.disclosure.offer", {
+      contact: contactId,
+      scope: {
+        facets: { kind: "some", values: [newFacetId] },
+        sensitivity: { kind: "at_most", value: "private" },
+      },
+      purpose: "Generated clearance offer for the label05 mask.",
+      channel: "chat",
+      beneficiary: agentPersonId,
+      owner_ref: ownerPrincipal,
+      expires_at: expiresAt,
+    } satisfies FacadeInput<"vault.disclosure.offer">);
+    expect(offered.proposal_ref.length).toBeGreaterThan(0);
+    const sharingAfterOffer = await engine.client.call("vault.companions.sharing.get", sharingInput);
+    expect(sharingAfterOffer.stored ?? null).toBeNull();
+    expect(sharingAfterOffer.effective).toEqual(sharingBefore.effective);
+
+    // The same agent loses its slip mid-flow through the owner's public
+    // revoke door, and its next use of the verb it just used is refused.
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST", "/v1/core/slips/revoke",
+      { slip_id: Array.from(Buffer.from(writeSlipId, "hex")) },
+    );
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.revoked).toBe(true);
+    expect((await museLabel05AuditRows(engine.client)).some(row =>
+      row.source_op === "slip_revoke" && row.subject_ref === writeSlipId && row.fold_valid,
+    )).toBe(true);
+    const offerInputAfterRevoke = {
+      contact: contactId,
+      scope: {
+        facets: { kind: "some", values: [newFacetId] },
+        sensitivity: { kind: "at_most", value: "private" },
+      },
+      purpose: "Generated clearance offer after slip revocation.",
+      channel: "chat",
+      beneficiary: agentPersonId,
+      owner_ref: ownerPrincipal,
+      expires_at: expiresAt,
+    } satisfies FacadeInput<"vault.disclosure.offer">;
+    const afterRevoke = await agentWrite.client.raw<{ error: { code: string; message: string } }>(
+      "POST", "/v1/core/facade/vault.disclosure.offer", offerInputAfterRevoke,
+    );
+
+    // Everything above survives a restart, read back through the same doors.
+    await engine.restart();
+    const afterRestartRows = await listSubjectClaims();
+    const forkAfterRestart = museLabel05ClaimRowFor(afterRestartRows, forkId);
+    if (!forkAfterRestart) throw new Error("Facet fork does not read back after restart");
+    expect(forkAfterRestart.claim_scope.scope_facet_id).toBe(newFacetId);
+    expect(forkAfterRestart.value).toBe(sentinel);
+    const originAfterRestart = museLabel05ClaimRowFor(afterRestartRows, originId);
+    if (originAfterRestart) {
+      expect(originAfterRestart.claim_scope).toEqual(originClaimScopeBefore);
+    }
+    expect((await positionOf(originId)).scope).toEqual(originPositionBefore.scope);
+    expect((await engine.client.call("vault.identity.resolve", { entity: subjectId })).facets)
+      .toContain(newFacetId);
+    expect((await engine.client.call("vault.identity.events.get", {
+      event: topologyEvent,
+    })).seen).toBe(topologyReceipt.seen);
+    expect((await museLabel05Receipts(engine.client))
+      .some(row => row.receipt_ref === forkReceipt.receipt_ref)).toBe(true);
+    const sharingAfterRestart = await engine.client.call("vault.companions.sharing.get", sharingInput);
+    expect(sharingAfterRestart.stored ?? null).toBeNull();
+    expect(sharingAfterRestart.effective).toEqual(sharingBefore.effective);
+    const afterRestartRevoked = await agentWrite.client.raw<{ error: { code: string } }>(
+      "POST", "/v1/core/facade/vault.disclosure.offer", offerInputAfterRevoke,
+    );
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    try { await engine.close(); } catch (cleanup) {
+      if (primaryFailed) {
+        throw new AggregateError([primary, cleanup], `${String(primary)}; cleanup: ${String(cleanup)}`);
+      }
+      throw cleanup;
+    }
+    if (primaryFailed) throw primary;
+  }
+});
+
+
+// MUSE-LABEL-06 - A room discloses only what every non-owner present may see,
+// and narrows at once on doubt.
+//
+// Promises (stated precisely; changing an assertion later needs a
+// "promise changed" ruling):
+//   P-LABEL-009 (MUST): A room may disclose public content plus only the
+//     scopes cleared for every non-owner present.
+//   P-LABEL-010 (MUST): An unknown participant restricts room disclosure
+//     to public content.
+//   P-LABEL-012 (MUST): An owner's presence does not widen a guest's
+//     clearance.
+//   P-LABEL-017 (MUST): Uncertain participant identification narrows
+//     disclosure immediately.
+//   P-LABEL-018 (MUST): A momentary silence does not count as confirmation
+//     that a participant has left.
+//   P-LABEL-019 (MUST): A newly present participant causes in-flight output
+//     to be aborted or redacted under the new disclosure scope.
+//   P-LABEL-020 (MUST): The disclosure filter applies to transcript turns
+//     as well as retrieved claims.
+//   P-LABEL-021 (MUST): A disclosure override requires an
+//     owner-authenticated session credential, not voice identification alone.
+// Canon: oneiron/gate/one-1592-ildf2-ratify.md #rule, #owner-presence-built
+// and #pins (P1/P4/P5/P6/P7), with the consent-channel and DEC-0006 pages
+// named in the report. Exact mirror lines are in MUSE-LABEL-06.report.md.
+//
+// Doors used by this fragment: none. This is a suite.todo registration only.
+// It is not passing coverage and it executes no assertion.
+//
+// Why no executable case is written from the current typed surface:
+// the core act is to declare who is PRESENT for a disclosure assembly -
+// identified contact, unknown party, or sub-threshold identification -
+// then read what the room discloses, then change presence (silence,
+// confirmed departure, newcomer arrival) and read again, including while
+// output is in flight. In the generated facade snapshot given to this
+// writer (1353 rows) there is no verb to report present parties or an
+// identification state, no verb to attempt a disclosure override, and no
+// facade verb for the context-pack / context-board assemblies canon
+// names as reachable routes (POST /v1/core/context-pack,
+// POST /v1/core/context-board). Their request/result shapes are not in
+// the facade types this writer may check by hand, so calling them raw
+// would invent a wire shape. Do not cast a name to FacadeVerb, do not
+// send a guessed context-pack body, and do not substitute deterministic
+// chat-room membership (vault.rooms.join/leave) for presence under
+// identification doubt: a join is deterministic, while P-LABEL-017/018
+// are about an identification guess and a silence heuristic, which a
+// join/leave case would not prove.
+//
+// Adjacent typed doors that exist, and why each is not the missing act:
+// - vault.rooms.sharing (Read, for a room member) returns a room's
+//   effective Scope and clamps, including contact_clearance and unknown
+//   member counts. It is a scope view, not a content-disclosure read,
+//   and no typed door in the snapshot sets the local contact clearance
+//   it meets or reports a party as sub-threshold/unknown-but-present.
+// - vault.rooms.messages (Read) returns room turns this reader may read.
+//   Canon states a member's own read of a room outside a turn takes no
+//   clearance term, so it cannot prove the present-party meet.
+// - vault.recall / vault.hydrate (Read) take no room or interlocutor
+//   input in their typed requests. Canon states plain recall installs
+//   no disclosure clamp; a room turn's recall does, and no typed door
+//   here opens such a turn read with a declared roster.
+// - vault.disclosure.offer (Write, proposes) lets an agent file a
+//   clearance offer for one contact. vault.companions.sharing.set
+//   (Write, owner) is a standing yes to a frozen offer for a companion's
+//   contact in a companion's source vault, and takes an opaque
+//   expected_delta string. Neither is identified in canon or in its
+//   catalog line as setting the local present-party contact clearance
+//   that room_scope meets.
+// - vault.consent.create_standing_grant (Write, owner, host door) can
+//   create a disclosure grant bound {audience, class, envelope:
+//   {selectors}}. The class/selectors vocabulary that would make it a
+//   contact's clearance Scope is not stated in the allowed surface.
+// - ai.voice.start (Write, owner-bound, host door) takes an optional
+//   room_ref and roster_ref, and ai.voice.events can report a playout
+//   stop with reason "roster_changed". No typed door creates or updates
+//   that roster mid-session, reports an identification confidence, or
+//   submits a voice-only override, so P-LABEL-017/018/019/021 cannot be
+//   driven through it without guessing the roster record and the voice
+//   route setup.
+//
+// Types below are CANON DESIGN NOTES, not wire DTOs and not a client
+// adapter. Existing-door notes bind generated FacadeInput/FacadeResult.
+// Waiting shapes name only canon's semantic arguments and observable
+// results; final verb names, HTTP paths and SDK methods must come from
+// the typed catalog, never be guessed (G01).
+type museLabel06Ref = string;
+type museLabel06CurrentRoomSharing = {
+  request: FacadeInput<"vault.rooms.sharing">;
+  result: FacadeResult<"vault.rooms.sharing">;
+};
+type museLabel06CurrentClearanceOffer = {
+  request: FacadeInput<"vault.disclosure.offer">;
+  result: FacadeResult<"vault.disclosure.offer">;
+};
+type museLabel06CurrentCompanionSharing = {
+  setRequest: FacadeInput<"vault.companions.sharing.set">;
+  getResult: FacadeResult<"vault.companions.sharing.get">;
+};
+// P4: sub-threshold identification is UNKNOWN and narrows immediately.
+// Departure widens only on deterministic confirmation (channel
+// disconnect, owner statement) or after a hold-down window, never on a
+// momentary-silence heuristic.
+type museLabel06Identification =
+  | "identified_contact"
+  | "unknown"
+  | "sub_threshold";
+type museLabel06PresenceEvent =
+  | "arrived"
+  | "momentary_silence"
+  | "departed_channel_disconnect"
+  | "departed_owner_statement";
+// Waiting door, behind a grant: a typed present-party report for one
+// room/session, narrow-only for inference. An ungranted agent must be
+// refused, and an agent whose grant is revoked mid-flow must be refused
+// at its next report (owner revokes through a public door).
+type museLabel06PresenceReport = {
+  room: museLabel06Ref;
+  party: museLabel06Ref;
+  identification: museLabel06Identification;
+  event: museLabel06PresenceEvent;
+};
+// Waiting door: the owner, on an owner-authenticated session credential,
+// sets and reads one contact's standing clearance. A clearance is the
+// contact's Scope, so the scope field is the existing generated Scope.
+type museLabel06ContactClearanceSet = {
+  contact: museLabel06Ref;
+  scope: Facade.Scope;
+};
+// Waiting door: one room-scoped disclosure assembly over already-written
+// claims and transcript turns, under the room's current present-party
+// roster. The result must let a case tell, by record ref, exactly what
+// was disclosed, and must carry the effective scope it used.
+type museLabel06RoomAssemblyRequest = {
+  room: museLabel06Ref;
+  query: string;
+};
+type museLabel06RoomAssembly = {
+  disclosed_record_refs: museLabel06Ref[];
+  effective: Facade.Scope;
+};
+// Waiting door: an explicit disclosure override for named records in one
+// room. The credential is the caller's owner-authenticated session
+// credential; there is deliberately no voice-identification field,
+// because voice-detected owner presence never suffices (P6).
+type museLabel06DisclosureOverride = {
+  room: museLabel06Ref;
+  record_refs: museLabel06Ref[];
+};
+// P5: a roster widening is a barrier event - in-flight generation is
+// aborted, or redacted and re-assembled under the new disclosable set.
+type museLabel06InFlightOutcome = "aborted" | "redacted_and_reassembled";
+
+// Planned journey once the waiting doors exist (full-door form; every
+// planned assertion is sourced in MUSE-LABEL-06.report.md):
+// 1. Act. As the owner, write one positively public claim, one private
+//    claim below Tier A, one private transcript turn and one claim
+//    derived from that turn, each carrying a generated sentinel passed
+//    to redactor.add before first use. Set guest A's clearance to admit
+//    the private claim's scope; leave guest B without that clearance.
+//    Report the owner and guest A present and identified.
+// 2. Observe through a second door. Read a room-scoped assembly (a
+//    different verb from every write above) and vault.rooms.sharing:
+//    public and cleared-private records are disclosed (009). Repeat
+//    with guest B also present: the private claim, the private turn
+//    and its derived claim are all withheld (009, 020; disjoint or
+//    missing clearance meets to public-only, never a union). Repeat
+//    with an unknown party present: public only (010). Compare the
+//    owner-plus-guest assembly with a guest-only assembly: the same
+//    private records are withheld either way (012).
+// 3. Doubt narrows at once. Report guest A's identification as
+//    sub-threshold and, with no other change, read the assembly again:
+//    public only (017). Report momentary silence for guest B and read
+//    again: still public only (018). Only a deterministic departure
+//    confirmation for guest B, with guest A identified again, may let
+//    the cleared-private record return.
+// 4. In flight. Start one streamed room reply held at a scripted
+//    provider barrier (no sleep, no wall clock), then report a newcomer
+//    present. The stream must end aborted, or its delivered output must
+//    be redacted under the new scope, and the re-assembled output must
+//    contain no sentinel from a record the newcomer may not see (019).
+//    Read the outcome back through the stream/events door and through
+//    the assembly door, not only from the acting call.
+// 5. Override. Attempt the override on voice identification alone (a
+//    non-owner session credential): refused, with the standard refusal
+//    envelope, and the refusal receipt read back through vault.receipts
+//    or vault.authority.audit. Then perform it on the owner's
+//    authenticated session: exactly the named records are disclosed,
+//    receipted, and read back through the assembly door (021).
+// 6. Refuse the wrong actor kinds. A non-member reading the assembly, a
+//    guest reporting presence or setting a clearance, an agent without
+//    the presence-report grant, and that same agent after the owner
+//    revokes its grant mid-flow (vault.agents.grants.revoke) are each
+//    refused at next use; each refusal leaves state unchanged when read
+//    back, and leaves a receipt that is read back.
+// 7. Restart. await engine.restart(), then read sharing, the standing
+//    clearance and the assembly again: the meet, the unknown-party
+//    narrowing and every withholding above are unchanged. A presence
+//    report that was only a momentary silence must not have become a
+//    departure across the restart either.
+// Deterministic throughout: awaitPublic repeats reads only; the one
+// in-flight boundary is a ScriptedProviders barrier, never a sleep.
+suite.todo(test, "MUSE-LABEL-06", "waits on typed room presence/identification reporting, local contact-clearance set/read, room-scoped disclosure assembly, roster-barrier and owner-credential disclosure override doors");
