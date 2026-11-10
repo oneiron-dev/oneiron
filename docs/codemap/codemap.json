@@ -16820,7 +16820,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 1
      }
     },
@@ -98955,6 +98955,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/key_value_credential_read.rs",
+     "purpose": "[E2E-KV-GET-PREFILTER]: the keyed store's own reader under a read credential",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/live_run_claim_put.rs",
      "purpose": "Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker…",
      "surface": {}
@@ -100815,7 +100823,7 @@
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7242,
-   "test_files": 905
+   "test_files": 906
   },
   "oneiron-agent-runtime": {
    "files": [
