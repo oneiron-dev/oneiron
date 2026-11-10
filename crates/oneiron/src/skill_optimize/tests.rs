@@ -5047,11 +5047,12 @@ fn axes_with_minutes_floor() -> Vec<GoalAxisSpec> {
 /// A vector judge on [`vector_axes`] with a Jev seam. By default both primaries
 /// gain and the cost axis loses; `inverted` swaps them.
 ///
-/// NOTE (wave 2): the corrupt-digest half of `jev` has no successor — the
-/// engine builds the Jev verdict's digest itself now (faf881f23eb) — so the
-/// flag is kept but ignored, and the bad-digest asserts are reported as
-/// unportable. `None` keeps the observed old behavior (the tradeoff settles
-/// without a supplied Jev verdict) by answering approve at full confidence.
+/// The engine constructs the Jev verdict's question digest; a provider cannot
+/// corrupt it. Rule D (faf881f23eb) removes the bad-binding half of
+/// `jev_band_is_bound_and_only_outside_band_settles`: that commit removed the
+/// host verdict and its digest check, with no hostile-binding input successor.
+/// The tuple's former corruption flag is unused. `None` answers approve at
+/// full confidence without a supplied Jev verdict.
 struct LadderScorer {
     jev: Option<(f64, bool)>, // confidence, corrupt question binding
     jev_rung: crate::llm::decision::DecisionRung,
@@ -5234,18 +5235,6 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
     let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.jev");
     let owner = tradeoff_owner(&vault);
     ladder_goal(&vault, &owner, &skill, Vec::new())?;
-    let bad = LadderScorer::new(Some((0.95, true)));
-    assert!(
-        score_gate_skill_edit_in_cycle(
-            &vault,
-            &proposal,
-            &bad,
-            wake(&vault, "tradeoff-bad", 10),
-            900
-        )
-        .is_err()
-    );
-    assert!(skill_edit_verdict(&vault, &proposal)?.is_none());
     let good = LadderScorer::new(Some((0.95, false)));
     let decided = score_gate_skill_edit_in_cycle(
         &vault,
