@@ -117,3 +117,70 @@ pub(crate) fn admit_substrate_read_by(
         &["Ask the owner for the grant; the Coach holds it by default."],
     ))
 }
+
+#[cfg(oneiron_test_support)]
+mod fixture {
+    use std::collections::BTreeSet;
+
+    use super::super::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, ScopeAxis, ScopeId,
+        encode_federation_grant_body,
+    };
+    use crate::batch::{BatchOp, apply_ops};
+    use crate::entity_id::EntityId;
+    use crate::error::Result;
+    use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+    use crate::{TimeRange, Vault};
+
+    impl Vault {
+        /// TEST-ONLY: stands a Steward grant on this vault's root for
+        /// `holder` with `verbs`, its audience narrowed to the one project
+        /// `project`, as a holder override row leaves a member's grant.
+        pub(crate) fn stand_project_steward_grant_for_test(
+            &self,
+            holder: EntityId,
+            verbs: &[&str],
+            project: EntityId,
+        ) -> Result<EntityId> {
+            self.with_write_txn_grouped(|txn| {
+                let mut grant = FederationGrant::new(
+                    self.steward_root_scope_in_txn(txn)?,
+                    holder,
+                    FederationGrantRole::Steward,
+                    FederationGrantPreset::Steward,
+                );
+                grant.authority_scope.verbs =
+                    ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+                grant.authority_scope.audience =
+                    ScopeAxis::Some(BTreeSet::from([ScopeId(project)]));
+                let id = EntityId::now();
+                let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                apply_ops(
+                    &self.store,
+                    &self.config,
+                    &self.analyzer,
+                    txn,
+                    vec![BatchOp::Put {
+                        id,
+                        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                        occurred: TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        learned_at: now,
+                        row_version: None,
+                        data: encode_federation_grant_body(&grant)?,
+                        allow_maintenance: true,
+                        allow_reserved_predicate: false,
+                        hub_sync_imported: false,
+                    }],
+                    self.text_index_trusted
+                        .load(std::sync::atomic::Ordering::Acquire),
+                    false,
+                    true,
+                )?;
+                Ok(id)
+            })
+        }
+    }
+}
