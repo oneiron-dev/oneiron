@@ -103,7 +103,7 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
                     ModelTierRef("global".into()),
                 ),
                 response_format: ResponseFormat::Text,
-                locality: ModelLocality::OnDevice,
+                locality: ModelLocality::OwnServer,
                 host_keyless: false,
                 host_paid: false,
             },
