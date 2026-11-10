@@ -363,8 +363,9 @@ fn is_dag_membership(
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
 }
 
-/// A local TURN body may carry a PERSON author, or a witness TURN its
-/// AGENT_DEF writer (FIX 7129). Missing authors (for example, imported
+/// A local TURN body may carry a PERSON author, a witness TURN its AGENT_DEF
+/// writer (FIX 7129), or a scope summary landing's reply its landing writer
+/// (a MACHINE, [`landing_reply`]). Missing authors (for example, imported
 /// transcript labels) have no per-person fence to evaluate.
 fn turn_person(body: &[u8]) -> Result<Option<EntityId>> {
     let mut bytes = body;
@@ -412,16 +413,18 @@ fn guard_erased_author_body(
     body: &[u8],
 ) -> Result<()> {
     if let Some(person) = turn_person(body)? {
-        // A known author is a PERSON, or the AGENT_DEF a witness TURN stamps
-        // for its Agent writer (FIX 7129); any other known author is a bad
-        // carrier now. An unknown id stays admissible, as recipients do: a
-        // peer may deliver the TURN before (or without) its author's row. The
-        // erasure fence is keyed by id and still applies.
+        // A known author is a PERSON, the AGENT_DEF a witness TURN stamps for
+        // its Agent writer (FIX 7129), or the scope summary landing writer on
+        // its landing's reply; any other known author is a bad carrier now.
+        // An unknown id stays admissible, as recipients do: a peer may deliver
+        // the TURN before (or without) its author's row. The erasure fence is
+        // keyed by id and still applies.
         let admitted = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
             .map(|row| row.first().copied())
         {
             None | Some(Some(crate::registry::ENTITY_TYPE_PERSON)) => true,
             Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => witness_turn(body),
+            Some(Some(crate::registry::ENTITY_TYPE_MACHINE)) => landing_reply(body, person)?,
             Some(_) => false,
         };
         if !admitted {
@@ -432,6 +435,25 @@ fn guard_erased_author_body(
         }
     }
     Ok(())
+}
+
+/// Whether a TURN by a MACHINE `author` is a scope summary landing's reply:
+/// the author is the landing writer, and the body carries the `summary` key
+/// the DAG door stamps on a summary's reply (SUMMARY-AS-RECORD-PERMIT-SHAPE =
+/// A). Every other MACHINE author, and any other TURN by that writer, stays
+/// out of a room. The append door further admits only the reply its landing
+/// admitted (`scope_summary::check_landing_append`).
+fn landing_reply(body: &[u8], author: EntityId) -> Result<bool> {
+    if author != crate::scope_summary::landing_writer_id()? {
+        return Ok(false);
+    }
+    let mut bytes = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
+        return Ok(false);
+    };
+    Ok(fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some("summary")))
 }
 
 /// Whether a TURN body is the witness door's: it carries the `speaker`
