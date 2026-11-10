@@ -560,16 +560,6 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
   }, {
-    // The consolidation pass re-extracts the still-active source turn (job 7,
-    // 2026-11-10: two unscripted sends at cleanup, the two ladder passes of one
-    // generate as in PRIVACY-02's source-reextract). An empty reply is lawful
-    // and writes nothing, so eligible-people stays the only minting extraction.
-    id: "archive-reextract", origin: "extraction", role: "extraction_teacher",
-    purpose: "consolidation re-extraction of the active archive source turn",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
-    response: openaiText("archive-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
-      { inputTokens: 128, outputTokens: 16 }),
-  }, {
     id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
     standing: true,
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
@@ -579,16 +569,68 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
+  let stage = "archive engine setup";
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
     await grantExtraction(engine);
     const room = await ownerRoom(engine, "Privacy archive source", undefined, spec.occurredAt);
+    // Arm the handoff before witnessing can schedule Micro alongside Meso.
+    // Standing matches precede FIFO, so install only once eligible-people is
+    // already selected and held at the external provider boundary.
+    const extractionHandoff = providers.awaitBarrier("extract").then(() => {
+      providers.enqueue({
+        id: "archive-reextract", origin: "extraction", role: "extraction_teacher",
+        purpose: "background re-extraction of the active archive source turn",
+        standing: true,
+        request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
+        response: openaiText("archive-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
+          { inputTokens: 128, outputTokens: 16 }),
+      });
+      return null;
+    }).catch((error: unknown) => new Error(
+      `PRIVACY-01 extraction barrier: ${errorText(error)}; last provider observation: ${JSON.stringify(providers.seenFixtureCalls.map(call => ({ fixtureId: call.fixtureId, origin: call.origin, method: call.method, path: call.path })))}`,
+      { cause: error },
+    ));
     const source = await engine.client.call("vault.witness", {
       ...turn(room.id, `${names[0]}. ${names[1]}. ${spec.protected.claimText}`),
       occurred_at: spec.occurredAt,
     });
-    await extract(engine, turnId(source), providers);
-    const rows = await people(engine.client);
+    const savedTurn = await engine.client.call("vault.get", { entity_ref: source.turn_id });
+    expect(savedTurn.value?.kind).toBe("TURN");
+    expect(savedTurn.value?.id_hex).toBe(source.turn_id);
+    const messageRef = source.message_short_ids[0];
+    if (!messageRef) throw new Error("Archive source witness returned no MESSAGE reference");
+    const savedMessage = await engine.client.call("vault.get", { entity_ref: messageRef });
+    expect(savedMessage.value?.kind).toBe("MESSAGE");
+    expect(savedMessage.value?.body).toEqual(expect.objectContaining({
+      content: `${names[0]}. ${names[1]}. ${spec.protected.claimText}`,
+    }));
+    stage = "initial extraction admission and provider barrier";
+    const ticket = await engine.client.call("vault.memory.signal_extraction", {
+      turn_refs: [turnId(source)],
+    });
+    expect(ticket.job_refs.length).toBeGreaterThan(0);
+    const handoffFailure = await extractionHandoff;
+    if (handoffFailure !== null) throw handoffFailure;
+    providers.releaseBarrier("extract");
+    stage = "initial extraction completion";
+    for (const job_ref of ticket.job_refs) {
+      const result = await awaitPublic(
+        () => engine!.client.call("vault.memory.signal_extraction.result", { job_ref }),
+        value => value?.job.state === "completed",
+        { label: `PRIVACY-01 extraction ${job_ref} completion` },
+      );
+      if (!result) throw new Error("Completed extraction has no typed result");
+      expect(result.job.last_error ?? null).toBeNull();
+    }
+    stage = "extracted PERSON readbacks";
+    // The first request may belong to Micro rather than the explicit Meso
+    // job. Observe its PERSON writes, not the scheduler's relative order.
+    const rows = await awaitPublic(
+      () => people(engine!.client),
+      value => names.every(name => value.filter(row => row.name === name).length === 1),
+      { label: "PRIVACY-01 eligible PERSON readback after extraction" },
+    );
     const empty = rows.filter(row => row.name === names[0]);
     const protectedRows = rows.filter(row => row.name === names[1]);
     expect(empty).toHaveLength(1);
@@ -599,14 +641,20 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(before?.kind).toBe("PERSON");
     expect(object(before?.body).name).toBe(spec.mention);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    stage = "protected PERSON claim write";
     const protection = await engine.client.call("vault.claims.upsert", {
       subject_ref: protectedId, predicate: "privacy.archive_protection", value: spec.protected.claimText,
       confidence: 1, source: "user_stated", scope,
     });
     expect(protection.approval).toBe("auto");
+    const protectionRead = await engine.client.call("vault.claims.list", {
+      subject_ref: protectedId, predicate: "privacy.archive_protection", limit: 10,
+    });
+    expect(protectionRead.value.some(row => row.value === spec.protected.claimText)).toBe(true);
     const protectedBefore = (await engine.client.call("vault.get", { entity_ref: protectedId })).value;
     // Save the public, credential-nulled archive representation before the mark.
     const storedBefore = exportedRecord(await exportMembers(engine.client), emptyId);
+    stage = "cleanup policy and proposal readback";
     await engine.client.request("POST", "/v1/owner/cleanup", spec.cleanup);
     const run = await engine.client.call("vault.cleanup.run", {});
     expect(run.posture).toBe("propose_first");
@@ -619,6 +667,7 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(item?.evidence?.extraction_minted).toBe(true);
     expect(item?.evidence?.live_claims).toBe(0);
     expect(item?.content?.record?.value?.body).toEqual(before?.body);
+    stage = "cleanup archive decision and retained-body readback";
     const decided = await engine.client.call("vault.cleanup.decide", {
       proposal: run.proposal, expected_revision: review.revision,
       choices: review.items.map(row => ({ slot: row.slot,
@@ -636,17 +685,22 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(storedArchived.body).toEqual(storedBefore.body); // Same ID and retained body, not just a count.
     // Author the resolver's actual confidence CLAIM only after the archive.
     // Putting it on the empty PERSON before the pass would protect that PERSON.
+    stage = "resolver-confidence claim while archived";
     const evidence = await engine.client.call("vault.claims.upsert", {
       subject_ref: emptyId, predicate: "provider.enrichment", value: { provider: "privacy", name: spec.mention },
       confidence: 0.99, source: "user_stated", scope,
     });
     expect(evidence.approval).toBe("auto");
     if (!evidence.claim) throw new Error("Mention confidence claim has no typed record ref");
+    const evidenceRead = await engine.client.call("vault.get", { entity_ref: evidence.claim.id });
+    expect(evidenceRead.value?.kind).toBe("CLAIM");
+    expect(object(evidenceRead.value?.body).val).toEqual({ provider: "privacy", name: spec.mention });
     expect((await engine.client.call("vault.get", { entity_ref: emptyId })).value).toBeNull();
     const stillArchived = await engine.client.request<{ archived: { entity: string }[] }>(
       "GET", "/v1/owner/cleanup",
     );
     expect(stillArchived.body.archived.some(row => row.entity === emptyId)).toBe(true);
+    stage = "mention restoration and no-erasure readbacks";
     const mention = await engine.client.call("vault.entities.mention", {
       candidates: [{ subject: emptyId, confidence_claim_ref: evidence.claim.id }],
     });
@@ -663,7 +717,9 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "eligible-people")).toHaveLength(1);
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    primary = error instanceof PublicHttpError
+      ? new Error(`PRIVACY-01 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error })
+      : new Error(`PRIVACY-01 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     const cleanups: string[] = [];
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
