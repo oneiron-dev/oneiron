@@ -144,7 +144,7 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
         id: landing.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: landing.attempt_count,
-        resume_point: AttemptResumePoint::new("one-past-the-old-cap", 15),
+        resume_point: AttemptResumePoint::new("one-too-many", 15),
         now: 15,
     })?;
     assert_eq!(
