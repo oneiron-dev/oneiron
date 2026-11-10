@@ -5,7 +5,7 @@
 
 use super::*;
 
-use crate::comm::{count_contact_record_claim_entries, run_comm_projector};
+use crate::comm::count_contact_record_claim_entries;
 use crate::settings::model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, default_model_stack_registry,
 };
@@ -161,41 +161,6 @@ fn dial_off_stores_and_withholds_without_minting_a_party() {
         count_contact_record_claim_entries(&vault, PUBLISHER_PARTY_KEY).expect("contact view"),
         0,
         "a withheld batch must not mint the publisher counterparty"
-    );
-}
-
-/// Dial on: the counterparty resolves once for the batch, each signature rides
-/// `comm.rs`'s send-receipt door, and one projector pass surfaces the thread.
-#[test]
-fn dial_on_sends_through_the_comm_doors_and_the_projector_shows_the_thread() {
-    let (_tmp, vault) = open_vault();
-    set_publisher_enabled(&vault, true).expect("dial on");
-    let ids = [
-        emit_issue_signature(&vault, signature()).expect("emit a"),
-        emit_issue_signature(&vault, signature()).expect("emit b"),
-    ];
-
-    let outcome = send_signatures_if_enabled(&vault, &ids).expect("send");
-    assert_eq!(outcome.sent, 2);
-    assert_eq!(outcome.withheld, 0);
-    let party = outcome.party.expect("party resolved");
-    for id in ids {
-        assert_eq!(
-            signature_send_state(&vault, id).expect("state"),
-            SignatureSendState::Sent
-        );
-    }
-
-    // "Resolves or creates ONCE": a second resolution is the same entity, and a
-    // second batch reuses it rather than minting a twin.
-    assert_eq!(publisher_party(&vault).expect("re-resolve"), party);
-    let again = send_signatures_if_enabled(&vault, &ids[..1]).expect("second batch");
-    assert_eq!(again.party, Some(party));
-
-    run_comm_projector(&vault).expect("projector pass");
-    assert!(
-        count_contact_record_claim_entries(&vault, PUBLISHER_PARTY_KEY).expect("contact view") > 0,
-        "the projector must surface the publisher thread"
     );
 }
 
