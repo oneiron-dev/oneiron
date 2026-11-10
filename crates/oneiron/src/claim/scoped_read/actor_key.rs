@@ -37,6 +37,11 @@ pub struct ScopedReadActorKey {
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
     authority: Option<oneiron_authority::federation::Scope>,
+    /// Set only on a credential bound by two or more of its holder's agent
+    /// Grants (FIX AGENT-GRAPHFS-GRANT-WORLDS): the credential's Scope met
+    /// with each Grant alone. `authority` is their envelope; a row must lie
+    /// inside one of them. See [`Self::within_grant_alternatives`].
+    grant_alternatives: Option<std::sync::Arc<[oneiron_authority::federation::Scope]>>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -369,6 +374,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -410,6 +416,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -826,6 +833,29 @@ impl ScopedReadActorKey {
     /// [`Self::from_verified_slip`] already does.
     pub(crate) fn authority_scope(&self) -> Option<&oneiron_authority::federation::Scope> {
         self.authority.as_ref()
+    }
+
+    /// This key, its rows also held to one of `alternatives` alone: the
+    /// credential's Scope met with each of its holder's standing agent
+    /// Grants, when two or more stand (FIX AGENT-GRAPHFS-GRANT-WORLDS; the
+    /// key's own Scope is already their envelope). Each is taken as every
+    /// read door checks a proof of it ([`Self::read_authority`]). With fewer
+    /// than two the key is unchanged: its own Scope is exact.
+    #[must_use]
+    pub(crate) fn within_grant_alternatives(
+        mut self,
+        alternatives: Vec<oneiron_authority::federation::Scope>,
+    ) -> Self {
+        if alternatives.len() > 1 {
+            self.grant_alternatives = Some(alternatives.iter().map(Self::read_authority).collect());
+        }
+        self
+    }
+
+    /// The Scopes a row must lie inside one of, alone, beside this key's own
+    /// ([`Self::within_grant_alternatives`]); `None` when its own is exact.
+    pub(crate) fn grant_alternatives(&self) -> Option<&[oneiron_authority::federation::Scope]> {
+        self.grant_alternatives.as_deref()
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when
