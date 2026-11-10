@@ -24,10 +24,18 @@ fn an_owner_write_through_the_door_leaves_a_receipt_the_owner_can_read() {
     });
     let first = door::invoke(&owner, "vault.kv.put", put.clone()).expect("the owner may put");
     assert_eq!(first["replayed"], false);
-    assert!(first["receipt_ref"].as_str().is_some_and(|reference| !reference.is_empty()));
+    assert!(
+        first["receipt_ref"]
+            .as_str()
+            .is_some_and(|reference| !reference.is_empty())
+    );
 
     let after = receipts.all(&[]).expect("read the ledger");
-    assert!(after.len() > before, "the put left a receipt ({before} -> {})", after.len());
+    assert!(
+        after.len() > before,
+        "the put left a receipt ({before} -> {})",
+        after.len()
+    );
     assert!(receipts.latest(&[]).expect("read the newest").is_some());
 
     let again = door::invoke(&owner, "vault.kv.put", put).expect("the same request again");
@@ -47,8 +55,12 @@ fn a_vault_seeded_through_verbs_serves_what_it_was_seeded_with() {
     assert_eq!(seeded.clock().now(), oneiron_testkit::FAKE_EPOCH + 3600);
     let vault = seeded.open().expect("open");
     let owner = door::owner(&vault).expect("the owner");
-    let item = door::invoke(&owner, "vault.kv.get", json!({"namespace": ["seed"], "key": "city"}))
-        .expect("the owner reads the seeded value");
+    let item = door::invoke(
+        &owner,
+        "vault.kv.get",
+        json!({"namespace": ["seed"], "key": "city"}),
+    )
+    .expect("the owner reads the seeded value");
     assert_eq!(item["value"], json!({"name": "Lisbon"}));
 }
 
@@ -67,8 +79,17 @@ fn a_seed_that_binds_key_custody_is_never_cached_for_copying() {
 #[test]
 fn a_seeded_directory_that_binds_key_custody_is_never_copied() {
     let dir = tempfile::tempdir().expect("temp dir");
-    let record = seed_into(dir.path(), "door-custody-at", FakeClock::vault_config, jsonl_seed(SEED)).expect("seeded");
-    assert!(!record.beside.is_empty(), "the claim-backed put binds key custody");
+    let record = seed_into(
+        dir.path(),
+        "door-custody-at",
+        FakeClock::vault_config,
+        jsonl_seed(SEED),
+    )
+    .expect("seeded");
+    assert!(
+        !record.beside.is_empty(),
+        "the claim-backed put binds key custody"
+    );
     let error = FixtureVault::at(dir.path()).expect_err("a custody-bound seed is not copyable");
     assert!(error.to_string().contains("beside the vault"), "{error}");
 }
@@ -76,9 +97,17 @@ fn a_seeded_directory_that_binds_key_custody_is_never_copied() {
 #[test]
 fn a_seeded_directory_with_nothing_beside_the_vault_is_copied() {
     let dir = tempfile::tempdir().expect("temp dir");
-    let record = seed_into(dir.path(), "door-bare-at", FakeClock::vault_config, |_, _| Ok(())).expect("seeded");
+    let record = seed_into(
+        dir.path(),
+        "door-bare-at",
+        FakeClock::vault_config,
+        |_, _| Ok(()),
+    )
+    .expect("seeded");
     assert!(record.beside.is_empty(), "{:?}", record.beside);
-    let fixture = FixtureVault::at(dir.path()).expect("readable").expect("a record");
+    let fixture = FixtureVault::at(dir.path())
+        .expect("readable")
+        .expect("a record");
     let copy = fixture.copy().expect("copy");
     copy.open().expect("the copy opens");
 }
@@ -87,12 +116,20 @@ fn a_seeded_directory_with_nothing_beside_the_vault_is_copied() {
 fn a_seed_line_that_fails_names_its_line() {
     let seed = "{\"verb\": \"vault.no_such_verb\", \"input\": {}}\n";
     let error = TestVault::seeded("door-bad-seed", jsonl_seed(seed)).expect_err("refused");
-    assert!(error.to_string().contains("seed line 1 (vault.no_such_verb)"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("seed line 1 (vault.no_such_verb)"),
+        "{error}"
+    );
 }
 
 #[test]
 fn an_unknown_verb_is_refused_at_the_door() {
-    let copy = FixtureVault::empty(&fixture_cache!()).expect("fixture").copy().expect("copy");
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("fixture")
+        .copy()
+        .expect("copy");
     let vault = copy.open().expect("open");
     let owner = door::owner(&vault).expect("the owner");
     assert!(door::invoke(&owner, "vault.no_such_verb", json!({})).is_err());

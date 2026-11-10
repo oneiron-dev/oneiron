@@ -28,10 +28,8 @@ pub const PROMPT_FIELDS: [&str; 7] = [
 /// The prompt fields one level down, by `(parent, child)`: Anthropic's output
 /// schema (`output_config.format`) and the typed request's response format
 /// (`envelope.response_format`). Each lands in the prompt as `parent.child`.
-pub const NESTED_PROMPT_FIELDS: [(&str, &str); 2] = [
-    ("output_config", "format"),
-    ("envelope", "response_format"),
-];
+pub const NESTED_PROMPT_FIELDS: [(&str, &str); 2] =
+    [("output_config", "format"), ("envelope", "response_format")];
 
 const DIGEST_DOMAIN: &[u8] = b"oneiron-testkit/prompt-digest/v1\0";
 

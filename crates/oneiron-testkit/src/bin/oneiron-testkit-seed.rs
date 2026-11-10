@@ -30,9 +30,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let name = seed
-        .file_stem()
-        .map_or_else(|| "seed".to_owned(), |stem| stem.to_string_lossy().into_owned());
+    let name = seed.file_stem().map_or_else(
+        || "seed".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
     match seed_into(&out, &name, FakeClock::vault_config, jsonl_seed(&text)) {
         Ok(record) => {
             println!(

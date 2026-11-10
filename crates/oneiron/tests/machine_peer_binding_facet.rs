@@ -53,7 +53,12 @@ fn actor_claims(vault: &Vault, actor: WriteActor, predicate: &str) -> Vec<ClaimB
         .claims_for_subject(&actor.entity_ref())
         .expect("actor claim ids")
         .into_iter()
-        .map(|id| vault.get_claim(&id).expect("claim read").expect("stored claim"))
+        .map(|id| {
+            vault
+                .get_claim(&id)
+                .expect("claim read")
+                .expect("stored claim")
+        })
         .filter(|body| body.predicate == predicate)
         .collect()
 }
