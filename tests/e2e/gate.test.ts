@@ -1778,7 +1778,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     await engine.artifacts.json("muse-gate02-standing.json", {
       handle, grant_ref: standingGrant,
       answered_receipt_ref: standingAnswered.receipt_ref,
-      registry_row: standingRow, audit_entry_ref: grantAudit.entry_ref,
+      registry_row: standingRow, audit_receipt_ref: grantAudit.receipt_ref,
     });
 
     // Reuse inside the bound hydrates at once and mints nothing new.
@@ -4749,7 +4749,9 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     expect(refusalReceipt.actor_ref).toBe(agent.principalRef);
     expect(refusalReceipt.verb).toBe("vault.consent.create_standing_grant");
     if (refusalReceipt.outcome === "ok") throw new Error("MUSE-GATE-08 self-grant receipt reads ok");
-    expect(refusalReceipt.outcome.refused.code).toBe(agentGrantAttemptError.error?.code);
+    const refusalCode = agentGrantAttemptError.error?.code;
+    if (typeof refusalCode !== "string") throw new Error("MUSE-GATE-08 self-grant refusal carried no error code");
+    expect(refusalReceipt.outcome.refused.code).toBe(refusalCode);
     const registryAfterAgentAttempt = await museGate08ReadRegistryRefs(true);
     expect([...registryAfterAgentAttempt].filter(
       (ref) => !registryAfterInferred.has(ref))).toEqual([]);
