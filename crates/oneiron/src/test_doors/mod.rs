@@ -7,6 +7,7 @@
 pub mod consolidation;
 pub mod derivation_floor;
 pub mod derive;
+pub mod derive_verbs;
 pub mod live_run_claim_put;
 pub mod run_hold;
 pub mod steward;

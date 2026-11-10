@@ -103,6 +103,10 @@ pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_
 // engine reads its token where the verdict answers.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::derive_verdict::DeriveRefusal;
+// An ordinary agent's derive rows are written only by the integration
+// tests' doors (untangle 6.7d).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dreamer_grant::body_with_agent_derive_rows;
 // The landing rows' reference names the X02 grant a verdict stood on before
 // the Dreamer held a Steward grant (6.3b); only the lib tests read it here.
 #[cfg(test)]
