@@ -259,7 +259,10 @@ export type SdkOperation =
   | { readonly verb:"selfActor" }
   | { readonly verb:"people";readonly input:FacadeInput<"vault.people.list"> }
   | { readonly verb:"neighbors";readonly input:FacadeInput<"vault.neighbors"> }
-  | { readonly verb:"get";readonly input:FacadeInput<"vault.get"> };
+  | { readonly verb:"get";readonly input:FacadeInput<"vault.get"> }
+  /** Any generated facade method, by its dotted SDK path exactly as the package spells it
+   * (`vault.agents.create`, `reveal.describe`); the driver converts no casing. */
+  | { readonly verb:"facade";readonly path:string;readonly input:unknown };
 export interface PythonWitnessTurn {
   readonly conversation_ref:string;readonly turn_ref?:string;readonly occurred_at?:number;
   readonly messages:readonly {readonly id?:string;readonly author:"user"|"companion"|"system";readonly message_type:string;readonly content:string;readonly order:number}[];
@@ -279,6 +282,13 @@ import {pathToFileURL} from 'node:url';
 const p=JSON.parse(readFileSync(0,'utf8'));
 const {Oneiron}=await import(pathToFileURL(p.module).href);
 function error(e){return {name:e.name,code:e.code,message:e.message,suggestions:e.suggestions,wrongRoot:e.wrongRoot,hook:e.hook}}
+function facade(m,path,input){
+ const names=path.split('.');let parent=m;
+ for(const name of names.slice(0,-1))parent=parent==null?undefined:parent[name];
+ const method=parent==null?undefined:parent[names[names.length-1]];
+ if(typeof method!=='function')throw new Error('Unknown SDK facade path '+path);
+ return method.call(parent,input);
+}
 function trace(index,verb,phase,code){
  if(!p.trace?.root)return;
  mkdirSync(p.trace.root,{recursive:true,mode:0o700});
@@ -295,7 +305,7 @@ try {
    switch(o.verb){case 'witness':value=m.vault.witness(o.input);break;case 'claimUpsert':value=m.vault.claims.upsert(o.input);break;
     case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
     case 'selfActor':value=m.self.actor({});break;case 'people':value=m.vault.people.list(o.input);break;case 'neighbors':value=m.vault.neighbors(o.input);break;
-    case 'get':value=m.vault.get(o.input);break;default:throw new Error('Unknown SDK operation')}
+    case 'get':value=m.vault.get(o.input);break;case 'facade':value=facade(m,o.path,o.input);break;default:throw new Error('Unknown SDK operation')}
    trace(index,o.verb,'complete');return {ok:true,value};
   }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e)}}});
   process.stdout.write(JSON.stringify(results));

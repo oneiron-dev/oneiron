@@ -53,19 +53,21 @@ fn a_read_holder_reads_the_goal_and_others_are_refused() {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = define_agent(&vault).expect("an agent");
 
-    // The owner reads it.
-    let answer = goal_get(&vault, owner, EdgeActorClass::Human, project).expect("the owner reads");
-    let goal = goal_text(&answer)
-        .expect("the owner sees the goal")
-        .to_owned();
-
     // An agent with no grant is refused.
     assert_refused(goal_get(&vault, agent, EdgeActorClass::Agent, project));
 
-    // With a Steward grant naming `read`, it reads the same goal.
+    // With a Steward grant naming `read`, it reads the goal. This is the
+    // first read the test expects to succeed, so on a base where the verb
+    // is the owner's alone the test fails here, at the grant.
     stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB]).expect("a read grant");
     let answer = goal_get(&vault, agent, EdgeActorClass::Agent, project)
         .expect("a `read` holder reads the goal");
+    let goal = goal_text(&answer)
+        .expect("the holder sees the goal")
+        .to_owned();
+
+    // The owner reads the same goal.
+    let answer = goal_get(&vault, owner, EdgeActorClass::Human, project).expect("the owner reads");
     assert_eq!(goal_text(&answer), Some(goal.as_str()));
 
     // The Coach reads it through its own grant, and the grant is checked at
