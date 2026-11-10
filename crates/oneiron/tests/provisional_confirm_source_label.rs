@@ -30,7 +30,7 @@ use oneiron::access_grant::{
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
 };
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
@@ -49,10 +49,12 @@ const HIDDEN_WORDS: &str = "Mirela told Ada about the move.";
 const OPEN_WORDS: &str = "Zora arrived.";
 
 /// A tagger that tags each name it knows as a `PERSON`, in every MESSAGE it
-/// is given.
+/// is given; with `pronouns`, also each "She" as a `PRONOUN` coreferent with
+/// the nearest name before it, in any MESSAGE of the turn.
 struct Names {
     model: ModelId,
     known: &'static [&'static str],
+    pronouns: bool,
 }
 
 impl ExtractionEncoder for Names {
@@ -79,14 +81,38 @@ impl ExtractionEncoder for Names {
                     });
                 }
             }
+            if self.pronouns
+                && let Some(start) = text.find("She")
+            {
+                spans.push(NerSpan {
+                    message,
+                    start,
+                    end: start + 3,
+                    label: "PRONOUN".to_owned(),
+                    confidence: 0.9,
+                });
+            }
         }
         spans.sort_by_key(|span| (span.message, span.start));
+        let mut links = Vec::new();
+        let mut last_name = None;
+        for (index, span) in spans.iter().enumerate() {
+            if span.label == "PERSON" {
+                last_name = Some(index);
+            } else if let Some(antecedent) = last_name {
+                links.push(CorefLink {
+                    span: index,
+                    antecedent,
+                    confidence: None,
+                });
+            }
+        }
         EncoderAttempt {
             execution: None,
             panicked: false,
             result: Ok(EncoderOutput {
                 spans,
-                links: Vec::new(),
+                links,
                 vad: None,
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
@@ -129,6 +155,8 @@ struct Fixture {
     insider: EntityId,
     /// The vault's owner.
     owner: EntityId,
+    /// R.
+    relationship: EntityId,
     ada: EntityId,
     turn: EntityId,
     shared_message: EntityId,
@@ -243,6 +271,7 @@ fn tagged_fixture() -> Fixture {
         Arc::new(Names {
             model: "fixture/names@v1".parse().expect("model id"),
             known: &["Ada", "Mirela", "Zora"],
+            pronouns: false,
         }),
     )
     .expect("reconciler")
@@ -256,6 +285,7 @@ fn tagged_fixture() -> Fixture {
         outsider,
         insider,
         owner,
+        relationship,
         ada,
         turn,
         shared_message,
@@ -343,6 +373,7 @@ impl Fixture {
             "FIXTURE: the confirmed entity is a stored row"
         );
     }
+}
 
 /// A provisional entity named only in the R MESSAGE, once confirmed, is a
 /// PERSON the outsider does not read: its name is the R MESSAGE's words.
@@ -387,5 +418,79 @@ fn a_provisional_confirmed_from_an_open_message_is_read_by_every_member() {
     assert!(
         fixture.outsider_reads(&zora) && fixture.reads(fixture.insider, &zora),
         "every member reads the PERSON named in an open MESSAGE"
+    );
+}
+
+/// A pronoun in an open MESSAGE that corefers with a name read only in the R
+/// MESSAGE does not open the name: its words do not say it (review of the
+/// fix). Confirmed, the PERSON is still not read outside R.
+#[test]
+fn a_pronoun_in_an_open_message_does_not_open_a_name_read_only_in_a_relationship() {
+    let fixture = tagged_fixture();
+    let mirela = fixture.minted_in(fixture.hidden_message);
+
+    // A second turn: "Mirela called." in R, then "She is fine." open.
+    let turn = EntityId::now();
+    let (r_message, open_message) = (EntityId::now(), EntityId::now());
+    let message = |id: EntityId, order: u32, words: &str, metadata| WitnessMessage {
+        id: Some(id.to_hex()),
+        author: WitnessAuthor::User,
+        message_type: "dialogue".to_owned(),
+        content: words.to_owned(),
+        parts: None,
+        metadata,
+        is_visible: true,
+        order,
+        quote: None,
+    };
+    fixture
+        .vault
+        .memory(fixture.speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![
+                message(
+                    r_message,
+                    0,
+                    "Mirela called.",
+                    Some(serde_json::json!({"rel": fixture.relationship.to_hex()})),
+                ),
+                message(open_message, 1, "She is fine.", None),
+            ],
+            occurred_at: 20,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("the second turn");
+    TaggingReconciler::new(
+        Arc::clone(&fixture.vault),
+        Arc::new(Names {
+            model: "fixture/names@v1".parse().expect("model id"),
+            known: &["Ada", "Mirela", "Zora"],
+            pronouns: true,
+        }),
+    )
+    .expect("reconciler")
+    .drain_once()
+    .expect("the second tagging pass");
+    let second = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("FIXTURE: the second turn's tags are saved");
+    assert!(
+        second
+            .mentions
+            .iter()
+            .any(|mention| mention.message == open_message
+                && mention.link.entities().contains(&mirela)),
+        "FIXTURE: the open MESSAGE's pronoun names Mirela"
+    );
+
+    fixture.confirm(&mirela);
+    assert!(
+        !fixture.outsider_reads(&mirela),
+        "LEAK: an open pronoun opened a name read only in R's MESSAGEs"
     );
 }
