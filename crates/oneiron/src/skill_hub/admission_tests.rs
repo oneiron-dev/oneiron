@@ -1875,7 +1875,7 @@ fn active_hub_sync_proposes_changed_bytes_until_the_scored_admission_door() -> R
 }
 
 #[test]
-fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Result<()> {
+fn native_source_metadata_lands_active_after_fit_with_revocable_provenance() -> Result<()> {
     let fixture = Fixture::new();
     let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
     let mut native = package("fixture.native", "native-revision", "check result");
@@ -1897,23 +1897,21 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
         fixture
             .vault
             .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
-    assert_eq!(
-        fixture
-            .vault
-            .admit_marketplace_skill(&ask, &NoReplay, at(21), 21)?,
-        HubAdmissionDisposition::PendingConsent
-    );
-    fixture
-        .vault
-        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    assert_eq!(fixture.vault.skill_hub_provenance_count(&id)?, 1);
     let HubAdmissionDisposition::Ruled(receipt) =
         fixture
             .vault
             .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
     else {
-        panic!("consented native source")
+        panic!("an unused source needs fit, not an extra owner hold")
     };
     assert!(receipt.accepted);
+    assert!(receipt.after > receipt.before);
+    assert_eq!(receipt.hub_id, source.hub_id.to_hex());
+    assert_eq!(receipt.hub_ref, source.ref_string);
+    assert_eq!(receipt.publisher, publisher.identity());
+    assert_eq!(receipt.publisher_grant, publisher.grant_ref());
+    assert_eq!(fixture.vault.hub_admission_receipt(&id)?, Some(*receipt));
     assert_eq!(
         fixture
             .vault
@@ -1922,6 +1920,33 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
             .lifecycle_status,
         SkillLifecycle::Active
     );
+    {
+        let txn = fixture.vault.store.env.read_txn()?;
+        assert!(crate::consent::standing_grant_is_active_in_txn(
+            &fixture.vault.store,
+            &txn,
+            publisher.grant_ref(),
+        )?);
+    }
+    fixture
+        .vault
+        .revoke_skill_publisher(&fixture.owner, publisher.identity(), source.hub_id)?;
+    {
+        let txn = fixture.vault.store.env.read_txn()?;
+        assert!(!crate::consent::standing_grant_is_active_in_txn(
+            &fixture.vault.store,
+            &txn,
+            publisher.grant_ref(),
+        )?);
+    }
+    assert!(
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)
+            .is_err(),
+        "the source's offer grant is revocable"
+    );
+    assert_eq!(fixture.vault.skill_hub_provenance_count(&id)?, 1);
     Ok(())
 }
 
@@ -2388,12 +2413,10 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     Ok(())
 }
 
-/// Greptile #1336 repro: dropping the per-merge approve-once must not drop a
-/// review the scan requires. With the dial at `Low`, a delta that keeps the
-/// base's admitted tool scans `ProposedRequired`. It widens nothing, and the
-/// merge still waits for the owner.
+/// GATE-23: scanner findings stay visible on a same-permission update;
+/// they are signals, not an extra owner hold (ARCH-0053 r4b-hubs-h).
 #[test]
-fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
+fn shared_merge_the_scan_flags_lands_without_owner_hold() -> Result<()> {
     let fixture = Fixture::new();
     let delta = widened_package();
     fixture.vault.with_write_txn(|txn| {
@@ -2408,6 +2431,20 @@ fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
         super::ScanRiskLevel::Low,
     )?;
     let merged = submit_fixture_delta(&fixture, &delta)?;
+    let content_hash = delta.content_hash()?;
+    let scan_rows = fixture
+        .vault
+        .skill_scan_verdicts_for_content_hash(content_hash)?;
+    assert!(scan_rows.iter().any(|row| {
+        map_text(&row.value, "provider") == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
+            && map_text(&row.value, "riskLevel") == Some("low")
+    }));
+    assert_eq!(
+        crate::skill_scan::scan_gate_for_activation(&fixture.vault, content_hash)?,
+        crate::skill_scan::ActivationPosture::ProposedRequired {
+            risk: ScanRiskLevel::Low
+        }
+    );
     let ask = fixture.vault.prepare_shared_skill_merge(
         merged,
         fixture.resident,
@@ -2420,32 +2457,33 @@ fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
             .expect("candidate")
             .lifecycle_status)
     };
-    assert_eq!(
-        fixture.vault.merge_shared_skill_delta(
-            &ask,
-            &Useful(true),
-            &Replay::new(true),
-            at(21),
-            21
-        )?,
-        SharedSkillMergeDisposition::PendingConsent
-    );
-    assert_eq!(lifecycle()?, SkillLifecycle::Candidate);
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
         &Replay::new(true),
-        at(22),
-        22,
+        at(21),
+        21,
     )?
     else {
-        panic!("the owner answered the review");
+        panic!("a scanner flag must not park a same-permission update");
     };
     assert!(receipt.accepted);
     assert_eq!(lifecycle()?, SkillLifecycle::Active);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("update")
+            .content_hash,
+        Some(content_hash)
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .skill_scan_verdicts_for_content_hash(content_hash)?,
+        scan_rows,
+        "the update keeps its scanner signal after activation"
+    );
     Ok(())
 }
 

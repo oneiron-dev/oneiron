@@ -651,11 +651,18 @@ fn fork_hash_binds_actual_parent_at_fork_not_current_parent_at_export() -> Resul
     Ok(())
 }
 
+/// CONS-06 (owner ruling 2026-10-17, ARCH-0038 #export-credentials): the
+/// Owner's whole-vault export keeps source-file credentials byte-equal to
+/// stored ("all your data is all your data"), while scoped and contact
+/// exports still null them. The redaction manifest is checked on the scoped
+/// side, where redaction still happens.
 #[test]
-fn source_file_credentials_are_nulled_and_redaction_manifest_is_checked() -> Result<()> {
+fn owner_whole_vault_keeps_source_credentials_that_scoped_and_contact_exports_null() -> Result<()> {
+    use std::io::{Read as _, Seek as _};
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    // The real historical hub door can hold a scanner-flagged Candidate; export
-    // still cannot release that file, even when its secret has an unfamiliar shape.
+    // The real historical hub door can hold a scanner-flagged Candidate; the
+    // Owner's own archive keeps that file's bytes, even when its secret has
+    // an unfamiliar shape.
     let mut tainted = package();
     tainted.files.push(HubFile::new(
         "scripts/private.py",
@@ -672,53 +679,240 @@ fn source_file_credentials_are_nulled_and_redaction_manifest_is_checked() -> Res
         time(),
         130,
     )?;
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let export = vault.export_whole_vault(format)?;
-        export.manifest().validate(format)?;
-        let text = std::str::from_utf8(export.bytes()).expect("bundle fixture");
-        assert!(!text.contains("residual-file-credential"));
-        assert!(!text.contains("residual-signature"));
-        if format != PackFormat::Json {
+    // The Owner's whole-vault export keeps every source file byte-equal to
+    // stored, and names no redaction for the skill.
+    let export = vault.export_whole_vault(true)?;
+    export.manifest().validate()?;
+    assert!(export.manifest().secrets_included);
+    let document = vault.read_whole_vault_archive(export.bytes())?;
+    let tree = document
+        .skills
+        .iter()
+        .find(|bundle| bundle.entity.id == id.to_hex())
+        .expect("skill bundle")
+        .source_tree
+        .as_ref()
+        .expect("skill source tree");
+    assert_eq!(
+        tree.content_hash,
+        Some(tainted.content_hash()?.to_hex()),
+        "the owner's archive keeps the skill's exact source identity"
+    );
+    for want in &tainted.files {
+        let got = tree
+            .files
+            .iter()
+            .find(|file| file.path == want.path)
+            .expect("carried source file");
+        assert_eq!(
+            got.content,
+            ExportSourceContent::Text(
+                String::from_utf8(want.content.clone()).expect("UTF-8 fixture")
+            ),
+            "the owner's archive keeps {} byte-equal",
+            want.path
+        );
+        assert!(got.sha256.is_some(), "a kept file keeps its proof");
+    }
+    assert_eq!(tree.files.len(), tainted.files.len());
+    assert!(
+        !document
+            .manifest
+            .bundle_omissions
+            .iter()
+            .any(|omission| omission.entity_id == id.to_hex()),
+        "the owner's archive names no redaction for its skill"
+    );
+    assert!(
+        !document
+            .manifest
+            .import_refusals
+            .iter()
+            .any(|refusal| matches!(
+                refusal,
+                ExportImportRefusal::Entity { entity_id, .. } if entity_id == &id.to_hex()
+            )),
+        "the owner's archive refuses nothing of its skill"
+    );
+    // The owner's archive restores the skill's exact source on import.
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    target.import_whole_vault_archive(export.bytes())?;
+    let rtxn = target.store.env.read_txn()?;
+    let restored = target
+        .export_hub_package_in_txn(&rtxn, &id)?
+        .expect("restored source package");
+    let mut got = restored.export_files()?;
+    let mut want = tainted.export_files()?;
+    got.sort_by(|a, b| a.path.cmp(&b.path));
+    want.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(got, want, "import restores the exact source files");
+    drop(rtxn);
+    // A scoped records archive for an off-device reader still nulls the
+    // credential-bearing files, keeps the safe ones exact, and names the
+    // redaction in its manifest.
+    let contact = EntityId::now();
+    let reader =
+        crate::write_envelope::WriteActor::new(contact, crate::edge::EdgeActorClass::Human);
+    let mut ids = BTreeSet::new();
+    ids.insert(id);
+    let (mut spool, receipt, _positions) = vault.export_records_archive(
+        &ids,
+        reader,
+        |_txn| Ok::<_, Error>(()),
+        vault.archive_spool_file()?,
+    )?;
+    assert!(
+        receipt
+            .manifest()
+            .bundle_omissions
+            .iter()
+            .any(|omission| omission.entity_id == id.to_hex()
+                && omission.reason == BundleOmissionReason::SkillSourceRedacted),
+        "the scoped manifest names the redaction"
+    );
+    assert!(
+        receipt
+            .manifest()
+            .import_refusals
+            .iter()
+            .any(|refusal| matches!(
+                refusal,
+                ExportImportRefusal::Entity { entity_id, reason }
+                    if entity_id == &id.to_hex()
+                        && *reason == ImportRefusalReason::RedactedSource
+            )),
+        "the scoped manifest refuses the redacted source"
+    );
+    spool.seek(std::io::SeekFrom::Start(0))?;
+    let mut scoped_bytes = Vec::new();
+    spool.read_to_end(&mut scoped_bytes)?;
+    let scoped = vault.read_whole_vault_archive(&scoped_bytes)?;
+    let scoped_tree = scoped
+        .skills
+        .iter()
+        .find(|bundle| bundle.entity.id == id.to_hex())
+        .expect("scoped skill bundle")
+        .source_tree
+        .as_ref()
+        .expect("scoped source tree");
+    assert_eq!(
+        scoped_tree.content_hash, None,
+        "a redacted tree claims no identity"
+    );
+    for path in ["scripts/private.py", "signature.json"] {
+        let member = scoped_tree
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .expect("redacted member");
+        assert_eq!(member.content, ExportSourceContent::Redacted);
+        assert_eq!(member.sha256, None);
+    }
+    for path in ["SKILL.md", "scripts/count.py", "references/readme.md"] {
+        let want = tainted
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .expect("fixture file");
+        let got = scoped_tree
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .expect("carried safe file");
+        assert_eq!(
+            got.content,
+            ExportSourceContent::Text(
+                String::from_utf8(want.content.clone()).expect("UTF-8 fixture")
+            ),
+            "the scoped archive keeps {path} byte-equal"
+        );
+    }
+    // No scoped record row carries a credential byte, end to end.
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(scoped_bytes.as_slice()))
+        .map_err(|_| Error::InvariantViolation("scoped archive zip"))?;
+    for index in 0..zip.len() {
+        let mut member = zip
+            .by_index(index)
+            .map_err(|_| Error::InvariantViolation("scoped archive member"))?;
+        if !member.name().starts_with("records/") {
             continue;
         }
-        let mut document = vault.read_whole_vault_json(export.bytes())?;
+        let name = member.name().to_owned();
+        let mut text = String::new();
+        member
+            .read_to_string(&mut text)
+            .map_err(|_| Error::InvariantViolation("scoped archive member"))?;
         assert!(
-            document
-                .manifest
-                .bundle_omissions
-                .iter()
-                .any(|o| o.entity_id == id.to_hex()
-                    && o.reason == BundleOmissionReason::SkillSourceRedacted)
+            !text.contains("residual-file-credential"),
+            "scoped record carries no credential: {name}"
         );
-        assert_eq!(
-            document
-                .skills
-                .iter()
-                .find(|b| b.entity.id == id.to_hex())
-                .expect("bundle fixture")
-                .source_tree
-                .as_ref()
-                .expect("bundle fixture")
-                .content_hash,
-            None
-        );
-        document.manifest.import_refusals.clear();
         assert!(
-            vault
-                .read_whole_vault_json(&serde_json::to_vec(&document).expect("bundle fixture"))
-                .is_err()
+            !text.contains("residual-signature"),
+            "scoped record carries no credential: {name}"
         );
-        let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
-        assert!(target.import_whole_vault_json(export.bytes()).is_err());
-        assert!(target.get_skill_record(&id)?.is_none());
     }
+    // A redacted source still cannot import: the refusal from the old test,
+    // moved under the scope where redaction still happens.
+    let (_scoped_dir, scoped_vault) = open_test_vault_with(VaultConfig::default());
+    assert!(
+        scoped_vault
+            .import_whole_vault_archive(&scoped_bytes)
+            .is_err()
+    );
+    assert!(scoped_vault.get_skill_record(&id)?.is_none());
+    // The redaction manifest is checked: an archive whose manifest hides the
+    // redaction is rejected.
+    let tampered = archive_without_bundle_omissions(&scoped_bytes)?;
+    assert!(vault.read_whole_vault_archive(&tampered).is_err());
+    // A contact's shareable bundle of the skill row carries no credential bytes.
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+            .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
+    let emitted = bundle["entities"][0]["body"].to_string();
+    assert!(
+        !emitted.contains("residual-file-credential"),
+        "contact bundle: {emitted}"
+    );
+    assert!(
+        !emitted.contains("residual-signature"),
+        "contact bundle: {emitted}"
+    );
     Ok(())
+}
+
+/// Copies a whole-vault archive member by member, with `bundle_omissions`
+/// cleared from its manifest: the rows still declare the redaction.
+fn archive_without_bundle_omissions(bytes: &[u8]) -> Result<Vec<u8>> {
+    use std::io::{Read as _, Write as _};
+    let invalid = |what: &str| Error::InvalidConfig(format!("tampered fixture archive: {what}"));
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid("unreadable"))?;
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::FileOptions::default();
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index).map_err(|_| invalid("unreadable"))?;
+        let name = member.name().to_owned();
+        if name.ends_with('/') {
+            continue;
+        }
+        let mut content = Vec::new();
+        member
+            .read_to_end(&mut content)
+            .map_err(|_| invalid("unreadable"))?;
+        if name == VAULT_ARCHIVE_MANIFEST_PATH {
+            let mut manifest: WholeVaultDocumentManifest =
+                serde_json::from_slice(&content).map_err(|_| invalid("manifest"))?;
+            manifest.bundle_omissions.clear();
+            content = serde_json::to_vec(&manifest).map_err(|_| invalid("manifest"))?;
+        }
+        out.start_file(name.as_str(), options)
+            .map_err(|_| invalid("unwritable"))?;
+        out.write_all(&content).map_err(|_| invalid("unwritable"))?;
+    }
+    Ok(out
+        .finish()
+        .map_err(|_| invalid("unwritable"))?
+        .into_inner())
 }
 
 #[test]
