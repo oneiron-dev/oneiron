@@ -299,6 +299,58 @@ pub fn keep_only_the_dreamer_ceiling(vault: &Vault) -> Result<()> {
     })
 }
 
+/// Revokes every live MACHINE binding of base agent `agent` with the host
+/// root's signed `RevokeActor`, as a host that withdraws the agent's
+/// delegation does. Its Steward grant stays as it stands. Returns how many
+/// bindings it revoked.
+///
+/// # Errors
+///
+/// The vault's or the authority log's.
+pub fn revoke_base_agent_bindings(vault: &Vault, agent: EntityId) -> Result<usize> {
+    use crate::authority::{ActorBindingStatus, AuthorityOp};
+    let issuer = crate::test_support::test_host_issuer();
+    let fold = vault.authority_fold()?;
+    let live: Vec<_> = fold
+        .actor_bindings
+        .iter()
+        .filter(|(key, binding)| {
+            binding.actor_ref == agent
+                && binding.status == ActorBindingStatus::Active
+                && fold.roster.get(*key).is_some_and(|device| !device.revoked)
+        })
+        .map(|(key, binding)| (key.clone(), binding.epoch))
+        .collect();
+    for (authority_key, epoch) in &live {
+        vault.log_host_op_for_test(
+            &issuer,
+            AuthorityOp::RevokeActor {
+                authority_key: authority_key.clone(),
+                epoch: *epoch,
+            },
+        )?;
+    }
+    Ok(live.len())
+}
+
+/// Whether a read key built for engine actor `actor` by
+/// `ScopedReadActorKey::with_actor_class`, the constructor the engine's
+/// readers outside `for_engine_actor` use, reads `entity` now. A refused
+/// read counts as not read.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn class_key_reads(vault: &Vault, actor: EntityId, entity: EntityId) -> Result<bool> {
+    let key = crate::claim::ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+        .ok_or_else(|| Error::InvalidConfig("engine actor read key".into()))?;
+    let read = vault.scoped_read(key);
+    let txn = vault.store.env.read_txn()?;
+    Ok(read
+        .entity_raw_live_in(&txn, &entity)
+        .is_ok_and(|row| row.is_some()))
+}
+
 /// Where `agent`'s Steward grant stands, or `None` before any mint.
 ///
 /// # Errors
