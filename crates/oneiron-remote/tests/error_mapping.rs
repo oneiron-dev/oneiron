@@ -134,7 +134,7 @@ fn dynamic_binding_verbs_refuse_malformed_success_bodies() {
             "cancel",
             serde_json::json!({"task_ref": "11111111111111111111111111111111"}),
         ),
-        ("rooms.list", serde_json::json!({})),
+        ("vault.rooms.list", serde_json::json!({})),
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").expect("loopback peer");
         let address = listener.local_addr().unwrap();

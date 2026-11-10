@@ -299,13 +299,15 @@ fn overlays_stay_editable_and_are_painted_only_at_export() {
             ("width", Value::F32(width)),
         ])
     };
-    let rect = map(vec![
-        ("type", "rect".into()),
-        ("x", 4.into()),
-        ("y", 4.into()),
-        ("w", 10.into()),
-        ("h", 10.into()),
-    ]);
+    let rect = map(vec![(
+        "rect",
+        map(vec![
+            ("x", 4.into()),
+            ("y", 4.into()),
+            ("w", 10.into()),
+            ("h", 10.into()),
+        ]),
+    )]);
     let annotated = call(
         &organ,
         VERB_ANNOTATE,
@@ -328,11 +330,13 @@ fn overlays_stay_editable_and_are_painted_only_at_export() {
     assert!(overlay.clipped);
     assert!(matches!(overlay.shape, Shape::Rect { x, y, .. } if x == 0.0 && y == 0.0));
 
-    let arrow = map(vec![
-        ("type", "arrow".into()),
-        ("from", map(vec![("x", 1.into()), ("y", 6.into())])),
-        ("to", map(vec![("x", 6.into()), ("y", 1.into())])),
-    ]);
+    let arrow = map(vec![(
+        "arrow",
+        map(vec![
+            ("from", map(vec![("x", 1.into()), ("y", 6.into())])),
+            ("to", map(vec![("x", 6.into()), ("y", 1.into())])),
+        ]),
+    )]);
     let both = body(
         &call(
             &organ,
@@ -498,16 +502,16 @@ fn an_edit_never_returns_a_body_the_next_call_refuses() {
     let far = map(vec![
         (
             "shape",
-            map(vec![
-                ("type", "freehand".into()),
-                (
+            map(vec![(
+                "freehand",
+                map(vec![(
                     "points",
                     Value::Array(vec![map(vec![
                         ("x", Value::F32(16_777_216.0)),
                         ("y", Value::F32(0.0)),
                     ])]),
-                ),
-            ]),
+                )]),
+            )]),
         ),
         (
             "stroke",
