@@ -20,13 +20,22 @@ use super::{ADMISSION, ARM, WAKE};
 const TIMER_DUE: SideTable<(u64, EntityId, EntityId), (), Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_TIMER_DUE);
 /// Each idle or feed program, keyed by its occurrence kind's tag, then the actor and the
-/// registration, so a release reads only the programs it releases.
-const TRIGGER: SideTable<([u8; 1], EntityId, EntityId), (), Named> =
+/// registration, so a release reads only the programs it releases. A feed program's row keeps
+/// where its wake scan stands.
+const TRIGGER: SideTable<([u8; 1], EntityId, EntityId), TriggerRow, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_TRIGGER);
+
+/// An idle or feed program's trigger row.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct TriggerRow {
+    /// A feed program's wake scan, kept between releases (review #6982).
+    #[serde(default)]
+    feed_scan: crate::feeds::FeedWakeScan,
+}
 
 /// How many due timers one write releases; the release takes the next batch until none is due.
 const RELEASE_BATCH: usize = 64;
-/// How many drain batches one pass admits after it recorded wakes; the next pass admits the rest.
+/// How many drain batches one pass admits; the next pass admits the rest.
 const DRAIN_BATCHES: usize = 8;
 /// The shortest repeat a timer program may ask for.
 const MIN_TIMER_EVERY_SECS: u64 = 60;
@@ -85,7 +94,12 @@ pub(super) fn index_trigger_in_txn(
             TIMER_DUE.put(vault, txn, &(due, key.0, key.1), &())
         }
         (Some(OccurrenceKind::Timer), None) | (None, _) => Ok(()),
-        (Some(kind), _) => TRIGGER.put(vault, txn, &([kind.tag()], key.0, key.1), &()),
+        (Some(kind), _) => TRIGGER.put(
+            vault,
+            txn,
+            &([kind.tag()], key.0, key.1),
+            &TriggerRow::default(),
+        ),
     }
 }
 
@@ -275,7 +289,19 @@ impl Vault {
                     Some(authority) => authority.reader_key_in_txn(self, &txn)?,
                     None => None,
                 };
-                armed.push((actor, registration, key.map(|key| (subscription, key))));
+                let prior = TRIGGER
+                    .get(
+                        self,
+                        &txn,
+                        &([OccurrenceKind::Feed.tag()], actor, registration),
+                    )?
+                    .unwrap_or_default()
+                    .feed_scan;
+                armed.push((
+                    actor,
+                    registration,
+                    key.map(|key| (subscription, key, prior)),
+                ));
             }
             armed
         };
@@ -283,29 +309,33 @@ impl Vault {
             return Ok(0);
         }
         // Each mark is read under the program's own lane, outside the write that records it.
-        let mut marks = Vec::with_capacity(armed.len());
+        let mut scans = Vec::with_capacity(armed.len());
         for (actor, registration, reader) in armed {
-            let mark = match reader {
-                Some((subscription, key)) => {
-                    crate::feeds::feed_wake_mark(self, &self.scoped_read(key), subscription)?
-                }
+            let scanned = match reader {
+                Some((subscription, key, prior)) => crate::feeds::feed_wake_mark(
+                    self,
+                    &self.scoped_read(key),
+                    subscription,
+                    &prior,
+                )?,
                 None => None,
             };
-            marks.push((actor, registration, mark));
+            scans.push((actor, registration, scanned));
         }
         self.with_write_txn_grouped(|txn| {
             let mut recorded = 0;
-            for (actor, registration, mark) in &marks {
-                let Some(arming) = ARM.get(self, &*txn, &(*actor, *registration))? else {
-                    TRIGGER.delete(
-                        self,
-                        txn,
-                        &([OccurrenceKind::Feed.tag()], *actor, *registration),
-                    )?;
+            for (actor, registration, scanned) in scans {
+                let key = ([OccurrenceKind::Feed.tag()], actor, registration);
+                let Some(arming) = ARM.get(self, &*txn, &(actor, registration))? else {
+                    TRIGGER.delete(self, txn, &key)?;
                     continue;
                 };
                 // A program whose authority no longer stands, or whose lane is shown nothing new,
                 // owes nothing; a subscription gone since arming is refused at admission.
+                let Some((mark, feed_scan)) = scanned else {
+                    continue;
+                };
+                TRIGGER.put(self, txn, &key, &TriggerRow { feed_scan })?;
                 let Some(mark) = mark else {
                     continue;
                 };
@@ -401,41 +431,38 @@ pub(crate) fn next_program_timer_at(vault: &Vault) -> Result<Option<u64>> {
 }
 
 /// The release step each fact-hook runner pass and each housekeeping pass takes after due watcher
-/// ticks: timer and feed programs' wakes, then the admission of what they recorded. It never fails
-/// its pass: a release or drain that fails is logged and taken again by the next pass.
+/// ticks: timer and feed programs' wakes, then the admission of every owed wake, a bounded number
+/// of batches, whether or not this pass recorded any (review #6982): what a pass leaves owed, the
+/// next admits. It never fails its pass: a release or drain that fails is logged and taken again
+/// by the next pass.
 pub(crate) fn release_program_wakes(vault: &Vault, now: u64) {
-    let mut recorded = 0;
     for (trigger, released) in [
         ("timer", vault.release_timer_program_wakes(now)),
         ("feed", vault.release_feed_program_wakes(now)),
     ] {
-        match released {
-            Ok(count) => recorded += count,
-            Err(error) => tracing::warn!(
+        if let Err(error) = released {
+            tracing::warn!(
                 kind = ?error.kind(),
                 %error,
                 trigger,
                 "turn program wakes wait for the next pass"
-            ),
+            );
         }
     }
-    if recorded > 0 {
-        admit_owed(vault, now);
-    }
+    admit_owed(vault, now);
 }
 
-/// The idle check's release step: idle programs' wakes, then the admission of what they
-/// recorded. It never fails the check.
+/// The idle check's release step: idle programs' wakes, then the admission of every owed wake,
+/// as a pass's release step admits them. It never fails the check.
 pub(crate) fn release_idle_programs(vault: &Vault, idle: WakeIdleState, now: u64) {
-    match vault.release_idle_program_wakes(idle, now) {
-        Ok(0) => {}
-        Ok(_) => admit_owed(vault, now),
-        Err(error) => tracing::warn!(
+    if let Err(error) = vault.release_idle_program_wakes(idle, now) {
+        tracing::warn!(
             kind = ?error.kind(),
             %error,
             "idle turn program wakes wait for the next idle check"
-        ),
+        );
     }
+    admit_owed(vault, now);
 }
 
 /// Admits owed wakes through the one drain, a bounded number of batches.
