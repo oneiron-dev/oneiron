@@ -7,6 +7,7 @@ use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
 
 use super::super::pdf;
+use super::verify_chain_gates::issuer_permits_crl_sign;
 use super::verify_revocation::{EvidenceRejection, crl_entry_valid, issued_by, ocsp_entry_valid};
 use super::verify_sig_pipeline::Checks;
 
@@ -363,10 +364,12 @@ fn names_covered_certificate(
 /// (RFC 5280 §5.1.1.3, §5.2.1, §6.3.3(f), §8): it issued `cert`, or it holds
 /// a key that `cert`'s own issuer certified under the signer's subject (a
 /// separate CRL-signing key, or a rollover's link certificate the old key
-/// issued for the new one). A same-subject key that only another trust
-/// anchor vouches for is no shadow, but has no authority over `cert`: two
-/// CAs may share a name, and a CRL path must end at the certificate's own
-/// trust anchor.
+/// issued for the new one) and lets it sign CRLs: a certificate that names
+/// the key with a KeyUsage lacking cRLSign gives no authority, whatever
+/// another copy of the key's certificate asserts. A same-subject key that
+/// only another trust anchor vouches for is no shadow, but has no authority
+/// over `cert`: two CAs may share a name, and a CRL path must end at the
+/// certificate's own trust anchor.
 pub(super) fn crl_signer_authorized(
     cert: &EmbeddedCert,
     signer: &EmbeddedCert,
@@ -390,6 +393,7 @@ pub(super) fn crl_signer_authorized(
             if holder.cert.tbs_certificate.subject == *subject
                 && holder.cert.tbs_certificate.subject_public_key_info == *key
                 && holder.der != cert_issuer.der
+                && issuer_permits_crl_sign(&holder.cert)
                 && issued_by(holder, cert_issuer, memory)?
             {
                 return Ok(true);
