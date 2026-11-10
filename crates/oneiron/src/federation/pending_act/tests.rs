@@ -421,8 +421,6 @@ fn genesis(seed: u8) -> crate::authority::AuthorityLogEntry {
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),
@@ -485,7 +483,11 @@ impl PactLog {
             lo_to_hi: half.clone(),
             hi_to_lo: half,
         };
+        // Each epoch's commitment is keyed by its own opening key; the
+        // fold checks the gesture against the entry's own digest, never
+        // recomputing it, so a fixed test key keeps these entries valid.
         let digest = crate::authority::federation_scope_digest(
+            &[0x68; 32],
             &pact_nonce,
             &crate::federation::encode_federation_pact_scope(&scope).unwrap(),
         );
