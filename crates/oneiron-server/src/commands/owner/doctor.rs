@@ -185,9 +185,10 @@ enum LayeredClock {
 /// selects the manual clock, which then reads zero, never the host's time
 /// ([`crate::runtime::ManualClockFile`]). When the layers themselves do not
 /// merge, the clock is read from the config file alone: the environment and
-/// the flags set no clock, and doctor reads no settings file. A config file
-/// that does not read as TOML, or whose `[runtime] clock` is not `"system"`,
-/// leaves the clock unknown.
+/// the flags set no clock, and doctor reads no settings file. A config path
+/// whose existence cannot be checked, a config file that does not read as
+/// TOML, or one whose `[runtime] clock` is not `"system"` leaves the clock
+/// unknown.
 fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
     if let Ok(env) = EnvConfig::from_process()
         && let Ok(layered) = layer_serve_config(serve, env, default_config_path())
@@ -202,9 +203,16 @@ fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
         .clone()
         .or_else(|| std::env::var_os("ONEIRON_CONFIG").map(PathBuf::from))
         .or_else(default_config_path);
-    let Some(path) = path.filter(|path| path.exists()) else {
+    // A path whose existence cannot be checked (a parent the process may not
+    // search) is not taken as absent: its file may select the manual clock.
+    let Some(path) = path else {
         return LayeredClock::Host;
     };
+    match path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => return LayeredClock::Host,
+        Err(_) => return LayeredClock::Unknown,
+    }
     let Ok(table) = std::fs::read_to_string(&path)
         .map_err(drop)
         .and_then(|raw| toml::from_str::<toml::Table>(&raw).map_err(drop))
