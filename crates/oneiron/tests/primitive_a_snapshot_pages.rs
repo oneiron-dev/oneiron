@@ -298,3 +298,64 @@ fn a_caller_is_paged_only_the_rows_it_reads() -> TestResult {
     assert_eq!(served.next, None);
     Ok(())
 }
+
+#[test]
+fn a_row_written_after_the_open_is_marked_whatever_learned_time_it_names() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let before = put_person(&vault, 5)?;
+    let handle = snapshot(
+        &memory,
+        vec![SnapshotKind::Entity {
+            entity_type: PERSON,
+        }],
+    )?;
+    // A writer names its own learned time: one below the open's is still a
+    // write since the open, as the change log records it.
+    let later = put_person(&vault, 1)?;
+    let served = page(&memory, &handle, None, None)?;
+    let row = |id: EntityId| served.rows.iter().find(|row| row.version.entity == id);
+    assert!(
+        !row(before)
+            .expect("the earlier row is paged")
+            .changed_since_open
+    );
+    assert!(
+        row(later)
+            .expect("the later row is paged")
+            .changed_since_open
+    );
+    Ok(())
+}
+
+#[test]
+fn a_row_larger_than_the_bytes_per_page_is_named_and_not_served() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    for learned_at in 1..=3 {
+        put_person(&vault, learned_at)?;
+    }
+    replace_bounds(
+        &vault,
+        owner,
+        SnapshotReadSettings {
+            page_bytes: 16,
+            ..SnapshotReadSettings::DEFAULT
+        },
+    )?;
+    let handle = snapshot(
+        &memory,
+        vec![SnapshotKind::Entity {
+            entity_type: PERSON,
+        }],
+    )?;
+    let served = page(&memory, &handle, None, None)?;
+    assert!(served.rows.is_empty(), "no row fits 16 bytes");
+    assert_eq!(served.oversized.len(), 3);
+    assert!(served.oversized.iter().all(|row| row.bytes > 16));
+    assert_eq!(served.next, None, "the cursor moved past every named row");
+    assert_eq!(served.served, 0);
+    Ok(())
+}
