@@ -22,7 +22,9 @@ pub use evidence_spans::{
     EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus,
     EvidenceSpan, EvidenceSpans, EvidenceSpansRequest, evidence_spans, validate_evidence_spans,
 };
-pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
+pub use settings_doors::{
+    read_snapshot_read_settings, replace_snapshot_read_settings, snapshot_read_settings_as_holder,
+};
 pub(crate) use snapshot::erase_snapshot_handles_of_actor_in_txn;
 pub use snapshot::{
     SNAPSHOT_MAX_KINDS, SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage,
