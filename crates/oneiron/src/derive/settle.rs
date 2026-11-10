@@ -34,6 +34,12 @@ pub const SETTLE_IMPORT_REVIEW: &str = "gate.pending.derive.settle_import_review
 /// The reason a landed settlement's receipt names.
 const SETTLE_ALLOWED: &str = "gate.allow.derive.settle";
 
+/// The provenance surface of a settlement's answer. An answer cites no
+/// evidence: it answers an open marker, so the derivation floors that hold
+/// a derived claim (`surface = vault.derive`, GATE-12) do not hold it, as
+/// they hold no conflict answer of the Dreamer's.
+const SETTLE_SURFACE: &str = "vault.derive.settle";
+
 /// Stages `item`: the derive verdict over the marker, the owner's revert and
 /// hold, then the settlement in a savepoint of `txn`.
 ///
@@ -80,7 +86,7 @@ pub(super) fn stage_in_txn(
         actor,
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(vec![
-            (Value::from("surface"), Value::from(super::DERIVE_SURFACE)),
+            (Value::from("surface"), Value::from(SETTLE_SURFACE)),
             (
                 Value::from(super::DERIVE_BATCH_KEY),
                 Value::from(context.batch.to_hex()),
