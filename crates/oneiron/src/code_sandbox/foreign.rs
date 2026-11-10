@@ -93,7 +93,7 @@ pub fn execute_foreign_code(
     clippy::too_many_arguments,
     reason = "the host supplies each isolated execution axis"
 )]
-pub(crate) fn execute_foreign_code_on(
+pub fn execute_foreign_code_on(
     source: &str,
     tier: SandboxGuestTier,
     mounts: SandboxMountTable,
