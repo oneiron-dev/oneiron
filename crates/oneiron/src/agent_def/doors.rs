@@ -81,6 +81,43 @@ impl AgentAuthoring {
     }
 }
 
+/// The key the id of a proposed change to a stored definition is derived
+/// under.
+const PROPOSED_CHANGE_ID_CONTEXT: &str = "oneiron agent_def proposed change id v1";
+
+/// The id of the record that holds version `version` of the definition at
+/// `stored` as a proposal (ARCH-0053:20, r6). An agent's put that grants a
+/// stored definition more than its author's slice holds is stored there,
+/// beside the definition it would replace, which stays as it is. The id is
+/// the first 16 bytes of the BLAKE3 hash, keyed by
+/// [`PROPOSED_CHANGE_ID_CONTEXT`], of the stored id's bytes then the
+/// version's: a caller that knows what it put reads the proposal back, and a
+/// repeat of the same put lands on the same record.
+///
+/// # Errors
+///
+/// An invalid-key error when the derived bytes are a reserved id pattern.
+fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
+    let mut hasher = blake3::Hasher::new_derive_key(PROPOSED_CHANGE_ID_CONTEXT);
+    hasher.update(stored.as_bytes());
+    hasher.update(version.as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    let id = EntityId::from_bytes(bytes)?;
+    Ok(id)
+}
+
+/// What the author writer makes of one AGENT_DEF put an agent staged.
+enum AuthoredPut {
+    /// Stored as staged.
+    AsStaged,
+    /// Stored at the put's id, with this body.
+    Bounded(Vec<u8>),
+    /// Stored as a new proposal record at `id`, with `body`; the row the put
+    /// named stays as it is.
+    ProposedChange { id: EntityId, body: Vec<u8> },
+}
+
 /// Marks `definition` as authored by the agent `author` through `door`: a
 /// generated record, live at rest, whose provenance names both. Its approval
 /// is the caller's to set.
@@ -689,37 +726,36 @@ impl Vault {
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
-    /// The body an agent's generic put of a definition stores (ARCH-0053:20):
-    /// the one the author writer gives it, so every door an agent's own handle
+    /// What an agent's generic put of a definition stores (ARCH-0053:20): what
+    /// the author writer makes of it, so every door an agent's own handle
     /// writes rows through lands what `vault.agents.put` lands. A new
     /// definition inside the author's slice is active at the author's
     /// approval; wider, it is a proposal no dispatch runs. An agent that holds
     /// no definition of its own (a PERSON bound as an agent) has no slice to
     /// lend, so what it authors is a proposal. A put over a stored definition
-    /// answers to [`Self::agent_authored_update_body_in_txn`]. `None` leaves
-    /// the put as written.
+    /// answers to [`Self::agent_authored_update_in_txn`].
     ///
     /// # Errors
     ///
     /// A body that does not decode, and the author writer's refusals: an
     /// author that is switched off, a body that names fork lineage or a
     /// logical id, and an id that holds a deleted row.
-    fn agent_authored_definition_body_in_txn(
+    fn agent_authored_put_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         authoring: AgentAuthoring,
         id: &EntityId,
         body: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<AuthoredPut> {
         match live_entity_row_in_txn(&self.store, txn, id)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
                 body: stored,
             } => {
-                return self.agent_authored_update_body_in_txn(txn, authoring, id, &stored, body);
+                return self.agent_authored_update_in_txn(txn, authoring, id, &stored, body);
             }
             // Another entity type at the id is the put arm's to refuse.
-            LiveEntityRow::Live { .. } => return Ok(None),
+            LiveEntityRow::Live { .. } => return Ok(AuthoredPut::AsStaged),
             LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {}
         }
         let requested = decode_agent_definition(body)?;
@@ -748,39 +784,40 @@ impl Vault {
             definition.approval_status = ClaimApprovalStatus::Proposed;
             definition
         };
-        encode_agent_definition(&definition).map(Some)
+        encode_agent_definition(&definition).map(AuthoredPut::Bounded)
     }
 
-    /// The body an agent's generic put over the stored definition `stored`
-    /// stores at `id`. A put that names no grant the row does not hold (its
-    /// scope, skills, connectors and code-mode MCPs) stays as written, for
-    /// the update rules to judge: the id pin holds its ceiling, and the
+    /// What an agent's generic put over the stored definition `stored` at
+    /// `id` stores. A put that names no grant the row does not hold (its
+    /// scope, skills, connectors and code-mode MCPs) stays as staged, for the
+    /// update rules to judge: the id pin holds its ceiling, and the
     /// owner-only widening rule its three switches and its models. A put that
     /// grants the row more answers to the author's slice, as a new definition
-    /// does (ARCH-0053:20): inside the slice of an author other than the row
-    /// itself it stays as written; beyond it, the row is held as a proposal
-    /// no dispatch runs until the owner approves it. A put that already
-    /// stands below approved stays as written.
+    /// does (ARCH-0053:20). An author other than the row itself, whose own
+    /// standing slice holds everything the put names, holds the wider power:
+    /// its put stays as staged. Any other is a proposed change (ARCH-0053
+    /// r6): the stored definition stays as it is, and keeps working, and the
+    /// wider version is stored as a new proposal record that names it
+    /// ([`proposed_change_id`]; `replaces` in its provenance), for whoever
+    /// holds the wider power to approve.
     ///
     /// # Errors
     ///
-    /// A body, or a stored row, that does not decode.
-    fn agent_authored_update_body_in_txn(
+    /// A body, or a stored row, that does not decode, and for a proposed
+    /// change the refusals the same body would meet as an update of the
+    /// stored row (`validate_agent_definition_update`).
+    fn agent_authored_update_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         authoring: AgentAuthoring,
         id: &EntityId,
         stored: &[u8],
         body: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<AuthoredPut> {
         let requested = decode_agent_definition(body)?;
-        if grants_within(&requested, &decode_agent_definition(stored)?)
-            || !matches!(
-                requested.approval_status,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
-            return Ok(None);
+        let stored = decode_agent_definition(stored)?;
+        if grants_within(&requested, &stored) {
+            return Ok(AuthoredPut::AsStaged);
         }
         let author = &authoring.author;
         if author != id
@@ -795,13 +832,29 @@ impl Vault {
                 if grants_within(&requested, &slice)
                     && !requested.ceiling.widens_beyond(slice.ceiling)
                 {
-                    return Ok(None);
+                    return Ok(AuthoredPut::AsStaged);
                 }
             }
         }
+        // The proposal is the next version of the stored definition: it meets
+        // what that update would meet, and keeps the lineage the row has.
+        validate_agent_definition_update(&stored, &requested)?;
+        let proposal_id = proposed_change_id(id, &requested.version)?;
         let mut proposal = requested;
+        mark_agent_authored(&mut proposal, author, authoring.door);
+        if let rmpv::Value::Map(entries) = &mut proposal.provenance {
+            entries.push((
+                rmpv::Value::from("replaces"),
+                rmpv::Value::from(id.to_hex()),
+            ));
+        }
         proposal.approval_status = ClaimApprovalStatus::Proposed;
-        encode_agent_definition(&proposal).map(Some)
+        // A reserved logical id names its one seeded row.
+        proposal.logical_id = None;
+        Ok(AuthoredPut::ProposedChange {
+            id: proposal_id,
+            body: encode_agent_definition(&proposal)?,
+        })
     }
 
     /// `author_def` at the ceiling policy leaves the agent `author`: the
@@ -844,12 +897,13 @@ impl Vault {
 
     /// Holds each definition `ops` put to `authoring`'s slice, read in the
     /// transaction that applies them: the generic put doors' share of the
-    /// author writer ([`Self::agent_authored_definition_body_in_txn`]). With
-    /// no `authoring`, `ops` stay as staged.
+    /// author writer ([`Self::agent_authored_put_in_txn`]). A put it makes a
+    /// proposed change moves to the proposal's own id, so the row it named is
+    /// not written. With no `authoring`, `ops` stay as staged.
     ///
     /// # Errors
     ///
-    /// As [`Self::agent_authored_definition_body_in_txn`].
+    /// As [`Self::agent_authored_put_in_txn`].
     pub(crate) fn bound_agent_authored_puts_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -867,10 +921,15 @@ impl Vault {
                 ..
             } = op
                 && *entity_type == ENTITY_TYPE_AGENT_DEF
-                && let Some(bounded) =
-                    self.agent_authored_definition_body_in_txn(txn, authoring, id, data)?
             {
-                *data = bounded;
+                match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
+                    AuthoredPut::AsStaged => {}
+                    AuthoredPut::Bounded(body) => *data = body,
+                    AuthoredPut::ProposedChange { id: proposal, body } => {
+                        *id = proposal;
+                        *data = body;
+                    }
+                }
             }
         }
         Ok(())
