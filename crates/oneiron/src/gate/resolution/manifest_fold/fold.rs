@@ -103,8 +103,9 @@ pub(super) fn fold_policy_manifest(
             continue;
         }
         // The grant's rows replace the manifest's rows for the Dreamer in
-        // every trusted pack, so they read as the shipped rows did. A pack
-        // that does not decode keeps its own bytes and its own diagnostic.
+        // every trusted pack, so they read as the shipped rows did, the read
+        // row inside the grant's own data axes. A pack that does not decode
+        // keeps its own bytes and its own diagnostic.
         let steward_body = if steward_rows.is_empty() {
             None
         } else {
