@@ -33674,7 +33674,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/identity/settlement.rs",
@@ -45189,13 +45189,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/distinct_claim.rs",
      "purpose": "The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
       "re-export": 1
      }
@@ -65609,7 +65609,7 @@
      "path": "src/provenance/conversation_sources.rs",
      "purpose": "The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -98460,11 +98460,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/identity_distinct_source_label.rs",
+     "purpose": "The distinct fact an identity answer derives from a relationship-scoped MESSAGE stays inside that…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/inference_default_bind.rs",
      "purpose": "Public no-manifest local binding must use one registry snapshot, not a nested reader",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/intent_source_label.rs",
+     "purpose": "The owner's stated intent keeps the audience of the MESSAGE its words came from (OPUS-LEAKS, lead call G…",
      "surface": {}
     },
     {
@@ -101065,7 +101081,7 @@
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7250,
-   "test_files": 923
+   "test_files": 925
   },
   "oneiron-agent-runtime": {
    "files": [
