@@ -27,6 +27,26 @@ use tower::ServiceExt;
 const SECRET: &str = "owner";
 const MODEL: &str = "local/reasoner@rev-a";
 
+/// Runs the test `make` builds on a runtime whose threads carry the engine's
+/// stack ([`oneiron_server::ENGINE_THREAD_STACK_BYTES`]): the facade's
+/// generated dispatch frames overflow a test thread's default stack (FIX
+/// 16372).
+fn on_engine_stack<F: std::future::Future<Output = ()>>(make: impl FnOnce() -> F + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(oneiron_server::ENGINE_THREAD_STACK_BYTES)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(oneiron_server::ENGINE_THREAD_STACK_BYTES)
+                .build()
+                .unwrap()
+                .block_on(make());
+        })
+        .unwrap()
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+}
+
 /// One exact model on the scripted provider; `extra` is more of `[models]`.
 fn models(base_url: &str, extra: &str) -> ModelsConfig {
     ModelsConfig::from_toml(
@@ -141,41 +161,45 @@ async fn receipt(app: &axum::Router, request: Request<Body>) -> Value {
 /// retry meets the rest unsent and waits for it, spending nothing, and its
 /// second send answers. On main the retries meet the rest, spend both
 /// attempts unsent, and the step fails after one send.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_step_waits_out_its_offers_health_rest_and_sends_again() {
-    let fake = FakeLlm::start(vec![Reply::Status(503), Reply::text("recovered")], None).await;
-    let dir = tempfile::tempdir().unwrap();
-    let (vault, app, host) = served(dir.path(), &models(&fake.base_url, "")).await;
-    let body = receipt(&app, submit(&vault, "health-recovers", 3)).await;
-    assert_eq!(fake.seen().len(), 2, "two sends: {body:#}");
-    assert_eq!(body["result"]["status"], "finished", "{body:#}");
-    assert!(body.to_string().contains("recovered"), "{body:#}");
-    host.shutdown().await;
+#[test]
+fn a_step_waits_out_its_offers_health_rest_and_sends_again() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(vec![Reply::Status(503), Reply::text("recovered")], None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, app, host) = served(dir.path(), &models(&fake.base_url, "")).await;
+        let body = receipt(&app, submit(&vault, "health-recovers", 3)).await;
+        assert_eq!(fake.seen().len(), 2, "two sends: {body:#}");
+        assert_eq!(body["result"]["status"], "finished", "{body:#}");
+        assert!(body.to_string().contains("recovered"), "{body:#}");
+        host.shutdown().await;
+    });
 }
 
 /// Three 503s with three attempts declared and a one-second first rest
 /// (`[models] health_rest_secs`): each send rests the offer, each retry waits
 /// the rest out unsent, and the step sends three times before it fails.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_steps_declared_attempts_are_its_sends() {
-    let fake = FakeLlm::start(
-        vec![Reply::Status(503), Reply::Status(503), Reply::Status(503)],
-        Some(Reply::text("unreached")),
-    )
-    .await;
-    let dir = tempfile::tempdir().unwrap();
-    let (vault, app, host) =
-        served(dir.path(), &models(&fake.base_url, "health_rest_secs = 1")).await;
-    let body = receipt(&app, submit(&vault, "health-exhausts", 3)).await;
-    assert_eq!(fake.seen().len(), 3, "three sends: {body:#}");
-    assert_eq!(body["result"]["status"], "failed", "{body:#}");
-    assert_eq!(body["result"]["failure"]["class"], "retryable", "{body:#}");
-    assert_eq!(
-        body["result"]["failure"]["llm"],
-        json!({"Retryable": "ServerError"}),
-        "{body:#}"
-    );
-    host.shutdown().await;
+#[test]
+fn a_steps_declared_attempts_are_its_sends() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![Reply::Status(503), Reply::Status(503), Reply::Status(503)],
+            Some(Reply::text("unreached")),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, app, host) =
+            served(dir.path(), &models(&fake.base_url, "health_rest_secs = 1")).await;
+        let body = receipt(&app, submit(&vault, "health-exhausts", 3)).await;
+        assert_eq!(fake.seen().len(), 3, "three sends: {body:#}");
+        assert_eq!(body["result"]["status"], "failed", "{body:#}");
+        assert_eq!(body["result"]["failure"]["class"], "retryable", "{body:#}");
+        assert_eq!(
+            body["result"]["failure"]["llm"],
+            json!({"Retryable": "ServerError"}),
+            "{body:#}"
+        );
+        host.shutdown().await;
+    });
 }
 
 /// A first health rest outside one to sixty seconds is refused at load.
