@@ -2329,6 +2329,209 @@ fn a_held_event_never_blocks_a_decline_or_a_void() -> Result<()> {
     Ok(())
 }
 
+/// A failed self-verification keeps the same summary on the run and the
+/// door, every native code in order, and seals nothing: a sealer
+/// `VerifyFailed` with ordered codes including
+/// `validation_material_possible_tampering`, and a no-code coherence
+/// rejection with empty reasons.
+#[test]
+fn failed_verification_keeps_same_summary_and_ordered_verify_reasons_without_canonical_output()
+-> Result<()> {
+    use sha2::{Digest, Sha256};
+
+    enum SealFailureMode {
+        VerifyFailed { reasons: Vec<String> },
+        CoherenceEmpty,
+    }
+
+    struct FailingSealer {
+        mode: SealFailureMode,
+        profile: SealProfile,
+    }
+
+    impl FailingSealer {
+        fn passing_verdict(&self) -> EsignVerdict {
+            EsignVerdict {
+                verdict: SealVerdict::Passed,
+                reasons: Vec::new(),
+                achieved: Some(self.profile),
+                self_verify_ok: true,
+                report_json: Vec::new(),
+                active_content: SealActiveContentFacts::default(),
+            }
+        }
+
+        fn indeterminate_verdict(&self, reasons: Vec<String>) -> EsignVerdict {
+            EsignVerdict {
+                verdict: SealVerdict::Indeterminate,
+                reasons,
+                achieved: None,
+                self_verify_ok: false,
+                report_json: Vec::new(),
+                active_content: SealActiveContentFacts::default(),
+            }
+        }
+
+        fn sealed(&self, self_verify: EsignVerdict) -> EsignSealed {
+            let bytes = b"failing-seal".to_vec();
+            let evidence_sha256: [u8; 32] = Sha256::digest(&bytes).into();
+            EsignSealed {
+                bytes,
+                evidence_sha256,
+                requested: SealProfile::BaselineT,
+                achieved: self.profile,
+                degraded: Vec::new(),
+                self_verify,
+            }
+        }
+    }
+
+    impl EsignSealer for FailingSealer {
+        fn seal(
+            &self,
+            _request: &EsignSealRequest,
+            _producer: &mut dyn EsignSealProducer,
+        ) -> std::result::Result<EsignSealed, EsignSealError> {
+            match &self.mode {
+                SealFailureMode::VerifyFailed { reasons } => Err(EsignSealerError::VerifyFailed {
+                    verdict: Box::new(self.indeterminate_verdict(reasons.clone())),
+                }
+                .into()),
+                SealFailureMode::CoherenceEmpty => Ok(self.sealed(self.passing_verdict())),
+            }
+        }
+
+        fn verify(&self, _pdf: &[u8]) -> std::result::Result<EsignVerdict, EsignSealerError> {
+            Ok(self.passing_verdict())
+        }
+
+        fn prepare_esign_pdf(
+            &self,
+            _original: &[u8],
+            _request: &render::PdfPreparation<'_>,
+            _chain: [u8; 32],
+            _trail: &[String],
+        ) -> std::result::Result<Option<render::PreparedEsignPdf>, EsignSealerError> {
+            Ok(None)
+        }
+    }
+
+    let ordered = vec![
+        "validation_material_unavailable".to_owned(),
+        "validation_material_possible_tampering".to_owned(),
+        "trust_root_unavailable".to_owned(),
+    ];
+    let cases: Vec<(&str, SealFailureMode, Vec<String>, &str)> = vec![
+        (
+            "verify_failed_with_codes",
+            SealFailureMode::VerifyFailed {
+                reasons: ordered.clone(),
+            },
+            ordered.clone(),
+            "the sealed PDF failed its own verification",
+        ),
+        (
+            "coherence_empty",
+            SealFailureMode::CoherenceEmpty,
+            Vec::new(),
+            "sealed PDF failed post-seal verification",
+        ),
+    ];
+
+    for (name, mode, expected_reasons, expected_summary) in cases {
+        let (_dir, vault, id, mut doc) = setup()?;
+        doc.fields.clear();
+        event(
+            &vault,
+            id,
+            EsignEvent::Drafted {
+                document: doc.clone(),
+            },
+            3,
+        )?;
+        event(&vault, id, EsignEvent::Sent, 4)?;
+        let first = doc.recipients[0].id.clone();
+        event(
+            &vault,
+            id,
+            EsignEvent::Viewed {
+                recipient: first.clone(),
+            },
+            5,
+        )?;
+        event(
+            &vault,
+            id,
+            EsignEvent::Declined {
+                recipient: first,
+                reason: "declined".into(),
+            },
+            6,
+        )?;
+        assert!(vault.esign_document(id)?.ready_to_seal(), "{name}");
+        assert_eq!(vault.sweep_esign_seals(&[id], 906)?, 1, "{name}");
+        let sealer = FailingSealer {
+            mode,
+            profile: SealProfile::BaselineB,
+        };
+        let runs = vault.run_esign_seals(
+            &sealer,
+            SealProfile::BaselineB,
+            "https://example.test/sign",
+            "test-seal-worker",
+            1,
+        )?;
+        assert_eq!(runs.len(), 1, "{name}");
+        let reason = match &runs[0] {
+            EsignSealRun::Failed { document, reason } => {
+                assert_eq!(*document, Some(id), "{name}");
+                reason.clone()
+            }
+            EsignSealRun::Sealed { .. } => panic!("{name}: the seal must fail"),
+        };
+        assert_eq!(reason, expected_summary, "{name}");
+        let reader = EntityId::now();
+        vault.put_entity(
+            &reader,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+        let view = vault
+            .memory(reader, crate::edge::EdgeActorClass::Human)
+            .esign_seal_get(&EsignSealGetRequest {
+                document_ref: id.to_hex(),
+            })
+            .unwrap_or_else(|error| panic!("{name}: esign_seal_get failed: {error:?}"));
+        assert_eq!(view.document_ref, id.to_hex(), "{name}");
+        assert_eq!(view.attempts.len(), 1, "{name}");
+        let attempt = &view.attempts[0];
+        assert_eq!(attempt.kind, ESIGN_SEAL_ATTEMPT_KIND, "{name}");
+        assert_eq!(attempt.state, "failed", "{name}");
+        assert_eq!(
+            attempt.last_error.as_deref(),
+            Some(expected_summary),
+            "{name}"
+        );
+        assert_eq!(
+            reason,
+            attempt.last_error.as_deref().unwrap(),
+            "{name}: the run and the door keep the same summary"
+        );
+        assert_eq!(
+            attempt.verify_reasons, expected_reasons,
+            "{name}: every verify_reasons in order"
+        );
+        assert!(view.sealed.is_none(), "{name}: no canonical output");
+        assert!(
+            vault.sealed_esign_document(id)?.is_none(),
+            "{name}: no canonical output"
+        );
+    }
+    Ok(())
+}
+
 /// F18 (H397): owner doors take their actor from a proof this vault
 /// authenticated. Another vault's proof for the same PERSON id acts on nothing.
 mod foreign_owner_proof {
