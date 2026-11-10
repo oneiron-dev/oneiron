@@ -221,7 +221,7 @@ async function effortCorpus(engine: EngineFixture) {
  * fails the flow; no default vector, prompt echo or engine-derived answer.
  */
 // G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review;
-// FIX22118 adds the observed weave-lens text). 30 pinned literals from production-reconciliation batches
+// FIX22118 adds the observed weave-lens text; FIX22313 adds judge). 33 pinned literals from production-reconciliation batches
 // (R22 32-input batch before first test write, 8-input batches after; R41 supplied the weave-lens text;
 // egress.allowAll on a fresh
 // vault legitimately seeds bootstrap data): 1 startup literal 'model', 7
@@ -236,7 +236,7 @@ async function effortCorpus(engine: EngineFixture) {
 // backgroundScanVerdict below; producer skill_hub/verdict.rs:254-287 with
 // {contentHash, provider oneiron.static.v1, scannedAt, verdict unknown,
 // riskLevel none, completeness complete, governance recommended,
-// staticInputHash hex64}), and 3 prose rows (goal-intake, agent-health-review, and the reader weave lens).
+// staticInputHash hex64}), and 6 prose rows (the five bootstrap skills and the reader weave lens).
 // Fresh-run legitimacy is observed in-test via provider.seen (see R06 check)
 // plus 10s awaitPublic server-provided lists (/api/search/vector per-row
 // probes, vault.claims.list), not assumed from R22 snapshots. No fixture
@@ -273,6 +273,8 @@ const BACKGROUND_LITERALS: readonly string[] = [
   'Judge agent health from receipts with closed-form detectors and seeded dials.',
   'Compare skill revisions against a fixed rubric using held-out cases.',
   "Render one reader's weave report as a short, readable lens over the items their own read admitted.",
+  'Improve a standard skill from observed failures and held-out evidence.',
+  'Resume useful work from durable tasks and receipts without repeating effects.',
 ];
 // contentHashes of the 14 observed skill rows (5 bootstrap + 9 pack).
 const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
@@ -738,12 +740,26 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     // claim() observes each commit receipt and hydrates the write as owner.
     // Public synthetic values isolate the world ceiling from model-channel name projection.
     // Even a Public claim in the hidden world must remain unreadable.
-    const readable = await claim(engine, scope, {
-      predicate: "profile.name", value: readableText, sensitivity: 0, occurred_at: at, learned_at: at,
-    });
-    const hidden = await claim(engine, { ...scope, world_id: hiddenWorld.id_hex }, {
-      predicate: "profile.name", value: hiddenText, sensitivity: 0, occurred_at: at, learned_at: at,
-    });
+    async function retrieval04FixtureClaim(label: string, claimScope: Facade.ClaimScope, value: string) {
+      try {
+        return await claim(engine, claimScope, {
+          predicate: "profile.name", value, sensitivity: 0, occurred_at: at, learned_at: at,
+        });
+      } catch (error) {
+        if (error instanceof PublicHttpError) {
+          throw new Error(
+            `RETRIEVAL-04 owner ${label} fixture claim: status=${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}; first_suggestion=${error.error?.suggestions?.[0] ?? "absent"}`,
+            { cause: error },
+          );
+        }
+        throw new Error(
+          `RETRIEVAL-04 ENGINE DEFECT 2026-11-11: owner ${label} Public user_stated fixture did not pass claim()'s auto/approved landing/readback guard; sensitivity-stamped writes are parked Proposed by requested_approval; world=${claimScope.world_id}; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+    }
+    const readable = await retrieval04FixtureClaim("readable base-world", scope, readableText);
+    const hidden = await retrieval04FixtureClaim("hidden-world", { ...scope, world_id: hiddenWorld.id_hex }, hiddenText);
     expect(readable.entity.body).toMatchObject({ val: readableText, life: "active" });
     expect(hidden.entity.body).toMatchObject({ val: hiddenText, life: "active" });
     expect(hidden.id).not.toBe(readable.id);
@@ -774,7 +790,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       const recalled = await reader.call("vault.recall", recallInput).catch((error: unknown) => {
         if (error instanceof PublicHttpError) {
           throw new Error(
-            `RETRIEVAL-04 vault.recall: HTTP ${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}`,
+            `RETRIEVAL-04 vault.recall: HTTP ${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}; first_suggestion=${error.error?.suggestions?.[0] ?? "absent"}`,
             { cause: error },
           );
         }
@@ -1161,7 +1177,15 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
       const request: ContextPackRequest = { query: probe.query, query_vector: probe.vector,
         limit: fixture.constants.resultLimit, edge_hop: 0, view: "full",
         budget: { token_budget: fixture.constants.tokenBudget } };
-      return (await engine.client.request<ContextPackReply>("POST", "/v1/core/context-pack", request)).body;
+      try {
+        return (await engine.client.request<ContextPackReply>("POST", "/v1/core/context-pack", request)).body;
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        throw new Error(
+          `RETRIEVAL-06 context-pack query=${JSON.stringify(probe.query)}: status=${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}; first_suggestion=${error.error?.suggestions?.[0] ?? "absent"}`,
+          { cause: error },
+        );
+      }
     };
     const observed: { label: string; state: ContextPackReply["state"]; ids: string[] }[] = [];
     // G8 safe R06 failure ids: expected empty only for weak/anomalous. Any
@@ -1175,7 +1199,14 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
       const pack = await requestPack(probe);
       expect(pack.results).toEqual([]);
       expect(pack.neighbors).toEqual([]);
-      expect(["missing_data", "low_confidence"]).toContain(pack.state.kind);
+      try {
+        expect(["missing_data", "low_confidence"]).toContain(pack.state.kind);
+      } catch (error) {
+        throw new Error(
+          `RETRIEVAL-06 ENGINE DEFECT 2026-11-11: FIX 22309/22313 empty abstained retrieval reports ${pack.state.kind}; probe=${probe.label}; state=${JSON.stringify(pack.state)}; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
       expect(typeof pack.state.reason).toBe("string");
       expect(pack.state.reason!.length).toBeGreaterThan(0);
       expect(pack.evidence.result_ids).toEqual([]);
@@ -1459,6 +1490,15 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
   };
   const records = new Map<string, Awaited<ReturnType<typeof claim>>>();
   const reads: PriorRead[] = [];
+  async function retrieval09Diagnose<T>(label: string, act: () => Promise<T>): Promise<T> {
+    try { return await act(); } catch (error) {
+      if (!(error instanceof PublicHttpError)) throw error;
+      throw new Error(
+        `RETRIEVAL-09 ${label}: status=${error.reply.status}; code=${error.error?.code ?? "absent"}; message=${error.error?.message ?? errorText(error)}; first_suggestion=${error.error?.suggestions?.[0] ?? "absent"}`,
+        { cause: error },
+      );
+    }
+  }
   try {
     const zero: Facade.RetrievalWeights = { affect: 0, arousal: 0, community: 0, vad: 0 };
     expect((await engine.client.call("vault.retrieval.weights.get", {})).weights).toEqual(zero);
@@ -1520,12 +1560,13 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     const readAt = Math.ceil(Date.now() / 1000) + 1;
     const scored = ["calm", "intense", "community-neighbor"] as const;
     async function read(phase: string, effort: Facade.RecallEffort) {
-      const pack = await reader.call("vault.recall", {
+      const pack = await retrieval09Diagnose(`${phase} vault.recall effort=${effort}`, () => reader.call("vault.recall", {
         query: "retrievalpriors", effort, limit: 50, as_of: readAt,
         query_affect: fixture.queryAffect, telemetry: { capture_trace: true },
-      });
-      const evidence = pack.retrieval_run_id
-        ? await engine.client.call("vault.retrieval.run", { run_id: pack.retrieval_run_id })
+      }));
+      const runId = pack.retrieval_run_id;
+      const evidence = runId
+        ? await retrieval09Diagnose(`${phase} vault.retrieval.run`, () => engine.client.call("vault.retrieval.run", { run_id: runId }))
         : null;
       const rows = Object.fromEntries(scored.map(label => [label, evidence?.run.score_breakdown
         .find(hit => Buffer.from(hit.result_id).toString("hex") === records.get(label)!.id) ?? null]));
@@ -1549,12 +1590,13 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
         communityDelta: score("community-neighbor") - score("calm") };
     }
     async function configure(weights: Facade.RetrievalWeights) {
-      const current = await engine.client.call("vault.retrieval.weights.get", {});
-      const receipt = await engine.client.call("vault.retrieval.weights.configure", {
+      const setting = JSON.stringify(weights);
+      const current = await retrieval09Diagnose(`weights.get before ${setting}`, () => engine.client.call("vault.retrieval.weights.get", {}));
+      const receipt = await retrieval09Diagnose(`weights.configure ${setting}`, () => engine.client.call("vault.retrieval.weights.configure", {
         expected_body_hash: current.body_hash, weights,
-      });
-      await engine.awaitReceipt(receipt.receipt_ref);
-      const configured = (await engine.client.call("vault.retrieval.weights.get", {})).weights;
+      }));
+      await retrieval09Diagnose(`weights.configure receipt ${setting}`, () => engine.awaitReceipt(receipt.receipt_ref));
+      const configured = (await retrieval09Diagnose(`weights.get after ${setting}`, () => engine.client.call("vault.retrieval.weights.get", {}))).weights;
       expect(Object.keys(configured).sort()).toEqual(Object.keys(weights).sort());
       // Every coordinate is f32-backed; preserve the numeric setting across
       // the wire round trip without requiring the original decimal spelling.
@@ -1576,9 +1618,16 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       await configure({ ...zero, [axis]: value });
       const enabled = await read(`${axis}-enabled`, effort);
       const refs = rowOrder(enabled);
-      expect(refs.indexOf(records.get(favored)!.ref)).toBeLessThan(refs.indexOf(records.get("calm")!.ref));
-      if (axis === "community") expect(enabled.communityDelta).toBeGreaterThan(baseline.communityDelta);
-      else expect(enabled.intenseDelta).toBeGreaterThan(baseline.intenseDelta);
+      try {
+        expect(refs.indexOf(records.get(favored)!.ref)).toBeLessThan(refs.indexOf(records.get("calm")!.ref));
+        if (axis === "community") expect(enabled.communityDelta).toBeGreaterThan(baseline.communityDelta);
+        else expect(enabled.intenseDelta).toBeGreaterThan(baseline.intenseDelta);
+      } catch (error) {
+        throw new Error(
+          `RETRIEVAL-09 ENGINE DEFECT 2026-11-11: configured ${axis} prior did not improve the favored-vs-calm ranking/delta; effort=${effort}; baselineIntenseDelta=${baseline.intenseDelta}; enabledIntenseDelta=${enabled.intenseDelta}; baselineCommunityDelta=${baseline.communityDelta}; enabledCommunityDelta=${enabled.communityDelta}; as_of=${readAt}; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
       expect(await claimSet(engine)).toEqual(before);
       await configure(zero);
       const off = await read(`${axis}-off`, effort);
@@ -2226,6 +2275,46 @@ async function museRecallRefusalReceipt<V extends FacadeVerb>(
   expect(receipt.outcome.refused.code.length).toBeGreaterThan(0);
 }
 
+// A scoped actor's authenticated HTTP refusal states its call receipt in the
+// error envelope and the x-oneiron-receipt-ref header (api/call_receipt.rs,
+// OF-538). Read that receipt back as owner through vault.receipts.get. A /ws
+// socket is owner-grade only for these actors (FIX 23077), so the HTTP reply
+// is the refusal under test.
+async function museRecallHttpRefusalReceipt(
+  engine: EngineFixture,
+  label: string,
+  reply: { readonly status: number; readonly headers: Headers; readonly body: unknown },
+  verb: FacadeVerb,
+): Promise<void> {
+  const wire = reply.body as {
+    readonly error?: { readonly code?: unknown; readonly message?: unknown; readonly receiptRef?: unknown };
+  };
+  const errorCode = wire.error?.code;
+  const code = typeof errorCode === "string" ? errorCode : "<none>";
+  const errorMessage = wire.error?.message;
+  const message = typeof errorMessage === "string" ? errorMessage : "<none>";
+  const receiptRefValue = wire.error?.receiptRef;
+  const receiptRef = typeof receiptRefValue === "string" && receiptRefValue.length > 0
+    ? receiptRefValue : undefined;
+  if (!receiptRef) {
+    throw new Error(`${label} ${verb} HTTP refusal missing call receipt: status=${reply.status} code=${code} message=${message}`);
+  }
+  const header = reply.headers.get("x-oneiron-receipt-ref");
+  if (header !== receiptRef) {
+    throw new Error(`${label} ${verb} refusal receipt mismatch: status=${reply.status} code=${code} header=${header ?? "<none>"} receiptRef=${receiptRef}`);
+  }
+  const receipt = await awaitPublic(
+    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    value => value !== null,
+    { label: `${label} ${verb} refusal call receipt ${receiptRef}` },
+  );
+  if (!receipt || receipt.outcome === "ok") {
+    throw new Error(`${label} call receipt did not record the ${verb} refusal: status=${reply.status} code=${code} receiptRef=${receiptRef}`);
+  }
+  expect(receipt.verb).toBe(verb);
+  expect(receipt.outcome.refused.code.length).toBeGreaterThan(0);
+}
+
 // MUSE-RECALL-01 — P-RECALL-001, P-RECALL-016 (drivable subset).
 // Claims are seeded proposed, settled by the owner, retracted, marked stale,
 // and superseded; list/history/filter read them back before recall and restart.
@@ -2399,6 +2488,7 @@ async function museRecall01ExpectSettleRefused(
 suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved active claims, the surfaceable claim list holds back proposed, rejected, retracted, stale and superseded ones, and the pack is versioned with confidence and provenance by default", async () => {
   const occurred = 1769947200;
   const food = "preference.food";
+  const seedFood = "profile.food";
   const namePredicate = "profile.name";
   const query = "quokkafern";
   const autoSentinel = "quokkafern autoalpha";
@@ -2418,6 +2508,20 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
   try {
     const ownerRef = engine.pairedActor.principalRef;
     const scope = await ownerBaseClaimScope(engine.client, ownerRef);
+    const settle = async (
+      label: string, input: FacadeInput<"vault.claims.settle">,
+    ): Promise<FacadeResult<"vault.claims.settle">> => {
+      try {
+        return await engine.client.call("vault.claims.settle", input);
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        const detail = error.error;
+        throw new Error(
+          `MUSE-RECALL-01 owner settle ${label} actor=${ownerRef} predicate=${seedFood}: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"} receiptRef=${typeof detail?.receiptRef === "string" ? detail.receiptRef : "<none>"}`,
+          { cause: error },
+        );
+      }
+    };
 
     const agentRecord = await engine.client.call("vault.structural.put", {
       kind: "PERSON",
@@ -2431,12 +2535,14 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
       scope: ["core:read", "core:write"],
     });
 
-    // Act: three claims land proposed, in the consent queue.
-    const seeded = await engine.client.call("vault.claims.seed", {
+    // A different actor opens the proposals: an opener never settles its own.
+    // Seed does not supersede; profile.* is Normal-labelled for owner approval.
+    // The distinct auto/retracted/stale upserts below keep the set-valued food key.
+    const seeded = await agent.client.call("vault.claims.seed", {
       claims: [
-        museRecall01ClaimInput(scope, ownerRef, food, approvedSentinel, 0.82, occurred),
-        museRecall01ClaimInput(scope, ownerRef, food, proposedSentinel, 0.73, occurred),
-        museRecall01ClaimInput(scope, ownerRef, food, rejectedSentinel, 0.64, occurred),
+        museRecall01ClaimInput(scope, ownerRef, seedFood, approvedSentinel, 0.82, occurred),
+        museRecall01ClaimInput(scope, ownerRef, seedFood, proposedSentinel, 0.73, occurred),
+        museRecall01ClaimInput(scope, ownerRef, seedFood, rejectedSentinel, 0.64, occurred),
       ],
     } satisfies FacadeInput<"vault.claims.seed">);
     expect(seeded).toHaveLength(3);
@@ -2449,7 +2555,7 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
     }
 
     // Observe the writes back through claims.list and the pending queue.
-    let foodClaims = await museRecall01Claims(engine.client, ownerRef, food);
+    let foodClaims = await museRecall01Claims(engine.client, ownerRef, seedFood);
     const approvedView0 = museRecall01Claim(foodClaims, approvedSentinel);
     museRecall01ExpectClaimState(approvedView0, "proposed", "active", false, 0.82);
     const proposedView0 = museRecall01Claim(foodClaims, proposedSentinel);
@@ -2482,13 +2588,13 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
         decision: "approve",
       },
     );
-    foodClaims = await museRecall01Claims(engine.client, ownerRef, food);
+    foodClaims = await museRecall01Claims(engine.client, ownerRef, seedFood);
     museRecall01ExpectClaimState(
       museRecall01Claim(foodClaims, approvedSentinel), "proposed", "active", false, 0.82,
     );
 
     // The owner's public review/settle door can approve the proposed claim.
-    const approvedSettlement = await engine.client.call("vault.claims.settle", {
+    const approvedSettlement = await settle("approve proposed active claim", {
       claim_ref: approvedView0.claim_ref,
       review_id: approvedOwnerReview.review_id,
       decision: "approve",
@@ -2496,7 +2602,7 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
     expect(approvedSettlement.verdict).toBe("landed");
     expect(approvedSettlement.claim.approval).toBe("approved");
     await engine.awaitReceipt(approvedSettlement.receipt_ref);
-    foodClaims = await museRecall01Claims(engine.client, ownerRef, food);
+    foodClaims = await museRecall01Claims(engine.client, ownerRef, seedFood);
     const approvedView = museRecall01Claim(foodClaims, approvedSentinel);
     museRecall01ExpectClaimState(approvedView, "approved", "active", false, 0.82);
 
@@ -2504,7 +2610,7 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
     const rejectedOwnerReview = await engine.client.call("vault.claims.review", {
       claim_ref: rejectedView0.claim_ref,
     } satisfies FacadeInput<"vault.claims.review">);
-    const rejectedSettlement = await engine.client.call("vault.claims.settle", {
+    const rejectedSettlement = await settle("reject proposed active claim", {
       claim_ref: rejectedView0.claim_ref,
       review_id: rejectedOwnerReview.review_id,
       decision: "reject",
@@ -2577,15 +2683,20 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
 
     // Second door: the surfaceable-claims list admits exactly the states
     // ordinary recall may show, claim by claim.
+    const surfaceableSeedFood = await engine.client.call("vault.claims.list_filtered", {
+      subject_ref: ownerRef, predicate: seedFood, limit: 100,
+    } satisfies FacadeInput<"vault.claims.list_filtered">);
+    expect(museRecall01HasClaim(surfaceableSeedFood.value, approvedSentinel)).toBe(true);
+    for (const sentinel of [proposedSentinel, rejectedSentinel]) {
+      expect(museRecall01HasClaim(surfaceableSeedFood.value, sentinel)).toBe(false);
+    }
     const surfaceableFood = await engine.client.call("vault.claims.list_filtered", {
       subject_ref: ownerRef,
       predicate: food,
       limit: 100,
     } satisfies FacadeInput<"vault.claims.list_filtered">);
-    for (const sentinel of [autoSentinel, approvedSentinel]) {
-      expect(museRecall01HasClaim(surfaceableFood.value, sentinel)).toBe(true);
-    }
-    for (const sentinel of [proposedSentinel, rejectedSentinel, retractedSentinel, staleSentinel]) {
+    expect(museRecall01HasClaim(surfaceableFood.value, autoSentinel)).toBe(true);
+    for (const sentinel of [retractedSentinel, staleSentinel]) {
       expect(museRecall01HasClaim(surfaceableFood.value, sentinel)).toBe(false);
     }
     const surfaceableNames = await engine.client.call("vault.claims.list_filtered", {
@@ -2601,7 +2712,7 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
     const liveInput: FacadeInput<"vault.recall"> = { query, effort: "light", limit: 50 };
     const included: readonly (readonly [string, string, number])[] = [
       [autoSentinel, food, 0.91],
-      [approvedSentinel, food, 0.82],
+      [approvedSentinel, seedFood, 0.82],
       [newNameSentinel, namePredicate, 0.88],
     ];
     const livePack = await museRecall01AwaitPack(
@@ -2627,8 +2738,9 @@ suite.test(test, "MUSE-RECALL-01", "Ordinary recall serves auto and approved act
     museRecall01ExpectClaimState(
       museRecall01Claim(foodClaims, autoSentinel), "auto", "active", false, 0.91,
     );
+    const seedFoodAfterRestart = await museRecall01Claims(engine.client, ownerRef, seedFood);
     museRecall01ExpectClaimState(
-      museRecall01Claim(foodClaims, approvedSentinel), "approved", "active", false, 0.82,
+      museRecall01Claim(seedFoodAfterRestart, approvedSentinel), "approved", "active", false, 0.82,
     );
     museRecall01ExpectClaimState(
       museRecall01Claim(foodClaims, staleSentinel), "auto", "active", true, 0.86,
@@ -2826,9 +2938,26 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   // sole seeded match is still served. Containment of the only matching
   // memory at limit 10 is plumbing, not a ranking-quality claim.
   for (const effort of museRecall02OtherEfforts) {
-    const pack = await engine.client.call("vault.recall", {
-      query: queryToken, effort, limit: 10,
-    } satisfies FacadeInput<"vault.recall">);
+    // Paid recall has no default engine deadline; stay below the 10s HTTP budget.
+    const deadlineMs = 1500;
+    let pack: MuseRecall02Pack;
+    try {
+      pack = await engine.client.call("vault.recall", {
+        query: queryToken, effort, limit: 10, deadline_ms: deadlineMs,
+      } satisfies FacadeInput<"vault.recall">);
+    } catch (error) {
+      if (error instanceof PublicHttpError) {
+        const detail = error.error;
+        throw new Error(
+          `MUSE-RECALL-02 effort=${effort} deadline_ms=${deadlineMs} client_default_ms=10000: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"}`,
+          { cause: error },
+        );
+      }
+      throw new Error(
+        `MUSE-RECALL-02 effort=${effort} deadline_ms=${deadlineMs} client_default_ms=10000: ${error instanceof Error ? error.name : "unknown"}: ${errorText(error)}`,
+        { cause: error },
+      );
+    }
     expect(museRecall02Contains(pack, queryToken)).toBe(true);
   }
 
@@ -2872,6 +3001,18 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   expect(await engine.client.call("vault.retrieval.hyde.get", {})).toEqual(binding);
   const delivery = engine.client.call("vault.recall", {
     query: queryToken, effort: "high", limit: 10, deadline_ms: 1000,
+  }).catch((error: unknown): never => {
+    if (error instanceof PublicHttpError) {
+      const detail = error.error;
+      throw new Error(
+        `MUSE-RECALL-02 held HyDE effort=high deadline_ms=1000 client_default_ms=10000: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(
+      `MUSE-RECALL-02 held HyDE effort=high deadline_ms=1000 client_default_ms=10000: ${error instanceof Error ? error.name : "unknown"}: ${errorText(error)}`,
+      { cause: error },
+    );
   });
   void delivery.catch(() => {});
   const pending = await awaitPublic(
@@ -2898,8 +3039,8 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   await engine.client.call("vault.retrieval.hyde.configure", { binding: null });
   expect(await engine.client.call("vault.retrieval.hyde.get", {})).toEqual({ binding: null });
 
-  // Wrong actor: a write-only credential cannot recall. Read its own
-  // refused WS call back as owner, independently of the HTTP response.
+  // Wrong actor: a write-only credential cannot recall. Read its refused
+  // call's receipt back as owner through vault.receipts.get.
   const writerInput: FacadeInput<"vault.recall"> = {
     query: queryToken, effort: "light", limit: 10,
   };
@@ -2907,7 +3048,7 @@ async function museRecall02Flow(engine: EngineFixture, providers: ScriptedProvid
   expect(writerReply.status).toBe(403);
   museRecall02ExpectErrorEnvelope(writerReply.body);
   expect(writerReply.raw.includes(contentToken)).toBe(false);
-  await museRecallRefusalReceipt(engine, writer, "vault.recall", writerInput);
+  await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-02", writerReply, "vault.recall");
   // An unauthenticated caller is refused outright, with the envelope.
   const anonymous = new PublicHttpClient(engine.url, {
     artifacts: engine.artifacts, label: "muse-recall-02-anonymous",
@@ -3179,10 +3320,28 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       claimShortIds.push(receipt.claim_short_id);
       await engine.awaitReceipt(receipt.receipt_ref);
     }
-    museRecall03ExpectClaimWorlds(
-      await museRecall03OurClaimRows(engine.client, ownerRef, expectedWorldByValue),
-      expectedWorldByValue,
-    );
+    const seededRows = await museRecall03OurClaimRows(engine.client, ownerRef, expectedWorldByValue);
+    museRecall03ExpectClaimWorlds(seededRows, expectedWorldByValue);
+    const seededStates = [baseValue, ...storyValues, otherValue].map((value, index) => {
+      const row = seededRows.find(candidate => candidate.value === value);
+      return { slot: index === 0 ? "base" : index === storyValues.length + 1 ? "other" : `story${index - 1}`,
+        approval: row?.approval ?? null, lifecycle: row?.lifecycle ?? null,
+        stale: row?.stale ?? null, world: row?.claim_scope.world_id ?? null };
+    });
+    const supersededStories = seededStates.filter(row => row.slot.startsWith("story")
+      && row.lifecycle === "superseded");
+    const recall = async (input: FacadeInput<"vault.recall">): Promise<museRecall03Pack> => {
+      try {
+        return await engine.client.call("vault.recall", input);
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        const detail = error.error;
+        throw new Error(
+          `MUSE-RECALL-03 vault.recall: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"}`,
+          { cause: error },
+        );
+      }
+    };
 
     const partitionInput: FacadeInput<"vault.recall"> = {
       query: tokenCommon, effort: "light", limit: 10,
@@ -3190,12 +3349,35 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
         worlds: { kind: "worlds", world_refs: [storyWorld.id_hex], include_base: true },
       },
     };
-    const httpPack = await awaitPublic(
-      () => engine.client.call("vault.recall", partitionInput),
-      (pack) => museRecall03HasSentinel(pack, baseSentinel)
-        && storySentinels.every((sentinel) => museRecall03HasSentinel(pack, sentinel)),
-      { label: "MUSE-RECALL-03 indexed base and story claims" },
-    );
+    const awaitPartition = async (label: string): Promise<museRecall03Pack> => {
+      let lastPresence: { basePresent: boolean; storyPresent: boolean[]; itemCount: number } | null = null;
+      try {
+        const observed = await awaitPublic(
+          async () => {
+            const pack = await recall(partitionInput);
+            const presence = {
+              basePresent: museRecall03HasSentinel(pack, baseSentinel),
+              storyPresent: storySentinels.map(sentinel => museRecall03HasSentinel(pack, sentinel)),
+              itemCount: pack.items.length,
+            };
+            lastPresence = presence;
+            return { presence, pack };
+          },
+          value => value.presence.basePresent && value.presence.storyPresent.every(Boolean),
+          { label },
+        );
+        return observed.pack;
+      } catch (error) {
+        const prefix = supersededStories.length > 0
+          ? "MUSE-RECALL-03 ENGINE DEFECT 2026-11-11: canon-multi decision.practical was auto-superseded (residual FIX 8794)"
+          : "MUSE-RECALL-03 partition recall";
+        throw new Error(
+          `${prefix}; last presence=${JSON.stringify(lastPresence)}; seeded states=${JSON.stringify(seededStates)}; ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+    };
+    const httpPack = await awaitPartition("MUSE-RECALL-03 indexed base and story claims");
     museRecall03AssertBaseFirst(httpPack, tokenCommon, baseSentinel, storySentinels);
     expect(museRecall03HasSentinel(httpPack, otherSentinel)).toBe(false);
 
@@ -3207,12 +3389,12 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       ownerSocket.close();
     }
 
-    const limitedPack = await engine.client.call("vault.recall", {
+    const limitedPack = await recall({
       ...partitionInput, limit: 2,
     });
     expect(museRecall03HasSentinel(limitedPack, baseSentinel)).toBe(true);
 
-    const renderedPack = await engine.client.call("vault.recall", {
+    const renderedPack = await recall({
       ...partitionInput, format: "toon",
     });
     expect(typeof renderedPack.rendered).toBe("string");
@@ -3239,7 +3421,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     );
     expect(museRecall03HasSentinel(otherPack, otherSentinel)).toBe(true);
 
-    const baseOnlyPack = await engine.client.call("vault.recall", {
+    const baseOnlyPack = await recall({
       query: tokenOtherWorld, effort: "light", limit: 10,
       scope: { worlds: { kind: "base" } },
     } satisfies FacadeInput<"vault.recall">);
@@ -3274,7 +3456,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     });
     expect(museRecall03HasSentinel(ceilingBase, baseSentinel)).toBe(true);
 
-    const nowherePack = await engine.client.call("vault.recall", {
+    const nowherePack = await recall({
       query: tokenNowhere, effort: "light", limit: 10,
       scope: { worlds: { kind: "all" } },
     } satisfies FacadeInput<"vault.recall">);
@@ -3377,12 +3559,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       await museRecall03OurClaimRows(engine.client, ownerRef, expectedWorldByValue),
       expectedWorldByValue,
     );
-    const afterRestartPack = await awaitPublic(
-      () => engine.client.call("vault.recall", partitionInput),
-      (pack) => museRecall03HasSentinel(pack, baseSentinel)
-        && storySentinels.every((sentinel) => museRecall03HasSentinel(pack, sentinel)),
-      { label: "MUSE-RECALL-03 post-restart partitioned recall" },
-    );
+    const afterRestartPack = await awaitPartition("MUSE-RECALL-03 post-restart partitioned recall");
     museRecall03AssertBaseFirst(
       afterRestartPack, tokenCommon, baseSentinel, storySentinels,
     );
@@ -3479,6 +3656,33 @@ function museRecall04ExpectRefusal(
 suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search reports each signal's share, and a capability hit spends no memory slot", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-RECALL-04", profile,
     serverConfig: "[recall]\nretrieval_telemetry_capture = true\n" });
+  const recall = async (input: FacadeInput<"vault.recall">): Promise<MuseRecall04Pack> => {
+    try {
+      return await engine.client.call("vault.recall", input);
+    } catch (error) {
+      if (!(error instanceof PublicHttpError)) throw error;
+      const detail = error.error;
+      throw new Error(
+        `MUSE-RECALL-04 vault.recall effort=${input.effort ?? "default"}: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+  };
+  const expectThin = (pack: MuseRecall04Pack): void => {
+    try {
+      expect(pack.items).toHaveLength(0);
+      expect(pack.retrieval_meta.claims_returned).toBe(0);
+    } catch (error) {
+      const rows = pack.items.map(item => ({
+        short_id: item.short_id, kind: item.kind, predicate: item.predicate ?? null,
+        value_text: redactor.text(item.value_text).slice(0, 120),
+      }));
+      throw new Error(
+        `MUSE-RECALL-04 ENGINE DEFECT 2026-11-11: P-RECALL-012 zero-match lexical recall surfaced ${pack.items.length} memory items (claims=${pack.retrieval_meta.claims_returned}); default temporal effort anchor is not query evidence; rows=${JSON.stringify(rows)}; ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+  };
   try {
     const occurred = 1769947200;
     const phrase = "lantern quokka timetable";
@@ -3493,11 +3697,10 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
 
     // P-RECALL-012: a query with no evidence in a fresh vault returns a
     // structurally empty pack, not a dressed-up hint.
-    const thinPack = await engine.client.call("vault.recall", {
+    const thinPack = await recall({
       query: thinQuery, effort: "light", telemetry: { capture_trace: true }, limit: 10,
     } satisfies FacadeInput<"vault.recall">);
-    expect(thinPack.items).toHaveLength(0);
-    expect(thinPack.retrieval_meta.claims_returned).toBe(0);
+    expectThin(thinPack);
     const thinRun = await awaitPublic(
       () => museRecall04RunForPack(engine, thinPack, true),
       (value) => value !== null,
@@ -3557,7 +3760,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
     );
     expect(bm25.value.some((hit) => (hit.snippet ?? "").includes(phrase))).toBe(true);
     const pack = await awaitPublic(
-      () => engine.client.call("vault.recall", {
+      () => recall({
         query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: 10,
       } satisfies FacadeInput<"vault.recall">),
       (value) => markers.every((marker) => museRecall04PackHas(value, marker)),
@@ -3615,7 +3818,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
     expect(agentReadBack.definition.agent_id).toBe(capabilityName);
     expect(agentReadBack.lifecycle_status).toBe("active");
 
-    const cappedPack = await engine.client.call("vault.recall", {
+    const cappedPack = await recall({
       query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: markers.length,
     } satisfies FacadeInput<"vault.recall">);
     expect(cappedPack.items.length).toBeLessThanOrEqual(markers.length);
@@ -3633,10 +3836,11 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
       query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: 10,
     } satisfies FacadeInput<"vault.recall">);
     expect(Array.isArray(readerPack.items)).toBe(true);
-    museRecall04ExpectRefusal(await reader.client.raw<MuseRecall04Refusal>(
+    const readerRunsReply = await reader.client.raw<MuseRecall04Refusal>(
       "POST", "/v1/core/facade/vault.retrieval.runs", { limit: 1 },
-    ), 403);
-    await museRecallRefusalReceipt(engine, reader, "vault.retrieval.runs", { limit: 1 });
+    );
+    museRecall04ExpectRefusal(readerRunsReply, 403);
+    await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-04", readerRunsReply, "vault.retrieval.runs");
     await engine.client.call("vault.retrieval.runs", {
       limit: 1,
     } satisfies FacadeInput<"vault.retrieval.runs">);
@@ -3660,22 +3864,21 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
     // and the revocation all survive.
     await engine.restart();
     const afterRestart = await awaitPublic(
-      () => engine.client.call("vault.recall", {
+      () => recall({
         query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: 10,
       } satisfies FacadeInput<"vault.recall">),
       (value) => markers.every((marker) => museRecall04PackHas(value, marker)),
       { label: "seeded memories in recall after restart" },
     );
     expect(markers.every((marker) => museRecall04PackHas(afterRestart, marker))).toBe(true);
-    const thinAfterRestart = await engine.client.call("vault.recall", {
+    const thinAfterRestart = await recall({
       query: thinQuery, effort: "light", telemetry: { capture_trace: true }, limit: 10,
     } satisfies FacadeInput<"vault.recall">);
-    expect(thinAfterRestart.items).toHaveLength(0);
-    expect(thinAfterRestart.retrieval_meta.claims_returned).toBe(0);
+    expectThin(thinAfterRestart);
     await engine.client.call("vault.agents.get", {
       agent_def_ref: createdAgent.agent_def_ref,
     } satisfies FacadeInput<"vault.agents.get">);
-    const cappedAfterRestart = await engine.client.call("vault.recall", {
+    const cappedAfterRestart = await recall({
       query: phrase, effort: "light", limit: markers.length,
     });
     expect(markers.every(marker => museRecall04PackHas(cappedAfterRestart, marker))).toBe(true);
@@ -3775,7 +3978,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
   const token = `muse05w${secretHex(8)}`;
   const hiddenValue = `${token} hidden world note`;
   const worldName = `Muse05 Hidden World ${secretHex(4)}`;
-  const predicate = "preference";
+  const predicate = "profile.preference";
   redactor.add(token, hiddenValue, worldName);
 
   const engine = await EngineFixture.start({ id: "MUSE-RECALL-05", profile });
@@ -3834,11 +4037,23 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     } satisfies FacadeInput<"vault.get">);
     expect(worldRead.value?.kind).toBe("WORLD");
 
-    const claim = await engine.client.call("vault.claims.upsert", {
-      predicate, subject_ref: ownerRef, value: hiddenValue, confidence: 1,
-      source: "user_stated", scope: { ...baseScope, world_id: world.id_hex },
-      occurred_at: occurred,
-    } satisfies FacadeInput<"vault.claims.upsert">);
+    const claim = await (async () => {
+      try {
+        return await engine.client.call("vault.claims.upsert", {
+          predicate, subject_ref: ownerRef, value: hiddenValue, confidence: 1,
+          source: "user_stated", scope: { ...baseScope, world_id: world.id_hex },
+          occurred_at: occurred,
+        } satisfies FacadeInput<"vault.claims.upsert">);
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        const detail = error.error;
+        const firstSuggestion = detail?.suggestions?.[0] ?? "<none>";
+        throw new Error(
+          `MUSE-RECALL-05 vault.claims.upsert: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${firstSuggestion}`,
+          { cause: error },
+        );
+      }
+    })();
     await engine.awaitReceipt(claim.receipt_ref);
     const ownerClaims = await engine.client.call("vault.claims.list", {
       subject_ref: ownerRef, predicate, limit: 100,
@@ -4142,15 +4357,23 @@ async function museRecall06CollectUntil(
 ): Promise<MuseRecall06Event[]> {
   const events: MuseRecall06Event[] = [];
   for (let index = 0; index < maxEvents; index++) {
-    const event = await subscription.next();
+    let event: MuseRecall06Event;
+    try {
+      event = await subscription.next();
+    } catch (error) {
+      throw new Error(
+        `MUSE-RECALL-06 subscription ${subscription.id} frame wait failed; last public events=${events.map(value => value.kind).join(",") || "<none>"}; ${errorText(error)}`,
+        { cause: error },
+      );
+    }
     if (event.kind === "error") {
-      throw new Error(`Subscription error ${event.code}: ${event.message}`);
+      throw new Error(`MUSE-RECALL-06 subscription ${subscription.id} error ${event.code}: ${event.message}; last public events=${events.map(value => value.kind).join(",") || "<none>"}`);
     }
     events.push(event);
     if (ready(events)) return events;
   }
   throw new Error(
-    `Subscription did not reach the expected event within ${maxEvents} events: ${events.map(event => event.kind).join(",")}`,
+    `MUSE-RECALL-06 subscription ${subscription.id} did not reach the expected event within ${maxEvents} events; last public events= ${events.map(event => event.kind).join(",")}`,
   );
 }
 
@@ -4163,7 +4386,7 @@ async function museRecall06RecallMentions(
     () => client.call("vault.recall", { query, effort: "light", limit: 10 }),
     value => value.items.some(item => item.value_text.includes(token)
       || item.cited_messages?.some(message => message.value_text.includes(token))),
-    { label: "subscription write visible through recall" },
+    { label: "MUSE-RECALL-06 subscription write visible through recall" },
   );
   return pack.items.some(item => item.value_text.includes(token)
     || item.cited_messages?.some(message => message.value_text.includes(token)));
@@ -4233,6 +4456,7 @@ async function museRecall06ConnectFails(
 
 suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then EOSE before live updates, and a reconnect with its last cursor catches up and resumes live updates", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-RECALL-06", profile });
+  let stage = "public setup and HTTP recall control";
   try {
     const hex = secretHex(6);
     const common = `lantern${hex}`;
@@ -4288,6 +4512,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
     // Snapshot frames come first, then EOSE, and no live data precedes EOSE.
     let subscriptionId = -1;
     let lastCursor: MuseRecall06Cursor | undefined;
+    stage = "owner human snapshot subscription";
     const socket = await engine.websocket();
     try {
       const subscription = museRecall06Subscribe(socket, common);
@@ -4346,6 +4571,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
     expect(await museRecall06RecallMentions(engine.client, common, charlieToken)).toBe(true);
 
     let deltaMention: museRecall06Mention = { token: deltaToken, refs: [] };
+    stage = "owner human cursor-resume subscription";
     const resumedSocket = await engine.websocket();
     try {
       const resumed = museRecall06Subscribe(
@@ -4404,6 +4630,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
 
     // Its subscription attempt is refused too. sub.err is unstamped;
     // only the equivalent RPC recall has a public call receipt.
+    stage = "write-only agent subscription";
     const writerSocket = await engine.websocket(writer);
     try {
       const writerSubscription = museRecall06Subscribe(writerSocket, common);
@@ -4419,6 +4646,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
       writerSocket.close();
     }
 
+    stage = "write-only agent RPC refusal receipt";
     await museRecallRefusalReceipt(engine, writer, "vault.recall", {
       query: common, effort: "light", limit: 10,
     });
@@ -4426,6 +4654,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
     // Losing its scope mid-flow: the owner revokes the reader agent's
     // paired slip through the public slip door. Its next read and its
     // next socket are refused, and the revoke reads back in the audit log.
+    stage = "reader grant revocation";
     const auditAfterPair = await museRecallAuditRows(engine.client);
     const beforeHashes = new Set(auditBefore.map(row => row.entry_hash));
     const readerMints = auditAfterPair.filter(row => !beforeHashes.has(row.entry_hash)
@@ -4454,6 +4683,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
     // Survive a restart: the records read back over HTTP again, a fresh
     // subscription again sends a snapshot holding them before EOSE, and
     // the revoked reader is still refused.
+    stage = "owner human restart and subscription readback";
     await engine.restart();
     expect(await museRecall06RecallMentions(engine.client, common, deltaToken)).toBe(true);
     const restartedSocket = await engine.websocket();
@@ -4479,6 +4709,27 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
       { query: common, effort: "light", limit: 10 },
     );
     expect(readerAfterRestart.status).toBe(401);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-RECALL-06 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    const message = errorText(error);
+    if (message.includes("WS closed 4008")) {
+      throw new Error(
+        `MUSE-RECALL-06 TEST BUG 2026-11-11: WsClient.connect sends hello but no auth.bind before app-tier use; ${stage}; ${message}`,
+        { cause: error },
+      );
+    }
+    if (stage.startsWith("write-only agent") && /WS upgrade (failed|closed)/.test(message)) {
+      throw new Error(
+        `MUSE-RECALL-06 ENGINE DEFECT 2026-11-11: scoped agent cannot reach WS facade/subscription; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; ${stage}; ${message}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-RECALL-06 ${stage}: ${message}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -4698,6 +4949,53 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(readerHydrated.value[0]?.id_hex).toBe(liveView.id_hex);
     expect(museRecall07BodyField(readerHydrated.value[0]?.body, "content")).toBe(liveText);
 
+    // These authenticated HTTP refusals carry a call receipt. Read it back as
+    // owner instead of re-driving the refusal over an owner-grade-only /ws
+    // socket with the scoped writer's credential.
+    const readRefusalReceipt = async (
+      reply: { readonly status: number; readonly headers: Headers; readonly body: unknown },
+      verb: "vault.hydrate" | "vault.delete",
+    ): Promise<void> => {
+      const wire = reply.body as {
+        readonly error?: {
+          readonly code?: unknown; readonly message?: unknown;
+          readonly suggestions?: unknown; readonly receiptRef?: unknown;
+        };
+      };
+      const errorCode = wire.error?.code;
+      const code = typeof errorCode === "string" ? errorCode : "<none>";
+      const errorMessage = wire.error?.message;
+      const message = typeof errorMessage === "string" ? errorMessage : "<none>";
+      const errorSuggestions = wire.error?.suggestions;
+      const firstSuggestion = Array.isArray(errorSuggestions) ? errorSuggestions[0] : undefined;
+      const suggestion = typeof firstSuggestion === "string" ? firstSuggestion : "<none>";
+      const receiptRefValue = wire.error?.receiptRef;
+      const receiptRef = typeof receiptRefValue === "string" && receiptRefValue.length > 0
+        ? receiptRefValue : undefined;
+      if (!receiptRef) {
+        throw new Error(
+          `MUSE-RECALL-07 ${verb} HTTP refusal missing call receipt: status=${reply.status} code=${code} message=${message} suggestion=${suggestion}`,
+        );
+      }
+      const header = reply.headers.get("x-oneiron-receipt-ref");
+      if (header !== receiptRef) {
+        throw new Error(
+          `MUSE-RECALL-07 ${verb} refusal receipt mismatch: status=${reply.status} code=${code} message=${message} suggestion=${suggestion} header=${header ?? "<none>"} receiptRef=${receiptRef}`,
+        );
+      }
+      const receipt = await awaitPublic(
+        () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+        (value) => value !== null,
+        { label: `MUSE-RECALL-07 ${verb} refusal call receipt ${receiptRef}` },
+      );
+      if (!receipt || receipt.outcome === "ok") {
+        throw new Error(
+          `MUSE-RECALL-07 call receipt did not record the ${verb} refusal: status=${reply.status} code=${code} message=${message} suggestion=${suggestion} receiptRef=${receiptRef}`,
+        );
+      }
+      expect(receipt.verb).toBe(verb);
+      expect(receipt.outcome.refused.code.length).toBeGreaterThan(0);
+    };
     const writerDenied = await museRecall07ExpectRawRefusal(
       writer.client,
       "/v1/core/facade/vault.hydrate",
@@ -4705,7 +5003,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       403,
     );
     expect(JSON.stringify(writerDenied.body).includes(liveText)).toBe(false);
-    await museRecallRefusalReceipt(engine, writer, "vault.hydrate", { refs: [liveShortId] });
+    await readRefusalReceipt(writerDenied, "vault.hydrate");
 
     const readerSlipId = museRecall07MintedSlipId(
       auditBeforePairing,
@@ -4735,7 +5033,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(retiredHydrated.value[0]?.id_hex).toBe(retiredPerson.view.id_hex);
     expect(retiredHydrated.value[0]?.kind).toBe("PERSON");
 
-    await museRecall07ExpectRawRefusal(
+    const deleteDenied = await museRecall07ExpectRawRefusal(
       writer.client,
       "/v1/core/facade/vault.delete",
       {
@@ -4744,9 +5042,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       } satisfies FacadeInput<"vault.delete">,
       403,
     );
-    await museRecallRefusalReceipt(engine, writer, "vault.delete", {
-      entity_ref: retiredPerson.view.id_hex, reason: "user_hard_delete",
-    });
+    await readRefusalReceipt(deleteDenied, "vault.delete");
     const stillLive = await museRecall07Get(engine.client, retiredShortId);
     expect(stillLive.id_hex).toBe(retiredPerson.view.id_hex);
 
@@ -4762,7 +5058,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
         entity_ref: retiredShortId,
       } satisfies FacadeInput<"vault.get">),
       (read) => read.value === null,
-      { label: "hard-deleted PERSON reads absent through vault.get" },
+      { label: "MUSE-RECALL-07 hard-deleted PERSON reads absent through vault.get" },
     );
     expect(retiredRead.value).toBeNull();
     await engine.requireHttpDoor("/v1/core/batch/shortId/hydrate", "POST");
@@ -4861,6 +5157,12 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       postRestartShortId,
       batchLiveIds: [...batchIds],
     });
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    throw new Error(
+      `MUSE-RECALL-07 public setup/hydrate/receipt readback: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    );
   } finally {
     await engine.close();
   }
@@ -4940,9 +5242,17 @@ async function museRecall08RecallAllFormats(
 ): Promise<Map<string, museRecall08Pack>> {
   const packs = new Map<string, museRecall08Pack>();
   for (const format of museRecall08Formats) {
-    packs.set(format, await client.call("vault.recall", {
-      query, effort: "light", limit: 10, format,
-    }));
+    try {
+      packs.set(format, await client.call("vault.recall", {
+        query, effort: "light", limit: 10, format,
+      }));
+    } catch (error) {
+      if (!(error instanceof PublicHttpError)) throw error;
+      throw new Error(
+        `MUSE-RECALL-08 vault.recall format=${format}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
   }
   return packs;
 }
@@ -4972,7 +5282,14 @@ function museRecall08AssertSamePackAllFormats(
     expect(museRecall08ItemSignature(pack)).toEqual(referenceSignature);
     expect(museRecall08PackHas(pack, sentinel)).toBe(true);
     const rendered = museRecall08Rendered(pack);
-    expect(rendered.includes(sentinel)).toBe(true);
+    try {
+      expect(rendered.includes(sentinel)).toBe(true);
+    } catch (error) {
+      throw new Error(
+        `MUSE-RECALL-08 ENGINE DEFECT 2026-11-11: light recall drops message text from rendered pack; format=${format} item_has_sentinel=${museRecall08PackHas(pack, sentinel)} rendered_has_sentinel=${rendered.includes(sentinel)} rendered_chars=${rendered.length}; recall/mod.rs:849-853 disables hydration before serialize/pack_preparation.rs:287`,
+        { cause: error },
+      );
+    }
     renderings.push(rendered);
   }
   // Five formats means five serializations, not one default repeated.
@@ -5063,7 +5380,7 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     const baseline = await awaitPublic(
       () => engine.client.call("vault.recall", { query: sentinel, effort: "light", limit: 10 }),
       pack => museRecall08PackHas(pack, sentinel),
-      { label: "baseline recall finds the witnessed sentinel turn" },
+      { label: "MUSE-RECALL-08 baseline recall finds the witnessed sentinel turn" },
     );
     expect(museRecall08ItemSignature(baseline).length).toBeGreaterThan(0);
 
@@ -5120,7 +5437,7 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     const refusalReceipt = await awaitPublic(
       () => engine.client.call("vault.receipts.get", { receipt_ref: refusalReceiptRef }),
       receipt => receipt !== null,
-      { label: "write-only agent recall refusal call receipt" },
+      { label: "MUSE-RECALL-08 write-only agent recall refusal call receipt" },
     );
     if (!refusalReceipt) throw new Error("Recall refusal left no readable call receipt");
     expect(refusalReceipt.verb).toBe("vault.recall");
@@ -5169,6 +5486,12 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     const auditAfterRestart = await museRecallAuditRows(engine.client);
     expect(auditAfterRestart.some(row => row.source_op === "slip_revoke"
       && row.subject_ref === readerSlipId && row.fold_valid)).toBe(true);
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    throw new Error(
+      `MUSE-RECALL-08 public setup/readback: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    );
   } finally {
     await engine.close();
   }
