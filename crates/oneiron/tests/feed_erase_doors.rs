@@ -83,10 +83,16 @@ fn a_hard_delete_leaves_no_edge_row_naming_the_deleted_end() {
         )
         .expect("follow edges");
     let (from, to) = (put_person(&vault), put_person(&vault));
+    // A PERSON's put may write edges of its own: the count before the Supports edge is the base.
+    let before = rows_naming(&vault, &to).expect("rows");
     vault
         .put_edge(&from, EdgeKind::Supports, &to, 0.5)
         .expect("edge");
-    assert_eq!(rows_naming(&vault, &to).expect("rows"), 1, "the edge added");
+    assert_eq!(
+        rows_naming(&vault, &to).expect("rows"),
+        before + 1,
+        "the edge added"
+    );
 
     vault
         .delete_entity_with_reason(&to, DeleteReason::UserHardDelete)
