@@ -61,8 +61,8 @@ impl Memory<'_> {
     }
 
     /// Moves every cursor of one of this actor's subscriptions to its source's
-    /// head, the way back past a gap; the caller takes its snapshot first
-    /// (`vault.feeds.resync`).
+    /// head, the way back past a gap; the caller takes its snapshot after it,
+    /// so no change falls between the two (`vault.feeds.resync`).
     ///
     /// # Errors
     ///
