@@ -163,7 +163,13 @@ fn a_granted_ask_is_answered_through_a_region_and_receipted() {
         .filter(|line| line.verb == ANSWER)
         .collect();
     assert_eq!(functional.len(), 2);
-    assert_eq!(functional.iter().map(|line| line.id as usize).collect::<Vec<_>>(), vec![1, 3]);
+    assert_eq!(
+        functional
+            .iter()
+            .map(|line| line.id as usize)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
     for line in &functional {
         assert_eq!(line.refused, None);
         assert_eq!(line.data_hash, Some(Hash32::of(&handler.bytes)));
@@ -175,7 +181,13 @@ fn a_granted_ask_is_answered_through_a_region_and_receipted() {
         .filter(|line| line.verb == oneiron_organ_protocol::ASK_MEMORY_GROW)
         .collect();
     assert_eq!(grows.len(), 2);
-    assert_eq!(grows.iter().map(|line| line.id as usize).collect::<Vec<_>>(), vec![2, 4]);
+    assert_eq!(
+        grows
+            .iter()
+            .map(|line| line.id as usize)
+            .collect::<Vec<_>>(),
+        vec![2, 4]
+    );
     for line in &grows {
         assert_eq!(line.refused, Some(AskCode::NotGranted));
     }
