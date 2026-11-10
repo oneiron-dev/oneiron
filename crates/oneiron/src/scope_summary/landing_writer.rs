@@ -14,7 +14,7 @@
 //! summary text and door-owned reply fields, in the summary's conversation,
 //! backed by a stored merge header signed by this MACHINE. Every RepliesTo
 //! edge must name that header's subject, including raw and replicated writes;
-//! a missing landing refuses rather than deferring the writer's authority.
+//! a missing landing waits, and is never admitted.
 //!
 //! When slice 6.7 lands, the summary commits through `vault.derive.commit` by
 //! the generating agent under its Steward derive grant, and this writer and

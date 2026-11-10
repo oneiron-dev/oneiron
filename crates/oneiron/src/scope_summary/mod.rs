@@ -55,7 +55,7 @@ pub(crate) use doors::{
     body_covers_in_txn, body_covers_through_in, merge_summary_ref, merge_word_sources_in_txn,
     merge_word_sources_through_in, turn_needs_summary_cover, validate_summary_put,
 };
-pub(crate) use landing_reply::validate_landing_reply_in;
+pub(crate) use landing_reply::{LandingReplyVerdict, validate_landing_reply_in};
 pub(crate) use landing_writer::{check_landing_append, landing_writer, landing_writer_id};
 pub(crate) use request::{ComposedSummary, ScopeSummaryPlan, decode_target};
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
