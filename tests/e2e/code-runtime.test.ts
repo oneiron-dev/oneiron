@@ -984,7 +984,7 @@ async function codeRuntime07DrainLs(
   let cursor: string | null = null;
   let plan: Facade.GraphFsPlan | undefined;
   for (let page = 0; page < 20; page += 1) {
-    const result = await client.call("graph_fs.ls", { mount, path, cursor, by_time: byTime });
+    const result: Facade.GraphFsOutput = await client.call("graph_fs.ls", { mount, path, cursor, by_time: byTime });
     if (plan === undefined) plan = result.plan;
     expect(result.plan).toBe(plan);
     lines.push(...codeRuntime07Lines(result.output));
@@ -1001,7 +1001,7 @@ async function codeRuntime07DrainFind(
   let cursor: string | null = null;
   let plan: Facade.GraphFsPlan | undefined;
   for (let page = 0; page < 20; page += 1) {
-    const result = await client.call("graph_fs.find", { mount, path, cursor, newer_than: newerThan });
+    const result: Facade.GraphFsOutput = await client.call("graph_fs.find", { mount, path, cursor, newer_than: newerThan });
     if (plan === undefined) plan = result.plan;
     expect(result.plan).toBe(plan);
     lines.push(...codeRuntime07Lines(result.output));

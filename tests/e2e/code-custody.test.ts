@@ -293,7 +293,7 @@ suite.test(test, "CODE-CUSTODY-02", "An expired checkout refuses publication and
     let cursor: string | undefined = undefined;
     let rootProjectRef: string | undefined = undefined;
     do {
-      const directory = await engine.client.call("graph_fs.readdir", {
+      const directory: FacadeResult<"graph_fs.readdir"> = await engine.client.call("graph_fs.readdir", {
         mount, path: "/entities", ...(cursor === undefined ? {} : { cursor }),
       });
       const refs = directory.entries.filter(entry => entry.kind === "directory").map(entry => entry.name);
