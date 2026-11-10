@@ -10,6 +10,9 @@
 //!   restart too, and through the run's own call as through the host door.
 //! - An attempt the caller's run did not spawn is refused, each miss the same
 //!   way.
+//! - A retried child is one child: the wait that named its first try is
+//!   answered when its newest try ends, and two tries of it are no two
+//!   children.
 //!
 //! On main the request and answer types and the host door do not exist, and
 //! `tasks.wait`'s input parses no `agents` member, so this file does not
@@ -20,7 +23,9 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     AgentWaitSetResult, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, agent_dispatch_actor,
 };
-use oneiron::attempt_queue::{AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt};
+use oneiron::attempt_queue::{
+    AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, RetryAttempt, RetryOutcome,
+};
 use oneiron::code_run::{
     HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, TaskWaitAgentsRequest,
     TaskWaitInput, TaskWaitSetCall, WaitDeliveries,
@@ -369,5 +374,56 @@ fn a_wait_names_only_children_the_callers_run_spawned() -> TestResult {
     let pending = host.wait_agents_from_host(wait_on(&[own], None, "a root run"))?;
     assert!(!pending.done);
     assert_eq!(pending.pending, vec![hex(own)]);
+    Ok(())
+}
+
+#[test]
+fn a_retried_child_is_one_child_and_its_newest_try_answers_the_wait() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(dir.path())?;
+    let (parent, actor) = root_run(&vault, RUN, 1)?;
+    let leased = claim(&vault, parent)?;
+    let child = spawn_child(&vault, parent, RUN, "retried", 2)?;
+    let host = HostSelfDispatcher::for_leased_agent_attempt(&vault, actor, &leased)?;
+    let waiting = host.wait_agents_from_host(wait_on(&[child], None, "the-child"))?;
+    assert!(!waiting.done);
+
+    // The child's first try fails and is retried: the spawn's place passes
+    // to a new try under a new id.
+    let first_try = claim(&vault, child)?;
+    let claimed_at = first_try.claimed_at.ok_or("a claim records its time")?;
+    let RetryOutcome::Retried(retry) = AttemptQueue::new(&vault).retry(RetryAttempt {
+        id: child,
+        lease_owner: WORKER.to_owned(),
+        attempt_count: first_try.attempt_count,
+        backoff_until: claimed_at,
+        last_error: Some("the first try failed".to_owned()),
+        now: claimed_at,
+    })?
+    else {
+        return Err("a retry schedules a new try".into());
+    };
+    assert_eq!(retry.retry_of, Some(child));
+    // The first try has ended, the child has not: the wait still waits.
+    let still = host.wait_agents_from_host(wait_on(&[child], None, "the-child"))?;
+    assert!(!still.done);
+    assert_eq!(still.pending, vec![hex(child)]);
+    assert_eq!(delivered(&vault, &waiting.wait)?, None);
+    // Both ids name one child, so a wait over the two is no wait of two.
+    let twice = host
+        .wait_agents_from_host(wait_on(&[child, retry.id], Some(2), "both-tries"))
+        .expect_err("two tries of one child");
+    assert_eq!(twice.code, "task_wait_invalid");
+
+    // The newest try ends the child, and the write that ends it answers the
+    // wait that named the first try.
+    complete(&vault, retry.id)?;
+    let done = delivered(&vault, &waiting.wait)?
+        .ok_or("the wait is delivered when the child's newest try ends")?;
+    assert!(done.done);
+    assert_eq!(done.reason.as_deref(), Some("all"));
+    assert_eq!(done.settled.len(), 1);
+    assert_eq!(done.settled[0].attempt, hex(child));
+    assert_eq!(done.settled[0].state, "completed");
     Ok(())
 }

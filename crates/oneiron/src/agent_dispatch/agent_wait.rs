@@ -17,10 +17,13 @@
 //! they stand with, because the queue's settled hook calls them; the run's
 //! dispatcher and the host door only open a wait and read its reduction.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
@@ -43,9 +46,6 @@ const WAITER: &[u8] = b"w";
 const CORRUPT: &str = "agent child wait set";
 /// The state of a child whose row was pruned: it had ended before that.
 const CHILD_GONE: &str = "gone";
-/// How many earlier tries of a settled row's retry lineage the hook walks
-/// back for the id a wait named.
-const RETRY_WALK_MAX: usize = 64;
 
 /// One AGENT child a wait names, once it has ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +122,9 @@ pub(crate) enum AgentWaitOpen {
     /// The step key already names a wait over other children, or under
     /// another policy.
     Changed,
+    /// Two of the named attempts are tries of one child: a retry keeps a
+    /// spawn's place under a new id, and a repeated spawn answers with it.
+    SameChild,
     /// The caller is not the actor its attempt was dispatched as, or a named
     /// attempt is not a child that attempt spawned in its own run. One
     /// answer for every such miss, so a wait probes nothing.
@@ -209,9 +212,16 @@ pub(crate) fn open_agent_wait(
             }
             Some(set) => set,
             None => {
+                let mut tips = HashSet::with_capacity(children.len());
                 for child in children {
                     if !spawned_by(&queue, wtxn, *child, &parent_row)? {
                         return Ok(AgentWaitOpen::NotOwn);
+                    }
+                    // Two tries of one child count once: each stands as the
+                    // newest try of its lineage, as the reduction reads it.
+                    let tip = queue.newest_retry_in_txn(wtxn, *child)?.unwrap_or(*child);
+                    if !tips.insert(tip) {
+                        return Ok(AgentWaitOpen::SameChild);
                     }
                 }
                 let set = AgentWaitSet {
@@ -365,15 +375,23 @@ pub(crate) fn settle_agent_child_waits_in_txn(
         return Ok(());
     }
     let queue = AttemptQueue::new(vault);
+    // Every earlier try of the ended row is read, however long the lineage:
+    // the wait's index row stands under the try it named. A walk that meets
+    // a row twice stops.
     let mut named = vec![ended.id];
+    let mut seen = HashSet::from([ended.id]);
     let mut earlier = ended.retry_of;
     while let Some(id) = earlier {
-        if named.len() >= RETRY_WALK_MAX || named.contains(&id) {
+        if !seen.insert(id) {
             break;
         }
         named.push(id);
         earlier = queue.get_in_txn(wtxn, id)?.and_then(|row| row.retry_of);
     }
+    vault
+        .store
+        .limit_watch
+        .measure(EngineLimit::AttemptRetryTipRows, named.len() as u64);
     for id in named {
         for key in INDEX.scan_keys(&vault.store, wtxn, &waiter_prefix(id))? {
             let wait = waiter_wait(&key)?;
