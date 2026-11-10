@@ -21,8 +21,9 @@ mod source_version;
 pub(crate) mod tables;
 
 pub use evidence_spans::{
-    EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus,
-    EvidenceSpan, EvidenceSpans, EvidenceSpansRequest, evidence_spans, validate_evidence_spans,
+    EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
+    EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
+    evidence_spans, validate_evidence_spans,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
