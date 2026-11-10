@@ -213,6 +213,54 @@ mod tests {
         let checks = material_check(&doc, &[&first, &second], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
+
+    #[test]
+    fn dss_crl_gains_no_authority_from_a_replacement_certificate_key_usage() {
+        // The leaf's issuer certified a same-subject key for digital
+        // signatures only. /Certs holds first a self-signed certificate for
+        // that key that adds cRLSign, then the issuer's certificate for it;
+        // the key's CRL lists the leaf. cRLSign must come from the
+        // certificate the issuer gave the key (RFC 5280 §6.3.3(f)), not from
+        // the key holder's own copy, so the key has no revocation authority
+        // and its CRL claims nothing about the leaf. The issuer still vouches
+        // for the key, so it is no shadow: missing material, not forged
+        // (review round 1 of #6944, P1b).
+        let issuer = test_ca("issuer");
+        let leaf_der = leaf_under(&issuer, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let key_holder = ca_with_kus("issuer", vec![rcgen::KeyUsagePurpose::DigitalSignature]);
+        let issuer_rc = rcgen::Issuer::from_params(&issuer.rcgen_params, &issuer.rcgen_key);
+        let certified_der = key_holder
+            .rcgen_params
+            .signed_by(&key_holder.rcgen_key, &issuer_rc)
+            .unwrap()
+            .der()
+            .to_vec();
+        let mut replacement_params = key_holder.rcgen_params.clone();
+        replacement_params
+            .key_usages
+            .push(rcgen::KeyUsagePurpose::CrlSign);
+        let replacement_der = replacement_params
+            .self_signed(&key_holder.rcgen_key)
+            .unwrap()
+            .der()
+            .to_vec();
+        let crl = build_crl(
+            &key_holder,
+            THIS_UPDATE,
+            NEXT_UPDATE,
+            None,
+            vec![leaf.tbs_certificate.serial_number],
+        );
+        let doc = dss_doc(
+            &[replacement_der, certified_der, leaf_der.clone()],
+            &[crl],
+            &[],
+        );
+        let checks = material_check(&doc, &[&issuer], &[&leaf_der]);
+        assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
+    }
+
     #[test]
     fn dss_crl_counts_only_from_a_key_with_authority_over_the_leaf() {
         // A same-subject CRL key the leaf's own issuer certified is that
