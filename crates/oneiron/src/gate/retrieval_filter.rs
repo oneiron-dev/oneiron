@@ -209,11 +209,10 @@ impl PolicyManifestResolution {
                 Some(scope) => {
                     // The unchanged shipped house row opens only reads with no proof.
                     // It does not cap a read carrying an explicit Scope.
-                    let policy = RetrievalPolicyFloor::from_scoped_grants(
-                        self.scoped_grants()
-                            .iter()
-                            .filter(|grant| !is_shipped_house_read_row(grant)),
+                    let policy = RetrievalPolicyFloor::from_scoped_grants_excluding(
+                        self.scoped_grants(),
                         actor,
+                        is_shipped_house_read_row,
                     );
                     let proof = RetrievalPolicyFloor::from_authority_scope(scope);
                     policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
@@ -249,14 +248,24 @@ impl RetrievalPolicyFloor {
     }
 
     fn from_scoped_grants(
-        grants: impl IntoIterator<Item = &PolicyScopedGrant>,
+        grants: &[PolicyScopedGrant],
         actor: &ScopedReadActorKey,
+    ) -> Option<Self> {
+        Self::from_scoped_grants_excluding(grants, actor, |_| false)
+    }
+
+    /// The floor of `grants`, leaving out each row for which `excluded`
+    /// returns true, as if the manifest did not carry it.
+    fn from_scoped_grants_excluding(
+        grants: &[PolicyScopedGrant],
+        actor: &ScopedReadActorKey,
+        excluded: impl Fn(&PolicyScopedGrant) -> bool,
     ) -> Option<Self> {
         let mut saw_read_grant = false;
         let mut floor: Option<Self> = None;
         for grant in grants
-            .into_iter()
-            .filter(|grant| scoped_read_grant_has_read_effector(grant))
+            .iter()
+            .filter(|&grant| !excluded(grant) && scoped_read_grant_has_read_effector(grant))
         {
             if !scoped_read_actor_matches(grant, actor) {
                 continue;
