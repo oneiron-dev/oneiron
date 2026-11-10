@@ -559,16 +559,6 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
   }, {
-    // The consolidation pass re-extracts the still-active source turn (job 7,
-    // 2026-11-10: two unscripted sends at cleanup, the two ladder passes of one
-    // generate as in PRIVACY-02's source-reextract). An empty reply is lawful
-    // and writes nothing, so eligible-people stays the only minting extraction.
-    id: "archive-reextract", origin: "extraction", role: "extraction_teacher",
-    purpose: "consolidation re-extraction of the active archive source turn",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
-    response: openaiText("archive-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
-      { inputTokens: 128, outputTokens: 16 }),
-  }, {
     id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
     standing: true,
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
@@ -578,16 +568,68 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
+  let stage = "archive engine setup";
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
     await grantExtraction(engine);
     const room = await ownerRoom(engine, "Privacy archive source", undefined, spec.occurredAt);
+    // Arm the handoff before witnessing can schedule Micro alongside Meso.
+    // Standing matches precede FIFO, so install only once eligible-people is
+    // already selected and held at the external provider boundary.
+    const extractionHandoff = providers.awaitBarrier("extract").then(() => {
+      providers.enqueue({
+        id: "archive-reextract", origin: "extraction", role: "extraction_teacher",
+        purpose: "background re-extraction of the active archive source turn",
+        standing: true,
+        request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
+        response: openaiText("archive-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
+          { inputTokens: 128, outputTokens: 16 }),
+      });
+      return null;
+    }).catch((error: unknown) => new Error(
+      `PRIVACY-01 extraction barrier: ${errorText(error)}; last provider observation: ${JSON.stringify(providers.seenFixtureCalls.map(call => ({ fixtureId: call.fixtureId, origin: call.origin, method: call.method, path: call.path })))}`,
+      { cause: error },
+    ));
     const source = await engine.client.call("vault.witness", {
       ...turn(room.id, `${names[0]}. ${names[1]}. ${spec.protected.claimText}`),
       occurred_at: spec.occurredAt,
     });
-    await extract(engine, turnId(source), providers);
-    const rows = await people(engine.client);
+    const savedTurn = await engine.client.call("vault.get", { entity_ref: source.turn_id });
+    expect(savedTurn.value?.kind).toBe("TURN");
+    expect(savedTurn.value?.id_hex).toBe(source.turn_id);
+    const messageRef = source.message_short_ids[0];
+    if (!messageRef) throw new Error("Archive source witness returned no MESSAGE reference");
+    const savedMessage = await engine.client.call("vault.get", { entity_ref: messageRef });
+    expect(savedMessage.value?.kind).toBe("MESSAGE");
+    expect(savedMessage.value?.body).toEqual(expect.objectContaining({
+      content: `${names[0]}. ${names[1]}. ${spec.protected.claimText}`,
+    }));
+    stage = "initial extraction admission and provider barrier";
+    const ticket = await engine.client.call("vault.memory.signal_extraction", {
+      turn_refs: [turnId(source)],
+    });
+    expect(ticket.job_refs.length).toBeGreaterThan(0);
+    const handoffFailure = await extractionHandoff;
+    if (handoffFailure !== null) throw handoffFailure;
+    providers.releaseBarrier("extract");
+    stage = "initial extraction completion";
+    for (const job_ref of ticket.job_refs) {
+      const result = await awaitPublic(
+        () => engine!.client.call("vault.memory.signal_extraction.result", { job_ref }),
+        value => value?.job.state === "completed",
+        { label: `PRIVACY-01 extraction ${job_ref} completion` },
+      );
+      if (!result) throw new Error("Completed extraction has no typed result");
+      expect(result.job.last_error ?? null).toBeNull();
+    }
+    stage = "extracted PERSON readbacks";
+    // The first request may belong to Micro rather than the explicit Meso
+    // job. Observe its PERSON writes, not the scheduler's relative order.
+    const rows = await awaitPublic(
+      () => people(engine!.client),
+      value => names.every(name => value.filter(row => row.name === name).length === 1),
+      { label: "PRIVACY-01 eligible PERSON readback after extraction" },
+    );
     const empty = rows.filter(row => row.name === names[0]);
     const protectedRows = rows.filter(row => row.name === names[1]);
     expect(empty).toHaveLength(1);
@@ -598,14 +640,20 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(before?.kind).toBe("PERSON");
     expect(object(before?.body).name).toBe(spec.mention);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    stage = "protected PERSON claim write";
     const protection = await engine.client.call("vault.claims.upsert", {
       subject_ref: protectedId, predicate: "privacy.archive_protection", value: spec.protected.claimText,
       confidence: 1, source: "user_stated", scope,
     });
     expect(protection.approval).toBe("auto");
+    const protectionRead = await engine.client.call("vault.claims.list", {
+      subject_ref: protectedId, predicate: "privacy.archive_protection", limit: 10,
+    });
+    expect(protectionRead.value.some(row => row.value === spec.protected.claimText)).toBe(true);
     const protectedBefore = (await engine.client.call("vault.get", { entity_ref: protectedId })).value;
     // Save the public, credential-nulled archive representation before the mark.
     const storedBefore = exportedRecord(await exportMembers(engine.client), emptyId);
+    stage = "cleanup policy and proposal readback";
     await engine.client.request("POST", "/v1/owner/cleanup", spec.cleanup);
     const run = await engine.client.call("vault.cleanup.run", {});
     expect(run.posture).toBe("propose_first");
@@ -618,6 +666,7 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(item?.evidence?.extraction_minted).toBe(true);
     expect(item?.evidence?.live_claims).toBe(0);
     expect(item?.content?.record?.value?.body).toEqual(before?.body);
+    stage = "cleanup archive decision and retained-body readback";
     const decided = await engine.client.call("vault.cleanup.decide", {
       proposal: run.proposal, expected_revision: review.revision,
       choices: review.items.map(row => ({ slot: row.slot,
@@ -635,17 +684,22 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(storedArchived.body).toEqual(storedBefore.body); // Same ID and retained body, not just a count.
     // Author the resolver's actual confidence CLAIM only after the archive.
     // Putting it on the empty PERSON before the pass would protect that PERSON.
+    stage = "resolver-confidence claim while archived";
     const evidence = await engine.client.call("vault.claims.upsert", {
       subject_ref: emptyId, predicate: "provider.enrichment", value: { provider: "privacy", name: spec.mention },
       confidence: 0.99, source: "user_stated", scope,
     });
     expect(evidence.approval).toBe("auto");
     if (!evidence.claim) throw new Error("Mention confidence claim has no typed record ref");
+    const evidenceRead = await engine.client.call("vault.get", { entity_ref: evidence.claim.id });
+    expect(evidenceRead.value?.kind).toBe("CLAIM");
+    expect(object(evidenceRead.value?.body).val).toEqual({ provider: "privacy", name: spec.mention });
     expect((await engine.client.call("vault.get", { entity_ref: emptyId })).value).toBeNull();
     const stillArchived = await engine.client.request<{ archived: { entity: string }[] }>(
       "GET", "/v1/owner/cleanup",
     );
     expect(stillArchived.body.archived.some(row => row.entity === emptyId)).toBe(true);
+    stage = "mention restoration and no-erasure readbacks";
     const mention = await engine.client.call("vault.entities.mention", {
       candidates: [{ subject: emptyId, confidence_claim_ref: evidence.claim.id }],
     });
@@ -662,7 +716,9 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "eligible-people")).toHaveLength(1);
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    primary = error instanceof PublicHttpError
+      ? new Error(`PRIVACY-01 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error })
+      : new Error(`PRIVACY-01 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     const cleanups: string[] = [];
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
@@ -1655,6 +1711,7 @@ function museLabel01MintedSlipId(
 // through ClaimView.claim_scope, not through getEntity alone.
 suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope keys is rejected and lands nothing, and a complete claim keeps its birth facet through read-backs, an agent grant, wrong-actor attempts and a restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-LABEL-01", profile });
+  let stage = "witness setup";
   try {
     const occurred = 1769947200;
     const ownerRef = engine.pairedActor.principalRef;
@@ -1681,13 +1738,23 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
         order: 0,
       }],
     } satisfies FacadeInput<"vault.witness">);
-    await engine.awaitReceipt(witness.receipt_ref);
+    // witness: is a write marker, not a vault.receipts row (ARCH-0044).
+    // Read both records through a door other than the writing door.
+    const messageRef = witness.message_short_ids[0];
+    if (!messageRef) throw new Error("Witness returned no MESSAGE reference");
+    const message = await engine.client.call("vault.get", { entity_ref: messageRef });
+    expect(message.value?.kind).toBe("MESSAGE");
+    expect(message.value?.body).toEqual(expect.objectContaining({
+      content: `This distinct person is ${personName}.`,
+    }));
     const turn = await engine.client.call("vault.get", {
       entity_ref: witness.turn_short_id,
     } satisfies FacadeInput<"vault.get">);
     if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
       throw new Error("Witnessed TURN is not readable through vault.get");
     }
+    expect(turn.value.id_hex).toBe(witness.turn_id);
+    stage = "person creation and scope readback";
     const createdPerson = await engine.client.call("vault.people.create", {
       identity: { name: personName },
       identity_evidence_refs: [turn.value.id_hex],
@@ -1725,6 +1792,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
     } satisfies FacadeInput<"vault.claims.upsert">;
 
     // P-LABEL-001: each missing axis, then the whole scope object, is refused.
+    stage = "missing-scope refusal controls";
     const missingKeys = [
       "world_id",
       "scope_facet_id",
@@ -1762,6 +1830,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
     // A PERSON id is a real entity id in facet format, but it is no FACET.
     const inventedFacetValue = `${sentinel}-person-as-facet`;
     redactor.add(inventedFacetValue);
+    stage = "PERSON-as-FACET batch refusal and receipt";
     const commitOutcomes = await engine.client.call("vault.commit", {
       claims: [{
         ...completeInput,
@@ -1778,12 +1847,17 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
     const refusalReceipt = commitOutcome.receipt_ref;
     expect(typeof refusalReceipt === "string" && refusalReceipt.length > 0).toBe(true);
     if (!refusalReceipt) throw new Error("Refused commit outcome has no receipt_ref");
-    await engine.awaitReceipt(refusalReceipt);
+    await awaitPublic(
+      () => engine.client.call("vault.receipts", { limit: 100, kinds: ["reference_refusal"] }),
+      page => page.receipts.some(row => row.receipt_ref === refusalReceipt),
+      { label: `MUSE-LABEL-01 PERSON-as-FACET refusal receipt ${refusalReceipt}` },
+    );
 
     // None of the refused writes above landed on this fresh subject.
     expect(await museLabel01ListClaims(engine.client, subjectRef, predicate)).toHaveLength(0);
 
     // Positive control: the same input with all four keys lands once.
+    stage = "complete claim write and birth-stamp readback";
     const written = await engine.client.call("vault.claims.upsert", completeInput);
     expect(written.claim_short_id.length).toBeGreaterThan(0);
     expect(written.receipt_ref.length).toBeGreaterThan(0);
@@ -1816,6 +1890,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
 
     // P-LABEL-007 in part: share read access inside this facet through a
     // named-agent Grant, then revoke it. The record stamp must not move.
+    stage = "named-agent read Grant mint and readback";
     const baseAgents = await engine.client.call("vault.agents.base", {});
     expect(baseAgents.agents.length).toBeGreaterThan(0);
     const namedAgent = baseAgents.agents[0]!;
@@ -1825,20 +1900,33 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
         worlds: { kind: "some", values: [birthScope.world_id] },
         facets: { kind: "some", values: [birthScope.scope_facet_id] },
         bands: { kind: "all" },
-        verbs: { kind: "some", values: ["vault.get", "vault.claims.list"] },
+        audience: { kind: "all" },
+        verbs: { kind: "some", values: ["read"] },
         sensitivity: { kind: "all" },
       },
     } satisfies FacadeInput<"vault.agents.grants.mint">);
     expect(mintedGrant.grant.grant_ref.length).toBeGreaterThan(0);
+    expect(mintedGrant.grant.confers).toBe(true);
+    const mintedGrantRead = await engine.client.call("vault.get", {
+      entity_ref: mintedGrant.grant.grant_ref,
+    });
+    expect(mintedGrantRead.value?.kind).toBe("FEDERATION_GRANT");
+    expect(mintedGrantRead.value?.id_hex).toBe(mintedGrant.grant.grant_ref);
+    expect(object(mintedGrantRead.value?.body).authority_scope).toEqual(mintedGrant.grant.authority_scope);
     museLabel01ExpectScope(
       await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
       birthScope,
     );
+    stage = "named-agent Grant revoke and readback";
     const revokedGrant = await engine.client.call("vault.agents.grants.revoke", {
       grant_ref: mintedGrant.grant.grant_ref,
     } satisfies FacadeInput<"vault.agents.grants.revoke">);
     expect(revokedGrant.grant_ref).toBe(mintedGrant.grant.grant_ref);
     expect(revokedGrant.changed).toBe(true);
+    const grantAudit = await museLabel01AuditRows(engine.client);
+    expect(grantAudit.some(row => row.source_op === "agent_grant_act"
+      && row.grant_ref === mintedGrant.grant.grant_ref
+      && row.detail === "revoke" && row.fold_valid)).toBe(true);
     museLabel01ExpectScope(
       await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
       birthScope,
@@ -1847,6 +1935,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
     // Wrong actor kind: an externally paired agent held only to core:read.
     // It can name itself, cannot write the claim, and loses even that use
     // when the owner revokes its slip through the public revoke route.
+    stage = "read-only agent write refusal";
     const agentName = `Muse Label Agent ${sentinel}`;
     redactor.add(agentName);
     const agentRecord = await engine.client.call("vault.structural.put", {
@@ -1884,6 +1973,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
       birthScope,
     );
 
+    stage = "reader slip revoke and audit readback";
     const agentSlipId = museLabel01MintedSlipId(
       auditBeforePair,
       await museLabel01AuditRows(engine.client),
@@ -1914,6 +2004,7 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
     ).toBe(true);
 
     // The stamp, the facet_of edge and the revoked slip survive a restart.
+    stage = "restart stamp and revoked-slip readback";
     await engine.restart();
     museLabel01ExpectScope(
       await museLabel01ReadOnlyClaim(engine.client, subjectRef, predicate, sentinel),
@@ -1944,6 +2035,14 @@ suite.test(test, "MUSE-LABEL-01", "A claim write missing any of its four scope k
       namedAgent: namedAgent.name,
       revokedSlipAuditSubject: agentSlipId,
     });
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-LABEL-01 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-LABEL-01 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2428,6 +2527,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
   const forbiddenValue = `${queryToken} forbidden rehearsal note ${forbiddenSentinel}`;
 
   const engine = await EngineFixture.start({ id: "MUSE-LABEL-03", profile });
+  let stage = "scoped actors and witness setup";
   try {
     const scope = await ownerBaseClaimScope(
       engine.client,
@@ -2475,13 +2575,17 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
         content: `Owner-only note ${turnSentinel} for a private rehearsal plan.`,
       }],
     } satisfies FacadeInput<"vault.witness">);
-    await engine.awaitReceipt(witnessed.receipt_ref);
+    // witness: names the write; the MESSAGE and TURN reads below prove it landed.
     const messageRef = witnessed.message_short_ids[0];
     if (!messageRef) throw new Error("Witness returned no message reference");
     const savedMessage = await engine.client.call("vault.get", {
       entity_ref: messageRef,
     } satisfies FacadeInput<"vault.get">);
     if (!savedMessage.value) throw new Error("Witnessed message is not readable by the owner");
+    expect(savedMessage.value.kind).toBe("MESSAGE");
+    expect(savedMessage.value.body).toEqual(expect.objectContaining({
+      content: `Owner-only note ${turnSentinel} for a private rehearsal plan.`,
+    }));
     expect(museLabel03Includes(savedMessage, turnSentinel)).toBe(true);
     const turn = await engine.client.call("vault.get", {
       entity_ref: witnessed.turn_short_id,
@@ -2489,12 +2593,14 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
       throw new Error("Witnessed TURN is not readable by the owner");
     }
+    expect(turn.value.id_hex).toBe(witnessed.turn_id);
     const turnHex = turn.value.id_hex;
 
     // Act: three claims about the same conversation. The public control is
-    // positively stamped public. The source control is stamped sensitive and
+    // positively stamped public. The source control is stamped private and
     // cites the turn. The derived claim cites the same turn, is the most
     // relevant text for the query, and carries no sensitivity stamp at all.
+    stage = "private-source claim admission";
     const sourceClaim = await engine.client.call("vault.claims.upsert", {
       predicate: "label03.source_note",
       subject_ref: conversation.id,
@@ -2502,12 +2608,15 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
       confidence: 1,
       source: "user_stated",
       scope,
-      sensitivity: 2,
+      // Private is enough to test a Public-only ceiling. Sensitive (2)
+      // requires consent before recall (ARCH-0003); this is not a consent case.
+      sensitivity: 1,
       evidence_turn_refs: [turnHex],
       occurred_at: occurred,
       salience: 1,
     } satisfies FacadeInput<"vault.claims.upsert">);
     await engine.awaitReceipt(sourceClaim.receipt_ref);
+    stage = "public-control claim admission";
     const publicClaim = await engine.client.call("vault.claims.upsert", {
       predicate: "label03.public_note",
       subject_ref: conversation.id,
@@ -2519,6 +2628,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
       occurred_at: occurred,
     } satisfies FacadeInput<"vault.claims.upsert">);
     await engine.awaitReceipt(publicClaim.receipt_ref);
+    stage = "unstamped-derived claim admission";
     const derivedClaim = await engine.client.call("vault.claims.upsert", {
       predicate: "label03.derived_note",
       subject_ref: conversation.id,
@@ -2534,6 +2644,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     await engine.awaitReceipt(derivedClaim.receipt_ref);
 
     // Observe through a second door: exact claim reads by subject/predicate.
+    stage = "recorded claim readbacks";
     const sourceClaimView = museLabel03OnlyClaim(
       await engine.client.call("vault.claims.list", {
         subject_ref: conversation.id,
@@ -2561,6 +2672,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
 
     // Owner-alone control: an unfiltered ranked recall as the owner finds
     // all three, and the derived item still cites its source turn.
+    stage = `ENGINE DEFECT 2026-11-11: FIX 23103 explicit Public/Private stamps force Proposed; owner recall controls; last recorded approvals public=${publicClaimView.approval}, private=${sourceClaimView.approval}, unstamped=${derivedClaimView.approval}`;
     const ownerRecall = await museLabel03Recall(engine.client, queryToken, false);
     expect(museLabel03Includes(ownerRecall, publicSentinel)).toBe(true);
     expect(museLabel03Includes(ownerRecall, sourceSentinel)).toBe(true);
@@ -2569,15 +2681,20 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
       (item) => item.value_text.includes(derivedSentinel),
     );
     if (!derivedItem) throw new Error("Derived claim is missing from owner recall");
-    expect(derivedItem.provenance.evidence_turn_ids.length).toBeGreaterThan(0);
+    stage = "derived claim exact evidence birth readback";
+    // CLAIM recall items leave the legacy evidence_turn_ids projection empty.
+    // Verify the exact cited TURN in the recorded claim's host-stamped birth.
+    expect(derivedClaimView.made_by?.inputs).toContainEqual({ row: turnHex, role: "input" });
 
     // Public-only claim reads: the positively public claim is served, the
-    // stamped-sensitive claim and the unstamped derived claim are not.
+    // stamped-private claim and the unstamped derived claim are not.
+    stage = "ENGINE DEFECT 2026-11-11: FIX 23103 Proposed Public control is withheld by the Surfaceable filtered read";
     const publicFiltered = await engine.client.call("vault.claims.read_filtered", {
       claim_ref: publicClaimView.claim_ref,
       filter: { max_sensitivity_band: 0 },
     } satisfies FacadeInput<"vault.claims.read_filtered">);
     expect(publicFiltered.value?.value).toBe(publicValue);
+    stage = "public-only private and unstamped claim withholding";
     const sourceFiltered = await engine.client.call("vault.claims.read_filtered", {
       claim_ref: sourceClaimView.claim_ref,
       filter: { max_sensitivity_band: 0 },
@@ -2592,6 +2709,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
 
     // Public-only ranked recall: relevance does not pull the private-derived
     // item in, while the less salient public control is still found.
+    stage = "public-only ranked recall";
     const publicRecall = await museLabel03Recall(engine.client, queryToken, true);
     expect(museLabel03Includes(publicRecall, publicSentinel)).toBe(true);
     expect(museLabel03Includes(publicRecall, sourceSentinel)).toBe(false);
@@ -2599,6 +2717,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     expect(museLabel03Includes(publicRecall, turnSentinel)).toBe(false);
 
     // Hydrate is the next door in both directions.
+    stage = "hydrate controls and public-only filter";
     const hydratedAll = await engine.client.call("vault.hydrate", {
       refs: [
         derivedClaim.claim_short_id,
@@ -2608,26 +2727,46 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     } satisfies FacadeInput<"vault.hydrate">);
     expect(museLabel03Includes(hydratedAll, derivedSentinel)).toBe(true);
     expect(museLabel03Includes(hydratedAll, publicSentinel)).toBe(true);
+    // hydrate is all-or-error, not a partial-result filter. Test the public
+    // positive control separately, then each withheld private reference.
     const hydratedPublic = await engine.client.call("vault.hydrate", {
-      refs: [
-        derivedClaim.claim_short_id,
-        sourceClaim.claim_short_id,
-        publicClaim.claim_short_id,
-      ],
+      refs: [publicClaim.claim_short_id],
       filter: { max_sensitivity_band: 0 },
     } satisfies FacadeInput<"vault.hydrate">);
     expect(museLabel03Includes(hydratedPublic, publicSentinel)).toBe(true);
     expect(museLabel03Includes(hydratedPublic, sourceSentinel)).toBe(false);
     expect(museLabel03Includes(hydratedPublic, derivedSentinel)).toBe(false);
     expect(museLabel03Includes(hydratedPublic, turnSentinel)).toBe(false);
+    for (const [label, claimRef] of [
+      ["private source", sourceClaim.claim_short_id],
+      ["unstamped derived", derivedClaim.claim_short_id],
+    ] as const) {
+      const denied = await engine.client.raw<{
+        error?: { code?: string; message?: string; suggestions?: string[] };
+      }>("POST", "/v1/core/facade/vault.hydrate", {
+        refs: [claimRef], filter: { max_sensitivity_band: 0 },
+      } satisfies FacadeInput<"vault.hydrate">);
+      if (denied.status !== 404 || denied.body.error?.code !== "NOT_FOUND") {
+        throw new Error(`MUSE-LABEL-03 ${label} public-only hydrate refusal: status=${denied.status} code=${denied.body.error?.code ?? "<none>"} message=${denied.body.error?.message ?? "<none>"} suggestion=${denied.body.error?.suggestions?.[0] ?? "<none>"}`);
+      }
+      expect(museLabel03Includes(denied.body, sourceSentinel)).toBe(false);
+      expect(museLabel03Includes(denied.body, derivedSentinel)).toBe(false);
+      expect(museLabel03Includes(denied.body, turnSentinel)).toBe(false);
+    }
 
     // Scoped export through a public channel is the export door.
+    stage = "public scoped export";
     const scopedExport = await engine.client.call("vault.export.scoped", {
       selector: {},
       channel: {
         channel_ref: "muse-label-03-public",
         scope: {
+          worlds: { kind: "some", values: [scope.world_id] },
+          facets: { kind: "some", values: [scope.scope_facet_id] },
+          // bands are entity-type bytes; CLAIM=0, separate from sensitivity.
           bands: { kind: "some", values: [0] },
+          audience: { kind: "all" },
+          verbs: { kind: "some", values: ["read"] },
           sensitivity: { kind: "at_most", value: "public" },
         },
       },
@@ -2642,6 +2781,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
 
     // Survive a restart, then repeat the public-only checks through recall,
     // the filtered claim read, and the second (reader agent) actor.
+    stage = "restart and reader recall";
     await engine.restart();
     museLabel03OnlyClaim(
       await engine.client.call("vault.claims.list", {
@@ -2659,6 +2799,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     const publicAfterRestart = await museLabel03Recall(engine.client, queryToken, true);
     expect(museLabel03Includes(publicAfterRestart, publicSentinel)).toBe(true);
     expect(museLabel03Includes(publicAfterRestart, derivedSentinel)).toBe(false);
+    stage = "ENGINE DEFECT 2026-11-11: FIX 23103 Proposed Public control is absent from the reader recall";
     const readerRecall = await museLabel03Recall(reader.client, queryToken, true);
     expect(museLabel03Includes(readerRecall, publicSentinel)).toBe(true);
     expect(museLabel03Includes(readerRecall, derivedSentinel)).toBe(false);
@@ -2666,6 +2807,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
 
     // Refuse the wrong actor kind for a read: the write-only agent has no
     // core:read grant behind vault.hydrate, and learns no claim text.
+    stage = "write-only actor read refusal";
     const refusedHydrate = await writeOnly.client.raw(
       "POST",
       "/v1/core/facade/vault.hydrate",
@@ -2680,6 +2822,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
 
     // Refuse the wrong actor kind for a write, and read the refusal receipt
     // back under the invocation id this case supplied for that one raw call.
+    stage = "read-only actor write refusal receipt";
     const invocation = secretHex(16);
     redactor.add(invocation);
     const refusedWrite = await reader.client.raw(
@@ -2719,6 +2862,7 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
     // Lose the grant mid-flow: the owner revokes the reader's slip through
     // the public revoke door, the reader's next recall is refused, and the
     // revocation is read back in the authority audit.
+    stage = "reader slip revoke and next use";
     const auditBeforeRevoke = await museLabel03AuditRows(engine.client);
     const readerSlipId = museLabel03MintedSlipId(
       auditBeforeReader,
@@ -2773,6 +2917,14 @@ suite.test(test, "MUSE-LABEL-03", "An unstamped claim citing an owner-only turn 
       },
       readerSlipRevoked: revoked.body.revoked,
     });
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-LABEL-03 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-LABEL-03 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2827,6 +2979,8 @@ function museLabel04Mint(
       worlds: { kind: "some", values: [worldId] },
       facets: { kind: "some", values: [facetId] },
       bands: { kind: "all" },
+      audience: { kind: "all" },
+      sensitivity: { kind: "at_most", value: "private" },
       verbs: { kind: "some", values: [...verbs] },
     },
   };
@@ -2855,6 +3009,7 @@ async function museLabel04Refused(
   const denied = await actor.raw<museLabel04ErrorEnvelope>(
     "POST", `/v1/core/facade/${verb}`, input,
   );
+  if (!statuses.includes(denied.status)) throw new PublicHttpError(denied);
   expect(statuses).toContain(denied.status);
   const error = denied.body?.error;
   if (!error || typeof error.code !== "string" || error.code.length === 0
@@ -2884,12 +3039,23 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
   // A real second vault identity, read before this one-slot file starts the
   // host vault (the SECRETS-01 sequential-vault pattern). No peers option,
   // no concurrent second server.
+  let stage = "peer identity setup";
   const peer = await EngineFixture.start({ id: "MUSE-LABEL-04-peer", profile });
   let peerVault = "";
+  let peerHolderKey = "";
   try {
     const peerIdentity = await peer.client.call("vault.federation.connect.identity", {});
     expect(peerIdentity.vault.length).toBeGreaterThan(0);
     peerVault = peerIdentity.vault;
+    peerHolderKey = peerIdentity.host_key;
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-LABEL-04 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-LABEL-04 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     await peer.close();
   }
@@ -2897,6 +3063,7 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
 
   const engine = await EngineFixture.start({ id: "MUSE-LABEL-04", profile });
   try {
+    stage = "host identity and named WORLD readback";
     const hostIdentity = await engine.client.call("vault.federation.connect.identity", {});
     expect(hostIdentity.vault.length).toBeGreaterThan(0);
     expect(hostIdentity.vault).not.toBe(peerVault);
@@ -2925,6 +3092,7 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
     const validMint = museLabel04Mint(
       peerVault, world.id_hex, baseScope.scope_facet_id, ["read", "propose"],
     );
+    stage = "complete six-axis named-world guest grant mint";
     const grant = await engine.client.call("vault.federation.connect.grants.mint", validMint);
     expect(grant.grant.length).toBeGreaterThan(0);
     // The resolved ceiling is not widened: exactly the named world (never
@@ -2941,19 +3109,25 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
     // leaves this vault with no pact.
     expect((await engine.client.call("vault.federation.status", {})).pacts).toEqual([]);
 
-    // Observe the live grant through a different verb: it mints a guest
-    // slip. The slip is a generated capability value; it is redacted as
-    // soon as it exists and is never written to an artifact.
+    // An inert Connect grant is stored, but is not yet authority to mint a
+    // guest credential: that also needs an operative pact. Read the grant
+    // through a second door and check the inactive-pact refusal explicitly.
+    stage = "stored inert grant readback and inactive-pact slip refusal";
+    const grantRead = await engine.client.call("vault.get", { entity_ref: grant.grant });
+    expect(grantRead.value?.kind).toBe("FEDERATION_GRANT");
+    expect(grantRead.value?.id_hex).toBe(grant.grant);
+    expect(object(grantRead.value?.body).authority_scope).toEqual(grant.resolved_scope);
     const slipInput = {
-      grant_ref: grant.grant, expires_at: museLabel04SlipExpiresAt,
+      grant_ref: grant.grant, holder_key: peerHolderKey,
+      expires_at: museLabel04SlipExpiresAt,
     } satisfies FacadeInput<"vault.guests.mint_slip">;
-    const slip = await engine.client.call("vault.guests.mint_slip", slipInput);
-    redactor.add(slip.slip, slip.slip_id);
-    expect(slip.slip.length).toBeGreaterThan(0);
+    await museLabel04Refused(engine.client, engine.client,
+      "vault.guests.mint_slip", slipInput, [400, 403, 422]);
 
     // Refuse a widened grant: a verb outside "read"/"propose" is rejected,
     // and so is a grant that names the reserved base world. Each refusal
     // leaves a call receipt the owner reads back.
+    stage = "widened-verb and base-world grant refusals";
     await museLabel04Refused(engine.client, engine.client,
       "vault.federation.connect.grants.mint",
       museLabel04Mint(peerVault, world.id_hex, baseScope.scope_facet_id,
@@ -2967,6 +3141,7 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
 
     // Refuse the wrong actor kind: a paired agent with ordinary read/write
     // credential scope cannot mint a guest grant on the host.
+    stage = "agent guest-grant mint refusal";
     const agentRecord = await engine.client.call("vault.structural.put", {
       kind: "PERSON", body: { name: museLabel04AgentName },
       occurred_at: museLabel04OccurredAt,
@@ -2982,6 +3157,7 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
 
     // Survive a restart: the named world and the no-pact state read back
     // unchanged, and the grant is still live enough to revoke below.
+    stage = "restart named-world and inert-grant readback";
     await engine.restart();
     const worldAfterRestart = await engine.client.call("vault.get", { entity_ref: world.entity_ref });
     expect(worldAfterRestart.value?.kind).toBe("WORLD");
@@ -2990,13 +3166,26 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
 
     // The owner revokes the guest grant through its public door; the next
     // use of that grant — minting another slip — is refused with a receipt.
+    stage = "guest grant revoke and next slip refusal";
     const revoked = await engine.client.call("vault.guests.revoke", {
       grant_ref: grant.grant,
     } satisfies FacadeInput<"vault.guests.revoke">);
     expect(revoked.grant_ref).toBe(grant.grant);
     expect(revoked.changed).toBe(true);
-    await museLabel04Refused(engine.client, engine.client,
-      "vault.guests.mint_slip", slipInput, [400, 403, 422]);
+    expect((await engine.client.call("vault.get", { entity_ref: grant.grant })).value).toBeNull();
+    // Withdrawal is checked before pact admission and answers NOT_FOUND (404),
+    // unlike the inactive but still-stored grant checked above.
+    const revokedCode = await museLabel04Refused(engine.client, engine.client,
+      "vault.guests.mint_slip", slipInput, [404]);
+    expect(revokedCode).toBe("NOT_FOUND");
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-LABEL-04 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw new Error(`MUSE-LABEL-04 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -3100,6 +3289,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
   const engine = await EngineFixture.start({ id: "MUSE-LABEL-05", profile });
   let primaryFailed = false;
   let primary: unknown;
+  let stage = "people and scoped actors";
   try {
     const occurred = 1769947200;
     const suffix = secretHex(4);
@@ -3169,6 +3359,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     // The owner authors the origin claim under the substrate mask, then reads
     // it back through doors that did not write it.
     const scope = await ownerBaseClaimScope(engine.client, ownerPrincipal);
+    stage = "origin claim and scope readbacks";
     const originCommit = await engine.client.call("vault.claims.upsert", {
       subject_ref: subjectId, predicate, value: sentinel,
       confidence: 1, source: "user_stated", scope, occurred_at: occurred,
@@ -3224,25 +3415,41 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     // Wrong actors first, with the exact input the owner uses below. A facet
     // fork is a move only the owner may apply; neither agent slip may do it,
     // and the read/write refusal leaves a governance receipt.
-    const readDenied = await agentRead.client.raw<{ error: { code: string; message: string } }>(
+    stage = "agent facet-fork admission refusal and call receipts";
+    const readDenied = await agentRead.client.raw<{
+      error: { code: string; message: string; suggestions?: string[]; receiptRef?: string };
+    }>(
       "POST", "/v1/core/facade/vault.identity.facet", facetInput,
     );
     expect(readDenied.status).toBe(403);
     expect(readDenied.body.error?.code?.length ?? 0).toBeGreaterThan(0);
-    const writeDenied = await agentWrite.client.raw<{ error: { code: string; message: string } }>(
+    const writeDenied = await agentWrite.client.raw<{
+      error: { code: string; message: string; suggestions?: string[]; receiptRef?: string };
+    }>(
       "POST", "/v1/core/facade/vault.identity.facet", facetInput,
     );
     expect(writeDenied.status).toBe(403);
     expect(writeDenied.body.error?.code?.length ?? 0).toBeGreaterThan(0);
-    const refusalReceipts = await awaitPublic(
-      () => museLabel05Receipts(engine.client),
-      rows => rows.some(row => !baselineReceiptRefs.has(row.receipt_ref)
-        && (row.actor_ref === agentActorRef || row.actor_ref === agentPersonId)),
-      { label: "agent facet-fork refusal receipt", timeoutMs: 5_000 },
-    );
-    const refusalReceipt = refusalReceipts.find(row => !baselineReceiptRefs.has(row.receipt_ref)
-      && (row.actor_ref === agentActorRef || row.actor_ref === agentPersonId));
-    if (!refusalReceipt) throw new Error("Agent facet-fork refusal left no receipt");
+    // Host-door admission refuses before a topology/Gate row is written.
+    // Its durable evidence is the HTTP facade call receipt, not receipts().
+    let refusalReceiptRef = "";
+    for (const [actorLabel, denied] of [["read-only", readDenied], ["read/write", writeDenied]] as const) {
+      const receiptRef = denied.body.error?.receiptRef;
+      if (!receiptRef) {
+        throw new Error(`MUSE-LABEL-05 ${actorLabel} facet-fork refusal: status=${denied.status} code=${denied.body.error?.code ?? "<none>"} message=${denied.body.error?.message ?? "<none>"} suggestion=${denied.body.error?.suggestions?.[0] ?? "<none>"}; no receiptRef`);
+      }
+      const receipt = await awaitPublic(
+        () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+        value => value !== null,
+        { label: `MUSE-LABEL-05 ${actorLabel} facet-fork call receipt ${receiptRef}`, timeoutMs: 5_000 },
+      );
+      if (!receipt) throw new Error("Agent facet-fork refusal left no call receipt");
+      expect(receipt.actor_ref).toBe(agentActorRef);
+      expect(receipt.verb).toBe("vault.identity.facet");
+      if (receipt.outcome === "ok") throw new Error("Agent facet-fork receipt records success");
+      expect(receipt.outcome.refused.code).toBe(denied.body.error.code);
+      if (actorLabel === "read/write") refusalReceiptRef = receiptRef;
+    }
 
     // Nothing moved: still one claim, same stamp, no new facet on the subject.
     const afterRefusalRows = await listSubjectClaims();
@@ -3254,6 +3461,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
       .toEqual(facetsBefore);
 
     // The owner applies the same fork. Read every effect back elsewhere.
+    stage = "owner facet fork and linked-claim readbacks";
     const forkResult = await engine.client.call("vault.identity.facet", facetInput);
     expect(forkResult.outcome).toBe("applied");
     if (forkResult.outcome !== "applied") throw new Error("Owner facet fork did not apply");
@@ -3265,16 +3473,21 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     }
     expect(topologyAction.forked).toHaveLength(1);
     expect(topologyAction.facets).toHaveLength(1);
-    const forkId = topologyAction.forked[0];
+    // The event lists forked ORIGIN ids, not the newly minted claim ids.
+    expect(topologyAction.forked).toEqual([originId]);
     const newFacetId = topologyAction.facets[0];
-    if (!forkId || !newFacetId) throw new Error("Owner facet fork named no fork or facet");
+    if (!newFacetId) throw new Error("Owner facet fork named no facet");
     const topologyEvent = topologyReceipt.event;
-    expect(forkId).not.toBe(originId);
     expect(newFacetId).not.toBe(scope.scope_facet_id);
 
     const afterForkRows = await listSubjectClaims();
-    const forkRow = museLabel05ClaimRowFor(afterForkRows, forkId);
-    if (!forkRow) throw new Error("Facet fork does not read back by subject");
+    const forks = afterForkRows.filter(row => row.claim?.id !== originId
+      && row.claim_scope.scope_facet_id === newFacetId && row.value === sentinel);
+    expect(forks).toHaveLength(1);
+    const forkRow = forks[0];
+    const forkId = forkRow?.claim?.id;
+    if (!forkRow || !forkId) throw new Error("Facet fork does not read back by subject");
+    expect(forkId).not.toBe(originId);
     expect(forkRow.claim_scope.scope_facet_id).toBe(newFacetId);
     expect(forkRow.subject_ref).toBe(subjectId);
     expect(forkRow.predicate).toBe(predicate);
@@ -3301,6 +3514,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
       .toContain(newFacetId);
 
     // The decision is in the ledger, read through doors that did not write it.
+    stage = "owner facet-fork ledger readbacks";
     const recordedEvent = await engine.client.call("vault.identity.events.get", {
       event: topologyEvent,
     });
@@ -3311,7 +3525,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     if (recordedAction.op !== "facet") {
       throw new Error("Recorded topology event is not the facet fork");
     }
-    expect(recordedAction.forked).toContain(forkId);
+    expect(recordedAction.forked).toContain(originId);
     expect(recordedAction.facets).toContain(newFacetId);
     const forkLedgerRows = await awaitPublic(
       () => museLabel05Receipts(engine.client),
@@ -3326,7 +3540,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     if (!forkReceipt) throw new Error("Owner facet fork left no governance receipt");
     await engine.artifacts.json("muse-label05-ledger.json", {
       subjectId, originId, forkId, newFacetId, topologyEvent,
-      refusalReceiptRef: refusalReceipt.receipt_ref,
+      refusalReceiptRef,
       forkReceiptRef: forkReceipt.receipt_ref,
     });
 
@@ -3334,6 +3548,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     // clearance offer for the contact over the new private mask. Filing alone
     // stores no sharing scope and moves no effective scope; the owner's
     // application door is not guessed, so the positive path stays unproved.
+    stage = "MISSING DOOR FIX 22495: clearance-offer leg needs a model-backed companion PERSON and a CID-7 COUNTERPARTY_CONTACT; the fixture supplies ordinary PERSONs, not a contact; waits on vault.counterparty_contacts.create";
     const sharingInput = {
       companion_ref: agentPersonId, contact_ref: contactId,
     } satisfies FacadeInput<"vault.companions.sharing.get">;
@@ -3359,6 +3574,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
 
     // The same agent loses its slip mid-flow through the owner's public
     // revoke door, and its next use of the verb it just used is refused.
+    stage = "agent slip revoke and next use";
     const revoked = await engine.client.request<{ revoked: boolean }>(
       "POST", "/v1/core/slips/revoke",
       { slip_id: Array.from(Buffer.from(writeSlipId, "hex")) },
@@ -3385,6 +3601,7 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     );
 
     // Everything above survives a restart, read back through the same doors.
+    stage = "restart fork ledger and sharing readbacks";
     await engine.restart();
     const afterRestartRows = await listSubjectClaims();
     const forkAfterRestart = museLabel05ClaimRowFor(afterRestartRows, forkId);
@@ -3411,7 +3628,9 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     );
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    primary = error instanceof PublicHttpError
+      ? new Error(`MUSE-LABEL-05 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error })
+      : new Error(`MUSE-LABEL-05 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     try { await engine.close(); } catch (cleanup) {
       if (primaryFailed) {
