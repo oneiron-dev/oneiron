@@ -4,6 +4,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::PptxCommentAction;
 use crate::edit_roundtrip::pptx::tests::support;
 use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
+use crate::error::ArtifactError;
 use crate::llm::decision::{
     AnswerContract, DecisionCall, DecisionClass, DecisionProvider, HeldLadder, PairedAnswer,
     ProviderDecision, ProviderPin,
@@ -926,6 +927,12 @@ fn many_judgment_proposal(input: &[u8], count: usize, run_ref: &str) -> super::s
 
 #[test]
 fn settlement_row_limit_is_shared_by_encoder_decoder_select_and_discard() {
+    // Ruled refusal removed (Rule 5, counts never refuse; FIX 9819, f55d6afbd47
+    // OF-505/OF-510 #3963): "every row a review writes is kept, whatever their
+    // number". The old cap was 4096; one row past it now validates and settles,
+    // and select refuses the over-count proposal only at PPTX replay, never on
+    // count. The duplicate and alias checks below are unchanged: they stay.
+    const MAX_JUDGMENTS: usize = 4096;
     let input = deck(1);
     let (_dir, vault, artifact, actor) = vault_with_deck(&input);
     let consent = SettleConsent::OwnerConsent { brief_ref: None };
@@ -945,27 +952,41 @@ fn settlement_row_limit_is_shared_by_encoder_decoder_select_and_discard() {
             .len(),
         MAX_JUDGMENTS
     );
-    let too_many = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit");
-    assert!(
-        vault
-            .settle_discard_edit_proposal(&artifact, &too_many, &consent, actor, "over", 5)
-            .is_err()
-    );
-    assert!(
-        vault
-            .settle_select_edit_proposal(
-                &artifact,
-                &too_many,
-                &consent,
-                actor,
-                TimeRange { start: 5, end: 5 },
-                5
-            )
-            .is_err()
-    );
-    assert!(
+    // One row past the old cap: no count refusal at the shared row check or at
+    // the discard door, and the ledger keeps and decodes every row.
+    let over = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit");
+    assert!(validate_judgment_rows(&over.manifest.slide_judgments).is_ok());
+    let discarded = vault
+        .settle_discard_edit_proposal(&artifact, &over, &consent, actor, "over", 5)
+        .unwrap();
+    assert_eq!(discarded.receipt.outcome, "discarded");
+    assert_eq!(
         vault
             .blob_artifact_settlement(&artifact, "review:over-limit")
+            .unwrap()
+            .unwrap()
+            .pptx_judgments
+            .len(),
+        MAX_JUDGMENTS + 1
+    );
+    // At select the same over-count proposal is refused only because its cloned
+    // ops cannot replay over the one-slide base: the count check is gone from
+    // the select path too, and the refused select still lands nothing.
+    let select = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit-select");
+    assert!(matches!(
+        vault.settle_select_edit_proposal(
+            &artifact,
+            &select,
+            &consent,
+            actor,
+            TimeRange { start: 5, end: 5 },
+            5
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:over-limit-select")
             .unwrap()
             .is_none()
     );
