@@ -126,7 +126,29 @@ impl Vault {
         announcement: AnnouncementAuthority,
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let (batch, entities) = self.stage_core_batch(input, announcement)?;
+        self.write_core_batch_in_lane_as(input, commit, announcement, lane, None)
+    }
+
+    /// [`Self::write_core_batch_in_lane`] for the handle `writer` is bound
+    /// to. An agent's batch holds each AGENT_DEF it creates to that agent's
+    /// slice (ARCH-0053:20; [`BatchBuilder::authored_through`]): inside the
+    /// slice it is active, wider it is a proposal. With no `writer`, every
+    /// body is written as staged.
+    /// # Errors
+    /// As [`Self::write_core_batch_in_lane`], and the author writer's
+    /// refusal of a definition it would refuse at `vault.agents.put`.
+    pub(crate) fn write_core_batch_in_lane_as(
+        &self,
+        input: &CoreBatchWriteInput,
+        commit: CoreBatchCommit,
+        announcement: AnnouncementAuthority,
+        lane: &CoreWriteLane<'_>,
+        writer: Option<&crate::WriteActor>,
+    ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let (mut batch, entities) = self.stage_core_batch(input, announcement)?;
+        if let Some(writer) = writer {
+            batch = batch.authored_through(writer, "vault.batch");
+        }
         batch.commit_in_core_lane(lane, commit)?;
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),

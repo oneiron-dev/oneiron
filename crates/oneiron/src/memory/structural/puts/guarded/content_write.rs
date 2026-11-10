@@ -58,7 +58,10 @@ impl Memory<'_> {
                 .batch_in()
                 .asset_text_birth(&id, occurred, learned_at, &data, &sources)
         };
-        batch = batch.made_by(&id, birth);
+        // An agent's new AGENT_DEF is held to its own slice (ARCH-0053:20).
+        batch = batch
+            .made_by(&id, birth)
+            .authored_through(&self.write_actor(), "vault.structural.put");
         for (kind, target, weight) in &resolved_edges {
             batch = batch.edge(&id, *kind, target, *weight);
         }
