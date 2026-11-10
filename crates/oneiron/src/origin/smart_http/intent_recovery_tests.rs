@@ -601,7 +601,7 @@ impl crate::origin::lfs::LfsReadRoom for RoomFor {
         self.asked.fetch_add(1, Ordering::SeqCst);
         let left = self
             .left
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             });
         left.ok()

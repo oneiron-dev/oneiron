@@ -35,9 +35,9 @@ pub(super) enum Listing {
 impl Listing {
     const fn tag(self) -> [u8; 1] {
         match self {
-            Self::Proposal => [b'p'],
-            Self::Digest => [b'd'],
-            Self::Run => [b'r'],
+            Self::Proposal => *b"p",
+            Self::Digest => *b"d",
+            Self::Run => *b"r",
         }
     }
 
