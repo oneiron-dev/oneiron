@@ -3,9 +3,10 @@
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{ActSurface, HostSlipIssuer, PairingPrincipal, VerifiedSlip};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
@@ -149,7 +150,13 @@ fn base_and_second_grants(other: EntityId) -> Vec<BTreeSet<ScopeId>> {
 fn fixture(grants: GrantWorlds) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    // The owner's agent Grant act is carried by this install's live machine
+    // profile, as a serving start or `init` enrols it (FIX 4648).
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
     let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     let other_world = vault
         .create_world(&owner_proof, "Grant-excluded world", OCCURRED_AT)
