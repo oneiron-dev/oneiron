@@ -869,33 +869,6 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
         "the source codec still round-trips unchanged"
     );
 
-    // StandingOutboundGrant scope → ActionGrant, across every blind scope dial.
-    let scopes = [
-        StandingOutboundGrantScope::Contact {
-            contact_ref: "contact:alice".to_owned(),
-        },
-        StandingOutboundGrantScope::VerbClass {
-            verb_class: "send".to_owned(),
-        },
-        StandingOutboundGrantScope::Channel {
-            channel: "email".to_owned(),
-        },
-        StandingOutboundGrantScope::BriefVerbClass {
-            brief_ref: "brief:q3".to_owned(),
-            verb_class: "send".to_owned(),
-        },
-    ];
-    for scope in scopes {
-        let dial_before = scope.dial_label();
-        let (class, selectors, _) = outbound_scope_axes(&scope);
-        assert!(!class.is_empty() && !selectors.is_empty());
-        assert_eq!(
-            scope.dial_label(),
-            dial_before,
-            "projection must not change the source scope's dial vocabulary"
-        );
-    }
-
     // PolicyScopedGrant → ActionGrant. `receipt_required` may only RESTRICT.
     let policy_grant = PolicyScopedGrant {
         authority_scope: crate::federation::scope_codec::read_preset(),

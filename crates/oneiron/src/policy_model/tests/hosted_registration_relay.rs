@@ -7,7 +7,7 @@ use crate::error::RelayError;
 fn hosted_registration_rejects_a_policy_it_could_not_enforce() {
     let long_id = "x".repeat(POLICY_PATTERN_ID_MAX_LEN + 1);
     let long_pattern = "a".repeat(POLICY_PATTERN_MAX_LEN + 1);
-    let too_many: Vec<PolicyPatternRule> = (0..=POLICY_PATTERN_RULES_MAX)
+    let too_many: Vec<PolicyPatternRule> = (0..=256)
         .map(|index| escalate_rule(&format!("rule.{index}"), "(?i)bomb"))
         .collect();
 
