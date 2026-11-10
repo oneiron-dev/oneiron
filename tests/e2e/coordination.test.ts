@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
-import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
+import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
+import { PublicHttpClient, PublicHttpError, WsRpcError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
-import { defineFile } from "./support/run.ts";
+import { defineFile, LIMITS, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -1914,3 +1914,2734 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
  * for the full deterministic journey, not permission to call LinearTaskStore.
  */
 suite.todo(test, "COORDINATION-09", "waits on typed Linear webhook intake and task-issue mirror edit/mapping/provenance doors");
+
+// ---- MUSE-LOOP-01 (Muse Wonder Full, ported 10 Nov) ----
+/*
+ * MUSE-LOOP-01 (PARTIAL) — promises P-LOOP-001 and P-LOOP-002, plus the
+ * approve/reject half of the working title. Doors used: vault.claims.upsert,
+ * vault.commit, vault.writes.pending (canon pendingWrites(limit)),
+ * vault.claims.review, vault.claims.settle, vault.claims.list,
+ * vault.claims.history, vault.receipts, vault.receipts.get and
+ * vault.authority.audit.
+ *
+ * Unproved and not faked here:
+ * - P-LOOP-003 push to subscribers: the typed facade has no
+ *   subscribe(scopedView)/unsubscribe verb and no named receipts or
+ *   pending-consent channel payload. Canon names sub.open only abstractly,
+ *   so a guessed WS payload would not be a typed door.
+ * - P-LOOP-004 amended receipt: ClaimSettleRequest accepts only
+ *   approve/reject and carries no amended/final claim. The separate
+ *   vault.skills.attribution.settle/read delta does not settle a pending
+ *   claim or link that claim's proposal, so it is not used as a substitute.
+ */
+
+type museLoop01ReceiptRow = FacadeResult<"vault.receipts">["receipts"][number];
+type museLoop01PendingRow = FacadeResult<"vault.writes.pending">[number];
+type museLoop01AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+
+interface museLoop01ReceiptActor {
+  readonly actorRef: string | undefined;
+  readonly actorClass: string;
+  readonly claimRef: string | undefined;
+  readonly outcomeText: string;
+}
+
+async function museLoop01CreatePerson(
+  client: PublicHttpClient,
+  name: string,
+  occurredAt: number,
+): Promise<FacadeResult<"vault.structural.put">> {
+  const created = await client.call("vault.structural.put", {
+    kind: "PERSON", body: { name }, occurred_at: occurredAt,
+  });
+  expect(created.id_hex.length).toBeGreaterThan(0);
+  return created;
+}
+
+async function museLoop01ReceiptRows(
+  client: PublicHttpClient,
+): Promise<museLoop01ReceiptRow[]> {
+  const rows: museLoop01ReceiptRow[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query: FacadeInput<"vault.receipts"> = {
+      limit: 1000, ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.receipts", query);
+    rows.push(...page.receipts);
+    if (!page.next_after) return rows;
+    after = page.next_after;
+  }
+}
+
+async function museLoop01ReceiptActor(
+  client: PublicHttpClient,
+  receiptRef: string,
+): Promise<museLoop01ReceiptActor> {
+  if (receiptRef.startsWith("call:")) {
+    const call = await awaitPublic(
+      () => client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+      value => value !== null,
+      { label: `call receipt ${receiptRef}` },
+    );
+    if (!call) throw new Error(`MUSE-LOOP-01: call receipt ${receiptRef} is not readable`);
+    return {
+      actorRef: call.actor_ref,
+      actorClass: call.actor_class,
+      claimRef: undefined,
+      outcomeText: typeof call.outcome === "string"
+        ? call.outcome : `refused:${call.outcome.refused.code}`,
+    };
+  }
+  const row = await awaitPublic(
+    async () => (await museLoop01ReceiptRows(client))
+      .find(candidate => candidate.receipt_ref === receiptRef),
+    value => value !== undefined,
+    { label: `governance receipt ${receiptRef}` },
+  );
+  if (!row) throw new Error(`MUSE-LOOP-01: governance receipt ${receiptRef} is not readable`);
+  return {
+    actorRef: row.actor_ref ?? undefined,
+    actorClass: row.actor_class,
+    claimRef: row.claim_ref ?? undefined,
+    outcomeText: row.outcome,
+  };
+}
+
+async function museLoop01AuditRows(
+  client: PublicHttpClient,
+): Promise<museLoop01AuditRow[]> {
+  const rows: museLoop01AuditRow[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = {
+      limit: 500, ...(after ? { after } : {}),
+    };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    after = page.next_after;
+  }
+}
+
+function museLoop01ClaimRefs(
+  receipt: FacadeResult<"vault.claims.upsert">,
+): Set<string> {
+  return new Set([
+    receipt.claim_short_id, receipt.claim?.id, receipt.claim?.short_id,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0));
+}
+
+function museLoop01PendingFor(
+  rows: readonly museLoop01PendingRow[],
+  claimRefs: ReadonlySet<string>,
+): museLoop01PendingRow | undefined {
+  return rows.find(row => claimRefs.has(row.claim_ref));
+}
+
+suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pending-write queue with receipts, and the owner approves one and rejects another with both actors named in receipts after restart", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-01", profile });
+  const ownerRef = engine.pairedActor.principalRef;
+  // A fixed public setup time, as GATE-09 uses; no wall-clock wait follows.
+  const occurred = 1769947200;
+  // Canon's registered-predicate example is goal.learning (ARCH-0044 S8).
+  const predicate = "goal.learning";
+  const proposedValue1 = `generated learning goal one ${secretHex(8)}`;
+  const proposedValue2 = `generated learning goal two ${secretHex(8)}`;
+  const noGrantValue = `generated learning goal ungranted ${secretHex(8)}`;
+  const afterRevokeValue = `generated learning goal revoked ${secretHex(8)}`;
+  redactor.add(proposedValue1, proposedValue2, noGrantValue, afterRevokeValue);
+
+  const auditBaseline = await museLoop01AuditRows(engine.client);
+  const proposerRecord = await museLoop01CreatePerson(
+    engine.client, "Loop Proposer Agent", occurred);
+  const proposer = await engine.pairActor({
+    principalRef: proposerRecord.id_hex, actorClass: "agent",
+    scope: ["core:read", "core:write"],
+  });
+  const readOnlyRecord = await museLoop01CreatePerson(
+    engine.client, "Loop Read Only Agent", occurred);
+  const readOnlyAgent = await engine.pairActor({
+    principalRef: readOnlyRecord.id_hex, actorClass: "agent",
+    scope: ["core:read"],
+  });
+  const subject1 = await museLoop01CreatePerson(
+    engine.client, "Loop Subject One", occurred);
+  const subject2 = await museLoop01CreatePerson(
+    engine.client, "Loop Subject Two", occurred);
+  const scope = await ownerBaseClaimScope(engine.client, ownerRef);
+  const baselinePending = new Set((
+    await engine.client.call("vault.writes.pending", { limit: 1000 })
+  ).map(row => row.claim_ref));
+
+  // An agent paired without core:write is refused at the write door, and
+  // the refusal lands nothing in the review queue or the claim list.
+  const noGrantInput: FacadeInput<"vault.claims.upsert"> = {
+    predicate, subject_ref: subject1.id_hex, value: noGrantValue,
+    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+  };
+  const noGrant = await readOnlyAgent.client.raw<{
+    error: { code: string; message: string };
+  }>("POST", "/v1/core/facade/vault.claims.upsert", noGrantInput);
+  expect(noGrant.status).toBe(403);
+  const pendingAfterNoGrant = await engine.client.call(
+    "vault.writes.pending", { limit: 1000 });
+  const claimsAfterNoGrant = await engine.client.call("vault.claims.list", {
+    subject_ref: subject1.id_hex, predicate, limit: 100,
+  });
+
+  // Act 1 (P-LOOP-002 receipt + P-LOOP-001 queue): the granted agent
+  // proposes an inferred claim. Canon maps inferred sources to proposed.
+  const proposalInput1: FacadeInput<"vault.claims.upsert"> = {
+    predicate, subject_ref: subject1.id_hex, value: proposedValue1,
+    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+  };
+  const receipt1 = await proposer.client.call("vault.claims.upsert", proposalInput1);
+  expect(receipt1.receipt_ref.length).toBeGreaterThan(0);
+  expect(receipt1.claim_short_id.length).toBeGreaterThan(0);
+  expect(receipt1.approval.toLowerCase()).toBe("proposed");
+  await engine.awaitReceipt(receipt1.receipt_ref);
+  const claimRefs1 = museLoop01ClaimRefs(receipt1);
+  const pending1 = await awaitPublic(
+    async () => museLoop01PendingFor(
+      await engine.client.call("vault.writes.pending", { limit: 1000 }), claimRefs1),
+    row => row !== undefined,
+    { label: "first proposed claim in pending writes" },
+  );
+  if (!pending1) throw new Error("MUSE-LOOP-01: first proposed claim never reached pending writes");
+  claimRefs1.add(pending1.claim_ref);
+  expect(baselinePending.has(pending1.claim_ref)).toBe(false);
+  const receiptActor1 = await museLoop01ReceiptActor(engine.client, receipt1.receipt_ref);
+  expect(receiptActor1.actorRef).toBe(proposer.principalRef);
+  expect(receiptActor1.actorClass.toLowerCase()).toBe("agent");
+  if (receiptActor1.claimRef !== undefined) {
+    expect(claimRefs1.has(receiptActor1.claimRef)).toBe(true);
+  }
+
+  // Observe through the owner review door, a second door from the write.
+  const review1 = await engine.client.call("vault.claims.review", {
+    claim_ref: pending1.claim_ref,
+  } satisfies FacadeInput<"vault.claims.review">);
+  expect(review1.review_id.length).toBeGreaterThan(0);
+  expect(review1.proposal_ref.length).toBeGreaterThan(0);
+  expect(claimRefs1.has(review1.claim.claim_ref)).toBe(true);
+  expect(review1.claim.subject_ref).toBe(subject1.id_hex);
+  expect(review1.claim.predicate).toBe(predicate);
+  expect(review1.claim.value).toBe(proposedValue1);
+  expect(review1.claim.approval.toLowerCase()).toBe("proposed");
+
+  // Wrong actor kind: the proposer may not settle its own proposal. The
+  // HTTP leg checks the standard typed envelope; the WS leg reads back
+  // the receipt the refusal leaves.
+  const settleApprove1: FacadeInput<"vault.claims.settle"> = {
+    claim_ref: pending1.claim_ref, review_id: review1.review_id, decision: "approve",
+  };
+  const deniedHttp = await proposer.client.raw<{
+    error: { code: string; message: string; suggestions?: readonly string[] };
+  }>("POST", "/v1/core/facade/vault.claims.settle", settleApprove1);
+  expect(deniedHttp.status).toBe(403);
+  expect(deniedHttp.body.error.code.length).toBeGreaterThan(0);
+  expect(deniedHttp.body.error.message.length).toBeGreaterThan(0);
+
+  const socket = await engine.websocket(proposer);
+  let deniedReceiptRef: string | undefined;
+  try {
+    await socket.call("vault.claims.settle", settleApprove1);
+    throw new Error("MUSE-LOOP-01: proposer agent settled its own claim over WS");
+  } catch (error) {
+    if (!(error instanceof WsRpcError)) throw error;
+    expect(error.frames.some(frame => frame.envelope.type === "rpc.err")).toBe(true);
+    deniedReceiptRef = error.frames.find(frame =>
+      typeof frame.envelope.receipt_ref === "string"
+      && frame.envelope.receipt_ref.length > 0)?.envelope.receipt_ref ?? undefined;
+  } finally {
+    socket.close();
+  }
+  if (!deniedReceiptRef) {
+    throw new Error("MUSE-LOOP-01: refused WS settle left no receipt_ref on its rpc.err frame");
+  }
+  const deniedReceipt = await museLoop01ReceiptActor(engine.client, deniedReceiptRef);
+  expect(deniedReceipt.actorRef).toBe(proposer.principalRef);
+  expect(deniedReceipt.actorClass.toLowerCase()).toBe("agent");
+  expect(deniedReceipt.outcomeText.toLowerCase()).not.toBe("ok");
+  expect(museLoop01PendingFor(
+    await engine.client.call("vault.writes.pending", { limit: 1000 }),
+    claimRefs1)?.claim_ref).toBe(pending1.claim_ref);
+
+  // The owner approves exactly the reviewed proposal.
+  const settled1 = await engine.client.call("vault.claims.settle", settleApprove1);
+  expect(settled1.verdict).toBe("landed");
+  expect(settled1.receipt_ref.length).toBeGreaterThan(0);
+  expect(settled1.proposal_ref).toBe(review1.proposal_ref);
+  expect(settled1.review_id).toBe(review1.review_id);
+  expect(settled1.changes.some(change =>
+    change.claim_ref === pending1.claim_ref && change.verdict === "landed")).toBe(true);
+  await engine.awaitReceipt(settled1.receipt_ref);
+  const settleReceiptActor1 = await museLoop01ReceiptActor(
+    engine.client, settled1.receipt_ref);
+  expect(settleReceiptActor1.actorRef).toBe(ownerRef);
+  expect(settleReceiptActor1.actorClass.toLowerCase()).toBe("human");
+  if (settleReceiptActor1.claimRef !== undefined) {
+    expect(claimRefs1.has(settleReceiptActor1.claimRef)).toBe(true);
+  }
+  await awaitPublic(
+    async () => museLoop01PendingFor(
+      await engine.client.call("vault.writes.pending", { limit: 1000 }),
+      claimRefs1) !== undefined,
+    present => present === false,
+    { label: "approved claim leaves pending writes" },
+  );
+  const listed1 = await engine.client.call("vault.claims.list", {
+    subject_ref: subject1.id_hex, predicate, limit: 100,
+  });
+  const landed1 = listed1.value.find(row => row.claim_ref === pending1.claim_ref);
+  expect(landed1?.value).toBe(proposedValue1);
+  expect(["approved", "auto"].includes(landed1?.approval.toLowerCase() ?? "")).toBe(true);
+
+  // Act 2 (same promises through vault.commit): a second agent proposal,
+  // this time for the owner to refuse.
+  const proposalInput2: FacadeInput<"vault.claims.upsert"> = {
+    predicate, subject_ref: subject2.id_hex, value: proposedValue2,
+    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+  };
+  const committed2 = await proposer.client.call("vault.commit", {
+    claims: [proposalInput2],
+  } satisfies FacadeInput<"vault.commit">);
+  expect(committed2).toHaveLength(1);
+  const outcome2 = committed2[0]!;
+  if (outcome2.outcome !== "landed") {
+    throw new Error(
+      `MUSE-LOOP-01: second proposal was refused: ${outcome2.refusal.code} ${outcome2.refusal.message}`);
+  }
+  const receipt2 = outcome2;
+  expect(receipt2.receipt_ref.length).toBeGreaterThan(0);
+  expect(receipt2.claim_short_id.length).toBeGreaterThan(0);
+  expect(receipt2.approval.toLowerCase()).toBe("proposed");
+  await engine.awaitReceipt(receipt2.receipt_ref);
+  const claimRefs2 = museLoop01ClaimRefs(receipt2);
+  const pending2 = await awaitPublic(
+    async () => museLoop01PendingFor(
+      await engine.client.call("vault.writes.pending", { limit: 1000 }), claimRefs2),
+    row => row !== undefined,
+    { label: "second proposed claim in pending writes" },
+  );
+  if (!pending2) throw new Error("MUSE-LOOP-01: second proposed claim never reached pending writes");
+  claimRefs2.add(pending2.claim_ref);
+  const receiptActor2 = await museLoop01ReceiptActor(engine.client, receipt2.receipt_ref);
+  expect(receiptActor2.actorRef).toBe(proposer.principalRef);
+  expect(receiptActor2.actorClass.toLowerCase()).toBe("agent");
+  const review2 = await engine.client.call("vault.claims.review", {
+    claim_ref: pending2.claim_ref,
+  } satisfies FacadeInput<"vault.claims.review">);
+  expect(review2.claim.value).toBe(proposedValue2);
+  expect(review2.claim.approval.toLowerCase()).toBe("proposed");
+
+  const settled2 = await engine.client.call("vault.claims.settle", {
+    claim_ref: pending2.claim_ref, review_id: review2.review_id, decision: "reject",
+  } satisfies FacadeInput<"vault.claims.settle">);
+  expect(settled2.verdict).toBe("rejected");
+  expect(settled2.receipt_ref.length).toBeGreaterThan(0);
+  expect(settled2.proposal_ref).toBe(review2.proposal_ref);
+  expect(settled2.changes.some(change =>
+    change.claim_ref === pending2.claim_ref && change.verdict === "rejected")).toBe(true);
+  await engine.awaitReceipt(settled2.receipt_ref);
+  const settleReceiptActor2 = await museLoop01ReceiptActor(
+    engine.client, settled2.receipt_ref);
+  expect(settleReceiptActor2.actorRef).toBe(ownerRef);
+  expect(settleReceiptActor2.actorClass.toLowerCase()).toBe("human");
+  await awaitPublic(
+    async () => museLoop01PendingFor(
+      await engine.client.call("vault.writes.pending", { limit: 1000 }),
+      claimRefs2) !== undefined,
+    present => present === false,
+    { label: "rejected claim leaves pending writes" },
+  );
+  const history2 = await engine.client.call("vault.claims.history", {
+    claim_ref: pending2.claim_ref,
+  } satisfies FacadeInput<"vault.claims.history">);
+  const rejectedRow = history2.value.find(row => row.claim_ref === pending2.claim_ref);
+  expect(rejectedRow?.value).toBe(proposedValue2);
+  expect(rejectedRow?.approval.toLowerCase()).toBe("rejected");
+  const listed2 = await engine.client.call("vault.claims.list", {
+    subject_ref: subject2.id_hex, predicate, limit: 100,
+  });
+  expect(listed2.value.some(row => row.value === proposedValue2
+    && ["approved", "auto"].includes(row.approval.toLowerCase()))).toBe(false);
+
+  // Survive a restart: queue state, landed and rejected claims, and the
+  // receipt chain naming the agent proposer and the human settler.
+  await engine.restart();
+  const pendingAfterRestart = await engine.client.call(
+    "vault.writes.pending", { limit: 1000 });
+  expect(museLoop01PendingFor(pendingAfterRestart, claimRefs1)).toBe(undefined);
+  expect(museLoop01PendingFor(pendingAfterRestart, claimRefs2)).toBe(undefined);
+  const listedAfterRestart = await engine.client.call("vault.claims.list", {
+    subject_ref: subject1.id_hex, predicate, limit: 100,
+  });
+  expect(listedAfterRestart.value.find(row =>
+    row.claim_ref === pending1.claim_ref)?.value).toBe(proposedValue1);
+  const historyAfterRestart = await engine.client.call("vault.claims.history", {
+    claim_ref: pending2.claim_ref,
+  } satisfies FacadeInput<"vault.claims.history">);
+  expect(historyAfterRestart.value.find(row =>
+    row.claim_ref === pending2.claim_ref)?.approval.toLowerCase()).toBe("rejected");
+  for (const [receiptRef, expectedRef, expectedClass] of [
+    [receipt1.receipt_ref, proposer.principalRef, "agent"],
+    [settled1.receipt_ref, ownerRef, "human"],
+    [receipt2.receipt_ref, proposer.principalRef, "agent"],
+    [settled2.receipt_ref, ownerRef, "human"],
+  ] as const) {
+    const actor = await museLoop01ReceiptActor(engine.client, receiptRef);
+    expect(actor.actorRef).toBe(expectedRef);
+    expect(actor.actorClass.toLowerCase()).toBe(expectedClass);
+  }
+
+  // The proposer loses its paired credential through the owner's public
+  // slip-revoke door (the AUTHORITY-05 pattern); its next write is refused.
+  const auditAfterPairing = await museLoop01AuditRows(engine.client);
+  const baselineHashes = new Set(auditBaseline.map(row => row.entry_hash));
+  const minted = auditAfterPairing.filter(row =>
+    !baselineHashes.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === proposer.principalRef);
+  const slipIds = [...new Set(minted.map(row => row.subject_ref)
+    .filter((value): value is string =>
+      typeof value === "string" && /^[a-f0-9]{64}$/.test(value)))];
+  for (const slipId of slipIds) {
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST", "/v1/core/slips/revoke",
+      { slip_id: Array.from(Buffer.from(slipId, "hex")) });
+    expect(revoked.status).toBe(200);
+  }
+  const afterRevokeInput: FacadeInput<"vault.claims.upsert"> = {
+    predicate, subject_ref: subject1.id_hex, value: afterRevokeValue,
+    confidence: 0.8, source: "inferred", scope, occurred_at: occurred,
+  };
+  const afterRevoke = await proposer.client.raw<{
+    error: { code: string; message: string };
+  }>("POST", "/v1/core/facade/vault.claims.upsert", afterRevokeInput);
+  const auditFinal = await museLoop01AuditRows(engine.client);
+  const listedFinal = await engine.client.call("vault.claims.list", {
+    subject_ref: subject1.id_hex, predicate, limit: 100,
+  });
+});
+
+// ---- MUSE-LOOP-02 (Muse Wonder Full, ported 10 Nov) ----
+type MuseLoop02Scope = FacadeInput<"vault.consent.graduation.answer">["scope"];
+type MuseLoop02Offer = FacadeResult<"vault.consent.graduation.offers">[number];
+type MuseLoop02TrustRow = FacadeResult<"vault.consent.graduation.trust_table">[number];
+type MuseLoop02Stats = NonNullable<FacadeResult<"vault.consent.graduation.stats">>;
+type MuseLoop02Snooze = FacadeResult<"vault.consent.graduation.answer">["snooze"];
+
+function museLoop02SameScope(left: MuseLoop02Scope, right: MuseLoop02Scope): boolean {
+  return left.op_kind === right.op_kind
+    && left.target_class === right.target_class
+    && left.actor === right.actor;
+}
+
+function museLoop02OfferFor(
+  offers: readonly MuseLoop02Offer[],
+  scope: MuseLoop02Scope,
+): MuseLoop02Offer | undefined {
+  return offers.find((offer) => museLoop02SameScope(offer.scope, scope));
+}
+
+function museLoop02TrustRowFor(
+  rows: readonly MuseLoop02TrustRow[],
+  scope: MuseLoop02Scope,
+): MuseLoop02TrustRow {
+  const row = rows.find((candidate) => museLoop02SameScope(candidate.scope, scope));
+  if (!row) {
+    throw new Error(`Trust table has no row for ${scope.op_kind} x ${scope.target_class}`);
+  }
+  return row;
+}
+
+function museLoop02SnoozedCount(snooze: MuseLoop02Snooze): number {
+  if (snooze.state !== "snoozed") {
+    throw new Error(`Expected a snoozed graduation scope, got ${snooze.state}`);
+  }
+  return snooze.count;
+}
+
+async function museLoop02Earn(
+  engine: EngineFixture,
+  scope: MuseLoop02Scope,
+  count: number,
+): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    // One owner ruling per call; outcome calls are the write, and every caller
+    // reads the result back through offers, stats and the trust table.
+    await engine.client.call("vault.consent.graduation.outcome", {
+      scope,
+      outcome: "approved_untouched",
+    });
+  }
+}
+
+async function museLoop02Stats(
+  engine: EngineFixture,
+  scope: MuseLoop02Scope,
+): Promise<MuseLoop02Stats> {
+  const stats = await engine.client.call("vault.consent.graduation.stats", { scope });
+  if (!stats) {
+    throw new Error(`Graduation stats are missing for ${scope.op_kind} x ${scope.target_class}`);
+  }
+  return stats;
+}
+
+async function museLoop02TrustRow(
+  engine: EngineFixture,
+  scope: MuseLoop02Scope,
+): Promise<MuseLoop02TrustRow> {
+  return museLoop02TrustRowFor(
+    await engine.client.call("vault.consent.graduation.trust_table", {}),
+    scope,
+  );
+}
+
+// MUSE-LOOP-02
+// Promises:
+// - P-LOOP-006 (MUST): a graduation offer provides go auto, not now, and
+//   always manual choices.
+// - P-LOOP-007 (MUST): choosing always manual stops graduation offers until
+//   the setting is changed.
+// Canon: ARCH-0056 #graduation-h (the three answers, manual_pinned and the
+// trust table) and ARCH-0055 section 7 (the scope tuple, outcome receipts,
+// "the system offers, the owner taps", and persistence across sessions).
+// Doors used, all through engine.client.call / engine.websocket:
+// vault.consent.graduation.policy (setup read of the effective threshold),
+// .outcome (owner records untouched approvals), .offers, .stats and
+// .trust_table (independent read-backs), .answer (auto / not-now /
+// manual_pinned), vault.consent.registry (the minted standing grant), and
+// vault.consent.graduation.settings.unpin (the settings change). The agent is
+// a paired PERSON principal used as the scope actor and as the wrong actor.
+// What stays unproved: GraduationOffer carries no answers/labels field, so
+// the three choices are proved by submitting each GraduationAnswer against
+// its own earned offer and reading the effect back, not by offer copy or
+// dashboard rendering. Not-now re-offer timing (backoff elapsed, three
+// snoozes) and an auto scope then executing a real send unaudited are also
+// unproved: no clock door may be used and no send door is in this case.
+suite.test(test, "MUSE-LOOP-02", "A graduation offer gives go auto, not now and always manual, and always manual stops offers until settings unpin", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-02", profile });
+
+  // A real paired agent principal: its ref is the actor in every scope tuple,
+  // and it is the wrong actor for answering its own offer below.
+  const agentName = `Muse Loop 02 Agent ${secretHex(4)}`;
+  redactor.add(agentName);
+  const occurredAt = 1769947200;
+  const agentRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON",
+    body: { name: agentName },
+    occurred_at: occurredAt,
+  });
+  const agent = await engine.pairActor({
+    principalRef: agentRecord.id_hex,
+    actorClass: "agent",
+    scope: ["core:read", "core:write"],
+  });
+
+  // The three scope tuples from canon's own examples, each completing one
+  // answer: "go auto for [send-email x client-followups]?", the trust table's
+  // "eligible soon" propose row, and its pinned MANUAL invoice row.
+  const autoScope: MuseLoop02Scope = {
+    op_kind: "send-email",
+    target_class: "client-followups",
+    actor: agent.principalRef,
+  };
+  const notNowScope: MuseLoop02Scope = {
+    op_kind: "send-email",
+    target_class: "new-contacts",
+    actor: agent.principalRef,
+  };
+  const manualScope: MuseLoop02Scope = {
+    op_kind: "invoice-create",
+    target_class: "any",
+    actor: agent.principalRef,
+  };
+  const scopes: readonly MuseLoop02Scope[] = [autoScope, notNowScope, manualScope];
+
+  // Baseline: no outcome receipts yet, so no offer exists for these scopes.
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    manualScope,
+  )).toBeUndefined();
+
+  // The canonical trigger is the legible "last 12 untouched" streak. Read the
+  // effective owner policy for each scope and never earn less than 12.
+  let requiredStreak = 12;
+  for (const scope of scopes) {
+    const policy = await engine.client.call("vault.consent.graduation.policy", { scope });
+    requiredStreak = Math.max(requiredStreak, policy.effective?.required_streak ?? 12);
+  }
+
+  for (const scope of scopes) {
+    await museLoop02Earn(engine, scope, requiredStreak);
+  }
+
+  // Earned offers, read back through offers, stats and the trust table.
+  const earnedOffers = await engine.client.call("vault.consent.graduation.offers", {});
+  for (const scope of scopes) {
+    const offer = museLoop02OfferFor(earnedOffers, scope);
+    if (!offer) {
+      throw new Error(
+        `No graduation offer after ${requiredStreak} untouched outcomes for ${scope.op_kind} x ${scope.target_class}`,
+      );
+    }
+    expect(offer.stats.untouched_streak).toBeGreaterThanOrEqual(requiredStreak);
+    expect(offer.stats.untouched_streak)
+      .toBeGreaterThanOrEqual(offer.threshold.required_streak);
+    expect(offer.stats.last_outcome).toBe("approved_untouched");
+
+    const stats = await museLoop02Stats(engine, scope);
+    expect(stats.untouched_streak).toBeGreaterThanOrEqual(requiredStreak);
+    expect(stats.last_outcome).toBe("approved_untouched");
+
+    const trustRow = await museLoop02TrustRow(engine, scope);
+    expect(trustRow.offer_is_earned).toBe(true);
+    expect(trustRow.snooze.state).toBe("none");
+    expect(trustRow.grant_ref == null).toBe(true);
+  }
+
+  // The wrong actor: the scoped agent cannot answer its own offer. The HTTP
+  // call carries the standard refusal envelope.
+  let deniedCode = "";
+  try {
+    await agent.client.call("vault.consent.graduation.answer", {
+      scope: manualScope,
+      answer: "auto",
+    });
+    throw new Error("The agent was allowed to answer its own graduation offer over HTTP");
+  } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBe(403);
+    expect(error.error).toBeDefined();
+    deniedCode = error.error?.code ?? "";
+    expect(deniedCode.length).toBeGreaterThan(0);
+    expect((error.error?.message ?? "").length).toBeGreaterThan(0);
+  }
+  expect(deniedCode.length).toBeGreaterThan(0);
+
+  // The same refusal over WS leaves a call receipt; the owner reads that
+  // receipt back through vault.receipts.get.
+  let deniedReceiptRef: string | undefined;
+  const agentSocket = await engine.websocket(agent);
+  try {
+    try {
+      await agentSocket.call("vault.consent.graduation.answer", {
+        scope: manualScope,
+        answer: "auto",
+      });
+      throw new Error("The agent was allowed to answer its own graduation offer over WS");
+    } catch (error) {
+      if (!(error instanceof WsRpcError)) throw error;
+      deniedReceiptRef = error.frames
+        .map((frame) => frame.envelope.receipt_ref)
+        .find((ref): ref is string => typeof ref === "string" && ref.length > 0);
+    }
+  } finally {
+    agentSocket.close();
+  }
+  if (!deniedReceiptRef) {
+    throw new Error("The WS graduation-answer refusal carried no receipt_ref");
+  }
+  const deniedReceipt = await engine.client.call("vault.receipts.get", {
+    receipt_ref: deniedReceiptRef,
+  });
+  if (!deniedReceipt) throw new Error("The WS refusal receipt is not readable by the owner");
+  expect(deniedReceipt.verb).toBe("vault.consent.graduation.answer");
+  expect(deniedReceipt.actor_class).toBe("agent");
+  expect(deniedReceipt.transport).toBe("ws");
+  if (typeof deniedReceipt.outcome === "string") {
+    throw new Error("The WS refusal receipt outcome is ok, not refused");
+  }
+  expect(deniedReceipt.outcome.refused.code.length).toBeGreaterThan(0);
+
+  // Both refusals changed nothing: the manual scope is still on offer.
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    manualScope,
+  )).toBeDefined();
+  expect((await museLoop02TrustRow(engine, manualScope)).offer_is_earned).toBe(true);
+
+  // P-LOOP-006, go auto: only this answer mints the standing grant.
+  const autoReceipt = await engine.client.call("vault.consent.graduation.answer", {
+    scope: autoScope,
+    answer: "auto",
+  });
+  expect(autoReceipt.answer).toBe("auto");
+  expect(museLoop02SameScope(autoReceipt.scope, autoScope)).toBe(true);
+  const grantRef = autoReceipt.grant?.grant_ref;
+  if (typeof grantRef !== "string" || grantRef.length === 0) {
+    throw new Error("The auto answer returned no standing grant_ref");
+  }
+  const autoTrust = await museLoop02TrustRow(engine, autoScope);
+  expect(autoTrust.grant_ref).toBe(grantRef);
+  expect((await museLoop02Stats(engine, autoScope)).state).toBe("auto");
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    autoScope,
+  )).toBeUndefined();
+  const registry = await engine.client.call("vault.consent.registry", { limit: 100 });
+  expect(registry.rows.some((row) => row.grant_ref === grantRef)).toBe(true);
+
+  // P-LOOP-006, not now: the scope snoozes and its streak re-earns from zero.
+  const notNowReceipt = await engine.client.call("vault.consent.graduation.answer", {
+    scope: notNowScope,
+    answer: "not-now",
+  });
+  expect(notNowReceipt.answer).toBe("not-now");
+  expect(museLoop02SameScope(notNowReceipt.scope, notNowScope)).toBe(true);
+  expect(notNowReceipt.grant == null).toBe(true);
+  expect(museLoop02SnoozedCount(notNowReceipt.snooze)).toBe(1);
+  if (notNowReceipt.snooze.state !== "snoozed") {
+    throw new Error("The not-now answer did not snooze its scope");
+  }
+  const notNowTrust = await museLoop02TrustRow(engine, notNowScope);
+  expect(museLoop02SnoozedCount(notNowTrust.snooze)).toBe(1);
+  expect((await museLoop02Stats(engine, notNowScope)).untouched_streak).toBe(0);
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    notNowScope,
+  )).toBeUndefined();
+
+  // P-LOOP-006 + P-LOOP-007, always manual: the scope is pinned and no offer
+  // returns, even after a fresh untouched streak.
+  const manualReceipt = await engine.client.call("vault.consent.graduation.answer", {
+    scope: manualScope,
+    answer: "manual_pinned",
+  });
+  expect(manualReceipt.answer).toBe("manual_pinned");
+  expect(museLoop02SameScope(manualReceipt.scope, manualScope)).toBe(true);
+  expect(manualReceipt.grant == null).toBe(true);
+  expect(manualReceipt.snooze.state).toBe("manual_pinned");
+
+  const pinnedTrust = await museLoop02TrustRow(engine, manualScope);
+  expect(pinnedTrust.snooze.state).toBe("manual_pinned");
+  expect(pinnedTrust.grant_ref == null).toBe(true);
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    manualScope,
+  )).toBeUndefined();
+
+  await museLoop02Earn(engine, manualScope, requiredStreak);
+  expect((await museLoop02TrustRow(engine, manualScope)).snooze.state)
+    .toBe("manual_pinned");
+  expect(museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    manualScope,
+  )).toBeUndefined();
+
+  // Every answer survives a restart: auto keeps its grant, not-now stays
+  // snoozed, and always manual stays pinned with no offer.
+  await engine.restart();
+  const offersAfterRestart = await engine.client.call("vault.consent.graduation.offers", {});
+  expect(museLoop02OfferFor(offersAfterRestart, autoScope)).toBeUndefined();
+  expect(museLoop02OfferFor(offersAfterRestart, notNowScope)).toBeUndefined();
+  expect(museLoop02OfferFor(offersAfterRestart, manualScope)).toBeUndefined();
+  expect((await museLoop02TrustRow(engine, autoScope)).grant_ref).toBe(grantRef);
+  expect((await museLoop02Stats(engine, autoScope)).state).toBe("auto");
+  expect(museLoop02SnoozedCount(
+    (await museLoop02TrustRow(engine, notNowScope)).snooze,
+  )).toBe(1);
+  expect((await museLoop02TrustRow(engine, manualScope)).snooze.state)
+    .toBe("manual_pinned");
+
+  // P-LOOP-007, until the setting is changed: only the settings unpin reopens
+  // the scope, it creates no grant, and a re-earned streak is offered again.
+  const unpinned = await engine.client.call("vault.consent.graduation.settings.unpin", {
+    scope: manualScope,
+  });
+  expect(unpinned.changed).toBe(true);
+  const reopenedTrust = await museLoop02TrustRow(engine, manualScope);
+  expect(reopenedTrust.snooze.state).toBe("none");
+  expect(reopenedTrust.grant_ref == null).toBe(true);
+
+  await museLoop02Earn(engine, manualScope, requiredStreak);
+  const reopenedOffer = museLoop02OfferFor(
+    await engine.client.call("vault.consent.graduation.offers", {}),
+    manualScope,
+  );
+  if (!reopenedOffer) {
+    throw new Error("The manual scope was not offered again after settings unpin and a re-earned streak");
+  }
+  expect(reopenedOffer.stats.untouched_streak).toBeGreaterThanOrEqual(requiredStreak);
+  expect((await museLoop02TrustRow(engine, manualScope)).offer_is_earned).toBe(true);
+  expect((await museLoop02Stats(engine, manualScope)).untouched_streak)
+    .toBeGreaterThanOrEqual(requiredStreak);
+});
+
+// ---- MUSE-LOOP-03 (Muse Wonder Full, ported 10 Nov) ----
+type MuseLoop03AskSpec = Extract<FacadeInput<"ask">, { intent_key: string }>;
+type MuseLoop03PeekRow = FacadeResult<"peek">[number];
+
+const museLoop03OccurredAt = 1769947200;
+const museLoop03RulingOption = "amend";
+
+function museLoop03Object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a public JSON object (body withheld)");
+  }
+  return value as Record<string, unknown>;
+}
+
+function museLoop03Ids(
+  values: readonly (string | null | undefined)[],
+): ReadonlySet<string> {
+  return new Set(
+    values.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    ),
+  );
+}
+
+function museLoop03AskSpec(args: {
+  intentKey: string;
+  ownerPersonRef: string;
+  questionTurnRef: string;
+  questionLabel: string;
+}): MuseLoop03AskSpec {
+  return {
+    intent_key: args.intentKey,
+    who: { people: [args.ownerPersonRef] },
+    what: {
+      reference: { turn: args.questionTurnRef },
+      revision: 1,
+      options: {
+        approve: { label: "Approve the draft as written" },
+        deny: { label: "Deny the draft" },
+        amend: { label: "Amend the draft, then send" },
+      },
+      context_refs: [],
+      label: args.questionLabel,
+    },
+    decide: "first",
+    need: { count: 1, of: { people: [args.ownerPersonRef] } },
+    default: "hold",
+  };
+}
+
+function museLoop03OwnerWord(
+  rows: readonly MuseLoop03PeekRow[],
+  ownerIds: ReadonlySet<string>,
+): MuseLoop03PeekRow | undefined {
+  return rows.find(
+    row => ownerIds.has(row.who) && row.answer?.option === museLoop03RulingOption,
+  );
+}
+
+// MUSE-LOOP-03 (PARTIAL) — promises, doors, and what stays unproved.
+// Proved here, in the user-recognisable form the typed doors can drive today:
+// - P-LOOP-008: an unsure paired agent escalates to the owner with the
+//   needs_input face whose name is now `ask` (CROSS-ARCH-0009b), and the
+//   question plus the owner's counted ruling survive read-back through
+//   peek, wait, describe and vault.receipts, and a restart.
+// - P-LOOP-010 (ask-up half only): the ask waits for the authorised owner,
+//   the asking agent cannot supply the counted ruling itself, and the
+//   settled result still reports effect_authorization
+//   "not_evaluated_by_ask": the ask authorised no effect by itself.
+// Not proved here (see the report for the candidate doors):
+// - P-LOOP-010 as the register binds it to ai.verdict / decide() Q3: the
+//   deterministic fixture has no scripted decision-ladder provider door,
+//   and canon states no provider fills a decision slot by default and an
+//   empty first rung still fails (ARCH-0076; ARCH-0036).
+// - P-LOOP-011: no deadline-cut typed decision is driven, for the same
+//   missing provider door. DecisionReceipt.time.stop exists in the typed
+//   surface, but nothing here may honestly force "deadline".
+// - P-LOOP-012: the settled ask names the answerer (counted evidence) and
+//   the question (settlement.requested), but the typed DecisionReceipt has
+//   no who-kept field and this flow settles no proposal, so "who kept the
+//   proposal, and when" stays unproved.
+// - The ARCH-0056 escalation receipt fields trigger=unsure and rationale
+//   have no typed slot on `ask`; the ruling rationale rides the referenced
+//   ruling turn instead, and trigger/rationale receipt fields stay unproved.
+// Doors used: vault.get, self.actor, vault.structural.put, pairActor (CLI),
+// vault.conversations.create, vault.witness, ask, peek, tasks.answer, wait,
+// describe, vault.receipts, anonymous and self-answer raw facade refusals,
+// EngineFixture.restart.
+
+suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask, the counted ruling is recorded, and the ask authorizes no effect", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-03", profile });
+  const museLoop03AgentName = `Muse Loop03 Agent ${secretHex(4)}`;
+  const museLoop03QuestionText = `MUSE-LOOP-03 unsure ${secretHex(4)}: should the softened reply be sent?`;
+  const museLoop03RulingText = `MUSE-LOOP-03 ruling ${secretHex(4)}: amend the softened reply, then send.`;
+  const museLoop03IntentKey = `muse-loop-03-${secretHex(8)}`;
+  const museLoop03ForeignIntentKey = `muse-loop-03-foreign-${secretHex(8)}`;
+  const museLoop03StepKey = `muse-loop-03-wait-${secretHex(8)}`;
+  const museLoop03RestartStepKey = `muse-loop-03-wait-after-restart-${secretHex(8)}`;
+  redactor.add(
+    museLoop03AgentName,
+    museLoop03QuestionText,
+    museLoop03RulingText,
+    museLoop03IntentKey,
+    museLoop03ForeignIntentKey,
+    museLoop03StepKey,
+    museLoop03RestartStepKey,
+  );
+
+  const ownerEntity = await engine.client.call("vault.get", {
+    entity_ref: engine.pairedActor.principalRef,
+  });
+  const ownerPersonRef = ownerEntity.value?.id_hex;
+  if (!ownerPersonRef) throw new Error("Owner person is not publicly readable");
+  const ownerSelf = await engine.client.call("self.actor", {});
+
+  const agentRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON",
+    body: { name: museLoop03AgentName },
+    occurred_at: museLoop03OccurredAt,
+  });
+  const agent = await engine.pairActor({
+    principalRef: agentRecord.id_hex,
+    actorClass: "agent",
+    scope: ["core:read", "core:write"],
+  });
+  const agentSelf = await agent.client.call("self.actor", {});
+  const ownerIds = museLoop03Ids([
+    engine.pairedActor.principalRef,
+    ownerPersonRef,
+    ownerSelf.actor_ref,
+    ownerSelf.person_ref,
+  ]);
+  const agentIds = museLoop03Ids([
+    agent.principalRef,
+    agentRecord.id_hex,
+    agentSelf.actor_ref,
+  ]);
+  expect([...ownerIds].some(id => agentIds.has(id))).toBe(false);
+
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: { members: [engine.pairedActor.principalRef, agent.principalRef] },
+    occurred_start: museLoop03OccurredAt,
+    occurred_end: museLoop03OccurredAt,
+  });
+  const questionWitness = await engine.client.call("vault.witness", {
+    conversation_ref: conversation.id,
+    occurred_at: museLoop03OccurredAt,
+    messages: [{
+      author: "user",
+      message_type: "text",
+      is_visible: true,
+      order: 0,
+      content: museLoop03QuestionText,
+    }],
+  } satisfies FacadeInput<"vault.witness">);
+  await engine.awaitReceipt(questionWitness.receipt_ref);
+  const questionMessageRef = questionWitness.message_short_ids[0];
+  if (!questionMessageRef) throw new Error("Witness returned no question message reference");
+  const savedQuestion = await engine.client.call("vault.get", {
+    entity_ref: questionMessageRef,
+  });
+  const savedQuestionContent = museLoop03Object(savedQuestion.value?.body).content;
+  expect(
+    typeof savedQuestionContent === "string"
+      && savedQuestionContent.includes("MUSE-LOOP-03 unsure")
+      && savedQuestionContent.includes("softened reply"),
+  ).toBe(true);
+
+  const spec = museLoop03AskSpec({
+    intentKey: museLoop03IntentKey,
+    ownerPersonRef,
+    questionTurnRef: questionWitness.turn_id,
+    questionLabel: museLoop03QuestionText,
+  });
+  const foreignSpec = museLoop03AskSpec({
+    intentKey: museLoop03ForeignIntentKey,
+    ownerPersonRef,
+    questionTurnRef: questionWitness.turn_id,
+    questionLabel: museLoop03QuestionText,
+  });
+
+  // Refuse the wrong actor kind first: no credential, no ask.
+  const anonymous = new PublicHttpClient(engine.url, {
+    artifacts: engine.artifacts,
+    label: "muse-loop-03-anonymous",
+  });
+  const foreign = await anonymous.raw<{ error: { code: string; message: string } }>(
+    "POST",
+    "/v1/core/facade/ask",
+    foreignSpec,
+    { "x-oneiron-invocation": secretHex(16) },
+  );
+  expect([401, 403].includes(foreign.status)).toBe(true);
+  expect(
+    typeof foreign.body.error?.code === "string" && foreign.body.error.code.length > 0,
+  ).toBe(true);
+  expect(
+    typeof foreign.body.error?.message === "string" && foreign.body.error.message.length > 0,
+  ).toBe(true);
+
+  const asked = await agent.client.call("ask", spec);
+  expect(asked.handle.group_ref.length).toBeGreaterThan(0);
+  expect(asked.task_refs.length).toBeGreaterThan(0);
+  const handle = asked.handle;
+
+  const peekBefore = await agent.client.call("peek", handle);
+  expect(museLoop03OwnerWord(peekBefore, ownerIds) === undefined).toBe(true);
+
+  // The asker may not rule its own escalation: either the word is refused
+  // with the standard envelope, or it is admitted as evidence only and is
+  // never the counted ruling below.
+  const selfAnswer = await agent.client.raw<{
+    error?: { code: string; message: string };
+  }>(
+    "POST",
+    "/v1/core/facade/tasks.answer",
+    { handle, word: { result_ref: questionWitness.turn_id, option: "approve" } },
+    { "x-oneiron-invocation": secretHex(16) },
+  );
+  if (selfAnswer.status >= 400) {
+    expect(
+      typeof selfAnswer.body.error?.code === "string"
+        && selfAnswer.body.error.code.length > 0,
+    ).toBe(true);
+  }
+  const peekAfterSelf = await agent.client.call("peek", handle);
+  expect(museLoop03OwnerWord(peekAfterSelf, ownerIds) === undefined).toBe(true);
+
+  const rulingWitness = await engine.client.call("vault.witness", {
+    conversation_ref: conversation.id,
+    occurred_at: museLoop03OccurredAt,
+    messages: [{
+      author: "user",
+      message_type: "text",
+      is_visible: true,
+      order: 0,
+      content: museLoop03RulingText,
+    }],
+  } satisfies FacadeInput<"vault.witness">);
+  await engine.awaitReceipt(rulingWitness.receipt_ref);
+  const rulingMessageRef = rulingWitness.message_short_ids[0];
+  if (!rulingMessageRef) throw new Error("Witness returned no ruling message reference");
+  const savedRuling = await engine.client.call("vault.get", {
+    entity_ref: rulingMessageRef,
+  });
+  const savedRulingContent = museLoop03Object(savedRuling.value?.body).content;
+  expect(
+    typeof savedRulingContent === "string"
+      && savedRulingContent.includes("MUSE-LOOP-03 ruling")
+      && savedRulingContent.includes("amend"),
+  ).toBe(true);
+  const rulingRefs = museLoop03Ids([
+    rulingWitness.turn_id,
+    rulingWitness.turn_short_id,
+    rulingMessageRef,
+  ]);
+
+  const answer = await engine.client.call("tasks.answer", {
+    handle,
+    word: { result_ref: rulingWitness.turn_id, option: museLoop03RulingOption },
+  });
+  expect(ownerIds.has(answer.actor_ref)).toBe(true);
+  expect(rulingRefs.has(answer.result_ref)).toBe(true);
+  expect(answer.word_ref.length).toBeGreaterThan(0);
+
+  const peekAnswered = await awaitPublic(
+    () => agent.client.call("peek", handle),
+    rows => museLoop03OwnerWord(rows, ownerIds) !== undefined,
+    { label: "MUSE-LOOP-03 owner word on peek" },
+  );
+  const ownerPeek = museLoop03OwnerWord(peekAnswered, ownerIds);
+  if (!ownerPeek) throw new Error("Owner word never appeared on peek");
+  expect(ownerPeek.kind).toBe("word");
+
+  const waited = await agent.client.call("wait", { handle, step_key: museLoop03StepKey });
+  if (!("Ready" in waited)) {
+    throw new Error("Answered ask did not return its settled result on wait");
+  }
+  const ready = waited.Ready;
+  expect(ready.effect_authorization).toBe("not_evaluated_by_ask");
+  expect(ready.coverage.met).toBe(true);
+  expect(ready.coverage.responded.some(id => ownerIds.has(id))).toBe(true);
+  expect(ready.picked).toBe(museLoop03RulingOption);
+  expect(ready.settlement.group_ref).toBe(handle.group_ref);
+  expect(ready.settlement.electorate.some(id => ownerIds.has(id))).toBe(true);
+  expect(ready.settlement.requested.intent_key).toBe(museLoop03IntentKey);
+  expect(ready.settlement.requested.what.label).toBe(museLoop03QuestionText);
+  const requestedReference = ready.settlement.requested.what.reference;
+  expect(
+    "turn" in requestedReference && requestedReference.turn === questionWitness.turn_id,
+  ).toBe(true);
+  const counted = ready.evidence.filter(row => row.reason === "counted");
+  expect(counted.length).toBe(1);
+  const countedWord = counted[0];
+  if (!countedWord) throw new Error("Settled ask has no counted word");
+  expect(ownerIds.has(countedWord.person_ref)).toBe(true);
+  expect(countedWord.word.option).toBe(museLoop03RulingOption);
+  expect(rulingRefs.has(countedWord.word.result_ref)).toBe(true);
+  expect(ownerIds.has(countedWord.answer.actor_ref)).toBe(true);
+
+  const described = await agent.client.call("describe", {
+    handle: { kind: "ask", group_ref: handle.group_ref },
+  });
+  if (described.kind !== "task_status") {
+    throw new Error("describe on an ask handle did not return its task status");
+  }
+  const outcome = described.receipt.outcome;
+  if (outcome.kind !== "snapshot") {
+    throw new Error("describe on an ask handle did not return a status snapshot");
+  }
+  const describedEntry = outcome.asks.find(([askHandle]) => askHandle.group_ref === handle.group_ref);
+  if (!describedEntry) throw new Error("describe snapshot does not carry this ask");
+  expect("Settled" in describedEntry[1]).toBe(true);
+
+  const receiptsPage = await engine.client.call("vault.receipts", { limit: 1000 });
+  const receiptTexts = receiptsPage.receipts.map(row => JSON.stringify(row));
+  expect(
+    receiptTexts.some(
+      text => text.includes(handle.group_ref)
+        || text.includes(answer.word_ref)
+        || asked.task_refs.some(ref => text.includes(ref)),
+    ),
+  ).toBe(true);
+
+  await engine.restart();
+
+  const peekAfterRestart = await agent.client.call("peek", handle);
+  expect(museLoop03OwnerWord(peekAfterRestart, ownerIds) !== undefined).toBe(true);
+
+  const replayed = await agent.client.call("ask", spec);
+
+  const waitedAfterRestart = await agent.client.call("wait", {
+    handle,
+    step_key: museLoop03RestartStepKey,
+  });
+  if (!("Ready" in waitedAfterRestart)) {
+    throw new Error("Settled ask did not return its result on wait after restart");
+  }
+  expect(waitedAfterRestart.Ready.picked).toBe(museLoop03RulingOption);
+  expect(waitedAfterRestart.Ready.settlement.group_ref).toBe(handle.group_ref);
+  expect(waitedAfterRestart.Ready.effect_authorization).toBe("not_evaluated_by_ask");
+  const countedAfterRestart = waitedAfterRestart.Ready.evidence.filter(
+    row => row.reason === "counted",
+  );
+  expect(countedAfterRestart.length).toBe(1);
+  const countedAfterRestartWord = countedAfterRestart[0];
+  if (!countedAfterRestartWord) {
+    throw new Error("Settled ask lost its counted word across restart");
+  }
+  expect(ownerIds.has(countedAfterRestartWord.person_ref)).toBe(true);
+  expect(countedAfterRestartWord.word.option).toBe(museLoop03RulingOption);
+
+  await engine.artifacts.json("muse-loop-03-ask.json", {
+    handle,
+    taskRefs: asked.task_refs,
+    taskRecords: asked.task_records,
+    answer,
+    foreignStatus: foreign.status,
+    selfAnswerStatus: selfAnswer.status,
+    picked: ready.picked,
+    settlementReason: ready.settlement.reason,
+    effectAuthorization: ready.effect_authorization,
+  });
+});
+
+// ---- MUSE-LOOP-04 (Muse Wonder Full, ported 10 Nov) ----
+// MUSE-LOOP-04 - P-LOOP-013, P-LOOP-014, P-LOOP-015.
+// P-LOOP-013 (MUST): automatic approval of answerer-model switches is off by default.
+// P-LOOP-014 (MUST): an unknown comparison result never automatically switches the answerer.
+// P-LOOP-015 (MUST): an approved answerer switch affects future answers without
+// rewriting past answers or receipts.
+// Doors: vault.models.catalog.refresh/get, vault.models.manifest.read/replace,
+// vault.models.bindings.read, vault.models.roles.read, vault.questions.create/
+// read/refresh/answers/outcomes.project/outcomes/edit, vault.claims.upsert,
+// vault.skills.list + vault.skills.optimize.goal.get (the trial goal),
+// vault.models.trials.nominate/approve/run/complete/get,
+// vault.agents.grants.mint/revoke, vault.models.bindings.propose/accept/get,
+// vault.receipts + vault.receipts.get, plus the same propose/accept over WS.
+// Unproved: no typed door in the facade reads or writes a persisted vault-wide
+// auto-approve setting (the case proves the off-by-default behaviour on a fresh
+// vault and the on-behaviour only through ModelTrialPolicy.auto_approve), and
+// the notice/one-click-undo and 30-day check that follow an approved switch.
+
+type MuseLoop04Binding = FacadeResult<"vault.models.bindings.read">;
+type MuseLoop04TrialView = FacadeResult<"vault.models.trials.get">;
+type MuseLoop04GraphAnswer = Extract<
+  FacadeResult<"vault.questions.refresh">[number],
+  { kind: "graph" }
+>;
+type MuseLoop04Receipt = FacadeResult<"vault.receipts">["receipts"][number];
+interface MuseLoop04ErrorEnvelope {
+  error: {
+    code: string;
+    message: string;
+    requestId: string;
+    suggestions: string[];
+    receiptRef?: string;
+  };
+}
+
+// Builder-adjustable setup constants. The facade types these as plain strings
+// and canon names them only in prose; each is named once here so the shipped
+// spelling can be fixed in one place without touching any assertion.
+const museLoop04Role: FacadeInput<"vault.models.bindings.read">["role"] = "generative_reasoner";
+const museLoop04Adapter = "graph";
+const museLoop04Recipe = "near_neighbourhood";
+const museLoop04Profile = "default";
+const museLoop04Delivery = "now";
+const museLoop04OccurredAt = 1769947200;
+const museLoop04IncumbentModel = "muse-loop-04-incumbent";
+const museLoop04CandidateModel = "muse-loop-04-candidate";
+const museLoop04Revision = "muse-loop-04-rev-1";
+const museLoop04CatalogRevision = "muse-loop-04-catalog-1";
+const museLoop04ScoreSource = "muse-loop-04-scores";
+const museLoop04Benchmark = "muse-loop-04-benchmark";
+const museLoop04OutcomePredicate = "muse_loop_04_outcome";
+const museLoop04ProviderPath = "/v1/chat/completions";
+
+function museLoop04Definition(
+  units: readonly string[],
+): FacadeInput<"vault.questions.create">["definition"] {
+  return {
+    question: {
+      text: "Is this unit a Muse Loop 04 fixture unit?",
+      class: "judgment",
+      contract: { kind: "noul" },
+      accept_type: true,
+    },
+    adapter: museLoop04Adapter,
+    units: [...units],
+    recipe: museLoop04Recipe,
+    profile: museLoop04Profile,
+    dial: { first: "big", ceiling: "big", band: { low: 0.35, high: 0.65 } },
+    activation: "standing",
+    refresh: { on_arrival: false },
+    delivery: museLoop04Delivery,
+    learning: true,
+    binding: {
+      source: { kind: "claim", predicate: museLoop04OutcomePredicate },
+      horizon: 31536000,
+      mapping: { yes: true, no: false },
+      noise_weight: 1,
+    },
+    criteria: { yes_if_all: ["The unit is a Muse Loop 04 fixture unit."] },
+    audience: "asker",
+  };
+}
+
+function museLoop04GraphOnly(
+  answers: readonly FacadeResult<"vault.questions.refresh">[number][],
+): MuseLoop04GraphAnswer[] {
+  return answers
+    .flatMap((answer) => (answer.kind === "graph" ? [answer] : []))
+    .sort((a, b) => a.claim.localeCompare(b.claim));
+}
+
+async function museLoop04Answers(
+  client: PublicHttpClient,
+  questionId: string,
+): Promise<MuseLoop04GraphAnswer[]> {
+  const reply = await client.call("vault.questions.answers", { id: questionId });
+  return museLoop04GraphOnly(Array.isArray(reply) ? reply : reply.answers);
+}
+
+async function museLoop04AllReceipts(
+  client: PublicHttpClient,
+): Promise<Map<string, MuseLoop04Receipt>> {
+  const found = new Map<string, MuseLoop04Receipt>();
+  let after: string | undefined;
+  for (;;) {
+    const page = await client.call("vault.receipts", {
+      limit: 1000,
+      ...(after ? { after } : {}),
+    } satisfies FacadeInput<"vault.receipts">);
+    for (const row of page.receipts) found.set(row.receipt_ref, row);
+    if (!page.next_after) return found;
+    after = page.next_after;
+  }
+}
+
+async function museLoop04CallReceipt(
+  owner: PublicHttpClient,
+  receiptRef: string,
+  verb: string,
+  actorClass: string,
+): Promise<FacadeResult<"vault.receipts.get">> {
+  const receipt = await awaitPublic(
+    () => owner.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    (value) => value !== null,
+    { label: `call receipt for ${verb}` },
+  );
+  if (!receipt) throw new Error(`No call receipt readable for ${verb}`);
+  expect(receipt.verb).toBe(verb);
+  expect(receipt.actor_class).toBe(actorClass);
+  return receipt;
+}
+
+async function museLoop04ExpectRefusal(
+  owner: PublicHttpClient,
+  actor: PublicHttpClient,
+  verb: string,
+  input: unknown,
+  actorClass: string,
+): Promise<void> {
+  const reply = await actor.raw<MuseLoop04ErrorEnvelope>(
+    "POST",
+    `/v1/core/facade/${verb}`,
+    input,
+    { "x-oneiron-invocation": secretHex(16) },
+  );
+  expect(reply.status).toBeGreaterThanOrEqual(400);
+  expect(reply.status).toBeLessThan(500);
+  const error = reply.body.error;
+  if (!error) throw new Error(`Refusal of ${verb} is not the standard error envelope`);
+  expect(typeof error?.code).toBe("string");
+  expect(error.code.length).toBeGreaterThan(0);
+  expect(typeof error?.message).toBe("string");
+  expect(error.message.length).toBeGreaterThan(0);
+  expect(typeof error?.requestId).toBe("string");
+  expect(Array.isArray(error?.suggestions)).toBe(true);
+  const receiptRef = error?.receiptRef;
+  expect(typeof receiptRef).toBe("string");
+  if (typeof receiptRef !== "string") throw new Error(`Refusal of ${verb} left no receiptRef`);
+  const receipt = await museLoop04CallReceipt(owner, receiptRef, verb, actorClass);
+  if (!receipt) throw new Error(`Refusal receipt for ${verb} vanished on read-back`);
+  expect(receipt.outcome).toEqual({ refused: { code: error.code } });
+}
+
+function museLoop04WsReceiptRef(
+  frames: readonly { readonly envelope: { readonly receipt_ref?: string | null } }[],
+  verb: string,
+): string {
+  const ref = frames
+    .map((frame) => frame.envelope.receipt_ref)
+    .find((value) => typeof value === "string" && value.length > 0);
+  if (!ref) throw new Error(`WS ${verb} frames carry no receipt_ref`);
+  return ref;
+}
+
+suite.test(
+  test,
+  "MUSE-LOOP-04",
+  "An answerer switch is never automatic by default or on an unknown result, and an approved switch changes only future answers",
+  async () => {
+    // Two scripted answerer backends. Separate origins distinguish them,
+    // because the wire request carries the model but no trial role.
+    const providers = await ScriptedProviders.start({
+      id: "MUSE-LOOP-04",
+      steps: [
+        {
+          id: "muse-loop-04-incumbent-yes",
+          origin: "incumbent",
+          role: "answerer-incumbent",
+          purpose: "typed-judgment",
+          request: { method: "POST", path: museLoop04ProviderPath, model: museLoop04IncumbentModel },
+          response: openaiText("muse-loop-04-incumbent-1", museLoop04IncumbentModel, JSON.stringify({ answer: true, probability: 0.9 }), {
+            inputTokens: 100,
+            outputTokens: 10,
+          }),
+          standing: true,
+        },
+        {
+          id: "muse-loop-04-candidate-yes",
+          origin: "candidate",
+          role: "answerer-candidate",
+          purpose: "typed-judgment",
+          request: { method: "POST", path: museLoop04ProviderPath, model: museLoop04CandidateModel },
+          response: openaiText("muse-loop-04-candidate-1", museLoop04CandidateModel, JSON.stringify({ answer: true, probability: 0.9 }), {
+            inputTokens: 100,
+            outputTokens: 10,
+          }),
+          standing: true,
+        },
+      ],
+    });
+    const incumbentUrl = providers.urls["incumbent"];
+    const candidateUrl = providers.urls["candidate"];
+    if (!incumbentUrl || !candidateUrl) throw new Error("Scripted answerer origins are missing");
+
+    const engine = await EngineFixture.start({
+      id: "MUSE-LOOP-04",
+      profile,
+      serverConfig: [
+        "[models.providers.loop04_incumbent]",
+        'kind = "local-openai-compat"',
+        `base_url = "${incumbentUrl}"`,
+        `revision = "${museLoop04Revision}"`,
+        "request_compression = false",
+        "",
+        "[models.providers.loop04_candidate]",
+        'kind = "local-openai-compat"',
+        `base_url = "${candidateUrl}"`,
+        `revision = "${museLoop04Revision}"`,
+        "request_compression = false",
+        "",
+        `[models.roles.${museLoop04Role}]`,
+        'provider = "loop04_incumbent"',
+        `model = "${museLoop04IncumbentModel}"`,
+      ].join("\n"),
+    });
+    const owner = engine.client;
+
+    // Bind the incumbent in the manifest, reusing the tier/slot the fresh
+    // vault already reports for this role so no tier value is invented.
+    const reportedBinding = await owner.call("vault.models.bindings.read", { role: museLoop04Role });
+    const incumbentBinding: MuseLoop04Binding = { ...reportedBinding, model: museLoop04IncumbentModel };
+    const candidateBinding: MuseLoop04Binding = { ...reportedBinding, model: museLoop04CandidateModel };
+    const manifestBefore = await owner.call("vault.models.manifest.read", {});
+    const manifest: FacadeInput<"vault.models.manifest.replace">["manifest"] = manifestBefore
+      ? { ...manifestBefore, roles: { ...manifestBefore.roles, [museLoop04Role]: incumbentBinding } }
+      : { version: 2, roles: { [museLoop04Role]: incumbentBinding }, routes: { llm: "own_server" } };
+    await owner.call("vault.models.manifest.replace", { manifest });
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+    expect((await owner.call("vault.models.roles.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // A refreshed catalog nominates the cheaper, higher-scored candidate.
+    // Registry scores and a catalog refresh switch nothing by themselves.
+    const catalogRow = (model: string, price: string, score: number) => ({
+      version: 1,
+      wire: "openai-compat" as const,
+      catalog: {
+        model,
+        display_name: model,
+        locality: "own_server" as const,
+        context_window_tokens: 8192,
+        cost: { input_per_million: price, output_per_million: price },
+      },
+      scores: { [museLoop04ScoreSource]: { [museLoop04Benchmark]: score } },
+      fetched_at: { [museLoop04ScoreSource]: museLoop04OccurredAt },
+    });
+    await owner.call("vault.models.catalog.refresh", {
+      revision: museLoop04CatalogRevision,
+      catalog: {
+        version: 1,
+        rows: [
+          catalogRow(museLoop04IncumbentModel, "10", 0.8),
+          catalogRow(museLoop04CandidateModel, "1", 0.9),
+        ],
+      },
+      scores: [{
+        source: museLoop04ScoreSource,
+        fetched_at: museLoop04OccurredAt,
+        observations: [
+          { model: museLoop04IncumbentModel, benchmark: museLoop04Benchmark, score: 0.8 },
+          { model: museLoop04CandidateModel, benchmark: museLoop04Benchmark, score: 0.9 },
+        ],
+      }],
+    } satisfies FacadeInput<"vault.models.catalog.refresh">);
+    const catalog = await owner.call("vault.models.catalog.get", { revision: museLoop04CatalogRevision });
+    expect(catalog.revision).toBe(museLoop04CatalogRevision);
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // Three graph units and one standing question over them.
+    const unitIds: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const unit = await owner.call("vault.structural.put", {
+        kind: "PERSON",
+        body: { name: `Muse Loop 04 Unit ${index}` },
+        occurred_at: museLoop04OccurredAt,
+      } satisfies FacadeInput<"vault.structural.put">);
+      unitIds.push(unit.id_hex);
+    }
+    const created = await owner.call("vault.questions.create", {
+      definition: museLoop04Definition(unitIds),
+    } satisfies FacadeInput<"vault.questions.create">);
+    const questionId = created.definition.question.id;
+    const questionVersion = created.definition.question.version;
+    const question = await owner.call("vault.questions.read", { id: questionId });
+    if (!question) throw new Error("Created standing question does not read back");
+    expect(question.definition.activation).toBe("standing");
+    expect([...question.definition.units].sort()).toEqual([...unitIds].sort());
+
+    // Past answers, answered by the incumbent on the host ladder.
+    const refreshed = museLoop04GraphOnly(await owner.call("vault.questions.refresh", { id: questionId }));
+    expect(refreshed).toHaveLength(3);
+    for (const answer of refreshed) {
+      expect(answer.decision.receipt.providers.some((pin) => pin.model === museLoop04IncumbentModel)).toBe(true);
+      expect(answer.decision.receipt.providers.some((pin) => pin.model === museLoop04CandidateModel)).toBe(false);
+    }
+    expect(await museLoop04Answers(owner, questionId)).toEqual(refreshed);
+
+    // The later fact bound by the question is each unit's held-out label.
+    const claimScope = await ownerBaseClaimScope(owner, engine.pairedActor.principalRef);
+    for (const answer of refreshed) {
+      const fact = await owner.call("vault.claims.upsert", {
+        predicate: museLoop04OutcomePredicate,
+        subject_ref: answer.unit,
+        value: "yes",
+        confidence: 1,
+        source: "user_stated",
+        scope: claimScope,
+        occurred_at: museLoop04OccurredAt,
+      } satisfies FacadeInput<"vault.claims.upsert">);
+      await engine.awaitReceipt(fact.receipt_ref);
+    }
+    await owner.call("vault.questions.outcomes.project", { id: questionId });
+    const outcomes = await awaitPublic(
+      () => owner.call("vault.questions.outcomes", { id: questionId }),
+      (value) => value.labels.length >= 3,
+      { label: "standing question outcome labels" },
+    );
+    const heldOut: FacadeInput<"vault.models.trials.nominate">["request"]["held_out"] =
+      outcomes.labels.slice(0, 3).map((label, index) => ({
+        answer: label.answer,
+        fact: label.fact,
+        source_family: `muse-loop-04-family-${index}`,
+      }));
+    expect(heldOut).toHaveLength(3);
+
+    // The trial goal: the goal record of the improver skill skill_optimize.
+    let goalId: string | undefined;
+    {
+      let after: string | undefined;
+      for (;;) {
+        const page = await owner.call("vault.skills.list", {
+          limit: 100,
+          ...(after ? { after } : {}),
+        } satisfies FacadeInput<"vault.skills.list">);
+        const skill = page.skills.find((row) => row.skill_id === "skill_optimize")
+          ?? page.skills.find((row) => row.skill_id.includes("optimize"));
+        if (skill) {
+          goalId = (await owner.call("vault.skills.optimize.goal.get", { skill: skill.entity })).goal_id;
+          break;
+        }
+        if (!page.next_after) break;
+        after = page.next_after;
+      }
+    }
+    if (!goalId) throw new Error("No skill_optimize goal is readable for the model trial");
+    const trialGoal = goalId;
+
+    const usageBound: FacadeInput<"vault.models.trials.nominate">["request"]["incumbent_usage_bound"] = {
+      input: { total: 100, cache_read: 0, cache_write: 0 },
+      output: { total: 10, text: 10, reasoning: 0 },
+      raw_provider: null,
+    };
+    const museLoop04RunTrial = async (
+      selections: FacadeInput<"vault.models.trials.nominate">["request"]["held_out"],
+      set: FacadeInput<"vault.models.trials.nominate">["request"]["set"],
+      autoApprove: boolean | undefined,
+      assessmentFor: (
+        measured: MuseLoop04TrialView,
+      ) => FacadeInput<"vault.models.trials.complete">["assessment"],
+    ): Promise<MuseLoop04TrialView> => {
+      const nominated = await owner.call("vault.models.trials.nominate", {
+        catalog_revision: museLoop04CatalogRevision,
+        request: {
+          principal: created.principal,
+          question: questionId,
+          question_version: questionVersion,
+          goal: trialGoal,
+          incumbent: {
+            model: museLoop04IncumbentModel,
+            backend: "loop04_incumbent",
+            serving_revision: museLoop04Revision,
+            context_window_tokens: 8192,
+          },
+          candidate: {
+            model: museLoop04CandidateModel,
+            backend: "loop04_candidate",
+            serving_revision: museLoop04Revision,
+            context_window_tokens: 8192,
+          },
+          source: museLoop04ScoreSource,
+          benchmark: museLoop04Benchmark,
+          set,
+          held_out: selections,
+          incumbent_usage_bound: usageBound,
+          candidate_usage_bound: usageBound,
+          future_units: 1000,
+          policy: {
+            exploration_remaining: 1000000,
+            ...(autoApprove === undefined ? {} : { auto_approve: autoApprove }),
+            candidate_needs_download: false,
+          },
+        },
+      } satisfies FacadeInput<"vault.models.trials.nominate">);
+      let trial = await owner.call("vault.models.trials.get", { question: questionId, trial: nominated.id });
+      if (trial.admission === "ask_exploration") {
+        await owner.call("vault.models.trials.approve", { question: questionId, trial: trial.id });
+        // Approving exploration does not itself switch the answerer.
+        expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+          .toBe(museLoop04IncumbentModel);
+        trial = await owner.call("vault.models.trials.get", { question: questionId, trial: trial.id });
+      }
+      const ran = await owner.call("vault.models.trials.run", { question: questionId, trial: trial.id });
+      expect(ran.execution).toBe("measured");
+      expect(ran.arms_total).toBeGreaterThan(0);
+      expect(ran.arms_unknown).toBe(0);
+      expect(ran.arms_completed).toBe(ran.arms_total);
+      const measured = await awaitPublic(
+        () => owner.call("vault.models.trials.get", { question: questionId, trial: trial.id }),
+        (value) => value.execution === "measured" && value.evidence != null,
+        { label: "measured model trial" },
+      );
+      if (!measured.evidence) throw new Error("Measured trial carries no evidence");
+      const completed = await owner.call("vault.models.trials.complete", {
+        question: questionId,
+        trial: trial.id,
+        assessment: assessmentFor(measured),
+      } satisfies FacadeInput<"vault.models.trials.complete">);
+      const reread = await owner.call("vault.models.trials.get", { question: questionId, trial: trial.id });
+      expect(reread.receipt ?? null).toEqual(completed.receipt ?? null);
+      return reread;
+    };
+
+    // P-LOOP-013: on this fresh vault nothing has ever turned auto-approval
+    // on, and the trial policy omits auto_approve. A cheaper candidate that
+    // is not worse (paired interval low end -0.01 stays above minus the
+    // 0.02 retest noise) completes as an offer, not an automatic switch.
+    const trialDefault = await museLoop04RunTrial(
+      heldOut,
+      { id: "muse-loop-04-set", version: 1, rubric_version: "muse-loop-04-rubric-1" },
+      undefined,
+      (measured) => {
+        const evidence = measured.evidence;
+        if (!evidence) throw new Error("Measured default trial carries no evidence");
+        return {
+          set: measured.request.set,
+          measurements_hash: evidence.measurements_hash,
+          paired_gain: { low: -0.01, high: 0.02 },
+          retest_noise: 0.02,
+          required_families: evidence.independent_families,
+          rare_slices_sufficient: true,
+          versions_match: true,
+          canary_diverged: false,
+        };
+      },
+    );
+    expect(trialDefault.request.policy.auto_approve ?? false).toBe(false);
+    const receiptDefault = trialDefault.receipt;
+    if (!receiptDefault) throw new Error("Completed default trial carries no receipt");
+    expect(receiptDefault.quality).toBe("not_worse");
+    expect(receiptDefault.action).toBe("offer");
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // P-LOOP-014: even with auto_approve explicitly on, a comparison the set
+    // cannot judge never auto-approves. This trial holds out only one of the
+    // three families its card requires: too few labels reads unknown.
+    const trialUnknown = await museLoop04RunTrial(
+      heldOut.slice(0, 1),
+      { id: "muse-loop-04-set", version: 2, rubric_version: "muse-loop-04-rubric-1" },
+      true,
+      (measured) => {
+        const evidence = measured.evidence;
+        if (!evidence) throw new Error("Measured unknown trial carries no evidence");
+        expect(evidence.independent_families).toBe(1);
+        return {
+          set: measured.request.set,
+          measurements_hash: evidence.measurements_hash,
+          paired_gain: { low: -0.01, high: 0.02 },
+          retest_noise: 0.02,
+          required_families: 3,
+          rare_slices_sufficient: true,
+          versions_match: true,
+          canary_diverged: false,
+        };
+      },
+    );
+    const receiptUnknown = trialUnknown.receipt;
+    if (!receiptUnknown) throw new Error("Completed unknown trial carries no receipt");
+    expect(receiptUnknown.quality).toBe("unknown");
+    expect(receiptUnknown.action).toBe("unknown");
+    expect(receiptUnknown.action).not.toBe("auto_approve");
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // The agent proposes; the owner approves or refuses. Before any grant,
+    // the paired agent cannot propose the switch.
+    const agentRecord = await owner.call("vault.structural.put", {
+      kind: "PERSON",
+      body: { name: "Muse Loop 04 Agent" },
+      occurred_at: museLoop04OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const agent = await engine.pairActor({
+      principalRef: agentRecord.id_hex,
+      actorClass: "agent",
+      scope: ["core:read", "core:write"],
+    });
+    const proposeInputDefault = {
+      question: questionId,
+      trial: trialDefault.id,
+      role: museLoop04Role,
+      binding: candidateBinding,
+    } satisfies FacadeInput<"vault.models.bindings.propose">;
+    await museLoop04ExpectRefusal(
+      owner,
+      agent.client,
+      "vault.models.bindings.propose",
+      proposeInputDefault,
+      agent.actorClass,
+    );
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // With the owner's grant naming the propose verb, the agent proposes the
+    // completed offer over WS. The proposal activates nothing by itself.
+    const minted = await owner.call("vault.agents.grants.mint", {
+      agent: agent.principalRef,
+      authority_scope: {
+        worlds: { kind: "all" },
+        facets: { kind: "all" },
+        bands: { kind: "all" },
+        audience: { kind: "all" },
+        verbs: { kind: "some", values: ["vault.models.bindings.propose", "vault.models.bindings.get"] },
+        sensitivity: { kind: "all" },
+      },
+    } satisfies FacadeInput<"vault.agents.grants.mint">);
+    expect(minted.grant.confers).toBe(true);
+    const agentSocket = await engine.websocket(agent);
+    const proposedCall = await agentSocket.call("vault.models.bindings.propose", proposeInputDefault);
+    agentSocket.close();
+    const proposal = proposedCall.value;
+    const proposeReceiptRef = museLoop04WsReceiptRef(
+      proposedCall.frames,
+      "vault.models.bindings.propose",
+    );
+    const proposeReceipt = await museLoop04CallReceipt(
+      owner,
+      proposeReceiptRef,
+      "vault.models.bindings.propose",
+      agent.actorClass,
+    );
+    if (!proposeReceipt) throw new Error("Proposal call receipt vanished on read-back");
+    expect(proposeReceipt.outcome).toBe("ok");
+    expect(proposeReceipt.actor_ref).toBe(agent.principalRef);
+    expect(proposal.status).toBe("proposed");
+    expect(proposal.role).toBe(museLoop04Role);
+    expect(proposal.previous.model).toBe(museLoop04IncumbentModel);
+    expect(proposal.proposed.model).toBe(museLoop04CandidateModel);
+    expect(proposal.trial.id).toBe(trialDefault.id);
+    const proposalRead = await owner.call("vault.models.bindings.get", { proposal: proposal.id });
+    expect(proposalRead.status).toBe("proposed");
+    expect(proposalRead.proposed.model).toBe(museLoop04CandidateModel);
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // The agent cannot approve its own proposal; approval is the owner's.
+    await museLoop04ExpectRefusal(
+      owner,
+      agent.client,
+      "vault.models.bindings.accept",
+      { proposal: proposal.id } satisfies FacadeInput<"vault.models.bindings.accept">,
+      agent.actorClass,
+    );
+    expect((await owner.call("vault.models.bindings.get", { proposal: proposal.id })).status)
+      .toBe("proposed");
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // Losing the grant mid-flow ends the agent's proposing at its next use.
+    const revoked = await owner.call("vault.agents.grants.revoke", {
+      grant_ref: minted.grant.grant_ref,
+    } satisfies FacadeInput<"vault.agents.grants.revoke">);
+    expect(revoked.changed).toBe(true);
+    await museLoop04ExpectRefusal(
+      owner,
+      agent.client,
+      "vault.models.bindings.propose",
+      {
+        question: questionId,
+        trial: trialUnknown.id,
+        role: museLoop04Role,
+        binding: candidateBinding,
+      } satisfies FacadeInput<"vault.models.bindings.propose">,
+      agent.actorClass,
+    );
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04IncumbentModel);
+
+    // Snapshot everything the approved switch must not rewrite, then the
+    // owner accepts the standing proposal over WS.
+    const pastAnswers = await museLoop04Answers(owner, questionId);
+    expect(pastAnswers).toEqual(refreshed);
+    const pastSnapshot = JSON.parse(JSON.stringify(pastAnswers)) as MuseLoop04GraphAnswer[];
+    const pastClaims = new Set(pastSnapshot.map((answer) => answer.claim));
+    const receiptsBeforeAccept = await museLoop04AllReceipts(owner);
+
+    const ownerSocket = await engine.websocket();
+    const acceptedCall = await ownerSocket.call("vault.models.bindings.accept", {
+      proposal: proposal.id,
+    } satisfies FacadeInput<"vault.models.bindings.accept">);
+    ownerSocket.close();
+    const accepted = acceptedCall.value;
+    const acceptReceiptRef = museLoop04WsReceiptRef(
+      acceptedCall.frames,
+      "vault.models.bindings.accept",
+    );
+    const acceptReceipt = await museLoop04CallReceipt(
+      owner,
+      acceptReceiptRef,
+      "vault.models.bindings.accept",
+      engine.pairedActor.actorClass,
+    );
+    if (!acceptReceipt) throw new Error("Accept call receipt vanished on read-back");
+    expect(acceptReceipt.outcome).toBe("ok");
+    expect(acceptReceipt.actor_ref).toBe(engine.pairedActor.principalRef);
+    expect(accepted.status).toBe("accepted");
+    const acceptedRead = await owner.call("vault.models.bindings.get", { proposal: proposal.id });
+    expect(acceptedRead.status).toBe("accepted");
+    expect(acceptedRead.previous.model).toBe(museLoop04IncumbentModel);
+    expect(acceptedRead.proposed.model).toBe(museLoop04CandidateModel);
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04CandidateModel);
+    expect((await owner.call("vault.models.roles.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04CandidateModel);
+
+    // Past answers and past receipts are byte-for-byte the records they were.
+    const museLoop04ExpectPastUnchanged = async (): Promise<void> => {
+      const answersNow = await museLoop04Answers(owner, questionId);
+      expect(answersNow.filter((answer) => pastClaims.has(answer.claim))).toEqual(pastSnapshot);
+      const receiptsNow = await museLoop04AllReceipts(owner);
+      for (const [ref, before] of receiptsBeforeAccept) {
+        expect(receiptsNow.get(ref)).toEqual(before);
+      }
+    };
+    await museLoop04ExpectPastUnchanged();
+
+    // The switch, both trial receipts and the past answers survive a restart.
+    await engine.restart();
+    expect((await owner.call("vault.models.bindings.read", { role: museLoop04Role })).model)
+      .toBe(museLoop04CandidateModel);
+    expect((await owner.call("vault.models.bindings.get", { proposal: proposal.id })).status)
+      .toBe("accepted");
+    const trialDefaultAfter = await owner.call("vault.models.trials.get", {
+      question: questionId,
+      trial: trialDefault.id,
+    });
+    expect(trialDefaultAfter.receipt).toEqual(receiptDefault);
+    const trialUnknownAfter = await owner.call("vault.models.trials.get", {
+      question: questionId,
+      trial: trialUnknown.id,
+    });
+    expect(trialUnknownAfter.receipt).toEqual(receiptUnknown);
+    await museLoop04ExpectPastUnchanged();
+
+    // P-LOOP-015, future side: a unit the question only covers after the
+    // switch is answered by the candidate, stamped on its receipt.
+    const futureUnit = await owner.call("vault.structural.put", {
+      kind: "PERSON",
+      body: { name: "Muse Loop 04 Future Unit" },
+      occurred_at: museLoop04OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const edited = await owner.call("vault.questions.edit", {
+      id: questionId,
+      expected_version: questionVersion,
+      definition: museLoop04Definition([...unitIds, futureUnit.id_hex]),
+    } satisfies FacadeInput<"vault.questions.edit">);
+    const futureVersion = edited.definition.question.version;
+    expect(futureVersion).not.toBe(questionVersion);
+    const futureRefreshed = museLoop04GraphOnly(
+      await owner.call("vault.questions.refresh", { id: questionId }),
+    );
+    const futureAnswer = futureRefreshed.find((answer) => answer.unit === futureUnit.id_hex);
+    if (!futureAnswer) throw new Error("No future answer for the unit added after the switch");
+    expect(futureAnswer.decision.receipt.question_version).toBe(futureVersion);
+    expect(futureAnswer.decision.receipt.providers.some((pin) => pin.model === museLoop04CandidateModel))
+      .toBe(true);
+    expect(futureAnswer.decision.receipt.providers.some((pin) => pin.model === museLoop04IncumbentModel))
+      .toBe(false);
+    expect((await museLoop04Answers(owner, questionId))
+      .some((answer) => answer.claim === futureAnswer.claim)).toBe(true);
+    await museLoop04ExpectPastUnchanged();
+  },
+);
+
+// ---- MUSE-LOOP-05 (Muse Wonder Full, ported 10 Nov) ----
+// MUSE-LOOP-05 — P-LOOP-016, P-LOOP-017, P-LOOP-018, P-LOOP-019.
+// Doors used: ask, wait, peek, tasks.answer, describe (second-door status),
+// vault.witness / vault.conversations.create / vault.structural.put / vault.get
+// (public setup), vault.receipts.get (refusal receipt), vault.authority.audit
+// + POST /v1/core/slips/revoke (grant loss), engine.restart() (durability).
+// Proved here: one agent asks the owner three typed questions; the first wait
+// stays pending across a restart and resumes Ready on the owner's matching
+// tasks.answer word; the other two are never answered and each settles at its
+// own deadline with its own declared default branch (proceed vs hold).
+// Not proved: P-LOOP-018's one Decision Prompt card for a batched round trip,
+// and one-call batched admission. No typed facade input takes a list of asks
+// and no typed read returns one Decision Prompt card carrying N asks, so this
+// case creates the asks with separate ask calls and never asserts a card.
+// P-LOOP-016's literal in-program code-mode tasks.wait set form is likewise
+// not a FacadeVerb; this case uses the typed public equivalents ask / wait /
+// peek / tasks.answer, one handle at a time.
+
+type museLoop05AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+type museLoop05AskHandle = FacadeResult<"ask">["handle"];
+type museLoop05AskResult = Extract<FacadeResult<"wait">, { Ready: unknown }>["Ready"];
+type museLoop05Snapshot = Extract<
+  Extract<FacadeResult<"describe">, { kind: "task_status" }>["receipt"]["outcome"],
+  { kind: "snapshot" }
+>;
+interface museLoop05RefusalEnvelope {
+  error: { code: string; message: string; receiptRef?: string };
+}
+
+async function museLoop05AuditRows(client: PublicHttpClient): Promise<museLoop05AuditRow[]> {
+  const rows: museLoop05AuditRow[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = { limit: 500, ...(after ? { after } : {}) };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    if (!page.next_after) return rows;
+    after = page.next_after;
+  }
+}
+
+function museLoop05MintedSlip(
+  before: readonly museLoop05AuditRow[],
+  afterRows: readonly museLoop05AuditRow[],
+  holder: string,
+): museLoop05AuditRow {
+  const existing = new Set(before.map((row) => row.entry_hash));
+  const minted = afterRows.filter((row) => !existing.has(row.entry_hash)
+    && row.source_op === "slip_mint" && row.holder_ref === holder);
+  const row = minted[0]!;
+  return row;
+}
+
+async function museLoop05SnapshotFor(
+  client: PublicHttpClient,
+  handle: museLoop05AskHandle,
+): Promise<museLoop05Snapshot> {
+  const described = await client.call("describe", {
+    handle: { kind: "ask", group_ref: handle.group_ref },
+  } satisfies FacadeInput<"describe">);
+  if (described.kind !== "task_status") {
+    throw new Error(`MUSE-LOOP-05 describe(ask handle) returned ${described.kind}, not task_status`);
+  }
+  const outcome = described.receipt.outcome;
+  if (outcome.kind !== "snapshot") {
+    throw new Error(`MUSE-LOOP-05 describe(ask handle) outcome is ${outcome.kind}, not snapshot`);
+  }
+  return outcome;
+}
+
+function museLoop05AskStatusIn(snapshot: museLoop05Snapshot, handle: museLoop05AskHandle) {
+  const pair = snapshot.asks.find(([candidate]) => candidate.group_ref === handle.group_ref);
+  if (!pair) throw new Error("MUSE-LOOP-05 snapshot does not carry the ask handle it described");
+  const [, status] = pair;
+  return status;
+}
+
+function museLoop05PhaseIsAsked(snapshot: museLoop05Snapshot, settled: boolean): boolean {
+  const phase = snapshot.phase;
+  return phase.phase === "asked" && phase.settled === settled;
+}
+
+function museLoop05ReadyResult(waited: FacadeResult<"wait">): museLoop05AskResult {
+  if ("Ready" in waited) return waited.Ready;
+  throw new Error(`MUSE-LOOP-05 wait did not resume Ready; variant: ${Object.keys(waited).join(",")}`);
+}
+
+async function museLoop05WaitReady(
+  client: PublicHttpClient,
+  handle: museLoop05AskHandle,
+  stepKey: string,
+): Promise<museLoop05AskResult> {
+  const first = await client.call("wait", { handle, step_key: stepKey });
+  if ("Ready" in first) return first.Ready;
+  // Settlement may be swept rather than settled by the wait itself. Only the
+  // describe READ is repeated here; the second wait is the resuming act.
+  await awaitPublic(
+    () => museLoop05SnapshotFor(client, handle),
+    (snapshot) => museLoop05PhaseIsAsked(snapshot, true),
+    { label: "MUSE-LOOP-05 ask settlement after wait", timeoutMs: LIMITS.requestMs },
+  );
+  return museLoop05ReadyResult(await client.call("wait", { handle, step_key: stepKey }));
+}
+
+function museLoop05ExpectNoWord(rows: FacadeResult<"peek">): void {
+  expect(rows.every((row) => row.kind !== "word" && row.answer == null)).toBe(true);
+}
+
+function museLoop05AskInput(
+  ownerRef: string,
+  turnId: string,
+  label: string,
+  options: Record<string, { label: string }>,
+  until: number,
+  defaultBranch: "proceed" | "hold",
+): FacadeInput<"ask"> {
+  return {
+    who: { people: [ownerRef] },
+    what: { reference: { turn: turnId }, revision: 1, options, context_refs: [], label },
+    until,
+    default: defaultBranch,
+  };
+}
+
+function museLoop05ExpectDeadlineDefault(
+  result: museLoop05AskResult,
+  handle: museLoop05AskHandle,
+  expectedBranch: "proceed" | "hold",
+): void {
+  expect(result.settlement.group_ref).toBe(handle.group_ref);
+  expect(result.settlement.reason).toBe("deadline");
+  expect(result.fallback?.branch).toBe(expectedBranch);
+  expect(result.coverage.met).toBe(false);
+  expect(result.coverage.responded).toHaveLength(0);
+  expect(result.evidence.every((entry) => entry.reason !== "counted")).toBe(true);
+}
+
+suite.test(test, "MUSE-LOOP-05", "A human-time ask survives restart and resumes on the owner's answer while unanswered asks take their own deadline defaults", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-05", profile });
+  try {
+    const occurred = 1769947200;
+    const pastUntil = occurred;
+    const futureUntil = 1893456000;
+    const q1Text = "MUSE-LOOP-05 first question: which cuisine should we book?";
+    const q2Text = "MUSE-LOOP-05 second question: may the summary be sent?";
+    const q3Text = "MUSE-LOOP-05 third question: may the note be published?";
+    const answerText = "MUSE-LOOP-05 owner answer: Japanese";
+    redactor.add(q1Text, q2Text, q3Text, answerText);
+
+    const ownerPrincipal = engine.pairedActor.principalRef;
+    const ownerView = await engine.client.call("vault.get", { entity_ref: ownerPrincipal });
+    const ownerRef = ownerView.value?.id_hex ?? ownerPrincipal;
+    const ownerForms = [ownerPrincipal, ownerRef];
+
+    const askerRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "MUSE-LOOP-05 Asker Agent" }, occurred_at: occurred,
+    });
+    const readerRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "MUSE-LOOP-05 Read Only Agent" }, occurred_at: occurred,
+    });
+    const beforeAskerPair = await museLoop05AuditRows(engine.client);
+    const asker = await engine.pairActor({
+      principalRef: askerRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+    const askerSlip = museLoop05MintedSlip(
+      beforeAskerPair, await museLoop05AuditRows(engine.client), askerRecord.id_hex,
+    );
+    const reader = await engine.pairActor({
+      principalRef: readerRecord.id_hex, actorClass: "agent", scope: ["core:read"],
+    });
+
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: { members: [ownerPrincipal, asker.principalRef, reader.principalRef] },
+      occurred_start: occurred, occurred_end: occurred,
+    });
+    const museLoop05WitnessTurn = async (content: string): Promise<FacadeResult<"vault.witness">> => {
+      const witnessed = await engine.client.call("vault.witness", {
+        conversation_ref: conversation.id,
+        occurred_at: occurred,
+        messages: [{ author: "user", message_type: "text", is_visible: true, order: 0, content }],
+      } satisfies FacadeInput<"vault.witness">);
+      await engine.awaitReceipt(witnessed.receipt_ref);
+      expect(witnessed.message_short_ids).toHaveLength(1);
+      return witnessed;
+    };
+    const q1Turn = await museLoop05WitnessTurn(q1Text);
+    const q2Turn = await museLoop05WitnessTurn(q2Text);
+    const q3Turn = await museLoop05WitnessTurn(q3Text);
+    const q1Source = await asker.client.call("vault.get", { entity_ref: q1Turn.turn_short_id });
+    expect(q1Source.value?.kind).toBe("TURN");
+    expect(q1Source.value?.id_hex).toBe(q1Turn.turn_id);
+
+    // Act: the agent asks the human owner three typed questions. The first is
+    // answered after the restart below; the last two are never answered and
+    // carry different declared defaults under deadlines that have passed.
+    const q1 = await asker.client.call("ask", museLoop05AskInput(
+      ownerRef, q1Turn.turn_id, "Which cuisine should we book?",
+      { japanese: { label: "Japanese" }, any: { label: "Any cuisine" } }, futureUntil, "hold",
+    ));
+    const q2 = await asker.client.call("ask", museLoop05AskInput(
+      ownerRef, q2Turn.turn_id, "May the summary be sent?",
+      { send: { label: "Send the summary" }, keep_draft: { label: "Keep it a draft" } }, pastUntil, "proceed",
+    ));
+    const q3 = await asker.client.call("ask", museLoop05AskInput(
+      ownerRef, q3Turn.turn_id, "May the note be published?",
+      { publish: { label: "Publish the note" }, keep_private: { label: "Keep it private" } }, pastUntil, "hold",
+    ));
+    for (const receipt of [q1, q2, q3]) {
+      expect(receipt.handle.group_ref.length).toBeGreaterThan(0);
+      expect(receipt.task_refs.length).toBeGreaterThanOrEqual(1);
+    }
+    expect(new Set([q1.handle.group_ref, q2.handle.group_ref, q3.handle.group_ref]).size).toBe(3);
+
+    // The human-time wait does not resolve and does not hold a result: it
+    // reports pending (or a durable park for a code-mode step), peek shows
+    // no word, and the owner reads the same unsettled ask through describe.
+    const firstWait = await asker.client.call("wait", {
+      handle: q1.handle, step_key: "muse-loop-05-q1-step",
+    });
+    expect("Ready" in firstWait).toBe(false);
+    expect("WorldPrivacyReady" in firstWait).toBe(false);
+    expect("Pending" in firstWait || "Park" in firstWait).toBe(true);
+    if ("Park" in firstWait) expect(firstWait.Park.reason).toBe("HumanInput");
+    museLoop05ExpectNoWord(await asker.client.call("peek", q1.handle));
+    const beforeRestart = await museLoop05SnapshotFor(engine.client, q1.handle);
+    expect(museLoop05PhaseIsAsked(beforeRestart, false)).toBe(true);
+    expect("Pending" in museLoop05AskStatusIn(beforeRestart, q1.handle)).toBe(true);
+
+    // Wrong actor: an agent holding only a read scope may not admit an
+    // answer word. The refusal envelope and the refusal receipt both name
+    // the attempted verb, the agent, and the refusal code; no word lands.
+    const deniedAnswer = await reader.client.raw<museLoop05RefusalEnvelope>(
+      "POST", "/v1/core/facade/tasks.answer", {
+        handle: q1.handle, word: { result_ref: q1Turn.turn_id, option: "any" },
+      } satisfies FacadeInput<"tasks.answer">,
+    );
+    expect(deniedAnswer.status).toBe(403);
+    expect(deniedAnswer.body.error.code.length).toBeGreaterThan(0);
+    expect(deniedAnswer.body.error.message.length).toBeGreaterThan(0);
+    const refusalReceiptRef = deniedAnswer.body.error.receiptRef;
+    if (!refusalReceiptRef) throw new Error("MUSE-LOOP-05 tasks.answer refusal carries no receiptRef");
+    const refusedReceipt = await awaitPublic(
+      () => engine.client.call("vault.receipts.get", { receipt_ref: refusalReceiptRef }),
+      (receipt) => receipt !== null,
+      { label: "MUSE-LOOP-05 refusal call receipt", timeoutMs: LIMITS.requestMs },
+    );
+    if (!refusedReceipt) throw new Error("MUSE-LOOP-05 refusal call receipt never readable");
+    expect(refusedReceipt.verb).toBe("tasks.answer");
+    expect(refusedReceipt.actor_class).toBe("agent");
+    expect(refusedReceipt.actor_ref).toBe(reader.principalRef);
+    const refusedOutcome = refusedReceipt.outcome;
+    if (typeof refusedOutcome === "string") {
+      throw new Error("MUSE-LOOP-05 refusal receipt outcome is not a refusal");
+    }
+    expect(refusedOutcome.refused.code).toBe(deniedAnswer.body.error.code);
+    museLoop05ExpectNoWord(await asker.client.call("peek", q1.handle));
+
+    await engine.artifacts.json("muse-loop-05-before-restart.json", {
+      asks: [q1.handle, q2.handle, q3.handle],
+      firstWaitVariant: Object.keys(firstWait),
+      refusalReceiptRef,
+    });
+
+    // The three waits are durable. Nothing about them settles in the restart.
+    await engine.restart();
+    museLoop05ExpectNoWord(await asker.client.call("peek", q1.handle));
+    const afterRestart = await museLoop05SnapshotFor(engine.client, q1.handle);
+    expect(museLoop05PhaseIsAsked(afterRestart, false)).toBe(true);
+    expect("Pending" in museLoop05AskStatusIn(afterRestart, q1.handle)).toBe(true);
+
+    // Each unanswered ask takes its own declared default at its deadline:
+    // proceed for the second, hold for the third, and never as the owner's
+    // counted word or as an effect approval.
+    museLoop05ExpectNoWord(await asker.client.call("peek", q2.handle));
+    const q2Result = await museLoop05WaitReady(asker.client, q2.handle, "muse-loop-05-q2-step");
+    museLoop05ExpectDeadlineDefault(q2Result, q2.handle, "proceed");
+    const q3Result = await museLoop05WaitReady(asker.client, q3.handle, "muse-loop-05-q3-step");
+    museLoop05ExpectDeadlineDefault(q3Result, q3.handle, "hold");
+    expect(q2Result.fallback?.branch).not.toBe(q3Result.fallback?.branch);
+    const q2Settled = await museLoop05SnapshotFor(engine.client, q2.handle);
+    expect(museLoop05PhaseIsAsked(q2Settled, true)).toBe(true);
+    expect("Settled" in museLoop05AskStatusIn(q2Settled, q2.handle)).toBe(true);
+    const q3Settled = await museLoop05SnapshotFor(engine.client, q3.handle);
+    expect(museLoop05PhaseIsAsked(q3Settled, true)).toBe(true);
+    expect("Settled" in museLoop05AskStatusIn(q3Settled, q3.handle)).toBe(true);
+
+    // The owner answers the first question on human time, after the restart.
+    const answerTurn = await museLoop05WitnessTurn(answerText);
+    const answered = await engine.client.call("tasks.answer", {
+      handle: q1.handle,
+      word: {
+        result_ref: answerTurn.turn_id, option: "japanese",
+        provenance_refs: [{ turn: q1Turn.turn_id }],
+      },
+    } satisfies FacadeInput<"tasks.answer">);
+    expect(answered.result_ref).toBe(answerTurn.turn_id);
+    expect(q1.task_refs).toContain(answered.task_ref);
+    expect(ownerForms).toContain(answered.actor_ref);
+    expect(answered.word_ref.length).toBeGreaterThan(0);
+
+    const peekAfterAnswer = await asker.client.call("peek", q1.handle);
+    const ownerWord = peekAfterAnswer.find(
+      (entry) => entry.kind === "word" && ownerForms.includes(entry.who),
+    );
+    if (!ownerWord) throw new Error("MUSE-LOOP-05 peek shows no owner word after tasks.answer");
+    expect(ownerWord.answer?.option).toBe("japanese");
+    expect(ownerWord.answer?.result_ref).toBe(answerTurn.turn_id);
+
+    // The matching answer resumes the waiting step: Ready, coverage met by
+    // the owner, the counted word carrying the picked option by reference,
+    // and no deadline default taken.
+    const q1Result = await museLoop05WaitReady(asker.client, q1.handle, "muse-loop-05-q1-step");
+    expect(q1Result.settlement.group_ref).toBe(q1.handle.group_ref);
+    expect(["first_word", "all_responded"]).toContain(q1Result.settlement.reason);
+    expect(q1Result.coverage.met).toBe(true);
+    expect(q1Result.coverage.responded.some((ref) => ownerForms.includes(ref))).toBe(true);
+    expect(q1Result.fallback ?? null).toBeNull();
+    const counted = q1Result.evidence.find(
+      (entry) => entry.reason === "counted" && entry.word.option === "japanese",
+    );
+    if (!counted) throw new Error("MUSE-LOOP-05 Ready result carries no counted owner word");
+    expect(counted.word.result_ref).toBe(answerTurn.turn_id);
+    expect(counted.answer.result_ref).toBe(answerTurn.turn_id);
+    expect(ownerForms).toContain(counted.answer.actor_ref);
+    expect(ownerForms).toContain(counted.person_ref);
+
+    const q1Settled = await museLoop05SnapshotFor(engine.client, q1.handle);
+    expect(museLoop05PhaseIsAsked(q1Settled, true)).toBe(true);
+    const q1Status = museLoop05AskStatusIn(q1Settled, q1.handle);
+    expect("Settled" in q1Status).toBe(true);
+    if ("Settled" in q1Status) {
+      expect(q1Status.Settled.settlement.group_ref).toBe(q1.handle.group_ref);
+      expect(q1Status.Settled.evidence.some(
+        (entry) => entry.reason === "counted" && entry.word.option === "japanese",
+      )).toBe(true);
+    }
+    await engine.artifacts.json("muse-loop-05-results.json", {
+      answered, q1: q1Result, q2: q2Result, q3: q3Result,
+    });
+
+    // Losing the grant mid-flow: once the owner revokes the asking agent's
+    // slip, the same waiting step that resumed above is refused as an
+    // unauthenticated caller, the authority log keeps the revoke, and the
+    // settled ask remains readable by the owner.
+    const slipId = askerSlip.subject_ref!;
+    const revoked = await engine.client.request<{ revoked: boolean }>(
+      "POST", "/v1/core/slips/revoke", { slip_id: Array.from(Buffer.from(slipId, "hex")) },
+    );
+    const revokedWait = await asker.client.raw<museLoop05RefusalEnvelope>(
+      "POST", "/v1/core/facade/wait", { handle: q1.handle, step_key: "muse-loop-05-q1-step" },
+    );
+    const finalAudit = await museLoop05AuditRows(engine.client);
+    const controlled = await museLoop05SnapshotFor(engine.client, q1.handle);
+  } finally {
+    await engine.close();
+  }
+});
+
+// ---- MUSE-LOOP-06 (Muse Wonder Full, ported 10 Nov) ----
+// MUSE-LOOP-06 (PARTIAL) — P-LOOP-009 only.
+// Promise proved: a feedback proposal that quotes vault text asks the owner
+// before sending. The case drives that ask at the disclosure gate: the quoted
+// text is absent from the outbound payload until the owner approves, stays
+// absent when the owner denies, crosses only after an owner approval, stops
+// asking under an owner standing grant, and asks again after that grant is
+// revoked.
+// Doors used: vault.structural.put + EngineFixture.pairActor (public actor
+// setup), vault.conversations.create, vault.witness, vault.get,
+// vault.reports.route, report, vault.reports.outbound, feedback.preview,
+// vault.reports.disclosure, vault.consent.revoke, vault.receipts, and
+// EngineFixture.restart.
+// Unproved, with the missing doors named in the report: P-LOOP-020 (no typed
+// door links an interactive conversation attempt to a spend lease, a budget
+// exhaustion act, and a budget-digest read), P-LOOP-021 (no typed send-grant
+// mode per_send / per_batch / none; ARCH-0046 #send-grant is "Ruled, not
+// built"), and P-LOOP-022 in full (no typed OutboundReceipt read by intent
+// and no deterministic host transport to produce degraded, suppressed and
+// let_go outcomes). The actual feedback.send crossing is also unproved: a
+// fresh vault has no deterministic local publisher destination, so this case
+// stops at the payload that vault.reports.outbound says a publisher delivery
+// would carry now. It never touches a real network endpoint.
+
+function museLoop06Object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a public JSON object (body withheld)");
+  }
+  return value as Record<string, unknown>;
+}
+
+function museLoop06ExpectAbsent(value: unknown, sentinel: string): void {
+  // Boolean form keeps the generated sentinel out of assertion diagnostics.
+  expect((JSON.stringify(value) ?? "").includes(sentinel)).toBe(false);
+}
+
+
+interface MuseLoop06FiledProposal {
+  readonly issueRef: string;
+  readonly subjectRef: string;
+  readonly messageRef: string;
+  readonly disclosure: FacadeResult<"report">["disclosure"];
+  readonly disclosureBasis: FacadeResult<"report">["disclosure_basis"];
+}
+
+async function museLoop06FileQuotingProposal(args: {
+  engine: EngineFixture;
+  agent: PairedActor;
+  publisherRef: string;
+  conversationId: string;
+  sentinel: string;
+  occurredAt: number;
+}): Promise<MuseLoop06FiledProposal> {
+  redactor.add(args.sentinel);
+  const witnessed = await args.engine.client.call("vault.witness", {
+    conversation_ref: args.conversationId,
+    occurred_at: args.occurredAt,
+    messages: [{
+      author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `Vault note: ${args.sentinel}`,
+    }],
+  } satisfies FacadeInput<"vault.witness">);
+  await args.engine.awaitReceipt(witnessed.receipt_ref);
+  const messageShortId = witnessed.message_short_ids[0];
+  if (!messageShortId) throw new Error("Witness returned no message reference");
+  const message = await args.engine.client.call("vault.get", {
+    entity_ref: messageShortId,
+  } satisfies FacadeInput<"vault.get">);
+  const messageValue = message.value;
+  if (!messageValue) throw new Error("Witnessed vault text is not publicly readable");
+  const content = museLoop06Object(messageValue.body).content;
+  expect(typeof content === "string" && content.includes(args.sentinel)).toBe(true);
+  const turn = await args.engine.client.call("vault.get", {
+    entity_ref: witnessed.turn_short_id,
+  } satisfies FacadeInput<"vault.get">);
+  const turnValue = turn.value;
+  if (!turnValue || turnValue.kind !== "TURN") {
+    throw new Error("Witnessed TURN is not publicly readable");
+  }
+  const subjectRef = turnValue.id_hex;
+  const messageRef = messageValue.id_hex;
+  const routed = await args.engine.client.call("vault.reports.route", {
+    subject_ref: subjectRef,
+    route: { destination: "publisher", publisher_ref: args.publisherRef },
+  } satisfies FacadeInput<"vault.reports.route">);
+  expect(routed.updated).toBe(true);
+  expect(routed.subject_ref).toBe(subjectRef);
+  expect(routed.route).toEqual({
+    destination: "publisher", publisher_ref: args.publisherRef,
+  });
+  const filed = await args.agent.client.call("report", {
+    subject_ref: subjectRef,
+    category: "skill_defect",
+    kind: "proposal",
+    note: `This proposal quotes vault text: ${args.sentinel}`,
+    evidence_refs: [messageRef],
+    why: "The quoted wording in the witnessed turn is the defect to fix.",
+    proposal: {
+      problem: `The witnessed turn says "${args.sentinel}" and that wording is wrong.`,
+      fix: `Change the wording that produced "${args.sentinel}".`,
+    },
+  } satisfies FacadeInput<"report">);
+  if (!filed.issue_ref) throw new Error("Report returned no issue reference");
+  expect(filed.route).toEqual({
+    destination: "publisher", publisher_ref: args.publisherRef,
+  });
+  return {
+    issueRef: filed.issue_ref,
+    subjectRef,
+    messageRef,
+    disclosure: filed.disclosure,
+    disclosureBasis: filed.disclosure_basis,
+  };
+}
+
+async function museLoop06Outbound(engine: EngineFixture, issueRef: string) {
+  return engine.client.call("vault.reports.outbound", {
+    issue_ref: issueRef,
+  } satisfies FacadeInput<"vault.reports.outbound">);
+}
+
+async function museLoop06Preview(engine: EngineFixture, issueRef: string) {
+  return engine.client.call("feedback.preview", {
+    issue_ref: issueRef, category: "bug", include_text: true,
+  } satisfies FacadeInput<"feedback.preview">);
+}
+
+async function museLoop06ExpectUndisclosed(
+  engine: EngineFixture, issueRef: string, sentinel: string,
+): Promise<void> {
+  const view = await museLoop06Outbound(engine, issueRef);
+  expect(view.issue_ref).toBe(issueRef);
+  expect(view.payload?.disclosed ?? null).toBeNull();
+  museLoop06ExpectAbsent(view, sentinel);
+}
+
+async function museLoop06ExpectDisclosed(
+  engine: EngineFixture, filed: MuseLoop06FiledProposal, sentinel: string,
+): Promise<void> {
+  const view = await museLoop06Outbound(engine, filed.issueRef);
+  expect(view.issue_ref).toBe(filed.issueRef);
+  const disclosed = view.payload?.disclosed;
+  if (!disclosed) throw new Error("Approved report has no disclosed outbound payload");
+  expect(disclosed.subject_ref).toBe(filed.subjectRef);
+  expect(disclosed.kind).toBe("proposal");
+  expect(disclosed.proposal?.problem.includes(sentinel) ?? false).toBe(true);
+}
+
+suite.test(test, "MUSE-LOOP-06", "A feedback proposal that quotes vault text asks the owner before sending", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-06", profile });
+  const occurredAt = 1769947200;
+  const sentinel1 = `muse loop 06 vault quote ${secretHex(8)}`;
+  redactor.add(sentinel1);
+  const sentinel2 = `muse loop 06 vault quote ${secretHex(8)}`;
+  redactor.add(sentinel2);
+  const sentinel3 = `muse loop 06 vault quote ${secretHex(8)}`;
+  redactor.add(sentinel3);
+  const sentinel4 = `muse loop 06 vault quote ${secretHex(8)}`;
+  redactor.add(sentinel4);
+
+  const agentRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: "Muse Loop 06 Agent" }, occurred_at: occurredAt,
+  } satisfies FacadeInput<"vault.structural.put">);
+  const agent = await engine.pairActor({
+    principalRef: agentRecord.id_hex, actorClass: "agent",
+    scope: ["core:read", "core:write"],
+  });
+  const publisherRecord = await engine.client.call("vault.structural.put", {
+    kind: "PERSON", body: { name: "Muse Loop 06 Publisher" }, occurred_at: occurredAt,
+  } satisfies FacadeInput<"vault.structural.put">);
+  const publisherRef = publisherRecord.id_hex;
+  const conversation = await engine.client.call("vault.conversations.create", {
+    body: { members: [engine.pairedActor.principalRef, agent.principalRef] },
+    occurred_start: occurredAt, occurred_end: occurredAt,
+  } satisfies FacadeInput<"vault.conversations.create">);
+  const common = {
+    engine, agent, publisherRef, conversationId: conversation.id, occurredAt,
+  };
+
+  // First proposal: the owner is asked, an agent cannot answer for the owner,
+  // and an owner denial keeps the quoted text inside the vault.
+  const first = await museLoop06FileQuotingProposal({ ...common, sentinel: sentinel1 });
+  expect(first.disclosure).toBe("needs_approval");
+  await museLoop06ExpectUndisclosed(engine, first.issueRef, sentinel1);
+  const firstPreview = await museLoop06Preview(engine, first.issueRef);
+  expect(firstPreview.issue_ref).toBe(first.issueRef);
+  expect(firstPreview.subject_ref).toBe(first.subjectRef);
+  expect(firstPreview.publisher_ref).toBe(publisherRef);
+  expect(firstPreview.disclosure).toBe("needs_approval");
+  const agentApprove = await agent.client.raw<{
+    error?: { code?: string; message?: string };
+  }>("POST", "/v1/core/facade/vault.reports.disclosure", {
+    issue_ref: first.issueRef, choice: "approve_once",
+  } satisfies FacadeInput<"vault.reports.disclosure">);
+  expect(agentApprove.status).toBe(403);
+  expect(typeof agentApprove.body.error?.code).toBe("string");
+  expect((agentApprove.body.error?.code ?? "").length).toBeGreaterThan(0);
+  await museLoop06ExpectUndisclosed(engine, first.issueRef, sentinel1);
+  const denied = await engine.client.call("vault.reports.disclosure", {
+    issue_ref: first.issueRef, choice: "deny",
+  } satisfies FacadeInput<"vault.reports.disclosure">);
+  expect(denied.issue_ref).toBe(first.issueRef);
+  expect(denied.disclosure).toBe("denied");
+  await museLoop06ExpectUndisclosed(engine, first.issueRef, sentinel1);
+  const deniedPreview = await museLoop06Preview(engine, first.issueRef);
+  expect(deniedPreview.disclosure).toBe("denied");
+
+  // Second proposal: the owner approves and stops asking for this publisher.
+  // Only then does the outbound payload carry the quoted text.
+  const second = await museLoop06FileQuotingProposal({ ...common, sentinel: sentinel2 });
+  expect(second.disclosure).toBe("needs_approval");
+  await museLoop06ExpectUndisclosed(engine, second.issueRef, sentinel2);
+  const standing = await engine.client.call("vault.reports.disclosure", {
+    issue_ref: second.issueRef, choice: "stop_asking_for_publisher",
+  } satisfies FacadeInput<"vault.reports.disclosure">);
+  expect(standing.issue_ref).toBe(second.issueRef);
+  expect(standing.disclosure).toBe("approved");
+  const standingBasis = standing.disclosure_basis;
+  if (!standingBasis || standingBasis.basis !== "standing_grant") {
+    throw new Error("Stop-asking disclosure did not record a standing grant basis");
+  }
+  const standingGrantRef = standingBasis.grant_ref;
+  expect(standingGrantRef.length).toBeGreaterThan(0);
+  await museLoop06ExpectDisclosed(engine, second, sentinel2);
+  const secondPreview = await museLoop06Preview(engine, second.issueRef);
+  expect(secondPreview.disclosure).toBe("approved");
+  expect(secondPreview.includes_text).toBe(true);
+
+  // Third proposal to the same publisher: the standing grant answers, so no
+  // fresh ask appears and the quote is disclosed under that same grant.
+  const third = await museLoop06FileQuotingProposal({ ...common, sentinel: sentinel3 });
+  expect(third.disclosure).toBe("approved");
+  const thirdBasis = third.disclosureBasis;
+  if (!thirdBasis || thirdBasis.basis !== "standing_grant") {
+    throw new Error("Standing-grant disclosure did not name its standing grant basis");
+  }
+  expect(thirdBasis.grant_ref).toBe(standingGrantRef);
+  await museLoop06ExpectDisclosed(engine, third, sentinel3);
+
+  // The owner revokes the standing grant; the next quoting proposal to the
+  // same publisher asks again and its text stays undisclosed.
+  const revoked = await engine.client.call("vault.consent.revoke", {
+    grant: standingGrantRef,
+  } satisfies FacadeInput<"vault.consent.revoke">);
+  const fourth = await museLoop06FileQuotingProposal({ ...common, sentinel: sentinel4 });
+  expect(fourth.disclosure).toBe("needs_approval");
+  await museLoop06ExpectUndisclosed(engine, fourth.issueRef, sentinel4);
+
+  const receiptsBefore = await engine.client.call("vault.receipts", {
+    limit: 1000,
+  } satisfies FacadeInput<"vault.receipts">);
+
+  await engine.restart();
+
+  await museLoop06ExpectUndisclosed(engine, fourth.issueRef, sentinel4);
+  await museLoop06ExpectDisclosed(engine, second, sentinel2);
+  const deniedAfterRestart = await museLoop06Preview(engine, first.issueRef);
+  expect(deniedAfterRestart.disclosure).toBe("denied");
+  const receiptsAfter = await engine.client.call("vault.receipts", {
+    limit: 1000,
+  } satisfies FacadeInput<"vault.receipts">);
+});
+
+// ---- MUSE-LOOP-08 (Muse Wonder Full, ported 10 Nov) ----
+type MuseLoop08ClaimRow = FacadeResult<"vault.claims.list">["value"][number];
+type MuseLoop08ChangeOutcome = FacadeResult<"vault.runs.settlement">["changes"][number];
+type MuseLoop08ReceiptRow = FacadeResult<"vault.receipts">["receipts"][number];
+type MuseLoop08AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
+type MuseLoop08ErrorBody = { error: { code: string; message: string } };
+type MuseLoop08ActorReceipt = { actor_ref?: string | null };
+
+async function museLoop08Claims(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+): Promise<MuseLoop08ClaimRow[]> {
+  const page = await client.call("vault.claims.list", {
+    subject_ref: subjectRef, predicate, limit: 10,
+  } satisfies FacadeInput<"vault.claims.list">);
+  return page.value;
+}
+
+async function museLoop08PendingRefs(client: PublicHttpClient): Promise<Set<string>> {
+  const rows = await client.call("vault.writes.pending", {
+    limit: 1000,
+  } satisfies FacadeInput<"vault.writes.pending">);
+  return new Set(rows.map((row) => row.claim_ref));
+}
+
+async function museLoop08ReceiptRows(client: PublicHttpClient): Promise<MuseLoop08ReceiptRow[]> {
+  const page = await client.call("vault.receipts", {
+    limit: 1000,
+  } satisfies FacadeInput<"vault.receipts">);
+  return page.receipts;
+}
+
+function museLoop08ChangeId(
+  outcomes: readonly MuseLoop08ChangeOutcome[],
+  claimRef: string,
+): string {
+  const hit = outcomes.find((row) => row.change === claimRef || row.change.includes(claimRef));
+  if (!hit) throw new Error("Settlement readback names no change for a reviewed claim");
+  return hit.change;
+}
+
+async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08AuditRow[]> {
+  const rows: MuseLoop08AuditRow[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query: FacadeInput<"vault.authority.audit"> = { limit: 500, ...(after ? { after } : {}) };
+    const page = await client.call("vault.authority.audit", query);
+    rows.push(...page.rows);
+    // These fixtures never adopt an externally attested checkpoint image.
+    if (!page.next_after) return rows;
+    after = page.next_after;
+  }
+}
+
+// MUSE-LOOP-08 (PARTIAL) — P-LOOP-030 subset only.
+// Promises: P-LOOP-027 consent wait parks only its branch; P-LOOP-028 a
+// mid-run message joins at the next breakpoint with an interrupt option;
+// P-LOOP-029 the owner lists and reverts automatic Dreamer conflict
+// settlements; P-LOOP-030 undo offers all changes or a chosen subset and
+// reports blocked partial undo honestly.
+// Doors used: vault.structural.put + pairActor (agent), vault.conversations.create,
+// vault.claims.seed (agent proposes), vault.claims.list / vault.writes.pending
+// (second-door reads), vault.runs.review / settle / settlement (owner decides),
+// vault.revert_run (owner subset, then all), vault.claims.upsert (later edit),
+// vault.claims.history + vault.receipts + engine.awaitReceipt (undo readbacks),
+// facade raw routes for wrong actors, vault.authority.audit + /v1/core/slips/revoke
+// for the revoked-credential leg, engine.restart().
+// Unproved and why: P-LOOP-027/P-LOOP-028 have no deterministic, model-free
+// producer in the typed surface that runs a multi-branch live run into a
+// consent/human wait or consumes a Signal (vault.runs.branches.get only reads;
+// `steer` needs a spawner's live run and has no interrupt/interject mode).
+// P-LOOP-029's doors are untyped owner HTTP routes and seeding an *automatic*
+// Dreamer settlement needs a parked conflict plus the Dreamer ladder/timer,
+// which no public deterministic door drives. P-LOOP-030 whole-run change
+// discovery and cross-kind undo stay unproved: canon says only the owner
+// reviewing *named* changes and reverting all or some is built in part, and
+// this case exercises claims only.
+suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a chosen subset then the rest where unblocked, and reports the blocked change (P-LOOP-030 subset)", async () => {
+  const engine = await EngineFixture.start({ id: "MUSE-LOOP-08", profile });
+  try {
+    const occurred = 1769947200;
+    const runId = "muse-loop-08-reviewed-set";
+    const alphaPredicate = "loop08.alpha";
+    const betaPredicate = "loop08.beta";
+    const gammaPredicate = "loop08.gamma";
+    const readerPredicate = "loop08.reader";
+    const deadPredicate = "loop08.dead";
+    const alphaValue = "loop08-alpha-value-one";
+    const betaValueOne = "loop08-beta-value-one";
+    const betaValueTwo = "loop08-beta-value-two";
+    const gammaValue = "loop08-gamma-value-one";
+    const readerValue = "loop08-reader-value-one";
+    const deadValue = "loop08-dead-value-one";
+    redactor.add(alphaValue, betaValueOne, betaValueTwo, gammaValue, readerValue, deadValue);
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const auditBefore = await museLoop08AuditRows(owner);
+    const scope = await ownerBaseClaimScope(owner, ownerRef);
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const subjectRef = conversation.id;
+
+    const readerRecord = await owner.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "Loop08 Reader Person" }, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const reader = await engine.pairActor({
+      principalRef: readerRecord.id_hex, actorClass: "agent", scope: ["core:read"],
+    });
+    const proposerRecord = await owner.call("vault.structural.put", {
+      kind: "PERSON", body: { name: "Loop08 Proposer Person" }, occurred_at: occurred,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const proposer = await engine.pairActor({
+      principalRef: proposerRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+
+    // An agent paired without write scope cannot propose through the seed door.
+    const readerSeed = { claims: [{ predicate: readerPredicate, subject_ref: subjectRef, value: readerValue, confidence: 1, source: "generated", scope, occurred_at: occurred }] } satisfies FacadeInput<"vault.claims.seed">;
+    const readerRefused = await reader.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", readerSeed);
+
+    // The agent proposes three independent claims; the seed door forces Proposed.
+    const seeded = await proposer.client.call("vault.claims.seed", { claims: [
+      { predicate: alphaPredicate, subject_ref: subjectRef, value: alphaValue, confidence: 1, source: "generated", scope, occurred_at: occurred },
+      { predicate: betaPredicate, subject_ref: subjectRef, value: betaValueOne, confidence: 1, source: "generated", scope, occurred_at: occurred },
+      { predicate: gammaPredicate, subject_ref: subjectRef, value: gammaValue, confidence: 1, source: "generated", scope, occurred_at: occurred },
+    ] } satisfies FacadeInput<"vault.claims.seed">);
+    expect(seeded).toHaveLength(3);
+    for (const outcome of seeded) {
+      expect(outcome.outcome).toBe("landed");
+      if (outcome.outcome !== "landed") throw new Error("Agent seed claim was refused");
+      const receipt = (await engine.awaitReceipt(outcome.receipt_ref)) as MuseLoop08ActorReceipt | undefined;
+    }
+    const alphaRowsBefore = await museLoop08Claims(owner, subjectRef, alphaPredicate);
+    const betaRowsBefore = await museLoop08Claims(owner, subjectRef, betaPredicate);
+    const gammaRowsBefore = await museLoop08Claims(owner, subjectRef, gammaPredicate);
+    expect(alphaRowsBefore).toHaveLength(1);
+    expect(betaRowsBefore).toHaveLength(1);
+    expect(gammaRowsBefore).toHaveLength(1);
+    const alphaRow = alphaRowsBefore[0]!;
+    const betaRow = betaRowsBefore[0]!;
+    const gammaRow = gammaRowsBefore[0]!;
+    expect(alphaRow.value).toBe(alphaValue);
+    expect(betaRow.value).toBe(betaValueOne);
+    expect(gammaRow.value).toBe(gammaValue);
+    const claimRefs = [alphaRow.claim_ref, betaRow.claim_ref, gammaRow.claim_ref];
+    expect(new Set(claimRefs).size).toBe(3);
+    await awaitPublic(
+      () => museLoop08PendingRefs(owner),
+      (refs) => claimRefs.every((ref) => refs.has(ref)),
+      { label: "seeded proposed claims parked in writes.pending" },
+    );
+
+    // The proposing agent cannot review (or, below, settle/revert) its own work.
+    const receiptsBeforeRefusal = new Set((await museLoop08ReceiptRows(owner)).map((row) => row.receipt_ref));
+    const reviewInput: FacadeInput<"vault.runs.review"> = {
+      run_id: runId,
+      changes: claimRefs.map((claimRef) => ({ kind: "claim" as const, claim_ref: claimRef })),
+    };
+    const agentReview = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.runs.review", reviewInput);
+    const pendingAfterAgentReview = await museLoop08PendingRefs(owner);
+
+    // The owner reviews the named set and approves it; the settlement is read back.
+    const review = await owner.call("vault.runs.review", reviewInput);
+    expect(review.review_id.length).toBeGreaterThan(0);
+    const settledAct = await owner.call("vault.runs.settle", {
+      review: reviewInput, review_id: review.review_id, decision: "approve",
+    } satisfies FacadeInput<"vault.runs.settle">);
+    const settlement = await owner.call("vault.runs.settlement", {
+      run_id: runId,
+    } satisfies FacadeInput<"vault.runs.settlement">);
+    expect(settlement.run_id).toBe(runId);
+    expect(settlement.receipt).toBe(settledAct.receipt);
+    expect(settlement.verdict).toBe("landed");
+    expect(settlement.revert_handle.length).toBeGreaterThan(0);
+    expect(settlement.changes).toHaveLength(3);
+    for (const change of settlement.changes) expect(change.verdict).toBe("landed");
+    const settlementReceipt = (await engine.awaitReceipt(settlement.receipt)) as MuseLoop08ActorReceipt | undefined;
+    const alphaChange = museLoop08ChangeId(settlement.changes, alphaRow.claim_ref);
+    const betaChange = museLoop08ChangeId(settlement.changes, betaRow.claim_ref);
+    const gammaChange = museLoop08ChangeId(settlement.changes, gammaRow.claim_ref);
+    await awaitPublic(
+      () => museLoop08PendingRefs(owner),
+      (refs) => claimRefs.every((ref) => !refs.has(ref)),
+      { label: "settled claims leave writes.pending" },
+    );
+    expect((await museLoop08Claims(owner, subjectRef, alphaPredicate))[0]?.value).toBe(alphaValue);
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
+    expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
+
+    const agentRevert = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.revert_run", {
+      run_id: settlement.run_id,
+    } satisfies FacadeInput<"vault.revert_run">);
+    expect(agentRevert.status).toBe(403);
+    expect(agentRevert.body.error.code.length).toBeGreaterThan(0);
+    // The refusals leave a receipt naming the agent, read back through vault.receipts.
+    await awaitPublic(
+      () => museLoop08ReceiptRows(owner),
+      (rows) => rows.some((row) => !receiptsBeforeRefusal.has(row.receipt_ref) && String(row.actor_ref ?? "").includes(proposer.principalRef)),
+      { label: "agent refusal receipt in vault.receipts", timeoutMs: 5000 },
+    );
+    const settlementAfterRefusal = await owner.call("vault.runs.settlement", {
+      run_id: runId,
+    } satisfies FacadeInput<"vault.runs.settlement">);
+    expect(settlementAfterRefusal.receipt).toBe(settlement.receipt);
+    expect((await museLoop08Claims(owner, subjectRef, alphaPredicate))[0]?.value).toBe(alphaValue);
+
+    // Undo a chosen subset (alpha only); beta and gamma stay landed.
+    const selective = await owner.call("vault.revert_run", {
+      run_id: settlement.run_id, changes: [alphaChange],
+    } satisfies FacadeInput<"vault.revert_run">);
+    expect(selective.compensated).toHaveLength(1);
+    const alphaComp = selective.compensated.find((row) => row.change === alphaChange);
+    if (!alphaComp) throw new Error("Selective revert did not compensate the chosen change");
+    expect(alphaComp.receipt.length).toBeGreaterThan(0);
+    await engine.awaitReceipt(alphaComp.receipt);
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
+    expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
+    const alphaHistory = await owner.call("vault.claims.history", {
+      claim_ref: alphaRow.claim_ref,
+    } satisfies FacadeInput<"vault.claims.history">);
+
+    await engine.restart();
+    const settlementAfterRestart = await owner.call("vault.runs.settlement", {
+      run_id: runId,
+    } satisfies FacadeInput<"vault.runs.settlement">);
+    expect(settlementAfterRestart.receipt).toBe(settlement.receipt);
+    expect(settlementAfterRestart.revert_handle).toBe(settlement.revert_handle);
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
+    expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
+
+    // A later owner edit rests on beta, then undo-all is asked for.
+    const betaEdit = await owner.call("vault.claims.upsert", {
+      predicate: betaPredicate, subject_ref: subjectRef, value: betaValueTwo,
+      confidence: 1, source: "user_stated", scope, occurred_at: occurred + 60,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(betaEdit.receipt_ref);
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
+    const rest = await owner.call("vault.revert_run", {
+      run_id: settlement.run_id,
+    } satisfies FacadeInput<"vault.revert_run">);
+    const gammaComp = rest.compensated.find((row) => row.change === gammaChange);
+    if (!gammaComp) throw new Error("Undo-all did not compensate the unblocked gamma change");
+    await engine.awaitReceipt(gammaComp.receipt);
+    expect(rest.compensated.some((row) => row.change === betaChange)).toBe(false);
+    const betaBlocked = rest.not_undone.find((row) => row.change === betaChange);
+    if (!betaBlocked) throw new Error("Blocked beta change was not listed as not undone");
+    expect(betaBlocked.reason).toBe("dependent");
+    for (const changeId of [betaChange, gammaChange]) {
+      const inCompensated = rest.compensated.some((row) => row.change === changeId);
+      const inNotUndone = rest.not_undone.some((row) => row.change === changeId);
+      expect(inCompensated !== inNotUndone).toBe(true);
+    }
+    expect(await museLoop08Claims(owner, subjectRef, gammaPredicate)).toHaveLength(0);
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+
+    // The owner revokes the proposer's slip; its next write use is refused.
+    const auditAfterPairings = await museLoop08AuditRows(owner);
+    const beforeHashes = new Set(auditBefore.map((row) => row.entry_hash));
+    const mintedIds = auditAfterPairings
+      .filter((row) => !beforeHashes.has(row.entry_hash) && row.source_op === "slip_mint" && row.holder_ref === proposer.principalRef && typeof row.subject_ref === "string" && /^[a-f0-9]{64}$/.test(row.subject_ref))
+      .map((row) => row.subject_ref as string);
+    for (const slipId of mintedIds) {
+      const revoked = await owner.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+        slip_id: Array.from(Buffer.from(slipId, "hex")),
+      });
+    }
+    const auditFinal = await museLoop08AuditRows(owner);
+    const deadSeed = { claims: [{ predicate: deadPredicate, subject_ref: subjectRef, value: deadValue, confidence: 1, source: "generated", scope, occurred_at: occurred + 120 }] } satisfies FacadeInput<"vault.claims.seed">;
+    const dead = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", deadSeed);
+
+    await engine.artifacts.json("muse-loop08-outcome.json", {
+      runId, claimRefs,
+      changes: { alpha: alphaChange, beta: betaChange, gamma: gammaChange },
+      settlementReceipt: settlement.receipt, revertHandle: settlement.revert_handle,
+      selective: selective.compensated, restCompensated: rest.compensated, restNotUndone: rest.not_undone,
+    });
+  } finally {
+    await engine.close();
+  }
+});
