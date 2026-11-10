@@ -4,14 +4,14 @@ use crate::attempt_queue::{
     EnqueueOutcome,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+#[cfg(feature = "code-sandbox-wasmtime")]
+use crate::code_sandbox::quickjs::QuickJsRuntimeFactory;
+#[cfg(feature = "code-sandbox-wasmtime")]
+use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
 use crate::engine_executor::SelfDispatchResponse;
 use crate::skill::{SkillCallContract, SkillLifecycle, SkillRecord};
 use crate::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
 use crate::temporal::TimeRange;
-#[cfg(feature = "code-sandbox-wasmtime")]
-use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
-#[cfg(feature = "code-sandbox-wasmtime")]
-use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::ComponentBudget;
 use rmpv::Value;
 #[cfg(feature = "code-sandbox-wasmtime")]
 use sha2::{Digest, Sha256};
