@@ -598,9 +598,7 @@ pub fn owner_revoke(
 ) -> std::result::Result<RevokeAnswer, String> {
     match vault.consent_revocation(owner, grant_ref) {
         Ok(answer) => Ok(RevokeAnswer {
-            receipt: answer
-                .receipt
-                .map(|receipt| receipt.decision_id().to_hex()),
+            receipt: answer.receipt.map(|receipt| receipt.decision_id().to_hex()),
             already_revoked: answer.already_revoked,
             revoked_by: answer.revoked_by,
         }),
