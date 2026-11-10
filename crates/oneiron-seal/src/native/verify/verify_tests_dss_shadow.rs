@@ -160,11 +160,12 @@ mod tests {
     }
 
     #[test]
-    fn dss_crl_from_separate_crl_signing_key_is_unavailable() {
+    fn dss_crl_from_separate_crl_signing_key_covers_the_leaf() {
         // The CA signs certificates with one key and CRLs with another,
-        // which it certified under its own subject (RFC 5280 §5.1.1.3). The
-        // verifier does not take that CRL as the leaf's coverage, but the
-        // anchor vouches for the key: missing material, not forged.
+        // which it certified under its own subject with cRLSign (RFC 5280
+        // §5.1.1.3). That key has revocation authority over the leaf, so
+        // its fresh complete CRL is the leaf's coverage (review round 1 of
+        // #6944, P1c).
         let anchor = test_ca("issuer");
         let leaf_der = leaf_under(&anchor, "leaf");
         let crl_signer = child_ca(&anchor, "issuer");
@@ -175,17 +176,18 @@ mod tests {
             &[],
         );
         let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
-        assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
     }
 
     #[test]
-    fn dss_crl_after_key_rollover_with_link_certificate_is_unavailable() {
+    fn dss_crl_after_key_rollover_with_link_certificate_covers_the_leaf() {
         // The CA rolled over to a new key (RFC 5280 §5.2.1). /Certs holds
         // its new self-signed certificate first, then the link certificate
-        // the old key issued for the new key; the only CRL is signed with
-        // the new key. The old key signed the leaf, so the leaf has no
-        // coverage, but the anchor vouches for the new key through the link
-        // certificate: missing material, not forged.
+        // the old key issued for the new key with cRLSign; the only CRL is
+        // signed with the new key. The old key signed the leaf, and the
+        // link certificate gives the new key revocation authority over it,
+        // so the new key's fresh complete CRL is the leaf's coverage (review
+        // round 1 of #6944, P1c).
         let old = test_ca("issuer");
         let leaf_der = leaf_under(&old, "leaf");
         let new = test_ca("issuer");
@@ -197,6 +199,32 @@ mod tests {
             &[],
         );
         let checks = material_check(&doc, &[&old], &[&leaf_der]);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_crl_under_another_name_from_a_certified_key_gives_no_coverage() {
+        // The leaf's issuer certified a CRL-signing key under another
+        // subject. That key's CRL carries the other name, so the verifier
+        // never judged it for the leaf (its freshness here has lapsed): it
+        // is no coverage, whatever authority the key holds. Indirect CRLs
+        // are out of scope (review round 1 of #6944, P1c).
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let crl_signer = child_ca(&anchor, "crl-signer");
+        let crl = build_crl(
+            &crl_signer,
+            AT_UNIX - 7200,
+            Some(AT_UNIX - 3600),
+            None,
+            vec![],
+        );
+        let doc = dss_doc(
+            &[leaf_der.clone(), crl_signer.cert_der.clone()],
+            &[crl],
+            &[],
+        );
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
 
@@ -213,6 +241,54 @@ mod tests {
         let checks = material_check(&doc, &[&first, &second], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
     }
+
+    #[test]
+    fn dss_crl_gains_no_authority_from_a_replacement_certificate_key_usage() {
+        // The leaf's issuer certified a same-subject key for digital
+        // signatures only. /Certs holds first a self-signed certificate for
+        // that key that adds cRLSign, then the issuer's certificate for it;
+        // the key's CRL lists the leaf. cRLSign must come from the
+        // certificate the issuer gave the key (RFC 5280 §6.3.3(f)), not from
+        // the key holder's own copy, so the key has no revocation authority
+        // and its CRL claims nothing about the leaf. The issuer still vouches
+        // for the key, so it is no shadow: missing material, not forged
+        // (review round 1 of #6944, P1b).
+        let issuer = test_ca("issuer");
+        let leaf_der = leaf_under(&issuer, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let key_holder = ca_with_kus("issuer", vec![rcgen::KeyUsagePurpose::DigitalSignature]);
+        let issuer_rc = rcgen::Issuer::from_params(&issuer.rcgen_params, &issuer.rcgen_key);
+        let certified_der = key_holder
+            .rcgen_params
+            .signed_by(&key_holder.rcgen_key, &issuer_rc)
+            .unwrap()
+            .der()
+            .to_vec();
+        let mut replacement_params = key_holder.rcgen_params.clone();
+        replacement_params
+            .key_usages
+            .push(rcgen::KeyUsagePurpose::CrlSign);
+        let replacement_der = replacement_params
+            .self_signed(&key_holder.rcgen_key)
+            .unwrap()
+            .der()
+            .to_vec();
+        let crl = build_crl(
+            &key_holder,
+            THIS_UPDATE,
+            NEXT_UPDATE,
+            None,
+            vec![leaf.tbs_certificate.serial_number],
+        );
+        let doc = dss_doc(
+            &[replacement_der, certified_der, leaf_der.clone()],
+            &[crl],
+            &[],
+        );
+        let checks = material_check(&doc, &[&issuer], &[&leaf_der]);
+        assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
+    }
+
     #[test]
     fn dss_crl_counts_only_from_a_key_with_authority_over_the_leaf() {
         // A same-subject CRL key the leaf's own issuer certified is that
