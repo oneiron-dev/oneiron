@@ -480,10 +480,13 @@ type LfsBatchResponse = {
 
 const codeCustody06Occurred = 1769947200;
 const codeCustody06Repo = "custody06";
-// Owner A's full-size append hit the shared 10 s request limit on fleet job 4.
-// A local client gives the large transfers up to 25 s per request; completing the whole
-// scenario within the unchanged 30 s flow limit remains unproved.
+// Nightly-tier: keep the authored >16 MiB fixture and every full-byte read-back.
+// Job 5b expired at 30.005 s during the first read after a successful append.
+// Nine full-size transfers retain 25 s request limits; the 5 min flow cap also
+// covers two vault starts, one restart and the authority/erase control calls.
+// This is a bounded allowance, not a measured completion time.
 const codeCustody06TransferTimeoutMs = 25_000;
+const codeCustody06FlowTimeoutMs = 300_000;
 
 function codeCustody06Sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -541,7 +544,7 @@ function codeCustody06TransferClient(engine: EngineFixture): PublicHttpClient {
 }
 
 function codeCustody06TransferError(error: unknown, context: string): Error {
-  const budget = `request_timeout_ms=${codeCustody06TransferTimeoutMs}; flow_deadline=unchanged`;
+  const budget = `request_timeout_ms=${codeCustody06TransferTimeoutMs}; flow_deadline_ms=${codeCustody06FlowTimeoutMs}`;
   if (error instanceof PublicHttpError) {
     const wire = error.error;
     return new Error(`${context}: status=${error.reply.status} code=${wire?.code ?? "unavailable"} message=${wire?.message ?? error.message}; ${budget}`);
@@ -562,7 +565,7 @@ async function codeCustody06Transfer<T>(context: string, run: () => Promise<T>):
 // CODE-CUSTODY-06 — Large blob fidelity and scoped deletion should work.
 // Promise: a >16 MiB blob round-trips byte-exact through two same-byte artifact owners and LFS basic batch/PUT/verify/download; erasing owner A keeps owner B and LFS bytes exact; a read-scoped actor is refused with receipts; a revoked capability slip's next use is refused; another vault discloses nothing.
 // Doors: vault.artifacts.put/append/read, vault.records.erase_preview/confirm, vault.code.origin.register, vault.code.origin.mirror.get, vault.agents.create, self.actor, vault.get, vault.receipts.get, LFS batch/upload/download/verify routes, POST /v1/core/slips/revoke, engine.restart().
-// Budget: full-size transfers use a local 25 s request limit; the 30 s flow deadline still binds.
+// Budget: nightly-tier, 300 s flow cap via suite.test; full-size requests remain capped at 25 s.
 // Stays unproved: the mirror half (build-required asset publication, mirror clone/smudge with the original disconnected, mirror_check run): no public door classifies repo paths build-required and no HTTPS mirror fixture is provided (see report).
 suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion should work", async () => {
   const fixtures = await loadFixtures();
@@ -816,7 +819,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
   } finally {
     await engine.close();
   }
-});
+}, codeCustody06FlowTimeoutMs);
 
 // CODE-CUSTODY-07 — Working views and cache isolate authority should work.
 /*

@@ -84,6 +84,7 @@ interface CodeRuntime02Scenarios {
 }
 
 interface CodeRuntime02Tools {
+  surfaceMode: string;
   tools: { name: string; inputSchema: { properties: { schema_version: { const: string } } } }[];
 }
 
@@ -283,6 +284,8 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
     const engine = await EngineFixture.start({
       id: "CODE-RUNTIME-02",
       profile,
+      // The generated tool-first execute_code accepts foreign source, not a durable task/run_ref.
+      surface: "primary",
       serverConfig: `
   [models.providers.code-rt02]
   kind = "local-openai-compat"
@@ -319,6 +322,7 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       const engineModelId = `code-rt02/${wireModel}@e2e-v1`;
       await engine.mcp.initialize();
       const tools = await engine.mcp.listTools() as CodeRuntime02Tools;
+      expect(tools.surfaceMode).toBe("primary");
       for (const name of ["execute_code", "read_result"]) {
         if (!tools.tools.some(tool => tool.name === name)) throw new Error(`${name} is not listed on this server`);
       }
@@ -391,7 +395,8 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
     throw error;
   } finally {
     try { await providers.close(); } catch (error) {
-      if (primaryFailure !== undefined) throw new AggregateError([primaryFailure, error], "CODE-RUNTIME-02 failed and its provider script did not complete");
+      if (primaryFailure !== undefined) throw new AggregateError([primaryFailure, error],
+        `CODE-RUNTIME-02 failed and its provider script did not complete; ${codeRuntime02RefusalText("primary", primaryFailure)}; ${codeRuntime02RefusalText("provider cleanup", error)}`);
       throw error;
     }
   }
@@ -572,7 +577,9 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
   try {
     const baseUrl = providers.urls["codegen"];
     if (!baseUrl) throw new Error("Scripted provider codegen origin did not bind");
-    const engine = await EngineFixture.start({ id: "CODE-RUNTIME-03", profile, serverConfig: `
+    const engine = await EngineFixture.start({ id: "CODE-RUNTIME-03", profile,
+      // The durable task/run_ref door is /mcp; tool-first execute_code is the foreign-source verb.
+      surface: "primary", serverConfig: `
   [models.providers.codegen]
   kind = "local-openai-compat"
   base_url = ${JSON.stringify(baseUrl)}
@@ -617,6 +624,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
 
       await engine.mcp.initialize();
       const tools = await engine.mcp.request<CodeRuntime03Tools>("tools/list");
+      expect(tools.surfaceMode).toBe("primary");
       expect(tools.tools.map(tool => tool.name)).toContain("execute_code");
       expect(tools.tools.map(tool => tool.name)).toContain("read_result");
 
