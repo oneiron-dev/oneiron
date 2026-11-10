@@ -16,7 +16,7 @@ use oneiron_organ_host::{
     BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
     OrganState, SightedInput, Unavailable,
 };
-use oneiron_organ_protocol::Value;
+use oneiron_organ_protocol::{FrameError, Value};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -382,21 +382,31 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
     host.install(spec);
     let small = || call("organ.echo", 1.into(), Vec::new(), "g");
     host.call(&vault, small()).expect("small call");
-    // Rule 5 (protocol 2.0, FIX 6191, 5b61e287afc): an install's frame size is
-    // a threshold, never a refusal, and a message takes as many frames as it
-    // needs; so a call past the frame size is carried, not refused.
     for _ in 0..6 {
         let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
-        host.call(&vault, big).expect("carried across frames");
+        let err = host.call(&vault, big).expect_err("too large");
+        assert!(
+            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
+            "{err:?}"
+        );
     }
-    // The same rule carries a value of any depth and any width (the retired
-    // MAX_FRAME_DEPTH was 64 levels, MAX_FRAME_VALUES 2^21 values): what
-    // bounds one is the memory its receiver books before building it.
+    // Small on the wire but past what the organ decodes: deeper than the
+    // depth limit, or more values than the value limit. Protocol 2.0
+    // (5b61e287afc) removed MAX_FRAME_DEPTH (64) and MAX_FRAME_VALUES (2^21);
+    // the values they held stand here.
     let deep: fn() -> Value = || (0..64).fold(Value::Nil, |inner, _| Value::Array(vec![inner]));
-    let wide: fn() -> Value = || Value::Array(vec![Value::Nil; 1 << 21]);
+    let wide: fn() -> Value = || {
+        let count = 1_usize << 21;
+        Value::Array(vec![Value::Nil; count])
+    };
     for args in [deep, deep, deep, wide, wide, wide] {
-        host.call(&vault, call("organ.echo", args(), Vec::new(), "g"))
-            .expect("carried");
+        let err = host
+            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
+            .expect_err("refused");
+        assert!(
+            matches!(err, HostError::Frame(FrameError::Refused(_))),
+            "{err:?}"
+        );
     }
     let status = host.status("probe").expect("installed");
     assert_eq!(

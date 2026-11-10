@@ -213,9 +213,9 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let status = unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), 15, &mut exists) };
     assert_eq!(status, OneironStatus::InvalidArg);
 
-    // Ruled refusals removed: FIX55 (d396e233532) retired the 8 KiB query
-    // refusal, and Rule 5 (FIX 8541, 005dd2c4427) the 1,000-row search limit
-    // (C retrieval serves every row asked for). The same calls are served.
+    // FIX55 (d396e233532) removed MAX_FFI_QUERY_BYTES (8 KiB) and Rule 5
+    // (FIX 8541, 005dd2c4427) MAX_FFI_SEARCH_LIMIT (1,000 rows); the values
+    // they held stand here.
     let long_query = "x".repeat(8 * 1024 + 1);
     let mut scored = OneironScoredEntityArray::empty();
     // SAFETY: each pointer is null or names a live local that outlives the call.
@@ -228,21 +228,11 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             &mut scored,
         )
     };
-    assert_eq!(status, OneironStatus::Ok);
-    // SAFETY: `scored` was returned by this crate and is freed once.
-    assert_eq!(
-        unsafe { oneiron_scored_entity_array_free(scored) },
-        OneironStatus::Ok
-    );
-    let mut scored = OneironScoredEntityArray::empty();
+    assert_eq!(status, OneironStatus::InvalidArg);
     // SAFETY: each pointer is null or names a live local that outlives the call.
-    let status = unsafe { oneiron_vault_search_text(vault, b"x".as_ptr(), 1, 1_001, &mut scored) };
-    assert_eq!(status, OneironStatus::Ok);
-    // SAFETY: `scored` was returned by this crate and is freed once.
-    assert_eq!(
-        unsafe { oneiron_scored_entity_array_free(scored) },
-        OneironStatus::Ok
-    );
+    let status =
+        unsafe { oneiron_vault_search_text(vault, b"x".as_ptr(), 1, 1_000 + 1, &mut scored) };
+    assert_eq!(status, OneironStatus::InvalidArg);
 
     // SAFETY: `vault` is live and every pointer names a local that outlives the call.
     let status = unsafe {
