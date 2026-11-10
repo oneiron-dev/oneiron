@@ -1,7 +1,8 @@
 //! A durable model step whose provider is down waits out its offer's health
 //! rest without spending a declared attempt (FIX 11226): `ai.steps.submit`'s
 //! `retry.max_attempts` counts the sends the step makes, and the rest still
-//! holds the offer for every other call.
+//! holds the offer for every other call. A rest longer than one submission
+//! waits parks the step, which resumes on its own once the offer is back.
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_llm.rs"]
@@ -120,6 +121,24 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
         },
         retry: ModelStepRetryPolicy { max_attempts },
     };
+    owner_post(
+        vault,
+        "ai.steps.submit",
+        serde_json::to_vec(&input).unwrap(),
+    )
+}
+
+/// `ai.steps.receipt` as the host root's owner, for `step_key`.
+fn read_receipt(vault: &Vault, step_key: &str) -> Request<Body> {
+    owner_post(
+        vault,
+        "ai.steps.receipt",
+        serde_json::to_vec(&json!({"step_key": step_key})).unwrap(),
+    )
+}
+
+/// The facade `verb` with `body`, signed by the host root's owner.
+fn owner_post(vault: &Vault, verb: &str, body: Vec<u8>) -> Request<Body> {
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
     let slip = vault.ensure_host_root_slip(&issuer).unwrap();
     let timestamp = vault.now_recorded_at();
@@ -131,7 +150,7 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    Request::post("/v1/core/facade/ai.steps.submit")
+    Request::post(format!("/v1/core/facade/{verb}"))
         .header(
             "authorization",
             format!("Bearer {}", slip.to_token().unwrap()),
@@ -141,7 +160,7 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
             json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string(),
         )
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_vec(&input).unwrap()))
+        .body(Body::from(body))
         .unwrap()
 }
 
@@ -198,6 +217,73 @@ fn a_steps_declared_attempts_are_its_sends() {
             json!({"Retryable": "ServerError"}),
             "{body:#}"
         );
+        host.shutdown().await;
+    });
+}
+
+/// Reads the step's receipt until its result is no longer parked, for up to
+/// `secs` seconds; the last receipt read.
+async fn settled(app: &axum::Router, vault: &Vault, step_key: &str, secs: u64) -> Value {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        let body = receipt(app, read_receipt(vault, step_key)).await;
+        let status = body["result"]["status"].clone();
+        if (status != "parked" && !status.is_null()) || std::time::Instant::now() >= end {
+            return body;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+/// A rest longer than the submission waits (`[models] step_rest_wait_secs =
+/// 0`) parks the step: the receipt says parked, with when the offer is back
+/// and the one send made, and the receipt door says so too. Once the rest
+/// ends the step resumes on its own and its second send answers.
+#[test]
+fn a_step_parks_past_its_rest_wait_and_resumes_on_its_own() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(vec![Reply::Status(503), Reply::text("resumed")], None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 2\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
+        let body = receipt(&app, submit(&vault, "health-parks", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(body["result"]["sends"], 1, "{body:#}");
+        assert!(
+            body["result"]["until"].as_u64().unwrap() > vault.now_recorded_at(),
+            "{body:#}"
+        );
+        assert_eq!(fake.seen().len(), 1, "{body:#}");
+        let read = receipt(&app, read_receipt(&vault, "health-parks")).await;
+        assert_eq!(read["result"]["status"], "parked", "{read:#}");
+        let done = settled(&app, &vault, "health-parks", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert!(done.to_string().contains("resumed"), "{done:#}");
+        assert_eq!(fake.seen().len(), 2, "{done:#}");
+        host.shutdown().await;
+    });
+}
+
+/// The sends a parked step made count against its declared attempts across
+/// its resumes: three 503s with three attempts declared park the step twice,
+/// and it fails on its third send in all, never three sends a resume.
+#[test]
+fn a_parked_steps_resumes_keep_its_declared_attempts() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![Reply::Status(503), Reply::Status(503), Reply::Status(503)],
+            Some(Reply::text("unreached")),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 1\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &models(&fake.base_url, extra)).await;
+        let body = receipt(&app, submit(&vault, "health-park-exhausts", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        let done = settled(&app, &vault, "health-park-exhausts", 30).await;
+        assert_eq!(done["result"]["status"], "failed", "{done:#}");
+        assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
+        assert_eq!(fake.seen().len(), 3, "{done:#}");
         host.shutdown().await;
     });
 }
