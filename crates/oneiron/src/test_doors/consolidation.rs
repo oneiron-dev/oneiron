@@ -142,7 +142,7 @@ fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
 
 /// The shipped policy (the Dreamer's rows included) plus a `core:read`
 /// grant for actor `reader`, so a test reads as a member would.
-fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
+pub(super) fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .map_err(|_| Error::InvalidConfig("default policy".into()))?
