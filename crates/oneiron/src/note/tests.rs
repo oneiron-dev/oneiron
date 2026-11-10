@@ -4,6 +4,7 @@
 use rmpv::Value;
 
 use super::*;
+use crate::error::{Error, RecordError};
 
 fn actor(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("actor id")

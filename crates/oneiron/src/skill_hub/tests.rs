@@ -127,6 +127,10 @@ fn scan_verdict_body(subject: EntityId, provider: &str, scanned_at: u64) -> Clai
 
 #[test]
 fn hub_package_rejects_file_count_above_limit() {
+    // Ruled refusal removed (Rule 5, counts never refuse; FIX 10100, a5f8f92ee32
+    // #4038): "No source-file count refuses a package". The package one file past
+    // the old cap of 4096 now hashes and exports every file.
+    const MAX_HUB_PACKAGE_FILES: usize = 4096;
     let files = (0..=MAX_HUB_PACKAGE_FILES)
         .map(|index| HubFile::new(format!("file-{index}"), Vec::new()))
         .collect();
@@ -137,19 +141,13 @@ fn hub_package_rejects_file_count_above_limit() {
     );
 
     assert_eq!(package.files.len(), MAX_HUB_PACKAGE_FILES + 1);
-    assert_eq!(
-        package
-            .content_hash()
-            .expect_err("file count must be capped")
-            .kind(),
-        ErrorKind::InvalidSkillBody
-    );
+    assert!(package.content_hash().is_ok(), "a file count never refuses");
     assert_eq!(
         package
             .export_files()
-            .expect_err("export file count must be capped")
-            .kind(),
-        ErrorKind::InvalidSkillBody
+            .expect("export keeps every file")
+            .len(),
+        MAX_HUB_PACKAGE_FILES + 1
     );
 }
 
@@ -478,6 +476,9 @@ fn open_backfills_pre_index_structured_skills() -> Result<()> {
 
 #[test]
 fn open_backfill_is_not_capped_by_on_demand_reader_limit() -> Result<()> {
+    // The on-demand reader's scan cap left in 95ec4c6b2da (#4237, counts never
+    // refuse); the seed keeps its old size.
+    const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
     let temp = tempfile::tempdir().expect("temp dir");
     let path = temp.path().to_path_buf();
     let vault = Vault::open(&path, crate::VaultConfig::default())?;
