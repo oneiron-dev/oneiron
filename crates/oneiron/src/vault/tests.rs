@@ -1307,9 +1307,10 @@ fn featureless_open_refuses_existing_entity_document_planes() -> Result<()> {
 /// receipt of that read, and a payload the actor may not see is counted.
 #[test]
 fn actor_memory_search_returns_its_receipt() -> Result<()> {
+    use crate::code_document::CodeSpanAnchor;
     use crate::code_memory::{
         AttachCodeMemory, CodeMemoryAnchor, CodeMemoryLocator, CodeMemoryPayloadRef,
-        CodeMemoryPullRequest, CodeMemoryRevision, CodeMemorySlotName, CodeMemorySlotValue,
+        CodeMemoryPullRequest, CodeMemorySlotName, CodeMemorySlotValue,
     };
     use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON};
     use rmpv::Value;
@@ -1328,9 +1329,17 @@ fn actor_memory_search_returns_its_receipt() -> Result<()> {
     vault.attach_code_memory(AttachCodeMemory {
         anchor: CodeMemoryAnchor {
             symbol_id: symbol,
+            // A cursor-anchored span on the symbol's file document at a
+            // version replaced the path and commit revision (029b5966b0a,
+            // FIX 7810).
             locator: CodeMemoryLocator {
-                path_at_revision: "src/a.rs".to_owned(),
-                revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+                span: CodeSpanAnchor {
+                    document_id: [0xD0; 32],
+                    start: b"cursor-start".to_vec(),
+                    end: b"cursor-end".to_vec(),
+                    content_hash: [0xC0; 32],
+                },
+                version: vec![(1, 0)],
                 validity: range,
             },
         },
