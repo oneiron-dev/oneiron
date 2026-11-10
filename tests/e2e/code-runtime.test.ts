@@ -668,6 +668,11 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       const firstSlice = await codeRuntime03CallTool<CodeRuntime03ReadContent>(engine.mcp, tools, "read_result", { run_ref: runRef, ref: firstRef, facet: "slice", input: { bytes: [0] } });
       expect(firstSlice.run_id).toBe(parked.run_id);
       const firstText = codeRuntime03SliceText(firstSlice);
+      if (!firstText.includes(firstMarker)) {
+        throw new Error(
+          `CODE-RUNTIME-03 ENGINE DEFECT 2026-11-11: guest step 1 (console.log -> ask -> pending tasks.wait) run_output=${JSON.stringify(firstText)} expected=${JSON.stringify(firstMarker)}; FIX [CODE-SANDBOX-WAIT-RESPONSE-FIELD]: tasks.wait replies with waitId but no output; the typed self.verbs.call shim requires output`,
+        );
+      }
       expect(firstText).toContain(firstMarker);
 
       // SIGKILL plus restart at the wait boundary doubles as the wrong-actor setup: mint the agent while stopped.

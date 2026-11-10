@@ -621,7 +621,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(appendB.landed.version).toBe(1);
     const versionB = appendB.landed.version;
     // Register accepts a served name without .git and a short branch name.
-    const registered = await codeCustody06ExpectedSuccess(`owner register vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
+    const registered = await codeCustody06ExpectedSuccess(`ENGINE DEFECT 2026-11-11: FIX [ORIGIN-REGISTER-GIT-REF-FORMAT-UNSUPPORTED] origin.register runs git init --ref-format=files, which Git < 2.45 rejects (exit 129); CODE-CUSTODY-06 owner register vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
       engine.client.call("vault.code.origin.register", {
         repo: codeCustody06Repo, default_branch: "main",
       }));
