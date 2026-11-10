@@ -14,9 +14,16 @@
 //! `src/<module path>/tables.rs`, whose module path this script reads from the file path. A file
 //! that does not sit at its module path does not compile.
 //!
-//! Nothing is skipped: a `side_tables!` invocation outside those files, a row this script cannot
-//! read, or a row attribute other than a doc comment fails the build. Every scanned file, every
-//! scanned directory and this script are `rerun-if-changed` inputs, so a new `tables.rs` is seen.
+//! Nothing is skipped: a row this script cannot read, or a row attribute other than a doc comment,
+//! fails the build. The script reads only the files rows may live in (every `tables.rs`, every file
+//! under `side_table/decls/`); `side_tables!` itself refuses, at compile time, to expand anywhere
+//! else, and every row names its `side_table::NAME` re-export, so a row this script missed does not
+//! compile either.
+//!
+//! `rerun-if-changed` inputs: this script, the files it reads, `lib.rs` and each directory's module
+//! file (`<dir>.rs` or `<dir>/mod.rs`), where a new `mod tables;` has to be declared. Not the
+//! directories: Cargo scans a watched directory recursively, so any edit in `src` would rerun the
+//! scan. An edit to any other file does not rerun it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -58,13 +65,19 @@ fn main() {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
     let src = manifest.join("src");
     println!("cargo:rerun-if-changed=build.rs");
-    let (mut files, mut dirs) = (Vec::new(), vec![src.clone()]);
-    collect_rust_files(&src, &mut files, &mut dirs);
+    let (mut files, mut dirs) = (Vec::new(), Vec::new());
+    collect_row_files(&src, &src.join(DECLS_DIR), &mut files, &mut dirs);
     files.sort();
     dirs.sort();
-    // A directory's entry for a file added or removed in it reruns the scan.
+    // A new `tables.rs` (or decl file) is declared in its directory's module file, so watching the
+    // module files sees it without watching the directories themselves.
+    println!("cargo:rerun-if-changed={}", src.join("lib.rs").display());
     for dir in &dirs {
-        println!("cargo:rerun-if-changed={}", dir.display());
+        for module_file in [dir.with_extension("rs"), dir.join("mod.rs")] {
+            if module_file.is_file() {
+                println!("cargo:rerun-if-changed={}", module_file.display());
+            }
+        }
     }
     let mut rows = Vec::new();
     for file in &files {
@@ -90,7 +103,9 @@ fn main() {
     }
 }
 
-fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) {
+/// Every file a row may live in under `dir`: each `tables.rs`, and each `.rs` file under `decls`
+/// (nested ones too, so `module_of` refuses them). Every directory below `dir` goes to `dirs`.
+fn collect_row_files(dir: &Path, decls: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|error| panic!("listing {}: {error}", dir.display()));
     for entry in entries {
@@ -99,8 +114,10 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf
             .path();
         if path.is_dir() {
             dirs.push(path.clone());
-            collect_rust_files(&path, out, dirs);
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            collect_row_files(&path, decls, out, dirs);
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && (path.starts_with(decls) || path.file_name().is_some_and(|name| name == "tables.rs"))
+        {
             out.push(path);
         }
     }

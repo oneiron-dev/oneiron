@@ -16,6 +16,7 @@ mod milestone;
 pub mod observation;
 mod outage_due;
 mod owner_doors;
+mod park_release;
 mod program;
 #[cfg(feature = "sync")]
 mod progress;
@@ -55,6 +56,13 @@ pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
+pub use self::park_release::{
+    PARK_RELEASE_OWED_PRODUCER, ParkReleaseAction, ParkReleaseView, ReleaseParkedAttemptRequest,
+    release_parked_attempt_as_owner,
+};
+// The owner notice's source, for the integration test doors (`test_doors::wake_d1_park_release`).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::park_release::park_release_notice_source;
 pub use self::program::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,

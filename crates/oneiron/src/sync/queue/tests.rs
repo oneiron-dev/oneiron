@@ -208,6 +208,7 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         1_772_000_000,
+        1_772_000_000,
     )
     .unwrap();
     let embed_key = encode_embed_key(&embed_id);
@@ -599,6 +600,7 @@ fn scrub_window_updates_drops_only_target_window_payload_rows() {
     let sweep_value = encode_hard_erase_sweep_job(
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
+        1_772_000_000,
         1_772_000_000,
     )
     .unwrap();

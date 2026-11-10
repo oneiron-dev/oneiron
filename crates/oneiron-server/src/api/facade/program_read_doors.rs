@@ -10,10 +10,11 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{
-    self, ProgramCheckpointRequest, ProgramCheckpointView, ProgramHoldReleaseView,
-    ProgramRunRequest, ProgramRunView, ReleaseTurnProgramHoldRequest, SettledProgramStepRequest,
-    SettledProgramStepView, TurnProgramAdmissionRequest, TurnProgramAdmissionView,
-    program_checkpoint, program_run, settled_program_step, turn_program_admission,
+    self, ParkReleaseView, ProgramCheckpointRequest, ProgramCheckpointView, ProgramHoldReleaseView,
+    ProgramRunRequest, ProgramRunView, ReleaseParkedAttemptRequest, ReleaseTurnProgramHoldRequest,
+    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionRequest,
+    TurnProgramAdmissionView, program_checkpoint, program_run, settled_program_step,
+    turn_program_admission,
 };
 use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
@@ -103,6 +104,26 @@ pub(crate) async fn vault_runs_program_hold_release(
         "vault.runs.program_hold.release",
         move |server, owner| {
             dreamer_runner::release_turn_program_hold_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.runs.parks.release` (WAKE-D1): the owner resumes a parked try that waits on an owner act, or stops a
+/// parked try of the Dreamer server's own pass.
+pub(crate) async fn vault_runs_parks_release(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ReleaseParkedAttemptRequest,
+) -> Listed<ParkReleaseView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.runs.parks.release",
+        move |server, owner| {
+            dreamer_runner::release_parked_attempt_as_owner(server.vault(), owner, &input)
                 .map_err(MemoryError::from)
         },
         |_| Vec::new(),
