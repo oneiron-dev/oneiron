@@ -506,7 +506,7 @@ fn manual_tournament_uses_landed_gate_and_runner() -> Result<()> {
     )?;
 
     let result = run_dreamer_claim_tournament(&vault, run)?;
-    assert_eq!(result.winner.claim_id, winner_id);
+    assert_eq!(result.winner.map(|winner| winner.claim_id), Some(winner_id));
     assert_eq!(result.stop_reason, DreamerTournamentStopReason::Consensus);
     assert_eq!(result.rounds_executed, 1);
 
