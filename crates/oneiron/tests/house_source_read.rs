@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::agent_dispatch::{AgentDispatcher, ProjectDetection, ProjectDetectionRun};
-use oneiron::authority::{ActSurface, HostSlipIssuer};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::claim::{PointRead, ScopedReadActorKey};
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
@@ -230,6 +230,13 @@ fn the_seeded_houses_own_grant_still_reads_a_claim() -> TestResult {
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let house = seeded_house(&vault)?;
+    // The owner's Grant act needs a carrier: this install rooted, then
+    // profiled in the vault's roster under its own keys, as `oneiron init`
+    // does before the owner's first act.
+    let issuer = HostSlipIssuer::from_secret(b"house-source-read-grant")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     let claim = owner_claim(&vault, owner)?;
     let claim_hex = claim.to_hex();
 
