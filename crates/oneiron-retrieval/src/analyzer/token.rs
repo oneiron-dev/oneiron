@@ -296,4 +296,19 @@ mod tests {
         assert_eq!(AnalyzerChannel::NormalizedOverlay.field_id(), 2);
         assert_eq!(AnalyzerChannel::CjkNgram.field_id(), 3);
     }
+
+    #[test]
+    fn token_overlay_zeros_position_increment_only() {
+        let tok = Token::new(
+            "hi",
+            0,
+            2,
+            0,
+            AnalyzerChannel::NormalizedOverlay,
+            TokenKind::Word,
+        )
+        .overlay();
+        assert_eq!(tok.position_increment, 0);
+        assert_eq!(tok.length_increment, 1);
+    }
 }
