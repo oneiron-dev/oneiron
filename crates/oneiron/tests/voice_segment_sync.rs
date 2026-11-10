@@ -86,7 +86,9 @@ fn commit_segment(
     value: Value,
 ) -> Result<(), Error> {
     vault.put_entity(asset, ENTITY_TYPE_ASSET, span(), SPAN_START, SEGMENT_AUDIO)?;
-    vault.put_claim(claim_id, &segment_claim(*asset, value), span(), SPAN_START)
+    let mut body = segment_claim(*asset, value);
+    body.scope_facet = vault.default_facet()?;
+    vault.put_claim(claim_id, &body, span(), SPAN_START)
 }
 
 /// The claim door — not the app — is what refuses a dishonest segment.
@@ -127,13 +129,10 @@ fn malformed_segment_claim_is_rejected_by_the_claim_door() {
     );
 
     // The same door accepts the honest body.
+    let mut honest = segment_claim(asset, segment_value(2, AEC_MODE_BYPASSED_HEADPHONES));
+    honest.scope_facet = vault.default_facet().expect("default facet");
     vault
-        .put_claim(
-            &EntityId::now(),
-            &segment_claim(asset, segment_value(2, AEC_MODE_BYPASSED_HEADPHONES)),
-            span(),
-            SPAN_START,
-        )
+        .put_claim(&EntityId::now(), &honest, span(), SPAN_START)
         .expect("a well-formed segment claim must land");
 }
 

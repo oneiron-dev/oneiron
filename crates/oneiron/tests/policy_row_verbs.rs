@@ -48,16 +48,22 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
     let id = EntityId::now();
     {
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        vault.put_entity(
+            &id,
+            TURN,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            turn.as_bytes(),
+        )?;
+        let stored = vault.get(&id)?.expect("masked turn must read back");
+        let stored = String::from_utf8(stored)?;
         assert!(
-            vault
-                .put_entity(
-                    &id,
-                    TURN,
-                    oneiron::TimeRange { start: 1, end: 1 },
-                    1,
-                    turn.as_bytes()
-                )
-                .is_err()
+            stored.contains("[secret sc"),
+            "scan-on write must mask the token, got {stored:?}"
+        );
+        assert!(
+            !stored.contains(token.as_str()),
+            "masked text must not hold the raw token"
         );
         let owner = vault.ensure_embedded_owner_actor()?;
         let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
