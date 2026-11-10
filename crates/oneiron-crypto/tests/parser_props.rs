@@ -10,7 +10,7 @@ use oneiron_crypto::{
 use proptest::prelude::*;
 
 fn envelope_corpus() -> Vec<Vec<u8>> {
-    let kek = Kek::from_bytes([1; 32]);
+    let kek = Kek::from_bytes_ref(&[1; 32]);
     let pass = Passphrase::new(b"pass phrase").expect("passphrase");
     let rec = RecoverySecret::from_bytes([2; 32]);
     let hybrid = HybridSecretKey::from_seeds(&[3; 64], &[4; 32]);

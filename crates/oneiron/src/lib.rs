@@ -262,6 +262,9 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+// Primitive A (slice 6.4): scoped reads with source versions any agent makes
+// behind its own grant.
+pub mod snapshot_read;
 pub mod training_pack;
 // FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
 pub mod drafter;
