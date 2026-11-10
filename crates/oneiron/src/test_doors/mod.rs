@@ -6,6 +6,7 @@
 
 pub mod consolidation;
 pub mod dag_append;
+pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod run_hold;
 pub mod untangle_regressions;
