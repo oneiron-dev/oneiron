@@ -4,8 +4,8 @@ error: cannot construct `SecretCustodyRecord` with struct literal syntax due to 
  8 |     oneiron::secret_custody::SecretCustodyRecord {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ...
-12 |         value_bytes: value,
+14 |         value_bytes: value,
    |         ------------------ private field
 ...
-18 |         manifest_ref: String::new(),
+20 |         manifest_ref: String::new(),
    |         --------------------------- private field

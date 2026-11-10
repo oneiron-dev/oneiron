@@ -446,6 +446,9 @@ mod cb_a {
         }
 
         let fixture = super::lead_fixture::LeadFixture::open();
+        // The owner's explicit depth on the vault project: the root lineage
+        // spends it (FIX 9560, #3935).
+        fixture.set_owner_depth(10);
         let vault = &fixture.vault;
 
         // The seeded lead is DATA: a `sys.*` logical id resolving to a stored
@@ -674,7 +677,8 @@ mod cb_a {
             .collect();
         assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
         // Depth decrements at every level and is persisted, not merely counted.
-        // The root starts at the project's depth row, 10 by default (ARCH-0067 §7).
+        // The root starts at the project's depth row, 10 as the owner set it
+        // (ARCH-0067 §7; the seeded default alone stores none since FIX 9560).
         assert_eq!(fixture.persisted_depth(lead_attempt), Some(10));
         assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(9));
         assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(8));
@@ -1238,8 +1242,10 @@ mod cb_a {
         else {
             panic!("policy has actor-bound Generated permits");
         };
-        // ARCH-0026: the stock rows bind the commitment projector and the
-        // Dreamer. The helper rebinds the projector's row and keeps the other.
+        // ARCH-0026: the stock rows bind the commitment projector, the e-sign
+        // seal actor with its SealJob auto checker (16fc2ad674d; Engine ruling
+        // T0F-STOCK-GENERATED-ROWS = A) and the Dreamer. The helper rebinds the
+        // projector's row and keeps the other two.
         let mut actor_refs = permits.iter_mut().map(|permit| {
             let Value::Map(fields) = permit else {
                 panic!("Generated permit is a row");
@@ -1249,10 +1255,13 @@ mod cb_a {
                 .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
                 .expect("Generated permit is actor-bound")
         });
-        let (Some(actor_ref), Some(dreamer_ref), None) =
-            (actor_refs.next(), actor_refs.next(), actor_refs.next())
-        else {
-            panic!("the stock Generated rows bind the projector and the Dreamer");
+        let (Some(actor_ref), Some(_seal_ref), Some(dreamer_ref), None) = (
+            actor_refs.next(),
+            actor_refs.next(),
+            actor_refs.next(),
+            actor_refs.next(),
+        ) else {
+            panic!("the stock Generated rows bind the projector, the seal actor and the Dreamer");
         };
         let dreamer = vault
             .dreamer_authority()
@@ -2223,6 +2232,110 @@ mod lead_fixture {
             decode_agent_dispatch_input(&payload.input)
                 .expect("decode the dispatch input")
                 .depth_remaining
+        }
+
+        /// The owner's explicit depth setting on the vault project. Since FIX
+        /// 9560 (a5f08b9b77d, #3935) a lineage under the seeded default alone
+        /// stores no depth (Engine ruling T0F-DELEGATION-DEPTH-DEFAULT = A).
+        /// The vault's embedded owner is rooted under a test owner key, a
+        /// signed genesis and its binding as a self-hosted root binds the
+        /// embedded owner, and that key signs the depth edit.
+        pub(crate) fn set_owner_depth(&self, depth: u64) {
+            use ed25519_dalek::{Signer, SigningKey};
+            use oneiron::authority::{
+                AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey,
+                AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
+                DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, GenesisRecoveryStep, ROLE_ADMIN,
+                ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
+            };
+            const OWNER_KEY_SEED: u8 = 0xD9;
+
+            let owner = self
+                .vault
+                .ensure_embedded_owner_actor()
+                .expect("the vault's owner");
+            let signing = SigningKey::from_bytes(&[OWNER_KEY_SEED; 32]);
+            let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+            let sign = |mut entry: AuthorityLogEntry| {
+                let transcript = authority_transcript(&entry).expect("authority transcript");
+                entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+                entry
+            };
+            let genesis = sign(AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: None,
+                seq: 0,
+                parent_hashes: Vec::new(),
+                op: AuthorityOp::Genesis {
+                    device: DeviceAuthority {
+                        key: key.clone(),
+                        transport_key_binding: [7; 32],
+                        attestation: AuthorityAttestation {
+                            kind: "SoftwareArgon2id".to_owned(),
+                            evidence: vec![1, 2, 3],
+                        },
+                        tier: AuthorityTier::Software,
+                        roles: ROLE_OWNER | ROLE_ADMIN,
+                    },
+                    genesis_nonce: [OWNER_KEY_SEED; 32],
+                    recovery: GenesisRecoveryStep::Saved([1; 32]),
+                    tier_floor: AuthorityTier::Software,
+                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                },
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100,
+            });
+            let bind = sign(AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(genesis_vault_id(&genesis).expect("the genesis vault id")),
+                seq: 1,
+                parent_hashes: vec![authority_entry_hash(&genesis).expect("the genesis hash")],
+                op: AuthorityOp::BindActor {
+                    authority_key: key.clone(),
+                    actor_ref: owner,
+                    actor_class: "human".to_owned(),
+                    epoch: 1,
+                },
+                signer: genesis.signer.clone(),
+                cosigns: Vec::new(),
+                ts: 101,
+            });
+            self.vault
+                .put_authority_log_entries(&[
+                    (
+                        genesis,
+                        TimeRange {
+                            start: 100,
+                            end: 100,
+                        },
+                        100,
+                    ),
+                    (
+                        bind,
+                        TimeRange {
+                            start: 101,
+                            end: 101,
+                        },
+                        101,
+                    ),
+                ])
+                .expect("root the owner's key");
+            let root = self.vault.root_project().expect("the vault project");
+            self.vault
+                .set_project_depth(
+                    root,
+                    depth,
+                    &oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+                    102,
+                    key,
+                    |message| Ok(signing.sign(message).to_bytes().to_vec()),
+                )
+                .expect("the owner sets the vault project's depth");
         }
 
         /// The settled `result_ref` on a TASK, read off the persisted body.
