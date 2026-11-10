@@ -104,9 +104,10 @@ fn rule_activation_and_amendment_accept_mixed_publication_and_event_configuratio
     for event_type in [None, Some(EventTypeKey("intro-call".to_owned()))] {
         let (_dir, vault) = open_vault();
         let publication = published_page(&vault);
+        let owner = owner_proof(&vault);
         let row = scoped_row(event_type);
-        let first =
-            apply_rule_amendment(&vault, 0, row.clone(), None).expect("activate after publication");
+        let first = apply_rule_amendment(&vault, &owner, 0, row.clone(), None)
+            .expect("activate after publication");
         assert_eq!(first.stored, row);
         let tighter = BookingAntiAbuseRuleRow {
             version: 2,
@@ -115,7 +116,7 @@ fn rule_activation_and_amendment_accept_mixed_publication_and_event_configuratio
             },
             ..row
         };
-        let outcome = apply_rule_amendment(&vault, 1, tighter.clone(), None)
+        let outcome = apply_rule_amendment(&vault, &owner, 1, tighter.clone(), None)
             .expect("amend after publication");
         assert_eq!(outcome.stored, tighter);
         assert!(outcome.owner_notice_required);
@@ -139,6 +140,7 @@ fn publication_does_not_replace_a_live_matching_event_configuration_for_rule_sco
     for event_type in [None, Some(EventTypeKey("intro-call".to_owned()))] {
         let (_dir, vault) = open_vault();
         published_page(&vault);
+        let owner = owner_proof(&vault);
         let row = scoped_row(event_type);
         let original = vault.get_claim(&id(0x57)).expect("read").expect("config");
         for (approval, lifecycle, stale) in [
@@ -175,7 +177,7 @@ fn publication_does_not_replace_a_live_matching_event_configuration_for_rule_sco
             vault
                 .put_claim(&id(0x57), &body, TimeRange { start: 1, end: 1 }, 1)
                 .expect("configuration status");
-            assert_rejected_without_activation(&vault, row.clone());
+            assert_rejected_without_activation(&vault, &owner, row.clone());
         }
         if row.scope.event_type.is_some() {
             let mut body = original;
@@ -185,7 +187,7 @@ fn publication_does_not_replace_a_live_matching_event_configuration_for_rule_sco
             vault
                 .put_claim(&id(0x57), &body, TimeRange { start: 1, end: 1 }, 1)
                 .expect("different event");
-            assert_rejected_without_activation(&vault, row);
+            assert_rejected_without_activation(&vault, &owner, row);
         }
     }
 }
@@ -197,9 +199,10 @@ fn malformed_true_event_configuration_still_denies_rule_activation_and_amendment
             for expected_version in [0, 1] {
                 let (_dir, vault) = open_vault();
                 published_page(&vault);
+                let owner = owner_proof(&vault);
                 let mut row = scoped_row(event_type.clone());
                 if expected_version == 1 {
-                    apply_rule_amendment(&vault, 0, row.clone(), None)
+                    apply_rule_amendment(&vault, &owner, 0, row.clone(), None)
                         .expect("initial valid activation");
                     row.version = 2;
                 }
@@ -251,7 +254,7 @@ fn malformed_true_event_configuration_still_denies_rule_activation_and_amendment
                 let scope = row.scope.clone();
                 assert!(
                     matches!(
-                        apply_rule_amendment(&vault, expected_version, row, None),
+                        apply_rule_amendment(&vault, &owner, expected_version, row, None),
                         Err(BookingError::InvalidConstraint(message))
                             if message.contains("InvalidBookingPage: rule scope has malformed event configuration")
                     ),

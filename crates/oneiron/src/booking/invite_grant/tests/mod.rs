@@ -351,6 +351,8 @@ fn payload_for(fixture: &Fixture, blob_ref: &str, recipient: &str) -> CalendarIn
         sequence: 0,
         ics_blob_ref: blob_ref.to_owned(),
         recipient: recipient.to_owned(),
+        // OF-123 (4524b3bc2ea): no saved mention names the recipient here.
+        mention: None,
     }
 }
 
@@ -964,6 +966,10 @@ fn confirm_invite_uses_once_minted_uid_and_current_sequence() {
         },
         reschedule_token: OpaqueLifecycleToken("reschedule".to_owned()),
         cancel_token: OpaqueLifecycleToken("cancel".to_owned()),
+        // FIX 6424 (2ce13d95c4a): no held invite names an approval digest.
+        approval_digest: None,
+        // FIX 5483: the fixture replays no writer reads.
+        reads: Vec::new(),
     };
     let mut sink = SpySink::default();
     let first = enqueue_confirm_invite(
