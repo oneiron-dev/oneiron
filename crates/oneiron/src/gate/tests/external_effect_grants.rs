@@ -140,7 +140,7 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
             verb_class: "send".to_owned(),
         },
     };
-    vault.mint_standing_outbound_grant(
+    let minted_grant = vault.mint_standing_outbound_grant(
         &crate::test_util::embedded_owner_proof(&vault),
         grant_id,
         &intent,
@@ -164,7 +164,7 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
     assert_eq!(lens.grants[0].last_used_at, Some(12));
 
     let decisions = vault.store.gate_decisions(10)?;
-    let grant_ref = format!("grant:{}", grant_id.to_hex());
+    let grant_ref = minted_grant.grant_ref();
     assert_eq!(decisions.len(), 1);
     assert_eq!(decisions[0].grant_ref.as_deref(), Some(grant_ref.as_str()));
 
