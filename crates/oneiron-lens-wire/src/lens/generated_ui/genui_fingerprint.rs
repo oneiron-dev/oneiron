@@ -78,7 +78,6 @@ impl LensBehaviorFingerprint {
         Ok(Self { cases })
     }
 
-    #[must_use]
     pub fn fixture_ids(&self) -> impl ExactSizeIterator<Item = &str> {
         self.cases.keys().map(String::as_str)
     }

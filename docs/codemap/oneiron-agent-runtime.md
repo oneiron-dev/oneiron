@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/code_sandbox/compiled_backends.rs` | src | s | 1 struct · 1 static | CompiledSandboxBackends | The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature… |
+| `src/code_sandbox/compiled_backends.rs` | src | s | 1 struct | CompiledSandboxBackends | The isolating backends this build carries, behind [`SandboxBackends`]: the Firecracker microVM (feature… |
 | `src/code_sandbox/firecracker.rs` | src | m | 1 struct · 4 fn · 4 const · 1 re-export | FirecrackerBackend | Host-configured jailer execution with a bounded vsock guest-agent protocol |
 | `src/code_sandbox/firecracker/config.rs` | src | s | 2 struct · 6 crate-vis | FirecrackerHostConfig, GuestArtifactPins | Host-only image pins and jailer profile validation |
 | `src/code_sandbox/firecracker/egress.rs` | src | s | 1 crate-vis | — | Native VM network channels terminate at the engine's one egress proxy |
