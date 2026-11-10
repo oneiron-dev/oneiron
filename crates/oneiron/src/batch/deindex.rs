@@ -339,7 +339,16 @@ fn capture_entity_deindex(
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
+    // Only a TURN takes part in a thread chain, as the put path asks
+    // (`put_staging`). A live row of another kind is no thread record: the
+    // chain's own check refuses one, which refused every delete of it.
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(store, wtxn, id)?,
+        crate::vault::LiveEntityRow::Live { entity_type, .. }
+            if entity_type != crate::registry::ENTITY_TYPE_TURN
+    ) {
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
+    }
     let related_neighbors = delete_related_edges(write, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);

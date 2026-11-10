@@ -428,6 +428,3 @@ pub enum DiscoverError {
         source: korean::DictLoadError,
     },
 }
-
-#[cfg(test)]
-mod tests;
