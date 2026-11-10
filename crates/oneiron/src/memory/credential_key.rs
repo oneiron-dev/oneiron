@@ -18,8 +18,8 @@ const HOST_HOLDER: &str = "host";
 
 /// What a credential's key is built for. A read key binds the owner's agent
 /// Grants that name its holder (FIX AGENT-GRAPHFS-GRANT-WORLDS,
-/// `Vault::agent_grant_bounded_slip_view_in_txn`); a write target's key
-/// keeps its credential's bounds alone, as before.
+/// `Vault::agent_grant_read_bound_in_txn`); a write target's key keeps its
+/// credential's bounds alone, as before.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KeyUse {
     Read,
@@ -252,16 +252,21 @@ impl Vault {
             || !matches!(proof.claims().actor_class.as_deref(), None | Some("human"))
             || proof.is_transferred()
         {
+            let Some(key) = base(&proof) else {
+                return Ok(None);
+            };
             // A delegate's read also stays inside the owner's agent Grants
             // that name its holder, each alone (FIX AGENT-GRAPHFS-GRANT-WORLDS).
-            let (proof, alternatives) = match key_use {
-                KeyUse::Read => self.agent_grant_bounded_slip_view_in_txn(txn, proof, holder)?,
-                KeyUse::WriteTarget => (proof, Vec::new()),
+            let key = match key_use {
+                KeyUse::Read => {
+                    match self.agent_grant_read_bound_in_txn(txn, proof.scope(), holder)? {
+                        Some(bound) => key.within_agent_grants(bound.envelope, &bound.alternatives),
+                        None => key,
+                    }
+                }
+                KeyUse::WriteTarget => key,
             };
-            return Ok(base(&proof).map(|key| {
-                key.within_grant_alternatives(alternatives)
-                    .require_relationship_grants(Some(holder))
-            }));
+            return Ok(Some(key.require_relationship_grants(Some(holder))));
         }
         let proof = &proof;
         let claims = proof.claims();

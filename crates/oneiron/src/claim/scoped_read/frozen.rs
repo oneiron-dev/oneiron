@@ -152,12 +152,14 @@ impl FrozenReadLane {
         let authority = if channel_refused {
             Scope::default()
         } else if let Some(alternatives) = key.grant_alternatives() {
-            // A frozen lane keeps one Scope. A key several agent Grants bind
-            // freezes inside all of them, never their envelope, so saved work
-            // reads past no one Grant (FIX AGENT-GRAPHFS-GRANT-WORLDS).
-            alternatives
-                .iter()
-                .fold(Scope::top(), |frozen, alternative| frozen.meet(alternative))
+            // A frozen lane keeps one Scope. A key agent Grants bind freezes
+            // inside its own Scope and all of them, never their envelope, so
+            // saved work reads past no one Grant and keeps any bound the key
+            // already held (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+            alternatives.iter().fold(
+                key.authority_scope().cloned().unwrap_or_else(Scope::top),
+                |frozen, alternative| frozen.meet(alternative),
+            )
         } else {
             key.authority_scope().cloned().unwrap_or_else(Scope::top)
         };
