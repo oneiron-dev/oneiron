@@ -27,10 +27,12 @@ use std::sync::Arc;
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
+use oneiron::core_write::{CoreBatchEntityInput, CoreBatchWriteInput};
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
-    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork,
+    NerSpan,
 };
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
@@ -198,7 +200,13 @@ fn tagged_fixture() -> Fixture {
     // MESSAGEs on its own live grant, never R's.
     let shared = EntityId::now();
     vault
-        .put_entity(&shared, ENTITY_TYPE_RELATIONSHIP, at(1), 1, b"relationship S")
+        .put_entity(
+            &shared,
+            ENTITY_TYPE_RELATIONSHIP,
+            at(1),
+            1,
+            b"relationship S",
+        )
         .expect("relationship S");
     vault
         .put_entity(&insider, ENTITY_TYPE_PERSON, at(1), 1, b"insider")
@@ -492,5 +500,59 @@ fn a_pronoun_in_an_open_message_does_not_open_a_name_read_only_in_a_relationship
     assert!(
         !fixture.outsider_reads(&mirela),
         "LEAK: an open pronoun opened a name read only in R's MESSAGEs"
+    );
+}
+
+/// A member of R who may write does not drop the audience of the PERSON
+/// confirmed from R's words (review of #7006): its below-owner `vault.batch`
+/// put of a body without it is refused as the owner's act, and the PERSON
+/// stays inside R. A member outside R that tries the same put is told the
+/// row is missing, as for any row it does not read.
+#[test]
+fn a_below_owner_put_does_not_drop_a_confirmed_persons_audience() {
+    let fixture = tagged_fixture();
+    let rewrite = |writer: EntityId, id: &EntityId, name: &str| {
+        fixture
+            .vault
+            .memory(writer, EdgeActorClass::Human)
+            .core_batch_write(&CoreBatchWriteInput {
+                entities: vec![CoreBatchEntityInput {
+                    id: Some(id.to_hex()),
+                    entity_type: ENTITY_TYPE_PERSON,
+                    occurred_start: None,
+                    occurred_end: None,
+                    learned_at: None,
+                    body: serde_json::json!({ "name": name }),
+                    text: None,
+                }],
+            })
+    };
+    let zora = fixture.minted_in(fixture.open_message);
+    fixture.confirm(&zora);
+    rewrite(fixture.insider, &zora, "Zora K.")
+        .expect("FIXTURE: a member rewrites a PERSON confirmed from an open MESSAGE");
+
+    let mirela = fixture.minted_in(fixture.hidden_message);
+    fixture.confirm(&mirela);
+    let outsider_put = rewrite(fixture.outsider, &mirela, "Mirela");
+    let insider_put = rewrite(fixture.insider, &mirela, "Mirela");
+    assert!(
+        !fixture.outsider_reads(&mirela),
+        "LEAK: a member of R rewrote the PERSON named only in R's MESSAGE without its \
+         audience, and a member outside R reads it ({insider_put:?})"
+    );
+    let refusal = insider_put.expect_err("the put that drops the audience is refused");
+    assert_eq!(
+        refusal.code, "FORBIDDEN",
+        "the owner's act, refused: {refusal:?}"
+    );
+    assert!(
+        fixture.reads(fixture.insider, &mirela),
+        "the member of R still reads the PERSON"
+    );
+    let missing = outsider_put.expect_err("a member outside R does not write the PERSON");
+    assert_eq!(
+        missing.code, "NOT_FOUND",
+        "a row the writer does not read answers as missing: {missing:?}"
     );
 }
