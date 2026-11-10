@@ -25316,7 +25316,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 17,
       "struct": 4
@@ -95802,7 +95802,7 @@
      "path": "src/workspace_roster/join_consent.rs",
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 6,
       "fn": 5,
       "re-export": 2,
@@ -98244,6 +98244,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_room_offer.rs",
+     "purpose": "A custom agent asks to join a room by an offer card (ARCH-0006a, OF-530 = A)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -100831,7 +100839,7 @@
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7242,
-   "test_files": 907
+   "test_files": 908
   },
   "oneiron-agent-runtime": {
    "files": [
