@@ -1,6 +1,6 @@
 {
   "name": "vault.feeds.resync",
-  "description": "Moves every cursor of one of the caller's change feed subscriptions to its source's head, after a read answered a gap and the caller took a snapshot.",
+  "description": "After a read answered a gap, moves every cursor of one of the caller's change feed subscriptions to its source's head; the caller then takes its snapshot and reads on.",
   "input": "crate::feeds::FeedSubscriptionRequest",
   "output": "crate::feeds::FeedSubscription",
   "call": "memory.feed_resync(input.subscription)?",
