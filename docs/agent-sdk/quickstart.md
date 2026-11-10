@@ -326,7 +326,7 @@ On an embedded or connected owner handle `memory`, save the inline ZIP:
 ```js
 import { writeFileSync } from "node:fs"
 const exported = memory.vault.export()
-writeFileSync("vault-export.zip", Buffer.from(exported.archive, "base64"), { mode: 0o600 })
+writeFileSync("vault-export.zip", Buffer.from(exported.archive, "base64"), { mode: 0o600, flag: "wx" })
 ```
 
 For a large vault, use the transfer form through `oneiron api` (which reads
@@ -342,11 +342,12 @@ function call(verb, input) {
   if (reply.exitCode !== 0) throw new Error(reply.stderr.toString())
   return JSON.parse(reply.stdout.toString())
 }
-const transfer = call("vault.export", { delivery: "transfer" })
 const file = openSync("vault-export.zip", "wx", 0o600)
 const digest = new Bun.CryptoHasher("blake3")
+let transfer
 let offset = 0
 try {
+  transfer = call("vault.export", { delivery: "transfer" })
   for (;;) {
     const piece = call("vault.export.transfer.read", { transfer_ref: transfer.transfer_ref, offset })
     const bytes = Buffer.from(piece.bytes_base64, "base64")
@@ -359,7 +360,7 @@ try {
   if (offset !== transfer.bytes || digest.digest("hex") !== transfer.digest) throw new Error("Export length or digest mismatch")
 } finally {
   closeSync(file)
-  call("vault.export.transfer.release", { transfer_ref: transfer.transfer_ref })
+  if (transfer) call("vault.export.transfer.release", { transfer_ref: transfer.transfer_ref })
 }
 ```
 
