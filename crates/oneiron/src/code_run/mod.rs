@@ -66,7 +66,7 @@ mod wait_rows;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::agent_put_draft;
-pub use self::agent_authoring::parse_agent_put_request;
+pub use self::agent_authoring::{AgentPutInput, AgentPutOutput, parse_agent_put_request};
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,

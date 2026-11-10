@@ -233,7 +233,32 @@ const PROPOSAL_CLOSE_IMPORT: SandboxLinkedImport =
 /// verb table, each by its exact name with the reason. Every other linked
 /// `self.*` operation, and every agent-authoring import, has a verb row in
 /// `scripts/sdk/verbs/` (`tests/linked_self_verb_surface.rs`).
-pub const LINKED_SELF_OPERATION_EXEMPTIONS: &[(&str, &str)] = &[];
+pub const LINKED_SELF_OPERATION_EXEMPTIONS: &[(&str, &str)] = &[
+    (
+        "self.express",
+        "engine-only: admits a host-bound, replay-identified expression through the witness door",
+    ),
+    (
+        "self.json.validate",
+        "vocabulary: validates only the supplied JSON schema and value",
+    ),
+    (
+        "self.speak",
+        "engine-only: admits a host-bound, replay-identified utterance through the witness door",
+    ),
+    (
+        "self.think",
+        "engine-only: admits a host-bound, replay-identified hidden utterance through the witness door",
+    ),
+    (
+        "self.verbs.call",
+        "engine-only: transports a selected row through its own admission and dispatch",
+    ),
+    (
+        "self.verbs.names",
+        "vocabulary: enumerates generated row names without reading vault state",
+    ),
+];
 
 const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
