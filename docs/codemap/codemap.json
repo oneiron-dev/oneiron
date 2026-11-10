@@ -38300,7 +38300,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 3,
       "re-export": 11
      }
@@ -90230,6 +90230,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/code_reply_healer.rs",
+     "purpose": "Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -90279,7 +90289,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 8
+      "mod": 9
      }
     },
     {
@@ -98344,6 +98354,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_reply_healer.rs",
+     "purpose": "CR02-T0: CODE-RUNTIME-02 repair-format checks through the library test door",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -99079,6 +99097,14 @@
      "notable": [],
      "path": "tests/live_run_claim_put.rs",
      "purpose": "Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_peer_binding_facet.rs",
+     "purpose": "A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary…",
      "surface": {}
     },
     {
@@ -100860,7 +100886,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101030,8 +101056,8 @@
    },
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7249,
-   "test_files": 920
+   "source_files": 7250,
+   "test_files": 922
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -152991,6 +153017,412 @@
    "purpose": "The store layer of the oneiron engine",
    "source_files": 643,
    "test_files": 4
+  },
+  "oneiron-testkit": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-testkit-pending-door.rs",
+     "purpose": "The nightly pending-door filter for a nightly job: `oneiron-testkit-pending-door <YYYY-MM-DD>` reads the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-testkit-probe-server.rs",
+     "purpose": "A socket-activated HTTP server for the testkit's own tests of `ServerProcess`",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-testkit-seed.rs",
+     "purpose": "Builds a fixture vault from a JSONL seed, for the E2E runner's snapshot fixtures (Fable's verdict, section…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FakeClock"
+     ],
+     "path": "src/clock.rs",
+     "purpose": "The fake clock: time that moves only when the test moves it",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/door.rs",
+     "purpose": "The in-process verb door: a public verb, by name, with JSON in and JSON out, through…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HashingEmbedder"
+     ],
+     "path": "src/embedder.rs",
+     "purpose": "The hashing embedder: stable pseudo-vectors with no model",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/fault.rs",
+     "purpose": "Fault injection through doors the engine already has",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FixtureCache",
+      "FixtureError",
+      "FixtureVault",
+      "SeedRecord",
+      "TestVault"
+     ],
+     "path": "src/fixture.rs",
+     "purpose": "Fixture vaults: seed a vault once, copy it for every test",
+     "surface": {
+      "enum": 1,
+      "fn": 19,
+      "struct": 4,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
+     "surface": {
+      "mod": 11,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Baseline",
+      "Finding",
+      "LintReport",
+      "Rule"
+     ],
+     "path": "src/lint.rs",
+     "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 13,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingDoors",
+      "WaitingTest"
+     ],
+     "path": "src/pending_door.rs",
+     "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScriptedBackend"
+     ],
+     "path": "src/provider/backend.rs",
+     "purpose": "[`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PromptDigest"
+     ],
+     "path": "src/provider/digest.rs",
+     "purpose": "The prompt digest a scripted reply is keyed by",
+     "surface": {
+      "const": 2,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provider/http.rs",
+     "purpose": "A minimal HTTP/1.1 server on loopback for the scripted provider: one request per connection, answered with…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Mode",
+      "Reply",
+      "ScriptedProvider",
+      "Step"
+     ],
+     "path": "src/provider/mod.rs",
+     "purpose": "Scripted model doors: answers from a script keyed by prompt digest, never from a model",
+     "surface": {
+      "enum": 2,
+      "fn": 19,
+      "mod": 2,
+      "re-export": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProviderMismatch",
+      "SeenCall"
+     ],
+     "path": "src/provider/script.rs",
+     "purpose": "The script both scripted model doors answer from: the steps, which of them have answered, every call seen…",
+     "surface": {
+      "crate-vis": 12,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Protocol",
+      "Usage"
+     ],
+     "path": "src/provider/wire.rs",
+     "purpose": "The protocol bodies the scripted provider answers with: OpenAI-compatible chat completions and…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Date",
+      "Entry"
+     ],
+     "path": "src/quarantine.rs",
+     "purpose": "The flaky-test quarantine and the three nextest tiers",
+     "surface": {
+      "const": 3,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceiptReader"
+     ],
+     "path": "src/receipt.rs",
+     "purpose": "The receipt reader: governance receipts read back through the public `vault.receipts` verb, newest first, as…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServerProcess",
+      "ServerSpec"
+     ],
+     "path": "src/server.rs",
+     "purpose": "A server process on a free port, started and stopped by the test",
+     "surface": {
+      "const": 1,
+      "fn": 12,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/door.rs",
+     "purpose": "A verb run through the in-process door leaves a receipt the receipt reader reads back through `vault.receipts`",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/kit.rs",
+     "purpose": "The hashing embedder, the fake clock and fixture copies keep their promises",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lint_rules.rs",
+     "purpose": "The test lint finds sleeps, wall-clock reads, network, fixed ports and real models in test code, and nothing…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pending_door.rs",
+     "purpose": "A test that waits on a product door runs nightly without failing it until its deadline; past the deadline…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/provider.rs",
+     "purpose": "The scripted provider answers each prompt from its script, in the mode the request asked for, and fails…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/server.rs",
+     "purpose": "A server starts on a free port the test owns, says when it is ready, and comes back on the same port after a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/test_lint.rs",
+     "purpose": "The workspace's tests keep the testkit rules, and the quarantine agrees with the nextest tiers",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "clock": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The fake clock: time that moves only when the test moves it"
+    },
+    "door": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The in-process verb door: a public verb, by name, with JSON in and JSON out, through…"
+    },
+    "embedder": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The hashing embedder: stable pseudo-vectors with no model"
+    },
+    "fault": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Fault injection through doors the engine already has"
+    },
+    "fixture": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Fixture vaults: seed a vault once, copy it for every test"
+    },
+    "lint": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…"
+    },
+    "pending_door": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…"
+    },
+    "provider": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Scripted model doors: answers from a script keyed by prompt digest, never from a model"
+    },
+    "quarantine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The flaky-test quarantine and the three nextest tiers"
+    },
+    "receipt": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The receipt reader: governance receipts read back through the public `vault.receipts` verb, newest first, as…"
+    },
+    "server": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A server process on a free port, started and stopped by the test"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
+   "source_files": 20,
+   "test_files": 7
   },
   "oneiron-uniffi": {
    "files": [
