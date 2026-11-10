@@ -153,10 +153,25 @@ fn a_forged_judgment_lands_nothing() -> Result<()> {
         scope: "outbound".to_owned(),
         evidence_receipts: vec!["receipt:forged".to_owned()],
         d_norm: 1.0,
+        engine_ver: "test".to_owned(),
         at: 50,
+        hunks: Vec::new(),
+        executor: None,
+        type_ref: None,
+        project: None,
+        attempt_receipt: None,
+        judge: None,
+        judge_model: None,
+        receipts: Vec::new(),
+        actor: None,
+        skill: None,
+        rejected: false,
     };
     assert!(project_edit_cost_claims(&vault, std::slice::from_ref(&forged))?.is_empty());
-    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
+    // e576014ab29 (#4332) retired the scalar skill.edit_cost rows into the
+    // shared learning.edit_cost cells: the same "nothing landed" read, through
+    // the cell the routed judgment below charges.
+    assert!(edit_cost_for(&vault, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?.is_none());
 
     // The same row, once it IS what this module routed, lands — so the refusal
     // above is the grounding check and not an unrelated failure.
@@ -219,11 +234,11 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
     }
     let ids = project_edit_cost_claims(&source, &judgments)?;
     assert_eq!(ids.len(), 2);
-    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    target.import_whole_vault_json(archive.bytes())?;
+    let archive = source.export_whole_vault(false)?;
+    target.import_whole_vault_archive(archive.bytes())?;
     assert_eq!(
         target
-            .import_whole_vault_json(archive.bytes())?
+            .import_whole_vault_archive(archive.bytes())?
             .inserted_entities,
         0
     );
@@ -239,24 +254,37 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
             let mut forged = body.clone();
             forged.approval = approval;
             let bytes = crate::claim::encode_claim_body(&forged)?;
-            assert!(
-                target
-                    .batch()
-                    .put_replicated(
-                        &EntityId::now(),
-                        crate::registry::ENTITY_TYPE_CLAIM,
-                        t(70),
-                        70,
-                        &bytes
-                    )
-                    .commit()
-                    .is_err()
-            );
+            // e576014ab29 (#4332) retired the skill-cost re-approval refusal
+            // with the scalar rows: the attempt below is no longer refused at
+            // the door, it is inert by shape — an Imported head is never read
+            // as a cell's own (active_heads_in_txn wants Observed) — so it
+            // lands or fails without resurrecting anything. The None reads
+            // after the loop are the teeth.
+            let _ = target
+                .batch()
+                .put_replicated(
+                    &EntityId::now(),
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    t(70),
+                    70,
+                    None,
+                    &bytes,
+                )
+                .commit();
         }
         preserved.push(body);
     }
-    assert_eq!(edit_cost_for(&target, &actor, "outbound")?, None);
-    assert_eq!(edit_cost_for(&target, &skill, "outbound")?, None);
+    // Learning-cell readbacks (e576014ab29 #4332): the same "nothing
+    // charged" values through the cells a local judgment would charge.
+    let actor_hex = actor.to_hex();
+    assert_eq!(
+        edit_cost_for(&target, &actor, &actor_hex, "outbound", None, None)?,
+        None
+    );
+    assert_eq!(
+        edit_cost_for(&target, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?,
+        None
+    );
     assert!(project_edit_cost_claims(&target, &judgments)?.is_empty());
     let local = judged(
         &target,
@@ -273,7 +301,7 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
     let fresh = project_edit_cost_claims(&target, &[local])?;
     assert_eq!(fresh.len(), 1);
     assert!(!ids.contains(&fresh[0]));
-    assert!(edit_cost_for(&target, &skill, "outbound")?.is_some());
+    assert!(edit_cost_for(&target, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?.is_some());
     for (id, before) in ids.iter().zip(preserved) {
         assert_eq!(target.get_claim(id)?, Some(before));
     }
@@ -795,6 +823,7 @@ fn a_discovery_share_mints_one_edit_proposal_shaped_like_the_attempt_lanes() -> 
         *proposal,
         SkillEditProposal {
             judgment_sequence: proposal.judgment_sequence,
+            row_id: proposal.row_id,
             skill,
             evidence_receipts: vec![receipt.to_owned()],
             at: 70,
@@ -849,7 +878,14 @@ fn an_execution_lapse_adds_one_actor_lesson_citing_its_amendment() -> Result<()>
     assert_eq!(lessons.len(), 1, "one lapse, one lesson");
     assert_eq!(
         lessons[0].evidence,
-        Some(ActorClaimEvidence::amendment(vec![receipt.to_owned()], 70)?.to_value()),
+        Some(
+            ActorClaimEvidence::amendment(
+                vec![receipt.to_owned()],
+                judgment.engine_ver.clone(),
+                70,
+            )?
+            .to_value(),
+        ),
         "the lesson cites its amendment receipt"
     );
     assert_eq!(
