@@ -12,7 +12,10 @@
 //! Round 2 of that review found one more: the rows were found by the spelling
 //! of their `actor_ref`, so a `Generated` permit bound to the Dreamer's id in
 //! upper case, which the source-trust decode reads as the Dreamer's, stayed in
-//! the pack and landed Auto under a grant without `derive`.
+//! the pack and landed Auto under a grant without `derive`. And a pack whose
+//! `Generated` trust is the shorthand `false` made the rewrite fail under a
+//! grant with `derive`, so the owner's full grant took the Dreamer's read row
+//! out and it read nothing.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -21,8 +24,9 @@
 
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::steward::{
-    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer,
-    keep_only_the_dreamer_ceiling, stand_steward_grant, weave_reach,
+    GrantMark, STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer,
+    grant_mark, keep_only_the_dreamer_ceiling, open_owner_carrier_vault, owner,
+    stand_steward_grant, weave_reach, write_generated_false_without_ceilings,
     write_shorthand_tool_output_trust, write_upper_case_dreamer_permit,
 };
 
@@ -105,5 +109,47 @@ fn a_permit_spelt_in_upper_case_goes_out_with_the_dreamers_rows() {
         weave_reach(&vault).expect("reach"),
         READS_ONLY,
         "a grant without derive lands nothing, however the permit's actor id is spelt"
+    );
+}
+
+#[test]
+fn the_owners_full_grant_keeps_the_read_row_over_a_generated_shorthand() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    write_generated_false_without_ceilings(&vault).expect("Generated: false, no ceiling");
+
+    // The first mint copies the one row the pack holds: the read row.
+    vault.provision_system_agent_grants().expect("first mint");
+    let Some(GrantMark::Minted { verbs, .. }) = grant_mark(&vault, dreamer).expect("mark") else {
+        panic!("the read row mints a grant");
+    };
+    assert_eq!(
+        verbs.iter().map(String::as_str).collect::<Vec<_>>(),
+        [STEWARD_READ_VERB],
+        "the first mint copies read alone"
+    );
+    assert_eq!(
+        weave_reach(&vault).expect("reach"),
+        READS_ONLY,
+        "the read-only grant reads"
+    );
+
+    // The owner's act gives the whole Steward default.
+    let owner = owner(&vault).expect("owner proof");
+    assert!(
+        vault
+            .grant_dreamer_weave(&owner, 1)
+            .expect("the owner's grant"),
+        "the owner's grant mints the whole default"
+    );
+    let Some(GrantMark::Minted { verbs, .. }) = grant_mark(&vault, dreamer).expect("mark") else {
+        panic!("the owner's grant stands");
+    };
+    assert_eq!(verbs.len(), STEWARD_VERBS.len(), "the whole default");
+    assert_eq!(
+        weave_reach(&vault).expect("reach"),
+        READS_ONLY,
+        "the full grant still reads; the pack's own `generated: false` still lands nothing"
     );
 }

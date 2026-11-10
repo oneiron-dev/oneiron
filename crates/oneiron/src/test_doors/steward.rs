@@ -299,6 +299,25 @@ pub fn keep_only_the_dreamer_ceiling(vault: &Vault) -> Result<()> {
     })
 }
 
+/// The shipped policy with no actor ceiling and with `Generated` trust written
+/// as the shorthand row `false` (this source never lands by itself), as the
+/// policy decode accepts it. The Dreamer's read row stays as shipped, so a
+/// first mint over it copies `read` alone.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_generated_false_without_ceilings(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, "actor_ceilings")? = rmpv::Value::Array(Vec::new());
+        let rmpv::Value::Map(sources) = policy_entry(entries, "source_trust")? else {
+            return Err(Error::InvalidConfig("source trust is not a map".into()));
+        };
+        *policy_entry(sources, "generated")? = rmpv::Value::Boolean(false);
+        Ok(())
+    })
+}
+
 /// The shipped policy with one class-wide `system` Auto ceiling and the
 /// `Generated` permit bound to the Dreamer's id spelt in upper case, as the
 /// source-trust decode accepts it. The Dreamer's read row stays as shipped.
