@@ -258,10 +258,8 @@ impl TaskPair {
         a.open_window(window.as_str());
         b.open_window(window.as_str());
 
-        // The first-party actor: the one id the default policy manifest gives
-        // an Auto ceiling, so `tasks.create` takes direct effect instead of
-        // parking a proposal. It is authored on node A and reaches node B the
-        // same way everything else here does — by replicating.
+        // The live vault owner is authored on node A and reaches node B the
+        // same way the task and its Owner fact do — by replicating.
         // FIX (a32044b3d27 #1307, 8a5feef95bd #1373): owner acts revalidate live
         // vault ownership at commit, so use the embedded owner actor instead of
         // a synthetic PERSON that authenticates but owns nothing.
@@ -280,6 +278,18 @@ impl TaskPair {
                 .vault
                 .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
                 .expect("the owner authenticates on each device");
+            // FIX (9062f8d0f89 #1346): the embedded owner has no default agent
+            // Auto ceiling (only the first-party E1 actor does), so `tasks.create`
+            // would park a proposal. Grant it on each device, for the create and
+            // the peer cancel, BEFORE minting the cancel grant: a standing grant
+            // binds to the policy frontier current at mint.
+            node.vault
+                .grant_agent_principal(
+                    &proof,
+                    &owner.to_hex(),
+                    oneiron::store::agent_record::AgentCeiling::Auto,
+                )
+                .expect("grant the owner's agent Auto ceiling on each device");
             node.vault
                 .mint_standing_outbound_grant(
                     &proof,
