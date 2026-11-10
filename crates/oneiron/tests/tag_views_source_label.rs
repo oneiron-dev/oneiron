@@ -24,12 +24,12 @@ use oneiron::access_grant::{
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
 };
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{
-    TaggingMarkerConfig, TaggingMentionsRequest, TaggingMode, TaggingReconciler,
+    MentionLink, TaggingMarkerConfig, TaggingMentionsRequest, TaggingMode, TaggingReconciler,
     TaggingTurnRequest,
 };
 use oneiron::temporal::TimeRange;
@@ -44,10 +44,12 @@ const SHARED_WORDS: &str = "Ada waved hello.";
 const HIDDEN_WORDS: &str = "Mirela told Ada about the move.";
 
 /// A tagger that tags each name it knows as a `PERSON`, in every MESSAGE it
-/// is given.
+/// is given; with `pronouns`, also each "She" as a `PRONOUN` coreferent with
+/// the nearest name before it, in any MESSAGE of the turn.
 struct Names {
     model: ModelId,
     known: &'static [&'static str],
+    pronouns: bool,
 }
 
 impl ExtractionEncoder for Names {
@@ -74,14 +76,38 @@ impl ExtractionEncoder for Names {
                     });
                 }
             }
+            if self.pronouns
+                && let Some(start) = text.find("She")
+            {
+                spans.push(NerSpan {
+                    message,
+                    start,
+                    end: start + 3,
+                    label: "PRONOUN".to_owned(),
+                    confidence: 0.9,
+                });
+            }
         }
         spans.sort_by_key(|span| (span.message, span.start));
+        let mut links = Vec::new();
+        let mut last_name = None;
+        for (index, span) in spans.iter().enumerate() {
+            if span.label == "PERSON" {
+                last_name = Some(index);
+            } else if let Some(antecedent) = last_name {
+                links.push(CorefLink {
+                    span: index,
+                    antecedent,
+                    confidence: None,
+                });
+            }
+        }
         EncoderAttempt {
             execution: None,
             panicked: false,
             result: Ok(EncoderOutput {
                 spans,
-                links: Vec::new(),
+                links,
                 vad: None,
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
@@ -118,6 +144,11 @@ struct Fixture {
     vault: Arc<Vault>,
     /// A member outside R.
     outsider: EntityId,
+    /// The speaker of the MESSAGEs.
+    speaker: EntityId,
+    /// R and S.
+    relationship: EntityId,
+    shared: EntityId,
     ada: EntityId,
     turn: EntityId,
     shared_message: EntityId,
@@ -221,6 +252,7 @@ fn tagged_fixture() -> Fixture {
         Arc::new(Names {
             model: "fixture/names@v1".parse().expect("model id"),
             known: &["Ada", "Mirela"],
+            pronouns: false,
         }),
     )
     .expect("reconciler")
@@ -231,6 +263,9 @@ fn tagged_fixture() -> Fixture {
         _dir: dir,
         vault,
         outsider,
+        speaker,
+        relationship,
+        shared,
         ada,
         turn,
         shared_message,
@@ -340,5 +375,119 @@ fn tag_views_serve_no_mention_from_a_message_outside_the_readers_relationship() 
         ),
         (false, Vec::new(), Vec::new()),
         "LEAK: the tag views serve the R MESSAGE's id and mentions to a member outside R"
+    );
+}
+
+/// `vault.tagging.mentions` answers a provisional entity (it has no row, so
+/// each hit is judged by its own TURN and MESSAGE), and a hit the outsider
+/// sees does not point at a mention in the R MESSAGE: a pronoun in the S
+/// MESSAGE that corefers with "Mirela" in the R MESSAGE shows with no
+/// antecedent (review round 1 of #6970).
+#[test]
+fn a_mentions_hit_never_points_at_a_mention_outside_the_readers_relationship() {
+    let fixture = tagged_fixture();
+    let tags = fixture
+        .vault
+        .turn_tags(&fixture.turn)
+        .expect("tags read")
+        .expect("FIXTURE: the turn's tags are saved");
+    let mirela = tags
+        .mentions
+        .iter()
+        .find_map(|mention| match &mention.link {
+            MentionLink::Minted { entity, .. } if mention.message == fixture.hidden_message => {
+                Some(*entity)
+            }
+            _ => None,
+        })
+        .expect("FIXTURE: Mirela minted a provisional entity");
+
+    // A second turn: "Mirela called." in R, then "She is fine." in S.
+    let turn = EntityId::now();
+    let (r_message, s_message) = (EntityId::now(), EntityId::now());
+    let message = |id: EntityId, order: u32, words: &str, space: EntityId| WitnessMessage {
+        id: Some(id.to_hex()),
+        author: WitnessAuthor::User,
+        message_type: "dialogue".to_owned(),
+        content: words.to_owned(),
+        parts: None,
+        metadata: Some(serde_json::json!({"rel": space.to_hex()})),
+        is_visible: true,
+        order,
+        quote: None,
+    };
+    fixture
+        .vault
+        .memory(fixture.speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![
+                message(r_message, 0, "Mirela called.", fixture.relationship),
+                message(s_message, 1, "She is fine.", fixture.shared),
+            ],
+            occurred_at: 20,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("the second turn");
+    TaggingReconciler::new(
+        Arc::clone(&fixture.vault),
+        Arc::new(Names {
+            model: "fixture/names@v1".parse().expect("model id"),
+            known: &["Ada", "Mirela"],
+            pronouns: true,
+        }),
+    )
+    .expect("reconciler")
+    .drain_once()
+    .expect("the second tagging pass");
+    let second = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("FIXTURE: the second turn's tags are saved");
+    let she = second
+        .mentions
+        .iter()
+        .find(|mention| mention.message == s_message)
+        .expect("FIXTURE: the S MESSAGE's pronoun is saved");
+    assert_eq!(
+        she.antecedent
+            .and_then(|antecedent| second.mentions.get(antecedent))
+            .map(|antecedent| antecedent.message),
+        Some(r_message),
+        "FIXTURE: the pronoun corefers with the R MESSAGE's Mirela"
+    );
+    assert!(
+        she.link.entities().contains(&mirela),
+        "FIXTURE: the pronoun names Mirela"
+    );
+
+    let hits = fixture
+        .vault
+        .memory(fixture.outsider, EdgeActorClass::Human)
+        .tagging_mentions(&TaggingMentionsRequest {
+            entity_ref: mirela.to_hex(),
+            limit: 16,
+        })
+        .expect("the outsider's mentions of a provisional entity")
+        .value
+        .mentions;
+    let hidden = [r_message.to_hex(), fixture.hidden_message.to_hex()];
+    let shown: Vec<_> = hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.mention.message_ref.clone(),
+                hidden.contains(&hit.mention.message_ref),
+                hit.mention.antecedent,
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        vec![(s_message.to_hex(), false, None)],
+        "LEAK: a mentions hit points at a mention in the R MESSAGE"
     );
 }
