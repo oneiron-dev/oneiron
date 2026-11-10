@@ -15,6 +15,10 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+/// The verb name the authoring door's definitions record as their door.
+const AGENTS_PUT_DOOR: &str = "vault.agents.put";
 
 /// Host-captured attempt generation. Guest input cannot construct this lease.
 #[derive(Debug, Clone)]
@@ -55,6 +59,25 @@ impl AgentDefinitionPutDisposition {
             Self::Active => "active",
             Self::Proposed => "proposed",
         }
+    }
+}
+
+/// The agent a generic row door writes for, and that door's verb name. A
+/// batch that carries one holds each definition it creates to that agent's
+/// slice (ARCH-0053:20).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AgentAuthoring {
+    author: EntityId,
+    door: &'static str,
+}
+
+impl AgentAuthoring {
+    /// `actor` writing through `door`; `None` when `actor` is no agent.
+    pub(crate) fn of(actor: &crate::WriteActor, door: &'static str) -> Option<Self> {
+        (actor.actor_class() == crate::edge::EdgeActorClass::Agent).then(|| Self {
+            author: actor.entity_ref(),
+            door,
+        })
     }
 }
 
@@ -176,6 +199,7 @@ impl Vault {
             id,
             requested,
             scope_widens,
+            AGENTS_PUT_DOOR,
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
@@ -237,8 +261,14 @@ impl Vault {
         if claims.single_use && issuer.is_none() {
             return Ok(None);
         }
-        let (definition, disposition) =
-            self.prepare_agent_definition_for_author_in_txn(txn, author, id, requested, false)?;
+        let (definition, disposition) = self.prepare_agent_definition_for_author_in_txn(
+            txn,
+            author,
+            id,
+            requested,
+            false,
+            AGENTS_PUT_DOOR,
+        )?;
         if disposition != AgentDefinitionPutDisposition::Active {
             return Ok(None);
         }
@@ -625,7 +655,89 @@ impl Vault {
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
-    /// Prepares the same author-bounded definition for a door that owns its writer.
+    /// The body an agent's generic row put of a new definition stores
+    /// (ARCH-0053:20): the one the author writer prepares for it, so
+    /// `vault.structural.put` and `vault.batch` land what `vault.agents.put`
+    /// lands. Inside the author's slice it is active at the author's
+    /// approval; wider, it is a proposal no dispatch runs. `None` leaves the
+    /// put as written: `id` holds a live row, which the update rules judge,
+    /// or the writer holds no definition of its own to bound the put by.
+    ///
+    /// # Errors
+    ///
+    /// A body that does not decode, and the author writer's refusals: an
+    /// author that is switched off, a body that names fork lineage or a
+    /// logical id, and an id that holds a deleted row.
+    fn agent_authored_definition_body_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: AgentAuthoring,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let author_holds_definition = matches!(
+            live_entity_row_in_txn(&self.store, txn, &authoring.author)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                ..
+            }
+        );
+        if !author_holds_definition
+            || matches!(
+                live_entity_row_in_txn(&self.store, txn, id)?,
+                LiveEntityRow::Live { .. }
+            )
+        {
+            return Ok(None);
+        }
+        let requested = decode_agent_definition(body)?;
+        let (definition, _) = self.prepare_agent_definition_for_author_in_txn(
+            txn,
+            &authoring.author,
+            id,
+            &requested,
+            false,
+            authoring.door,
+        )?;
+        encode_agent_definition(&definition).map(Some)
+    }
+
+    /// Holds each definition `ops` creates to `authoring`'s slice, read in
+    /// the transaction that applies them: the generic row doors' share of
+    /// the author writer ([`Self::agent_authored_definition_body_in_txn`]).
+    /// With no `authoring`, `ops` stay as staged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::agent_authored_definition_body_in_txn`].
+    pub(crate) fn bound_agent_authored_puts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: Option<AgentAuthoring>,
+        ops: &mut [BatchOp],
+    ) -> Result<()> {
+        let Some(authoring) = authoring else {
+            return Ok(());
+        };
+        for op in ops {
+            if let BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } = op
+                && *entity_type == ENTITY_TYPE_AGENT_DEF
+                && let Some(bounded) =
+                    self.agent_authored_definition_body_in_txn(txn, authoring, id, data)?
+            {
+                *data = bounded;
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepares the same author-bounded definition for a door that owns its
+    /// writer. `door` is the verb name its provenance records.
     fn prepare_agent_definition_for_author_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -633,6 +745,7 @@ impl Vault {
         id: &EntityId,
         requested: &AgentDefinition,
         scope_widens: bool,
+        door: &'static str,
     ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
         let author_def = self.read_agent_definition_in_txn(txn, author)?;
         if author_def.lifecycle_status != ClaimLifecycleStatus::Active
@@ -673,10 +786,7 @@ impl Vault {
                 rmpv::Value::from("author"),
                 rmpv::Value::from(author.to_hex()),
             ),
-            (
-                rmpv::Value::from("definedVia"),
-                rmpv::Value::from("vault.agents.put"),
-            ),
+            (rmpv::Value::from("definedVia"), rmpv::Value::from(door)),
         ]);
         definition.lifecycle_status = ClaimLifecycleStatus::Active;
         let disposition = if within {

@@ -23,7 +23,7 @@ mod widening;
 pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
-pub(crate) use self::doors::AgentAuthorLease;
+pub(crate) use self::doors::{AgentAuthorLease, AgentAuthoring};
 pub use self::doors::AgentDefinitionPutDisposition;
 pub use self::models::{
     AgentModel, UNBOUND_LIST_KEEPS_ROUTE, birth_under_inherited_list, ensure_inherited_model_list,
