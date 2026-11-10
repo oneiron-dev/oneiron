@@ -362,10 +362,7 @@ pub(crate) fn confirm_in_txn(
     // read only in a relationship's or a private MESSAGE is read only where
     // one of those MESSAGEs is.
     if let Some(audience) = naming_audience_in_txn(vault, txn, id, &entity.name)? {
-        fields.push((
-            crate::claim::IDENTITY_SOURCE_AUDIENCE_KEY.into(),
-            audience,
-        ));
+        fields.push((crate::claim::IDENTITY_SOURCE_AUDIENCE_KEY.into(), audience));
     }
     let mut body = Vec::new();
     rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
