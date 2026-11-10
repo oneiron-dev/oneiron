@@ -708,6 +708,7 @@ fn resolve(source: &str, target: &str) -> Result<String> {
 mod tests {
     use super::{relative, resolve};
     use crate::deck::fixture::limits;
+    use crate::resource::Resources;
     use crate::retained_opc::Package;
     use std::io::Write;
 
@@ -732,7 +733,7 @@ mod tests {
             writer.write_all(body.as_bytes()).unwrap();
         }
         let bytes = writer.finish().unwrap().into_inner();
-        let mut package = Package::open(&bytes, limits()).unwrap();
+        let mut package = Package::open(&bytes, limits(), &Resources::measuring()).unwrap();
         package
             .add_part("doc/b.xml", "application/xml", b"<b/>".to_vec())
             .unwrap();
@@ -745,7 +746,12 @@ mod tests {
             .relate("doc/a.xml", "urn:test", "doc/b.xml")
             .unwrap();
         assert_eq!(id, "rId1");
-        let reopened = Package::open(&package.export().unwrap(), limits()).unwrap();
+        let reopened = Package::open(
+            &package.export().unwrap(),
+            limits(),
+            &Resources::measuring(),
+        )
+        .unwrap();
         let rels = reopened.relationships("doc/a.xml").unwrap();
         assert_eq!(
             (rels[0].id.as_str(), rels[0].target.as_str()),

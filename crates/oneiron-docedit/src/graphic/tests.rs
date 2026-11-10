@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::ooxml::{Node, XmlTree};
-use crate::retained_opc::XmlLimits;
+use crate::resource::{Dimension, wide};
 
 const PX: i64 = EMU_PER_PX;
 const BOUNDS: Rect = Rect {
@@ -47,14 +47,17 @@ fn run(
         handle: record.artifact.clone(),
         media: record.media,
     };
-    compile_graphic(&GraphicInput {
-        binding: &binding,
-        requested,
-        record,
-        bytes,
-        bounds,
-        limits,
-    })
+    compile_graphic(
+        &GraphicInput {
+            binding: &binding,
+            requested,
+            record,
+            bytes,
+            bounds,
+            limits,
+        },
+        &Resources::measuring(),
+    )
 }
 
 fn document(bytes: &str, limits: GraphicLimits) -> Result<Drawing, GraphicError> {
@@ -659,23 +662,25 @@ fn document_bounds_and_limits_are_checked() {
         refused("<?php x ?>"),
         Refused::Malformed("processing instruction")
     );
+    // Rule 5 (#3932, #4288; Engine call T0H-RULE5-COUNT-ASSERTS = A): a path's
+    // segments and an SVG's nodes are observations, never a refusal, so the
+    // 3-segment path and the two-rect SVG compile.
     let three = svg(r##"<path d="M10 10 L20 20 L30 10 L40 20" fill="none" stroke="#000"/>"##);
-    let tight = GraphicLimits {
-        segments: 2,
-        ..limits
-    };
-    assert_eq!(refusal(document(&three, tight)), Refused::Limit);
-    let nodes = GraphicLimits {
-        svg_nodes: 2,
-        ..limits
-    };
+    document(&three, limits).expect("a segment count is an observation");
     let many = svg(r#"<rect width="5" height="5"/><rect width="5" height="5"/>"#);
-    assert_eq!(refusal(document(&many, nodes)), Refused::Limit);
+    document(&many, limits).expect("a node count is an observation");
     let bytes = GraphicLimits {
         svg_bytes: 64,
         ..limits
     };
-    assert_eq!(document(&many, bytes), Err(GraphicError::ResourceLimit));
+    assert_eq!(
+        document(&many, bytes),
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::SvgBytes,
+            wide(many.len()),
+            64
+        )))
+    );
 }
 
 #[test]
@@ -710,14 +715,7 @@ fn the_drawingml_fragment_is_well_formed_and_placed() {
     let wrapped = format!(
         r#"<p:spTree xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">{xml}</p:spTree>"#
     );
-    let tree = XmlTree::parse(
-        wrapped.as_bytes(),
-        XmlLimits {
-            max_depth: 32,
-            max_nodes: 10_000,
-        },
-    )
-    .unwrap();
+    let tree = XmlTree::parse(wrapped.as_bytes(), &Resources::measuring()).unwrap();
     let ids: Vec<&str> = named(&tree, "cNvPr")
         .map(|node| node.attr("id").unwrap())
         .collect();
@@ -892,14 +890,17 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
         handle: "artifact-2".to_owned(),
         media: MediaType::Png,
     };
-    let other = compile_graphic(&GraphicInput {
-        binding: &binding,
-        requested: illustration,
-        record: &held,
-        bytes: Some(&bytes),
-        bounds: BOUNDS,
-        limits,
-    });
+    let other = compile_graphic(
+        &GraphicInput {
+            binding: &binding,
+            requested: illustration,
+            record: &held,
+            bytes: Some(&bytes),
+            bounds: BOUNDS,
+            limits,
+        },
+        &Resources::measuring(),
+    );
     assert_eq!(other, Err(GraphicError::BindingMismatch));
     let unsourced = AssetRecord {
         provenance: Vec::new(),
@@ -1069,7 +1070,11 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
     let huge_record = record(MediaType::Png, &huge, Origin::Held);
     assert_eq!(
         check(&huge_record, Some(&huge), illustration),
-        Err(GraphicError::ResourceLimit)
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::RasterPixels,
+            10_000 * 10_000,
+            limits.raster_pixels
+        )))
     );
     // A header alone, or an image cut short, is not a verified payload.
     let header = png_header(4, 3);
@@ -1090,6 +1095,10 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
     };
     assert_eq!(
         run(&held, Some(&bytes), illustration, BOUNDS, small).map(|_| ()),
-        Err(GraphicError::ResourceLimit)
+        Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::RasterBytes,
+            wide(bytes.len()),
+            8
+        )))
     );
 }

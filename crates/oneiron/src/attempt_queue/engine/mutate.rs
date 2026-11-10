@@ -8,7 +8,9 @@ use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR
 use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
-use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::hold_override::override_note;
+use crate::attempt_queue::hold_override_receipt::record_hold_override_receipt_in_txn;
+use crate::attempt_queue::lifecycle::{HoldSignal, RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptPause, AttemptRecord,
@@ -252,6 +254,59 @@ impl AttemptQueue<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         input: InterveneAttempt,
     ) -> Result<InterveneOutcome> {
+        self.intervene_releasing_in_txn(wtxn, input, HoldRelease::Override)
+    }
+
+    /// [`Self::intervene_in_txn`] for a caller that is not the vault owner (a
+    /// TASK's owner, the host, an agent): its Pause or Resume of a held row
+    /// passes the table's caller-class column first
+    /// ([`RunLifecycle::caller_hold`]). `Ok(Err(signal))` refuses it, names
+    /// what the row waits on, and writes nothing. Every other intervention,
+    /// and an admitted one, runs as [`Self::intervene_in_txn`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::intervene_in_txn`].
+    pub(crate) fn intervene_as_caller_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: InterveneAttempt,
+    ) -> Result<std::result::Result<InterveneOutcome, HoldSignal>> {
+        let event = match input.kind {
+            AttemptInterventionKind::Resume => Some(RunEvent::Resume),
+            AttemptInterventionKind::Pause => Some(RunEvent::Pause {
+                pause: AttemptPause::Person,
+                by_hold_actor: false,
+            }),
+            _ => None,
+        };
+        if let Some(event) = event
+            && let Some(row) = self.get_in_write_txn(wtxn, input.id)?
+            && let Some(signal) =
+                RunLifecycle::caller_hold(RunRow::of(&row), event, placed_pause(&row, &input.actor))
+        {
+            return Ok(Err(signal));
+        }
+        Ok(Ok(self.intervene_in_txn(wtxn, input)?))
+    }
+
+    /// [`Self::intervene_in_txn`] for an engine hold's own release door
+    /// (budget resume, fan-out approval, hook answer): the door writes its
+    /// hold's record itself, so the Resume is no override (RUN-HOLD).
+    pub(crate) fn release_hold_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: InterveneAttempt,
+    ) -> Result<InterveneOutcome> {
+        self.intervene_releasing_in_txn(wtxn, input, HoldRelease::Own)
+    }
+
+    fn intervene_releasing_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        mut input: InterveneAttempt,
+        release: HoldRelease,
+    ) -> Result<InterveneOutcome> {
         // The annotation hold's actor is the engine's own: a pause under it
         // would read as a hold, and a reattach would resume it.
         if input.actor == ANNOTATION_HOLD_ACTOR {
@@ -273,8 +328,40 @@ impl AttemptQueue<'_> {
                 ERR_FANOUT_HOLD_ACTOR_RESERVED,
             )));
         }
+        // RUN-HOLD: a Resume of an engine hold by anyone but that hold's own
+        // door is an override. The hold follows it: its record moves in this
+        // transaction, and the Resume event's note names it.
+        let overridden = match (input.kind, release) {
+            (AttemptInterventionKind::Resume, HoldRelease::Override) => self
+                .get_in_write_txn(wtxn, input.id)?
+                .and_then(|row| match row.active_pause {
+                    Some(pause) if row.state == AttemptState::Paused && pause.is_engine_hold() => {
+                        Some((pause, row))
+                    }
+                    _ => None,
+                }),
+            _ => None,
+        };
+        if let Some((pause, _)) = &overridden {
+            input.note = override_note(*pause, input.note.take());
+        }
         let now = input.now;
+        let actor = input.actor.clone();
         let outcome = self.apply_intervention_in_txn(wtxn, input)?;
+        if outcome.effect == AttemptInterventionEffect::Resumed
+            && let Some((pause, before)) = &overridden
+        {
+            self.follow_hold_override_in_txn(wtxn, *pause, before, &actor, now)?;
+            // Engine call S65-B-R3: the attested record of the override.
+            let sequence = outcome
+                .record
+                .events
+                .last()
+                .map_or(0, |event| event.sequence);
+            record_hold_override_receipt_in_txn(
+                self.store, wtxn, *pause, before, &actor, sequence, now,
+            )?;
+        }
         // FIX 900: a cancelled child settles its spend lease in the same
         // write (OF-532), as `kill_spawn` does; idempotent, unmetered no-op.
         if outcome.effect == AttemptInterventionEffect::Cancelled
@@ -571,6 +658,25 @@ impl AttemptQueue<'_> {
             .put(wtxn, &ready_key, record.id.as_bytes())?;
         Ok(true)
     }
+}
+
+/// Whether `actor` placed `record`'s pause: the row's newest Pause event names
+/// it.
+fn placed_pause(record: &AttemptRecord, actor: &str) -> bool {
+    record
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == AttemptInterventionKind::Pause)
+        .is_some_and(|event| event.actor == actor)
+}
+
+/// Who resumes an engine hold (RUN-HOLD): its own release door, which writes
+/// the hold's record itself, or anyone else, whose Resume the hold follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldRelease {
+    Own,
+    Override,
 }
 
 /// The pause an intervention's `Pause` holds a row under (FIX 9579): the

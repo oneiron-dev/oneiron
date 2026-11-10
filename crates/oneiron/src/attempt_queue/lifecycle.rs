@@ -262,6 +262,88 @@ impl RunLifecycle {
     }
 }
 
+/// What a held row waits on: the signal that releases it for a caller that
+/// is not the vault owner (Fable 5.2 item 2, lead 06:5x: the table is keyed
+/// on hold kind x caller class; the matching signal wakes the wait). A
+/// refused Pause or Resume names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HoldSignal {
+    /// OF-541: the vault owner resumes the run's budget hold once its lease
+    /// has room (`vault.budgets.hold.resume`).
+    BudgetResume,
+    /// OF-393: the launch's approval ruling (`vault.fanout.resume`, or
+    /// `vault.fanout.resume_as` by a holder of its decision role).
+    FanoutApproval { launch_ref: EntityId },
+    /// FIX 7114: the verb hook's ask is answered (`tasks.answer` by one of
+    /// its members); the runtime then resumes the row.
+    HookAnswer,
+    /// OF-368: the comment thread reattaches at its exact words.
+    AnnotationReattach {
+        artifact_id: EntityId,
+        thread_id: EntityId,
+    },
+    /// A person's pause: the caller that paused the row resumes it, or the
+    /// vault owner does.
+    Pauser,
+}
+
+impl HoldSignal {
+    /// The refusal's reason code.
+    pub(crate) const fn reason_code(self) -> &'static str {
+        match self {
+            Self::BudgetResume => "awaits:budget_resume",
+            Self::FanoutApproval { .. } => "awaits:fanout_approval",
+            Self::HookAnswer => "awaits:hook_answer",
+            Self::AnnotationReattach { .. } => "awaits:annotation_reattach",
+            Self::Pauser => "awaits:pauser",
+        }
+    }
+
+    /// The signal a row under `pause` waits on.
+    const fn of(pause: AttemptPause) -> Self {
+        match pause {
+            AttemptPause::Person => Self::Pauser,
+            AttemptPause::Budget => Self::BudgetResume,
+            AttemptPause::Fanout { launch_ref } => Self::FanoutApproval { launch_ref },
+            AttemptPause::Hook { .. } => Self::HookAnswer,
+            AttemptPause::Annotation {
+                artifact_id,
+                thread_id,
+            } => Self::AnnotationReattach {
+                artifact_id,
+                thread_id,
+            },
+        }
+    }
+}
+
+impl RunLifecycle {
+    /// The table's caller-class column: whether a caller that is not the
+    /// vault owner may run `event` on `row`. It releases a person's pause it
+    /// placed itself (`placed`) and no other: no engine hold, and no other
+    /// caller's pause; nor does its Pause take an engine hold over, so it
+    /// cannot pause a held row and then resume its own pause. `None` admits
+    /// the event, which the table then steps as for anyone; `Some` refuses
+    /// it and names what the row waits on. The vault owner overrides any
+    /// hold and never asks this; a hold's own release door is the signal.
+    /// A paused row that names no pause was paused by a person.
+    pub(crate) fn caller_hold(row: RunRow, event: RunEvent, placed: bool) -> Option<HoldSignal> {
+        if row.state != AttemptState::Paused {
+            return None;
+        }
+        let pause = row.pause.unwrap_or(AttemptPause::Person);
+        match (event, pause) {
+            (RunEvent::Resume, AttemptPause::Person) if placed => None,
+            (RunEvent::Resume, pause) => Some(HoldSignal::of(pause)),
+            // A pause over a person's pause replays; over an engine hold it
+            // would take the hold over.
+            (RunEvent::Pause { .. }, AttemptPause::Person) => None,
+            (RunEvent::Pause { .. }, pause) => Some(HoldSignal::of(pause)),
+            _ => None,
+        }
+    }
+}
+
 /// One engine hold's write, as its door asks for it.
 pub(in crate::attempt_queue) struct HoldWrite {
     pub(in crate::attempt_queue) id: AttemptId,

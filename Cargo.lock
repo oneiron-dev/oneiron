@@ -8009,7 +8009,7 @@ dependencies = [
  "lzma-rust2 0.16.2",
  "memmap2",
  "ocrs",
- "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-authority",
  "oneiron-base",
  "oneiron-browser",
@@ -8093,6 +8093,29 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "libc",
+ "oneiron",
+ "oneiron-container",
+ "oneiron-contracts",
+ "oneiron-sandbox-contract",
+ "oneiron-spawn",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "wasmtime",
 ]
 
 [[package]]
@@ -8878,6 +8901,7 @@ dependencies = [
  "objc2-core-ml",
  "objc2-foundation",
  "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -9028,6 +9052,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-vm-outbox"
+version = "0.1.0"
+dependencies = [
+ "oneiron-server",
 ]
 
 [[package]]
