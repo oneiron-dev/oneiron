@@ -575,6 +575,22 @@ fn useful_question(candidate: EntityId) -> DecisionQuestion {
 // so this shell stays for it. `&UsefulUpstreamDecisions` cannot be built inline
 // without touching that body; left unported, see the wave report.
 struct Useful(bool);
+
+impl std::ops::Deref for Useful {
+    type Target = UsefulUpstreamDecisions<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        static YES_JUDGE: std::sync::LazyLock<FixtureJudge<'static>> =
+            std::sync::LazyLock::new(|| useful_judge(true));
+        static NO_JUDGE: std::sync::LazyLock<FixtureJudge<'static>> =
+            std::sync::LazyLock::new(|| useful_judge(false));
+        static YES: std::sync::LazyLock<UsefulUpstreamDecisions<'static>> =
+            std::sync::LazyLock::new(|| YES_JUDGE.useful_decisions());
+        static NO: std::sync::LazyLock<UsefulUpstreamDecisions<'static>> =
+            std::sync::LazyLock::new(|| NO_JUDGE.useful_decisions());
+        if self.0 { &YES } else { &NO }
+    }
+}
 #[test]
 fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_lineage() -> Result<()>
 {
