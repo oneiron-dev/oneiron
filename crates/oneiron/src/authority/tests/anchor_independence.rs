@@ -8,8 +8,7 @@
 use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::owner_anchor::{
-    YOURS, agent, enrol_anchor, fold_seen_at, pin, profile, publish, rekeyed, root_record,
-    signed,
+    YOURS, agent, enrol_anchor, fold_seen_at, pin, profile, publish, rekeyed, root_record, signed,
 };
 use super::support::{cosign_ed, ed_key, genesis_entry};
 use super::world_chain_reads::edit;

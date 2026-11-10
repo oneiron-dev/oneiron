@@ -292,13 +292,7 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
                 );
             } else {
                 host.vault
-                    .set_machine_role(
-                        &host.owner,
-                        ActSurface::ThisInstall,
-                        laptop,
-                        later,
-                        None,
-                    )
+                    .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, later, None)
                     .unwrap();
             }
             let fold = host.vault.authority_fold().unwrap();
@@ -327,13 +321,7 @@ fn a_removal_keeps_what_it_saw_after_an_earlier_not_mine_period() {
         let (laptop, laptop_key) = other_machine(&host, 84, earlier[0]);
         for role in &earlier[1..] {
             host.vault
-                .set_machine_role(
-                    &host.owner,
-                    ActSurface::ThisInstall,
-                    laptop,
-                    *role,
-                    None,
-                )
+                .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, *role, None)
                 .unwrap();
         }
         for read in [ReadLocation::MyMachines, ReadLocation::Everywhere] {
@@ -1324,13 +1312,7 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
             settings(ReadLocation::Everywhere),
         );
         host.vault
-            .set_machine_role(
-                &host.owner,
-                ActSurface::ThisInstall,
-                laptop,
-                removed,
-                None,
-            )
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, removed, None)
             .unwrap();
         land(&host, std::slice::from_ref(&widen));
         if marked_again {
