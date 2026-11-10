@@ -840,10 +840,10 @@ impl Memory<'_> {
         };
         // An entity the lane does not read has no mentions it may see. A
         // provisional entity has no row: each of its hits is judged by its
-        // own TURN and MESSAGE below.
-        if self.vault().provisional_entity(&entity)?.is_none()
-            && !lane.is_entity_readable(&entity)?
-        {
+        // own TURN and MESSAGE below, and one the lane reads no hit of
+        // answers as an id that names nothing.
+        let provisional = self.vault().provisional_entity(&entity)?.is_some();
+        if !provisional && !lane.is_entity_readable(&entity)? {
             let receipt = lane.read_receipt(None, 0)?;
             return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
@@ -897,6 +897,14 @@ impl Memory<'_> {
             };
             self.produced_from([hit.turn, hit.mention.message]);
             mentions.push(hit_view(&hit, freshness));
+        }
+        // The loop stops early only at `limit` (at least 1) hits, so no hit
+        // means none of the entity's hits reads: a provisional entity named
+        // only where the lane does not read is not found, as an absent id
+        // is (review round 2 of #6970).
+        if provisional && mentions.is_empty() {
+            let receipt = lane.read_receipt(None, 0)?;
+            return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
         let value = TaggingMentionsView {
             entity_ref: entity.to_hex(),
