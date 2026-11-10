@@ -109,6 +109,7 @@ const engine = await EngineFixture.start({
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
 | `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
 The fixture defaults to authenticated, model-free `init --embedder none
@@ -199,6 +200,8 @@ text; they still fail the strict vector fixture until explicitly authored.
   installed wheel. Targets are `{mode:"remote",url,credential}` or
   `{mode:"embedded",path,dimensions?}`. Operations are typed `witness`,
   `claimUpsert`, `recall`, `receipts`; Python inputs are native snake_case.
+  The Node driver also takes `{verb:"facade", path, input}`: any generated
+  facade method by its dotted SDK path as the package spells it, no casing conversion.
   Per-operation `{ok:false,error}` retains SDK errors; assert them explicitly.
   Broader SDK journeys may use an owned real process and the public package,
   never a private binding or Rust helper. `sdk.pair(link)` redeems through the
@@ -226,8 +229,9 @@ they do not estimate tokens or derive answers from requests.
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
 It does **not** claim an internal transaction committed. Early release works.
-`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role
-and purpose. Unexpected, extra or unconsumed calls fail `close` and the flow.
+`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role,
+purpose and HTTP request headers (lower-case names). The provider artifact keeps
+only content-type-like header values; every other header value is persisted as `[REDACTED]`. Unexpected, extra or unconsumed calls fail `close` and the flow.
 There is no catch-all fallback. Exact JSON/bytes fixtures cover HTTP
 Oneironer/media/connectors. Optional `sockets` scripts declare `id`, `origin`,
 `path`, `role`, `purpose`, and ordered `exchanges` of `{request,replies}`. Each
