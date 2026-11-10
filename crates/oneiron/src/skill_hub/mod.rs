@@ -95,7 +95,7 @@ mod support;
 mod verdict;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use self::adapter::{
     GitSkillHubAdapter, HttpIndexSkillHubAdapter, LocalDirSkillHubAdapter, SkillHubAdapter,

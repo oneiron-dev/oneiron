@@ -2125,3 +2125,391 @@ fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> 
     assert!(!destination.exists());
     Ok(())
 }
+
+/// Wave-2 shared ladder fixture (T0-B R4): the ONE multi-kind
+/// [`DecisionProvider`](crate::llm::decision::DecisionProvider) behind the
+/// skill_optimize and skill_hub test ports, with the
+/// [`HeldOutReplayNotes`](crate::skill_optimize::HeldOutReplayNotes) shell and
+/// the useful-upstream/claim-replay judge guards both areas build on.
+///
+/// The decide-switchover (c2a4a506975, faf881f23eb, 14fe3e01a77) replaced the
+/// verdict-callback traits (`HeldOutReplayScorer`, `GoalAxisScorer`,
+/// `UsefulUpstreamJudge`, `UsefulUpstreamClaimJudge`,
+/// `HeldOutClaimReplayScorer`) with typed judgments on the host ladder. Every
+/// ported fake answers through [`FixtureProvider`]: one struct, configured per
+/// test by an answer closure over the judgment kind
+/// ([`judgment_kind`](crate::skill_optimize::judgment_kind)) and the call's
+/// question and state. Nothing here is production code: it only answers
+/// fixture judgments, and every unexpected kind panics rather than inventing
+/// a value the test did not ask for.
+pub(crate) mod ladder_fixture {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use serde_json::{Value, json};
+
+    use crate::entity_id::EntityId;
+    use crate::error::{Error, Result};
+    use crate::llm::decision::{DecisionAnswer, DecisionBandPolicy};
+    use crate::llm::decision::{
+        DecisionBand, DecisionCall, DecisionDial, DecisionLadder, DecisionProvider,
+        DecisionQuestion, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
+        ProviderPin,
+    };
+    use crate::retrieval_depth::RetrievalDeadline;
+    use crate::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
+    use crate::skill_optimize::{
+        GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay, SkillOptimizeDecisions,
+        SkillReplayResponse, SkillReplayResponses, judgment_kind,
+    };
+
+    /// The person queue of a fixture ladder: there is no person to ask.
+    pub(crate) struct NoPerson;
+
+    impl HumanDecisionQueue for NoPerson {
+        fn queue(&self, _: HumanDecisionRequest) -> Result<()> {
+            Err(Error::InvalidConfig(
+                "a fixture ladder asks no person".into(),
+            ))
+        }
+    }
+
+    /// One provider slot holding `provider`, on `rung`, with no person queue.
+    /// The pin's rung must name the slot it sits in.
+    pub(crate) fn fixture_ladder(
+        provider: &dyn DecisionProvider,
+        rung: DecisionRung,
+    ) -> DecisionLadder<'_> {
+        let (rule, local, system_one, escalation, big) = match rung {
+            DecisionRung::Rule => (Some(provider), None, None, None, None),
+            DecisionRung::Local => (None, Some(provider), None, None, None),
+            DecisionRung::SystemOne => (None, None, Some(provider), None, None),
+            DecisionRung::Escalation => (None, None, None, Some(provider), None),
+            DecisionRung::Big => (None, None, None, None, Some(provider)),
+            DecisionRung::Human => (None, None, None, None, None),
+        };
+        DecisionLadder {
+            rule,
+            local,
+            system_one,
+            escalation,
+            big,
+            human: &NoPerson,
+            human_pin: ProviderPin {
+                rung: DecisionRung::Human,
+                model: "no-person".into(),
+                version: "1".into(),
+            },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
+        }
+    }
+
+    /// A score answer at full fixture confidence.
+    pub(crate) fn score_answer(value: f64) -> ProviderDecision {
+        ProviderDecision {
+            answer: DecisionAnswer::Score(value),
+            probability: Some(0.9),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }
+    }
+
+    /// A yes/no answer at full fixture confidence.
+    pub(crate) fn noul_answer(value: bool) -> ProviderDecision {
+        ProviderDecision {
+            answer: DecisionAnswer::Noul(value),
+            probability: Some(0.9),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }
+    }
+
+    /// A choice answer at full fixture confidence.
+    pub(crate) fn choice_answer(option: &str) -> ProviderDecision {
+        choice_answer_at(option, 0.9)
+    }
+
+    /// A choice answer at `probability` (the tradeoff band reads it).
+    pub(crate) fn choice_answer_at(option: &str, probability: f64) -> ProviderDecision {
+        ProviderDecision {
+            answer: DecisionAnswer::Choice(option.to_owned()),
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }
+    }
+
+    /// Wording for every judgment kind the gate asks in these tests, plus the
+    /// axis questions the vector and offline-axis fixtures score.
+    pub(crate) fn fixture_wording() -> BTreeMap<String, String> {
+        [
+            "score",
+            "structural",
+            "contrastive",
+            "preference",
+            "task_success",
+            "honesty",
+            "tradeoff",
+            "live_axis",
+            "response_score",
+            "axis.held_out",
+            "axis.quality",
+            "axis.safety",
+            "axis.human_minutes",
+            "axis.coverage",
+        ]
+        .into_iter()
+        .map(|kind| (kind.to_owned(), format!("fixture {kind} judgment")))
+        .collect()
+    }
+
+    /// A dial that starts where the fixture provider sits, under the default
+    /// band. Default bands are unlearned (shadow), so the first rung's
+    /// confident answer stands.
+    pub(crate) fn fixture_dial(first: DecisionRung) -> DecisionDial {
+        DecisionDial {
+            first,
+            ceiling: DecisionRung::Human,
+            band: DecisionBand::default(),
+        }
+    }
+
+    /// A clock no fixture judgment can outrun.
+    pub(crate) fn fixture_deadline() -> RetrievalDeadline {
+        RetrievalDeadline::after(Duration::from_secs(3600))
+    }
+
+    /// The shared multi-kind fixture provider. `answer` sees the judgment
+    /// kind ([`judgment_kind`], `None` for the skill_hub useful-upstream and
+    /// claim-replay questions, which are another family) with the call's
+    /// question and state, and returns the typed answer. `hook`, when set,
+    /// runs once on the first judgment: the deterministic stand-in for a
+    /// writer landing mid-flight.
+    pub(crate) struct FixtureProvider<'a> {
+        pin: ProviderPin,
+        revision: String,
+        hook: Mutex<Option<Box<dyn FnOnce() -> Result<()> + Send + 'a>>>,
+        answer: Box<
+            dyn Fn(Option<String>, DecisionQuestion, Value) -> Result<ProviderDecision>
+                + Send
+                + Sync
+                + 'a,
+        >,
+    }
+
+    impl<'a> FixtureProvider<'a> {
+        pub(crate) fn new(
+            pin: ProviderPin,
+            revision: &str,
+            answer: impl Fn(Option<String>, DecisionQuestion, Value) -> Result<ProviderDecision>
+            + Send
+            + Sync
+            + 'a,
+        ) -> Self {
+            Self {
+                pin,
+                revision: revision.to_owned(),
+                hook: Mutex::new(None),
+                answer: Box::new(answer),
+            }
+        }
+
+        pub(crate) fn with_hook(
+            pin: ProviderPin,
+            revision: &str,
+            hook: impl FnOnce() -> Result<()> + Send + 'a,
+            answer: impl Fn(Option<String>, DecisionQuestion, Value) -> Result<ProviderDecision>
+            + Send
+            + Sync
+            + 'a,
+        ) -> Self {
+            Self {
+                pin,
+                revision: revision.to_owned(),
+                hook: Mutex::new(Some(Box::new(hook))),
+                answer: Box::new(answer),
+            }
+        }
+    }
+
+    impl DecisionProvider for FixtureProvider<'_> {
+        fn pin(&self) -> ProviderPin {
+            self.pin.clone()
+        }
+
+        fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+            if let Some(hook) = self.hook.lock().unwrap().take() {
+                hook()?;
+            }
+            let kind = judgment_kind(&self.revision, call.question, call.state);
+            (self.answer)(kind, call.question.clone(), call.state.clone())
+        }
+    }
+
+    /// The shared [`HeldOutReplayNotes`] shell. Replay data is fixture
+    /// scaffolding: the state names the held-out receipts, the blind
+    /// preference always pairs the first two responses (a synthetic mate when
+    /// the reserve holds one), and every held-out replay carries one
+    /// objective, so the honesty floor scores without fixture-specific input.
+    pub(crate) struct FixtureNotes<'a> {
+        pub revision: String,
+        pub provider: FixtureProvider<'a>,
+        pub rung: DecisionRung,
+        pub dial: DecisionDial,
+        pub bands: DecisionBandPolicy,
+        pub wording: BTreeMap<String, String>,
+        pub deadline: RetrievalDeadline,
+        pub principal: EntityId,
+        /// The declared task axes; empty is the scalar path.
+        pub goal_axes: Vec<GoalAxisSpec>,
+    }
+
+    /// Notes over `provider`, on the slot its pin names.
+    pub(crate) fn fixture_notes<'a>(
+        revision: &str,
+        provider: FixtureProvider<'a>,
+    ) -> FixtureNotes<'a> {
+        let rung = provider.pin.rung;
+        FixtureNotes {
+            revision: revision.to_owned(),
+            provider,
+            rung,
+            dial: fixture_dial(rung),
+            bands: DecisionBandPolicy::default(),
+            wording: fixture_wording(),
+            deadline: fixture_deadline(),
+            principal: EntityId::now(),
+            goal_axes: Vec::new(),
+        }
+    }
+
+    impl HeldOutReplayNotes for FixtureNotes<'_> {
+        fn judge_revision(&self) -> &str {
+            &self.revision
+        }
+
+        fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+            SkillOptimizeDecisions {
+                ladder: fixture_ladder(&self.provider, self.rung),
+                principal: self.principal,
+                dial: self.dial,
+                bands: self.bands.clone(),
+                deadline: &self.deadline,
+                wording: &self.wording,
+            }
+        }
+
+        fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
+            Ok(json!({ "held_out_receipts": case.held_out_receipts }))
+        }
+
+        fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+            let mut responses: Vec<SkillReplayResponse> = receipts
+                .iter()
+                .take(2)
+                .map(|receipt| SkillReplayResponse {
+                    receipt: receipt.clone(),
+                    task: "fixture task".to_owned(),
+                    response: format!("fixture response for {receipt}"),
+                })
+                .collect();
+            if responses.len() == 1 {
+                responses.push(SkillReplayResponse {
+                    receipt: "fixture-solo-pair-mate".to_owned(),
+                    task: "fixture task".to_owned(),
+                    response: "fixture solo mate response".to_owned(),
+                });
+            }
+            Ok(SkillReplayResponses {
+                responses,
+                rubric: None,
+            })
+        }
+
+        fn record_decision(
+            &self,
+            _question: &DecisionQuestion,
+            _decision: &crate::llm::decision::TypedDecision,
+            _state: &Value,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+            Ok(case
+                .held_out_receipts
+                .iter()
+                .map(|receipt| HonestyReplay {
+                    receipt: receipt.clone(),
+                    state: json!({ "receipt": receipt }),
+                    objectives: vec![format!("fixture objective for {receipt}")],
+                })
+                .collect())
+        }
+
+        fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+            Ok(self.goal_axes.clone())
+        }
+    }
+
+    /// The shared skill_hub judge guard: one provider behind the
+    /// useful-upstream and claim-replay decisions structs.
+    pub(crate) struct FixtureJudge<'a> {
+        pub provider: FixtureProvider<'a>,
+        pub rung: DecisionRung,
+        pub deadline: RetrievalDeadline,
+        pub dial: DecisionDial,
+        pub bands: DecisionBandPolicy,
+    }
+
+    /// A judge on the slot `pin` names, answering `answer`.
+    pub(crate) fn fixture_judge<'a>(
+        pin: ProviderPin,
+        revision: &str,
+        answer: impl Fn(Option<String>, DecisionQuestion, Value) -> Result<ProviderDecision>
+        + Send
+        + Sync
+        + 'a,
+    ) -> FixtureJudge<'a> {
+        let rung = pin.rung;
+        FixtureJudge {
+            provider: FixtureProvider::new(pin, revision, answer),
+            rung,
+            deadline: fixture_deadline(),
+            dial: fixture_dial(rung),
+            bands: DecisionBandPolicy::default(),
+        }
+    }
+
+    impl FixtureJudge<'_> {
+        pub(crate) fn useful_decisions(&self) -> UsefulUpstreamDecisions<'_> {
+            UsefulUpstreamDecisions {
+                ladder: fixture_ladder(&self.provider, self.rung),
+                dial: self.dial,
+                bands: self.bands.clone(),
+                deadline: &self.deadline,
+            }
+        }
+
+        pub(crate) fn claim_replay(&self, wording: String) -> ClaimReplayDecisions<'_> {
+            ClaimReplayDecisions {
+                ladder: fixture_ladder(&self.provider, self.rung),
+                dial: self.dial,
+                bands: self.bands.clone(),
+                wording,
+                deadline: &self.deadline,
+            }
+        }
+    }
+}
