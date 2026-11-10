@@ -796,6 +796,12 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     throw error;
   } finally {
     try { await providers.close(); }
+    catch (cleanupError) {
+      // A provider-script error (unconsumed steps) must not replace the body failure it follows.
+      if (secrets03BodyError !== null) throw new Error(redactor.text(`SECRETS-03 body failed: ${secrets03BodyError}; `
+        + `provider cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : "non-Error failure"}`));
+      throw cleanupError;
+    }
     finally {
       if (engine) {
         await engine.close();
