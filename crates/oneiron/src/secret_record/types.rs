@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-pub use oneiron_store::secret_record::types::*;
+pub(crate) use oneiron_store::secret_record::types::*;
 
 /// Entity body for `ENTITY_TYPE_SECRET_CUSTODY`: the secret value's home.
 ///
