@@ -5,5 +5,6 @@
 //! build reaches them. Hidden; never API.
 
 pub mod consolidation;
+pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod run_hold;
