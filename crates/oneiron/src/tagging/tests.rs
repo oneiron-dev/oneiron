@@ -12,7 +12,9 @@ use crate::attempt_queue::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
-use crate::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
+use crate::memory::extraction::{
+    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork,
+};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::off_record::{FloorWrites, OffRecordBackendClass};
 use crate::ports::ManualClock;
@@ -70,38 +72,45 @@ impl ExtractionEncoder for Scripted {
     fn locality(&self) -> crate::embed::EmbedderLocality {
         crate::embed::EmbedderLocality::OnDevice
     }
-    fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.inputs.lock().expect("inputs lock").push(input.clone());
-        if let Some(hook) = self.during_call.lock().expect("hook lock").take() {
-            hook();
-        }
-        let answer = *self.answer.lock().expect("answer lock");
-        match answer {
-            Answer::Fail => Err(crate::Error::UpstreamToolFailure {
-                tool: "fixture-tagger",
-                code: "fixture tagger unreachable".into(),
-            }),
-            Answer::Panic => panic!("fixture tagger panicked"),
-            Answer::Good | Answer::BadOffsets => {
-                let text = &input.messages[0].text;
-                let end = if answer == Answer::BadOffsets {
-                    text.len() + 3
-                } else {
-                    text.find(' ').unwrap_or(text.len())
-                };
-                // The unmapped span is the text's last character: spans come
-                // in order and never share coordinates.
-                let last = text.char_indices().last().map_or(0, |(at, _)| at);
-                Ok(answer_json(serde_json::json!({
-                    "spans": [
-                        {"message": 0, "start": 0, "end": end, "label": "PERSON", "confidence": 0.9},
-                        {"message": 0, "start": last, "end": text.len(), "label": "UNMAPPED", "confidence": 0.4}
-                    ],
-                    "links": [{"span": 1, "antecedent": 0}],
-                    "vad": {"valence": 0.2, "arousal": 0.4, "dominance": 0.6}
-                })))
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
+        let result = (|| -> crate::Result<EncoderOutput> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inputs.lock().expect("inputs lock").push(input.clone());
+            if let Some(hook) = self.during_call.lock().expect("hook lock").take() {
+                hook();
             }
+            let answer = *self.answer.lock().expect("answer lock");
+            match answer {
+                Answer::Fail => Err(crate::Error::UpstreamToolFailure {
+                    tool: "fixture-tagger",
+                    code: "fixture tagger unreachable".into(),
+                }),
+                Answer::Panic => panic!("fixture tagger panicked"),
+                Answer::Good | Answer::BadOffsets => {
+                    let text = &input.messages[0].text;
+                    let end = if answer == Answer::BadOffsets {
+                        text.len() + 3
+                    } else {
+                        text.find(' ').unwrap_or(text.len())
+                    };
+                    // The unmapped span is the text's last character: spans come
+                    // in order and never share coordinates.
+                    let last = text.char_indices().last().map_or(0, |(at, _)| at);
+                    Ok(answer_json(serde_json::json!({
+                        "spans": [
+                            {"message": 0, "start": 0, "end": end, "label": "PERSON", "confidence": 0.9},
+                            {"message": 0, "start": last, "end": text.len(), "label": "UNMAPPED", "confidence": 0.4}
+                        ],
+                        "links": [{"span": 1, "antecedent": 0}],
+                        "vad": {"valence": 0.2, "arousal": 0.4, "dominance": 0.6}
+                    })))
+                }
+            }
+        })();
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result,
         }
     }
 }
@@ -168,6 +177,8 @@ fn message(order: u32, content: &str) -> WitnessMessage {
         metadata: None,
         is_visible: true,
         order,
+        parts: None,
+        quote: None,
     }
 }
 
@@ -177,6 +188,8 @@ fn turn(turn_ref: Option<String>, messages: Vec<WitnessMessage>) -> WitnessTurn 
         turn_ref,
         messages,
         occurred_at: NOW,
+        thread_audience: None,
+        assertions: Default::default(),
     }
 }
 
@@ -1172,6 +1185,7 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
                 ..turn(None, vec![message(0, "Ada sailed north off the record")])
             },
             None,
+            None,
         )
         .expect("session witness");
     let promoted = receipt_turn(&receipt);
@@ -1811,7 +1825,7 @@ fn an_off_device_tagger_and_an_unarmed_vault_are_refused() {
         fn locality(&self) -> crate::embed::EmbedderLocality {
             crate::embed::EmbedderLocality::OwnerServer
         }
-        fn infer(&self, _: &EncoderInput) -> crate::Result<EncoderOutput> {
+        fn infer(&self, _: &EncoderInput, _: ExtractionWork) -> EncoderAttempt {
             unreachable!("never called")
         }
     }
@@ -1833,8 +1847,15 @@ fn plant_settled_markers(vault: &Vault, count: u64, settled_at: u64) {
     let queue = AttemptQueue::new(vault);
     let mut txn = vault.store.env.write_txn().expect("write txn");
     let turn = EntityId::from_bytes([0x5e; 16]).expect("turn id");
-    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, &shadow(CHECKPOINT), settled_at)
-        .expect("marker");
+    super::marker::enqueue_marker_in_txn(
+        vault,
+        &mut txn,
+        turn,
+        &shadow(CHECKPOINT),
+        settled_at,
+        ExtractionWork::Bulk,
+    )
+    .expect("marker");
     let ClaimOutcome::Claimed(leased) = queue
         .claim_kind_storage_in_txn(
             &mut txn,
@@ -1925,6 +1946,8 @@ fn bind_resident(vault: &Vault) -> EntityId {
                 id: Some(node.to_hex()),
                 ..message(0, "room")
             }],
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("room");
     let auth = vault
@@ -2408,14 +2431,12 @@ fn a_scan_for_another_kind_never_reads_a_tagging_row() {
 /// budget.
 #[test]
 fn a_tagging_backlog_past_the_cleanup_scan_leaves_cleanup_as_without_one() {
+    // The cleanup scan row cap, removed by c72f09112c4 (Rule 5 drains in L07-B scans).
+    const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
     let dir = tempfile::tempdir().expect("dir");
     let clock = ManualClock::new(NOW);
     let vault = open_on(dir.path(), &clock);
-    plant_settled_markers(
-        &vault,
-        crate::vault_cleanup::MAX_CLEANUP_SCAN_ROWS as u64 + 1,
-        NOW,
-    );
+    plant_settled_markers(&vault, MAX_CLEANUP_SCAN_ROWS as u64 + 1, NOW);
     let other = complete_other_job(&vault);
     assert_eq!(cleanup_proposals(&vault, &clock), vec![*other.as_bytes()]);
 }
@@ -2542,7 +2563,13 @@ fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
             1,
         )
         .expect("room");
-    let append = |record: AppendRecord| vault.append_dag_record(&record).expect("append").id;
+    let append = |record: AppendRecord| {
+        let writer = vault.memory(record.actor.entity_ref(), record.actor.actor_class());
+        vault
+            .append_dag_record(&writer, &record)
+            .expect("append")
+            .id
+    };
     let root = append(input(room, None, true, actor));
     let fork = append(input(room, Some(root), false, actor));
     let trunk = append(input(room, Some(root), true, actor));
@@ -3323,6 +3350,7 @@ fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
                             try_number,
                             call_micros: None,
                             outcome: TaggingOutcome::Rekeyed,
+                            execution: None,
                         };
                         super::history::record_in_txn(&vault, txn, &trace, NOW)?;
                     }
@@ -3404,6 +3432,8 @@ fn plant_low_range_marker(vault: &Vault, turn: EntityId) -> AttemptRecord {
         turn,
         checkpoint: CHECKPOINT.into(),
         stack: None,
+        work: ExtractionWork::Bulk,
+        open: None,
     })
     .expect("payload");
     let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
