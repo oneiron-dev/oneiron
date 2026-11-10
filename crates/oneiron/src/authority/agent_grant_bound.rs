@@ -19,11 +19,16 @@
 //! - A Grant row names the holder, but none stands for `read` now (expired,
 //!   no `read`, its owner gone, its pact lapsed): it reads nothing, so an
 //!   expiry never widens it.
-//! - One stands: the slip's Scope met with it.
-//! - Several stand: the slip's Scope met with their per-axis envelope, so a
-//!   one-axis question (the worlds a walk lists) answers exactly; the key
-//!   also carries each met Scope, and a row needs one of them alone to admit
-//!   its whole position (`ScopedRead::one_grant_alternative_admits_in`).
+//! - One or several stand: the key's Scope is met with their per-axis
+//!   envelope, so a one-axis question (the worlds a walk lists) answers
+//!   exactly, and the key carries the slip's Scope met with each Grant
+//!   alone: a row needs one of them to admit its whole position
+//!   (`ScopedRead::one_grant_alternative_admits_in`), as FIX 7462 judges a
+//!   row under a Grant.
+//!
+//! The credential itself is left whole: only the read key's Scope narrows,
+//! so a guard that asks for the exact credential (a phone line's) still
+//! finds it.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -31,23 +36,31 @@ use crate::error::Result;
 use crate::federation::{AgentGrantStanding, AgentVerbClasses};
 use oneiron_authority::federation::{Scope, ScopeAxis, SensitivityCeiling};
 
-use super::VerifiedSlip;
+/// What the owner's agent Grants that name a credential's holder bind its
+/// read key to.
+pub(crate) struct AgentGrantReadBound {
+    /// The standing Grants' per-axis envelope, its verbs left open: the read
+    /// key's Scope is met with it. Bottom on every other axis when none
+    /// stands, so the key reads nothing.
+    pub(crate) envelope: Scope,
+    /// The credential's Scope met with each standing Grant alone, in Grant
+    /// id order: a row must lie inside one of them.
+    pub(crate) alternatives: Vec<Scope>,
+}
 
 impl Vault {
-    /// `verified`, held by `holder`, met with the owner-agent Grants that
-    /// name `holder` in `txn` (module docs), beside the met Scope of each
-    /// standing Grant when two or more stand; the view's own Scope is their
-    /// envelope, and a row must lie inside one of them alone. With one or no
-    /// standing Grant the list is empty and the view's Scope is exact.
+    /// The bound the owner-agent Grants that name `holder` in `txn` put on a
+    /// read under a credential of Scope `slip` that `holder` holds (module
+    /// docs); `None` when no Grant row names `holder`.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
-    pub(crate) fn agent_grant_bounded_slip_view_in_txn(
+    pub(crate) fn agent_grant_read_bound_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        verified: VerifiedSlip,
+        slip: &Scope,
         holder: EntityId,
-    ) -> Result<(VerifiedSlip, Vec<Scope>)> {
+    ) -> Result<Option<AgentGrantReadBound>> {
         let (grants, undecoded) = self.agent_grants_reporting_in_txn(txn)?;
         let naming: Vec<&AgentGrantStanding> = grants
             .iter()
@@ -64,7 +77,7 @@ impl Vault {
             );
         }
         if naming.is_empty() {
-            return Ok((verified, Vec::new()));
+            return Ok(None);
         }
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
@@ -85,15 +98,11 @@ impl Vault {
             .fold(disclosure_axes(&Scope::default()), |envelope, bound| {
                 join(&envelope, bound)
             });
-        let alternatives = if bounds.len() > 1 {
-            bounds
-                .iter()
-                .map(|bound| verified.scope().meet(bound))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Ok((verified.meet_scope(&envelope), alternatives))
+        let alternatives = bounds.iter().map(|bound| slip.meet(bound)).collect();
+        Ok(Some(AgentGrantReadBound {
+            envelope,
+            alternatives,
+        }))
     }
 }
 
