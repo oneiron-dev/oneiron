@@ -125,12 +125,10 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
         response
     );
     assert_eq!(*writes.borrow(), 1);
-    // The operation id binds its request when it is staged (FIX 8609), so a
-    // reuse for another request is refused there.
     assert!(
         restarted
-            .stage_request(
-                &[1; 32],
+            .dispatch(
+                [1; 32],
                 task,
                 &GraphQlCall {
                     query: call.query,
