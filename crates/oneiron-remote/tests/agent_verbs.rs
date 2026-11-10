@@ -208,7 +208,8 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
     let page = client
         .agent_verb("vault.rooms.messages", history.clone())
         .unwrap();
-    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    // Ruled (9a9fec8d762): unbound PERSON has unknown clearance, so only public rows show.
+    assert_eq!(page["rows"].as_array().unwrap().len(), 0);
     let applied: oneiron::federation::Scope =
         serde_json::from_value(page["scope"].clone()).unwrap();
     assert_eq!(applied, expected);

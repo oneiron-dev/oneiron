@@ -16,7 +16,7 @@ use oneiron_organ_host::{
     BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
     OrganState, SightedInput, Unavailable,
 };
-use oneiron_organ_protocol::{FrameError, Hash32, Value, touch_fold};
+use oneiron_organ_protocol::{Hash32, Value, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -379,37 +379,40 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
     host.install(spec);
     let small = || call("organ.echo", 1.into(), Vec::new(), "g");
     host.call(&vault, small()).expect("small call");
+    // Ruled (Rule 5, 7de2f0302b4: "The install's frame sizes are
+    // `organ_call_frame_bytes` and `organ_reply_frame_bytes`"; protocol 2.0,
+    // 5b61e287afc: "protocol 2.0 framing" which "remove[s] typed caps"): the
+    // frame limit paces a longer message across more frames instead of
+    // refusing it (frame.rs: "a longer message takes more frames").
     for _ in 0..6 {
         let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
-        let err = host.call(&vault, big).expect_err("too large");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
-            "{err:?}"
-        );
+        let echoed = host.call(&vault, big).expect("carried across frames");
+        assert_eq!(echoed.report, Value::from("x".repeat(8192)));
     }
-    // Small on the wire but past what the organ decodes: deeper than the
-    // depth limit, or more values than the value limit. Protocol 2.0
+    // Small on the wire but past what the organ once decoded: deeper than the
+    // old depth limit, or more values than the old value limit. Protocol 2.0
     // (5b61e287afc) removed MAX_FRAME_DEPTH (64) and MAX_FRAME_VALUES (2^21);
-    // the values they held stand here.
+    // the limits are gone, so the values they held now cross whole and echo.
     let deep: fn() -> Value = || (0..64).fold(Value::Nil, |inner, _| Value::Array(vec![inner]));
     let wide: fn() -> Value = || {
         let count = 1_usize << 21;
         Value::Array(vec![Value::Nil; count])
     };
+    // Ruled (protocol 2.0, 5b61e287afc: "the iterative codec", "drop
+    // TYPED_DEPTH"): depth and value count no longer refuse; deep and wide
+    // values cross whole and echo.
     for args in [deep, deep, deep, wide, wide, wide] {
-        let err = host
-            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
-            .expect_err("refused");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::Refused(_))),
-            "{err:?}"
-        );
+        let made = args();
+        let echoed = host
+            .call(&vault, call("organ.echo", made.clone(), Vec::new(), "g"))
+            .expect("carried whole");
+        assert_eq!(echoed.report, made);
     }
     let status = host.status("probe").expect("installed");
     assert_eq!(
         (status.spawns, status.recent_crashes),
         (1, 0),
-        "refused calls neither kill nor count"
+        "carried calls neither kill nor count"
     );
     host.call(&vault, small()).expect("still warm");
 }
@@ -467,12 +470,18 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
         ("count".into(), 17.into()),
         ("bytes".into(), (70 * 1024).into()),
     ]);
-    let err = host
+    // Ruled (protocol 2.0, 5b61e287afc): "no 16-input/output caps"; a frame
+    // still carries at most 16 descriptors, and the message's 17 cross on
+    // the frames that follow.
+    let outcome = host
         .call(&vault, call("probe.outputs", args, Vec::new(), "g"))
-        .expect_err("too many regions");
+        .expect("17 regions are carried across frames");
+    assert_eq!(outcome.outputs.len(), 17);
     assert!(
-        matches!(&err, HostError::Organ(error) if matches!(error.code, oneiron_organ_protocol::ErrorCode::TooLarge)),
-        "{err:?}"
+        outcome
+            .outputs
+            .iter()
+            .all(|output| output.len() == 70 * 1024)
     );
     let status = host.status("probe").expect("installed");
     assert_eq!((status.spawns, status.recent_crashes), (1, 0));

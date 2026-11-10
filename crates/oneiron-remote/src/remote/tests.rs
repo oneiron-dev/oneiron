@@ -131,7 +131,7 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
             let mut reader = BufReader::new(&mut stream);
             let mut first = String::new();
             reader.read_line(&mut first).unwrap();
-            assert!(first.starts_with("POST /v1/core/facade/export HTTP/1.1"));
+            assert!(first.starts_with("POST /v1/core/facade/vault.export HTTP/1.1"));
             let mut length = 0;
             loop {
                 let mut line = String::new();
@@ -180,7 +180,7 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
     let generic = client
         .agent_verb("vault.export", serde_json::json!({"format":"json"}))
         .unwrap();
-    assert_eq!(generic["rendered"], "xxxx");
+    assert_eq!(generic["archive"], "eHh4eA==");
     let oneiron::memory::ExportAnswer::Inline(large) = client.vault_export(Some("json")).unwrap()
     else {
         panic!("an inline export");
@@ -250,9 +250,9 @@ fn export_peer(
     (origin, served)
 }
 
-/// C13: export read whatever the origin sent. It now reads at most its own
-/// ceiling: a body at the ceiling decodes, one byte more is refused, whether
-/// `Content-Length` announces it or not, and the client stops reading.
+/// C13 (79f9066ed5c): the export cap is gone, so export reads whatever the
+/// origin sent: bodies on both sides of the old 64 KiB mark decode whole,
+/// whether `Content-Length` announces them or not, and the client reads to the end.
 #[test]
 fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
     const LIMIT: usize = 64 * 1024;
@@ -274,11 +274,10 @@ fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
         let (at_limit, _) = export(LIMIT - framing, content_length);
         assert_eq!(at_limit.unwrap().archive.len(), LIMIT - framing);
         let (over, _) = export(LIMIT - framing + 1, content_length);
-        assert!(over.is_err(), "one byte over the export ceiling");
+        assert_eq!(over.unwrap().archive.len(), LIMIT - framing + 1);
     }
-    // An origin that keeps sending is cut off near the ceiling, not read to
-    // its end.
+    // Ruled (79f9066ed5c): with no cap, the client reads the origin to its end.
     let (endless, (written, total)) = export(1024 * LIMIT, false);
-    assert!(endless.is_err());
-    assert!(written < total, "the client read all {total} bytes");
+    assert_eq!(endless.unwrap().archive.len(), 1024 * LIMIT);
+    assert_eq!(written, total);
 }

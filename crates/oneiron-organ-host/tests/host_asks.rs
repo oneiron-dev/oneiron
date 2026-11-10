@@ -152,13 +152,32 @@ fn a_granted_ask_is_answered_through_a_region_and_receipted() {
     assert_eq!(handler.runs.load(Ordering::SeqCst), 2);
     let receipt = outcome.receipt;
     assert_eq!(receipt.protocol, PROTOCOL);
-    assert_eq!(receipt.asks.len(), 2);
-    for (n, line) in receipt.asks.iter().enumerate() {
-        assert_eq!(line.id as usize, n + 1);
-        assert_eq!(line.verb, ANSWER);
+    // Ruled (FIX 8454, e1383fe4188): "The organ runtime reserves a region
+    // answer's bytes with its own `memory.grow`"; each region answer adds one
+    // receipted memory.grow line, refused NotGranted here (no grant names it,
+    // no handler answers it), so the receipt holds 4 lines for 2 asks.
+    assert_eq!(receipt.asks.len(), 4);
+    let functional: Vec<_> = receipt
+        .asks
+        .iter()
+        .filter(|line| line.verb == ANSWER)
+        .collect();
+    assert_eq!(functional.len(), 2);
+    assert_eq!(functional.iter().map(|line| line.id as usize).collect::<Vec<_>>(), vec![1, 3]);
+    for line in &functional {
         assert_eq!(line.refused, None);
         assert_eq!(line.data_hash, Some(Hash32::of(&handler.bytes)));
         assert_eq!(line.data_len, 200 * 1024);
+    }
+    let grows: Vec<_> = receipt
+        .asks
+        .iter()
+        .filter(|line| line.verb == oneiron_organ_protocol::ASK_MEMORY_GROW)
+        .collect();
+    assert_eq!(grows.len(), 2);
+    assert_eq!(grows.iter().map(|line| line.id as usize).collect::<Vec<_>>(), vec![2, 4]);
+    for line in &grows {
+        assert_eq!(line.refused, Some(AskCode::NotGranted));
     }
 }
 
@@ -338,17 +357,22 @@ fn an_organ_that_keeps_asking_is_refused_once_then_cut_off() {
     let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
     let handler = bytes(4);
     let asks = AskHandlers::none().with(ANSWER, &handler);
-    let started = Instant::now();
     let result = host.call_with(
         &vault,
         ask_call(ANSWER, Value::Nil, 100_000, Duration::from_secs(30)),
         Vec::new(),
         &asks,
     );
-    assert!(matches!(result, Err(HostError::AskBudget)), "{result:?}");
-    assert_eq!(handler.runs.load(Ordering::SeqCst), 4);
-    assert!(started.elapsed() < Duration::from_secs(5));
-    // Ending the call cancelled it; the organ stopped and lives on.
+    // Ruled (Rule 5, FIX 5283, 7de2f0302b4): "Generic asks: `organ_asks`,
+    // `organ_ask_per_verb`, ..." are measured rows, and "The `AskBudget` end
+    // and the organ's ask latch are gone": every ask past the grant's 4 is
+    // answered.
+    let outcome = result.expect("every ask is served");
+    assert_eq!(lines(&outcome.report).len(), 100_000);
+    assert_eq!(outcome.receipt.asks.len(), 100_000);
+    assert_eq!(handler.runs.load(Ordering::SeqCst), 100_000);
+    assert!(outcome.receipt.asks.iter().all(|ask| ask.refused.is_none()));
+    // The call ended; the organ lives on.
     host.call(
         &vault,
         OrganCall {
@@ -728,7 +752,9 @@ fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
 #[test]
 fn an_answer_value_counts_against_the_answer_bytes() {
     // Astra (#1378) P2: only an answer's data was charged, so a fetch's 4 KiB
-    // final URL crossed under a 1 KiB cap.
+    // final URL crossed under a 1 KiB cap. Ruled (Rule 5, FIX 5283,
+    // 7de2f0302b4): the value counts in answer_len and is carried past the
+    // 1 KiB threshold, not refused.
     let (_dir, vault) = vault();
     let (port, asked) = serve(None);
     let mut granted = spec(vec![
@@ -752,8 +778,13 @@ fn an_answer_value_counts_against_the_answer_bytes() {
         let outcome = host
             .call_with(&vault, call, Vec::new(), &asks)
             .expect("the organ goes on");
-        assert_eq!(refused(&lines(&outcome.report)[0]), Some("too_large"));
-        assert_eq!(outcome.receipt.asks[0].refused, Some(AskCode::TooLarge));
+        // Ruled (Rule 5, FIX 5283, 7de2f0302b4): the generic ask limits,
+        // `organ_answer_bytes` among them, are "a `[limits]` row that asks and
+        // serves the work whole". The value still counts in the answer's
+        // bytes; past the 1 KiB grant it is carried, not refused.
+        assert_eq!(refused(&lines(&outcome.report)[0]), None);
+        assert_eq!(outcome.receipt.asks[0].refused, None);
+        assert!(outcome.receipt.asks[0].answer_len > 1024);
     }
     // The fetch itself ran; only its answer was over the cap.
     assert_eq!(asked.lock().expect("log").len(), 1);
