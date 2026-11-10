@@ -177,7 +177,11 @@ impl Vault {
         let doable = match &change {
             MemberAskChange::Add { role, .. } => {
                 non_root(*role)?;
-                current.is_none() && crate::consent::person_is_live_in_txn(self, &txn, &member)?
+                // The add effect refuses a second open invitation, so the
+                // ask is refused here, at filing.
+                current.is_none()
+                    && crate::consent::person_is_live_in_txn(self, &txn, &member)?
+                    && !self.open_invitation_stands_in_txn(&txn, vault_id, member, now)?
             }
             MemberAskChange::Remove { .. } => current.is_some_and(|from| from != Role::Owner),
             MemberAskChange::AssignRole { role, .. } => {
