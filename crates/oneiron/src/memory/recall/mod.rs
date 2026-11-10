@@ -847,8 +847,10 @@ impl Memory<'_> {
             }
             match effective {
                 Effort::Light => {
+                    // A rendered pack needs the Minimal fields (a TURN's `txt`);
+                    // a typed-only call builds its items without them.
                     builder = builder
-                        .hydrate(false)
+                        .hydrate(pack_format.is_some())
                         .include_edges(false)
                         .field_profile(FieldProfile::Minimal)
                         .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
