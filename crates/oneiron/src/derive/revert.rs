@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::record::{ItemRecord, batch_record_in_txn};
+use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
@@ -50,6 +50,12 @@ pub struct DeriveRevertReceipt {
 /// The revision of `row`, as an item of `kind` landed it, in `txn`: a digest
 /// of the stored row, or of the PERSON's `about` row for an `about` item.
 /// All zeros for a row that is gone.
+///
+/// An archive changes no byte of its claim: it stands in the claim's
+/// cleanup-archive marker. So an `archive` item's revision also covers that
+/// marker as stored (its request id and time included), and a claim that was
+/// restored, or restored and archived again by a later act, no longer stands
+/// at the revision its first archive left.
 pub(super) fn row_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -59,10 +65,30 @@ pub(super) fn row_revision_in(
     if kind == "person_about" {
         return crate::dreamer_consolidation::about_revision_in(vault, txn, row);
     }
-    Ok(
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row)?
-            .map_or([0; 32], |raw| *blake3::hash(&raw).as_bytes()),
-    )
+    let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row)?
+        .map_or([0; 32], |raw| *blake3::hash(&raw).as_bytes());
+    if kind != "archive" {
+        return Ok(stored);
+    }
+    let marker = crate::ports::TombstoneStoreRead::port_deletion_marker(
+        &vault.store,
+        txn,
+        crate::ports::DeletionMarker::Archive,
+        &row,
+    )?;
+    let mut revision = blake3::Hasher::new();
+    revision.update(b"oneiron:derive-archive-revision:v1");
+    revision.update(&stored);
+    match marker {
+        Some(marker) => {
+            revision.update(&[1]);
+            revision.update(&marker);
+        }
+        None => {
+            revision.update(&[0]);
+        }
+    }
+    Ok(*revision.finalize().as_bytes())
 }
 
 impl Vault {
@@ -218,15 +244,16 @@ impl Vault {
                 self.restore_archived_in_txn(txn, &first()?)?;
             }
             "same_as" => {
-                let status = first()?;
-                let body = self
-                    .get_claim_in_txn(txn, &status)?
-                    .ok_or(Error::EntityNotFound)?;
                 crate::dreamer_consolidation::revert_authored_change_in_txn(
-                    self, txn, status, *author, reverter, now_ms,
+                    self,
+                    txn,
+                    first()?,
+                    *author,
+                    reverter,
+                    now_ms,
                 )?;
-                if let crate::claim::ClaimSubject::Edge { source, target, .. } = body.subject {
-                    unlink_same_as_in_txn(self, txn, source, target)?;
+                if let Some(edge) = &item.applied_edge {
+                    unlink_applied_edge_in_txn(self, txn, edge)?;
                 }
             }
             _ => return Ok(false),
@@ -235,30 +262,30 @@ impl Vault {
     }
 }
 
-/// Removes the SameAs edge between `source` and `target`, both
-/// orientations, when it stands.
-fn unlink_same_as_in_txn(
+/// The revision of the SameAs edge `source` to `target` in `txn`: a digest
+/// of the edge as stored, `None` when no such edge stands.
+pub(super) fn same_as_edge_revision_in(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     source: EntityId,
     target: EntityId,
+) -> Result<Option<[u8; 32]>> {
+    use crate::ports::EdgeStoreStaging;
+    Ok(vault
+        .store
+        .port_edge_encoded(txn, &source, EdgeKind::SameAs, &target)?
+        .map(|raw| *blake3::hash(&raw).as_bytes()))
+}
+
+/// Removes the SameAs edge a `same_as` item created, while it stands as the
+/// commit left it. An edge that is gone, or that another writer has put
+/// again or changed since, is not this item's to remove and stays.
+fn unlink_applied_edge_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    edge: &AppliedEdge,
 ) -> Result<()> {
-    use crate::ports::EdgeStoreRead;
-    let mut ops = Vec::new();
-    for (from, to) in [(source, target), (target, source)] {
-        if vault
-            .store
-            .port_edge_get(txn, &from, EdgeKind::SameAs, &to)?
-            .is_some()
-        {
-            ops.push(crate::batch::BatchOp::DeleteEdge {
-                src: from,
-                kind: EdgeKind::SameAs,
-                tgt: to,
-            });
-        }
-    }
-    if ops.is_empty() {
+    if same_as_edge_revision_in(vault, txn, edge.source, edge.target)? != Some(edge.revision) {
         return Ok(());
     }
     crate::batch::apply_ops(
@@ -266,7 +293,11 @@ fn unlink_same_as_in_txn(
         &vault.config,
         &vault.analyzer,
         txn,
-        ops,
+        vec![crate::batch::BatchOp::DeleteEdge {
+            src: edge.source,
+            kind: EdgeKind::SameAs,
+            tgt: edge.target,
+        }],
         vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),

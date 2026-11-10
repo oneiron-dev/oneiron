@@ -1,5 +1,6 @@
 //! The claim item (kind 1): a `Generated` claim through the shared claim gate
-//! as the committing actor, held to the derivation floors.
+//! as the committing actor, held to the derivation floors and to that
+//! actor's own read.
 
 use rmpv::Value;
 
@@ -14,6 +15,10 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 /// Stages `claim` in a savepoint of `txn`: first at Auto, then, when the
 /// gate holds it, as a proposal (as the Dreamer's writers do). A refusal
 /// rolls the savepoint back and keeps a refusal receipt in `txn`.
+///
+/// The write goes in the committing actor's read lane, so the gate's
+/// reference check judges the subject and every cited row under that read:
+/// a claim about, or citing, a row its actor does not read is refused.
 ///
 /// # Errors
 ///
@@ -46,6 +51,11 @@ pub(super) fn stage_in_txn(
             source_meet: ClaimSource::Generated,
         },
     ));
+    // The lane an ordinary core write is held to (`Memory::core_write_lane`):
+    // every recorded claim the actor's read reaches, so a proposal an
+    // earlier item of this batch landed still reads to the item citing it.
+    let read = super::actor_read(vault, context.stamp.actor)?
+        .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
     stage_candidate_in_txn(
         vault,
         txn,
@@ -53,6 +63,7 @@ pub(super) fn stage_in_txn(
         &claim.local,
         EntityId::now(),
         &candidate,
+        crate::core_write::CoreWriteLaneRef::Read(&read),
     )
 }
 
@@ -60,6 +71,9 @@ pub(super) fn stage_in_txn(
 /// savepoint of `txn`: first at Auto, then, when the gate holds it, as a
 /// proposal (as the Dreamer's writers do). A refusal rolls the savepoint
 /// back and keeps a refusal receipt in `txn`.
+///
+/// The write goes in `lane`: under a read lane the gate's reference check
+/// refuses a subject or cited row outside that read.
 ///
 /// # Errors
 ///
@@ -71,6 +85,7 @@ pub(super) fn stage_candidate_in_txn(
     local: &str,
     id: EntityId,
     candidate: &ClaimCandidate,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> Result<ItemOutcome> {
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
         let mut envelope = envelope(context, local, approval)?;
@@ -88,7 +103,7 @@ pub(super) fn stage_candidate_in_txn(
                 },
                 context.now,
             )
-            .apply_recording_gate_decisions(&mut savepoint);
+            .apply_recording_gate_decisions_in_lane(&mut savepoint, lane);
         match staged {
             Ok(()) => {
                 savepoint.commit()?;

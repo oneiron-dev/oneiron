@@ -10,7 +10,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
-use oneiron::test_doors::derive::{Derived, Evidence, Named, commit, supports, witness_turn};
+use oneiron::test_doors::derive::{
+    Derived, Evidence, Named, claim_lifecycle, commit, revert, supports, witness_turn,
+};
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
 
@@ -129,5 +131,56 @@ fn evidence_for_a_row_that_is_no_claim_is_refused() {
             false,
             vec!["gate.deny.derive.evidence_head_not_a_claim".to_owned()]
         )
+    );
+}
+
+#[test]
+fn reverting_a_repeated_evidence_item_leaves_the_first_batchs_support() {
+    let fixture = fixture();
+    let turn = witness_turn(&fixture.vault, "my name is Oleksii").expect("a TURN");
+    let attach_as = |run: &str, local: &'static str| {
+        commit(
+            &fixture.vault,
+            fixture.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::Evidence(Evidence {
+                local,
+                head: Named::Stored(fixture.claim),
+                sources: vec![Named::Stored(turn)],
+            })],
+        )
+        .expect("commit")
+    };
+    let first = attach_as("run-evidence-first", "first");
+    assert!(first.items[0].landed, "{:?}", first.items);
+    let [record] = first.items[0].rows.as_slice() else {
+        panic!("one support record: {:?}", first.items);
+    };
+    let repeated = attach_as("run-evidence-repeated", "repeated");
+    assert!(
+        repeated.items[0].landed,
+        "the repeat replays the first assertion: {:?}",
+        repeated.items
+    );
+
+    let (_, left) = revert(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        repeated.batch,
+    )
+    .expect("revert")
+    .expect("the Dreamer may revert its own batch");
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *record).expect("read"),
+        Some("active".to_owned()),
+        "the first batch's support record still stands"
+    );
+    assert!(
+        repeated.items[0].rows.is_empty(),
+        "a replayed support is the first batch's, not the repeat's: {:?}",
+        repeated.items
     );
 }

@@ -294,8 +294,9 @@ pub const MAX_BATCH_ITEMS: usize = 256;
 
 impl DerivationBatch {
     /// Checks the batch's shape: at least one item and no more than
-    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, and every
-    /// local reference naming an earlier item.
+    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
+    /// local reference naming an earlier item, and at most one `about` item
+    /// for a person.
     ///
     /// # Errors
     ///
@@ -308,6 +309,7 @@ impl DerivationBatch {
             return Err(malformed("a derivation batch holds at most 256 items"));
         }
         let mut earlier: BTreeSet<&str> = BTreeSet::new();
+        let mut about_persons: Vec<&ItemRef> = Vec::new();
         for item in &self.items {
             let local = item.local();
             if local.trim().is_empty() {
@@ -326,6 +328,17 @@ impl DerivationBatch {
                 return Err(malformed(
                     "each derivation item's local name is unique in its batch",
                 ));
+            }
+            // A person's `about` row keeps one before-image, so a second
+            // `about` item for the same person would leave a revert of the
+            // batch at the first item's lines, not at the lines before it.
+            if let DerivationItem::PersonAbout(about) = item {
+                if about_persons.contains(&&about.person) {
+                    return Err(malformed(
+                        "a derivation batch holds one about item for a person",
+                    ));
+                }
+                about_persons.push(&about.person);
             }
             for cited in item.cited() {
                 if let ItemRef::Stored(id) = cited
