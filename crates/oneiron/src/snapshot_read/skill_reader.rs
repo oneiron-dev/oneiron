@@ -76,9 +76,16 @@ pub fn skill_library_get_as_reader(
     admitted_view_in_txn(memory, &read, &txn, &policy, &input.entity)?.ok_or_else(not_found)
 }
 
-/// `vault.skills.list` for a caller other than the owner: a page of the
-/// loadable skills it reads, after `after` in the type index. The page, the
-/// admissions and the views read one snapshot.
+/// `vault.skills.list` for a caller other than the owner: a page of up to
+/// `limit` loadable skills it reads, after `after` in the type index. The
+/// page, the admissions and the views read one snapshot.
+///
+/// The page and its cursor hold only skills the caller reads: the scan goes
+/// on past rows the caller does not read until the page is full or the index
+/// ends. `next_after` is the last skill served on a full page and `None` once
+/// the index ends, so a skill the caller does not read is never named, and a
+/// library the caller reads nothing of answers as an empty one
+/// (#6984 review round 1).
 ///
 /// # Errors
 ///
@@ -94,21 +101,36 @@ pub fn skill_library_list_as_reader(
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let ids = vault.entities_by_type_page_in_txn(
-        &txn,
-        ENTITY_TYPE_SKILL,
-        input.after.as_ref(),
-        input.limit,
-    )?;
-    let next_after = ids.last().copied();
     let policy = read.live_policy_manifest_in(&txn)?;
+    let page_size = input.limit.min(crate::vault::MAX_TYPE_QUERY_RESULTS);
     let mut skills = Vec::new();
-    for entity in ids {
-        if let Some(view) = admitted_view_in_txn(memory, &read, &txn, &policy, &entity)? {
-            skills.push(view);
+    let mut scanned_after = input.after;
+    loop {
+        let ids = vault.entities_by_type_page_in_txn(
+            &txn,
+            ENTITY_TYPE_SKILL,
+            scanned_after.as_ref(),
+            page_size,
+        )?;
+        let Some(last_scanned) = ids.last().copied() else {
+            return Ok(SkillLibraryPage {
+                skills,
+                next_after: None,
+            });
+        };
+        for entity in ids {
+            if let Some(view) = admitted_view_in_txn(memory, &read, &txn, &policy, &entity)? {
+                skills.push(view);
+                if skills.len() == page_size {
+                    return Ok(SkillLibraryPage {
+                        skills,
+                        next_after: Some(entity),
+                    });
+                }
+            }
         }
+        scanned_after = Some(last_scanned);
     }
-    Ok(SkillLibraryPage { skills, next_after })
 }
 
 /// `vault.skills.get` on an in-process handle: the embedded owner's read, or
