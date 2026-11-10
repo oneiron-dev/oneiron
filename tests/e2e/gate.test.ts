@@ -5275,7 +5275,8 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     } satisfies FacadeInput<"vault.consent.registry">);
     const museGate11LiveGrantRefs = async (): Promise<string[]> =>
       (await museGate11Registry()).rows.map((row) => row.grant_ref).sort();
-    const museGate11RegistryRow = async (grantRef: string, domain: string) => {
+    type MuseGate11Domain = FacadeResult<"vault.consent.registry">["rows"][number]["domain"];
+    const museGate11RegistryRow = async (grantRef: string, domain: MuseGate11Domain) => {
       const registry = await museGate11Registry();
       const row = registry.rows.find((candidate) => candidate.grant_ref === grantRef);
       if (!row) throw new Error("Standing grant is absent from the consent registry");
