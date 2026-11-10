@@ -127,8 +127,8 @@ fn response_journal_replays_success_and_never_retries_ambiguous_send() {
     assert_eq!(*writes.borrow(), 1);
     assert!(
         restarted
-            .dispatch(
-                [1; 32],
+            .stage_request(
+                &[1; 32],
                 task,
                 &GraphQlCall {
                     query: call.query,
@@ -255,7 +255,7 @@ fn linear_scanned_receipts(vault: &oneiron::Vault) -> Vec<oneiron::receipt::Rece
         .collect()
 }
 
-fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
+fn grant_linear_effects(vault: &oneiron::Vault, scheduler: EntityId, writer: EntityId) {
     use rmpv::Value as V;
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
@@ -281,35 +281,47 @@ fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
         (V::from("rules"), V::Array(vec![])),
         (
             V::from("actor_ceilings"),
-            V::Array(vec![V::Map(vec![
-                (V::from("actor_class"), V::from("agent")),
-                (V::from("actor_ref"), V::from(actor.to_hex())),
-                (V::from("ceiling"), V::from("auto")),
-            ])]),
+            V::Array(vec![
+                V::Map(vec![
+                    (V::from("actor_class"), V::from("system")),
+                    (V::from("actor_ref"), V::from(scheduler.to_hex())),
+                    (V::from("ceiling"), V::from("auto")),
+                ]),
+                V::Map(vec![
+                    (V::from("actor_class"), V::from("human")),
+                    (V::from("actor_ref"), V::from(writer.to_hex())),
+                    (V::from("ceiling"), V::from("auto")),
+                ]),
+            ]),
         ),
         (
             V::from("scoped_grants"),
             V::Array(
-                ["create_issue", "update_issue"]
-                    .iter()
-                    .map(|verb| {
-                        V::Map(vec![
-                            (V::from("actor_ref"), V::from(actor.to_hex())),
-                            (V::from("effector"), V::from(format!("external:{verb}"))),
-                            (V::from("scope"), scope_value.clone()),
-                            (
-                                V::from("selectors"),
-                                V::Map(vec![(V::from("channel"), V::from("linear"))]),
-                            ),
-                        ])
-                    })
-                    .collect(),
+                [
+                    (scheduler, "create_issue"),
+                    (scheduler, "update_issue"),
+                    (writer, "linear_issue_create"),
+                    (writer, "linear_issue_update"),
+                ]
+                .iter()
+                .map(|(who, verb)| {
+                    V::Map(vec![
+                        (V::from("actor_ref"), V::from(who.to_hex())),
+                        (V::from("effector"), V::from(format!("external:{verb}"))),
+                        (V::from("scope"), scope_value.clone()),
+                        (
+                            V::from("selectors"),
+                            V::Map(vec![(V::from("channel"), V::from("linear"))]),
+                        ),
+                    ])
+                })
+                .collect(),
             ),
         ),
     ];
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &V::Map(entries)).expect("encode policy");
-    // The vault's owner installs the policy; its rows name the acting agent.
+    // The vault's owner installs the policy; its rows name the scheduler and writer.
     let owner_id = vault.ensure_embedded_owner_actor().expect("vault owner");
     let owner = vault
         .authenticate_owner(
@@ -329,13 +341,55 @@ fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
         .expect("install policy");
 }
 
+fn linear_task(
+    vault: &oneiron::Vault,
+    writer: EntityId,
+    label: &str,
+    now: u64,
+) -> (EntityId, [u8; 32], oneiron::MirroredTaskFields) {
+    use oneiron::linear_sync::{
+        LinearSyncDirection, LinearTaskStore, VaultLinearTaskStore, linear_operation_id,
+    };
+    let task = vault
+        .memory(writer, oneiron::edge::EdgeActorClass::Human)
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::from(label),
+            Some(label.to_owned()),
+            None,
+            Some(now),
+        ))
+        .expect("mint TASK")
+        .task_ref
+        .expect("TASK minted");
+    let snapshot = VaultLinearTaskStore::new(vault)
+        .task_snapshot(task)
+        .expect("snapshot");
+    let operation_id = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        task,
+        snapshot.revision,
+        None,
+        None,
+        None,
+    );
+    (task, operation_id, snapshot.fields)
+}
+
+fn system_actor(scheduler: EntityId) -> oneiron::outbound::OutboundDispatchActor {
+    oneiron::outbound::OutboundDispatchActor {
+        actor_class: "system".to_owned(),
+        actor_ref: Some(scheduler.to_hex()),
+        actor_entity_ref: Some(scheduler),
+    }
+}
+
 #[test]
 fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     use oneiron::connector_key::{
         CalendarPeriod, ConnectorKeyRecord, EffectorBudget, EffectorBudgetOnExhaust,
         EffectorBudgetWindow,
     };
-    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    use oneiron::outbound::OutboundDispatchGate;
     let dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("responses");
     let vault =
@@ -350,9 +404,17 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
             b"actor",
         )
         .expect("person");
-    grant_linear_effects(&vault, actor);
-    // The TASK the call mutates; the PERSON is the agent acting.
-    let task = live_task(&vault, 0x5b);
+    let scheduler = EntityId::from_bytes([0x59; 16]).expect("scheduler");
+    vault
+        .put_entity(
+            &scheduler,
+            oneiron::registry::ENTITY_TYPE_MACHINE,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("scheduler");
+    grant_linear_effects(&vault, scheduler, actor);
     let key_id = EntityId::from_bytes([0x58; 16]).expect("key");
     vault
         .register_connector_key(
@@ -372,6 +434,9 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
             ),
         )
         .expect("budget");
+    let (task1, op1, fields1) = linear_task(&vault, actor, &fields().title, 100);
+    let (task2, op2, fields2) = linear_task(&vault, actor, &fields().title, 101);
+    let (task3, op3, fields3) = linear_task(&vault, actor, &fields().title, 102);
     let writes = Rc::new(RefCell::new(0));
     let transport = || JournalTransport {
         writes: writes.clone(),
@@ -382,14 +447,14 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         &vault,
         transport(),
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate::allow_when_policy_grants(),
         1000,
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     let first = egress
-        .create_issue([41; 32], task, &fields())
+        .create_issue(op1, task1, &fields1)
         .expect("first dispatch");
     let successful = linear_receipts(&vault);
     assert_eq!(successful.len(), 1);
@@ -398,12 +463,12 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     assert!(content_ref.starts_with("linear:request:v1:"));
     assert!(!content_ref.contains("mutation"));
     let replay = egress
-        .create_issue([41; 32], task, &fields())
+        .create_issue(op1, task1, &fields1)
         .expect("engine replay");
     assert_eq!(first, replay);
     assert_eq!(linear_receipts(&vault), successful);
     assert_eq!(*writes.borrow(), 1);
-    assert!(egress.create_issue([42; 32], task, &fields()).is_err());
+    assert!(egress.create_issue(op2, task2, &fields2).is_err());
     assert_eq!(*writes.borrow(), 1);
     assert_eq!(
         vault
@@ -438,7 +503,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         &vault,
         transport(),
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate {
             has_opted_in: false,
             has_permission: false,
@@ -448,7 +513,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     )
     .expect("denied door");
     let mut denied = LinearHostEgress::new(denied, config()).expect("egress");
-    assert!(denied.create_issue([43; 32], task, &fields()).is_err());
+    assert!(denied.create_issue(op3, task3, &fields3).is_err());
     assert_eq!(*writes.borrow(), 1);
     let denied_receipts = linear_receipts(&vault);
     assert_eq!(denied_receipts.len(), 3);
@@ -484,7 +549,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         &reopened,
         transport(),
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate::allow_when_policy_grants(),
         1002,
     )
@@ -492,7 +557,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     let mut resumed = LinearHostEgress::new(resumed, config()).expect("egress");
     assert_eq!(
         resumed
-            .create_issue([41; 32], task, &fields())
+            .create_issue(op1, task1, &fields1)
             .expect("durable replay"),
         first
     );
@@ -502,7 +567,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
 
 #[test]
 fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_restart() {
-    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    use oneiron::outbound::OutboundDispatchGate;
     let dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("responses");
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
@@ -516,9 +581,19 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
             b"actor",
         )
         .expect("person");
-    grant_linear_effects(&vault, actor);
-    // The TASK the call mutates; the PERSON is the agent acting.
-    let task = live_task(&vault, 0x6b);
+    let scheduler = EntityId::from_bytes([0x59; 16]).expect("scheduler");
+    vault
+        .put_entity(
+            &scheduler,
+            oneiron::registry::ENTITY_TYPE_MACHINE,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("scheduler");
+    grant_linear_effects(&vault, scheduler, actor);
+    // The TASK the call mutates; the PERSON is its verified writer.
+    let (task, op, mirror_fields) = linear_task(&vault, actor, &fields().title, 100);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
     let failed = JournalTransport {
@@ -530,13 +605,13 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
         &vault,
         failed,
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate::allow_when_policy_grants(),
         1000,
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
-    assert!(egress.create_issue([44; 32], task, &fields()).is_err());
+    assert!(egress.create_issue(op, task, &mirror_fields).is_err());
     assert_eq!(*calls.borrow(), 1);
     let recorded = linear_receipts(&vault);
     assert_eq!(recorded.len(), 1);
@@ -570,13 +645,13 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
         &reopened,
         healthy,
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate::allow_when_policy_grants(),
         1000,
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
-    assert!(egress.create_issue([44; 32], task, &fields()).is_err());
+    assert!(egress.create_issue(op, task, &mirror_fields).is_err());
     assert_eq!(*calls.borrow(), 1);
     assert_eq!(*writes.borrow(), 0);
     assert_eq!(linear_receipts(&reopened), recorded);
@@ -584,11 +659,11 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
 
 #[test]
 fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
-    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    use oneiron::outbound::OutboundDispatchGate;
     fn make<'a>(
         vault: &'a oneiron::Vault,
         responses: &tempfile::TempDir,
-        actor: EntityId,
+        scheduler: EntityId,
         calls: &Rc<RefCell<usize>>,
         writes: &Rc<RefCell<usize>>,
         failure: Option<GraphQlTransportError>,
@@ -603,7 +678,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
             vault,
             transport,
             responses.path().to_path_buf(),
-            OutboundDispatchActor::agent(actor),
+            system_actor(scheduler),
             OutboundDispatchGate::allow_when_policy_grants(),
             now,
         )
@@ -622,16 +697,26 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
             b"actor",
         )
         .expect("person");
-    grant_linear_effects(&vault, actor);
-    // The TASK the call mutates; the PERSON is the agent acting.
-    let task = live_task(&vault, 0x6c);
+    let scheduler = EntityId::from_bytes([0x59; 16]).expect("scheduler");
+    vault
+        .put_entity(
+            &scheduler,
+            oneiron::registry::ENTITY_TYPE_MACHINE,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("scheduler");
+    grant_linear_effects(&vault, scheduler, actor);
+    // The TASK the call mutates; the PERSON is its verified writer.
+    let (task, op, mirror_fields) = linear_task(&vault, actor, &fields().title, 100);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
     let mut first = LinearHostEgress::new(
         make(
             &vault,
             &responses,
-            actor,
+            scheduler,
             &calls,
             &writes,
             Some(GraphQlTransportError::NotSent),
@@ -640,7 +725,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         config(),
     )
     .expect("egress");
-    assert!(first.create_issue([45; 32], task, &fields()).is_err());
+    assert!(first.create_issue(op, task, &mirror_fields).is_err());
     assert_eq!(*calls.borrow(), 1);
     let definite = linear_receipts(&vault);
     assert_eq!(definite.len(), 1);
@@ -657,7 +742,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         make(
             &vault,
             &responses,
-            actor,
+            scheduler,
             &calls,
             &writes,
             Some(GraphQlTransportError::Uncertain),
@@ -666,7 +751,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         config(),
     )
     .expect("egress");
-    assert!(second.create_issue([45; 32], task, &fields()).is_err());
+    assert!(second.create_issue(op, task, &mirror_fields).is_err());
     assert_eq!(*calls.borrow(), 2);
     let outcomes = linear_receipts(&vault);
     assert_eq!(
@@ -693,11 +778,11 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
     let reopened =
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
     let mut replay = LinearHostEgress::new(
-        make(&reopened, &responses, actor, &calls, &writes, None, 1002),
+        make(&reopened, &responses, scheduler, &calls, &writes, None, 1002),
         config(),
     )
     .expect("egress");
-    assert!(replay.create_issue([45; 32], task, &fields()).is_err());
+    assert!(replay.create_issue(op, task, &mirror_fields).is_err());
     assert_eq!(
         *calls.borrow(),
         2,
@@ -710,7 +795,7 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
 
 #[test]
 fn interrupted_request_staging_retries_same_operation_after_restart() {
-    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    use oneiron::outbound::OutboundDispatchGate;
     use std::io::Write;
     let vault_dir = tempfile::tempdir().expect("vault");
     let responses = tempfile::tempdir().expect("host response custody");
@@ -726,15 +811,33 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
             b"actor",
         )
         .expect("person");
-    grant_linear_effects(&vault, actor);
-    // The TASK the call mutates; the PERSON is the agent acting.
-    let task = live_task(&vault, 0x6d);
+    let scheduler = EntityId::from_bytes([0x59; 16]).expect("scheduler");
+    vault
+        .put_entity(
+            &scheduler,
+            oneiron::registry::ENTITY_TYPE_MACHINE,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("scheduler");
+    grant_linear_effects(&vault, scheduler, actor);
+    // The TASK the call mutates; the PERSON is its verified writer.
+    let (task, op, mirror_fields) = linear_task(&vault, actor, &fields().title, 100);
     let calls = Rc::new(RefCell::new(0));
     let writes = Rc::new(RefCell::new(0));
-    let op = [46; 32];
+    let tracker = config();
     let call = GraphQlCall {
         query: crate::egress::CREATE,
-        variables: json!({"input":{"teamId":"team-1"}}),
+        variables: json!({"input": {
+            "title": mirror_fields.title,
+            "description": mirror_fields.description,
+            "priority": mirror_fields.priority,
+            "stateId": tracker.status_ids.get(&mirror_fields.status).expect("mapped status"),
+            "assigneeId": mirror_fields.assignee_ref.as_ref()
+                .map(|reference| tracker.assignee_ids.get(reference).expect("mapped assignee")),
+            "teamId": tracker.team_id,
+        }}),
     };
     let journal = crate::journal::LinearResponseJournal::new(
         &vault,
@@ -782,14 +885,14 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
             failure: None,
         },
         responses.path().to_path_buf(),
-        OutboundDispatchActor::agent(actor),
+        system_actor(scheduler),
         OutboundDispatchGate::allow_when_policy_grants(),
         1000,
     )
     .expect("door");
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     let created = egress
-        .create_issue(op, task, &fields())
+        .create_issue(op, task, &mirror_fields)
         .expect("safe retry");
     assert_eq!(created.issue.issue_id, "created");
     assert_eq!(*calls.borrow(), 1);
@@ -798,10 +901,10 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     assert!(door.request_by_ref(&reference).expect("resolve").is_some());
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     assert_eq!(
-        egress.create_issue(op, task, &fields()).expect("replay"),
+        egress.create_issue(op, task, &mirror_fields).expect("replay"),
         created
     );
-    let mut altered = fields();
+    let mut altered = mirror_fields.clone();
     altered.title = "changed payload".into();
     assert!(egress.create_issue(op, task, &altered).is_err());
     assert_eq!(*calls.borrow(), 1);
