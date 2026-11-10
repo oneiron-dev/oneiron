@@ -157,11 +157,6 @@ impl LlmBackend for ScopeBackend {
         self.inner.stream(request, lease)
     }
 }
-impl crate::llm::SingleRouteBackend for ScopeBackend {
-    fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
-        crate::llm::SingleRouteBackend::preflight(&self.inner, request, stream)
-    }
-}
 
 #[test]
 fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()> {
