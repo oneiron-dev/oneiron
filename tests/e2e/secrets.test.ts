@@ -376,9 +376,10 @@ async function secrets03Call<V extends FacadeVerb>(
     { "x-oneiron-invocation": crypto.randomUUID().replaceAll("-", "") });
   secrets03ObserveWire(reply, secrets03ScanBytes);
   const secrets03Code = secrets03ErrorCode(reply.body);
+  const secrets03Message = secrets03ErrorMessage(reply.body);
   expect({ check: `SECRETS-03 facade ${verb} returns HTTP 200`, status: reply.status, code: secrets03Code,
-    ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 facade ${verb} returns HTTP 200`,
-    status: 200, code: secrets03Code, ok: true });
+    message: secrets03Message, ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 facade ${verb} returns HTTP 200`,
+    status: 200, code: secrets03Code, message: secrets03Message, ok: true });
   return reply.body;
 }
 function secrets03ErrorCode(body: unknown): string {
@@ -387,6 +388,14 @@ function secrets03ErrorCode(body: unknown): string {
   if (!error || typeof error !== "object" || Array.isArray(error)) return "no-envelope";
   const code = (error as Record<string, unknown>).code;
   return typeof code === "string" ? redactor.text(code) : "no-code";
+}
+// The refusal's message, redacted, so a red names why (no secret survives the redactor).
+function secrets03ErrorMessage(body: unknown): string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "unparsed-body";
+  const error = (body as Record<string, unknown>).error;
+  if (!error || typeof error !== "object" || Array.isArray(error)) return "no-envelope";
+  const message = (error as Record<string, unknown>).message;
+  return typeof message === "string" ? redactor.text(message).slice(0, 300) : "no-message";
 }
 function secrets03SafeText(value: unknown): string {
   return typeof value === "string" ? redactor.text(value) : String(value);
@@ -488,9 +497,10 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       const reply = await owner.raw<T>(method, path, body);
       secrets03ObserveWire(reply, secrets03ScanBytes);
       const secrets03OwnerCode = secrets03ErrorCode(reply.body);
+      const secrets03OwnerMessage = secrets03ErrorMessage(reply.body);
       expect({ check: `SECRETS-03 owner ${method} ${path} returns HTTP 200`, status: reply.status,
-        code: secrets03OwnerCode, ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 owner ${method} ${path} returns HTTP 200`,
-        status: 200, code: secrets03OwnerCode, ok: true });
+        code: secrets03OwnerCode, message: secrets03OwnerMessage, ok: reply.status === 200 }).toEqual({ check: `SECRETS-03 owner ${method} ${path} returns HTTP 200`,
+        status: 200, code: secrets03OwnerCode, message: secrets03OwnerMessage, ok: true });
       return reply.body;
     };
     const secrets03Gate = async (ref: string): Promise<void> => {
