@@ -269,6 +269,7 @@ const BACKGROUND_LITERALS: readonly string[] = [
   '{"contentHash": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:15ab715ae6fc567ee6217ddd3232b4e6513a2b180fcca469d6bfdaac7e8efd9d", "pin": {"type": "content_hash", "value": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c"}}}',
   'Interview a human for a typed project goal record and commit it via authenticated intake.',
   'Judge agent health from receipts with closed-form detectors and seeded dials.',
+  'Compare skill revisions against a fixed rubric using held-out cases.',
   "Render one reader's weave report as a short, readable lens over the items their own read admitted.",
 ];
 // contentHashes of the 14 observed skill rows (5 bootstrap + 9 pack).
@@ -958,7 +959,8 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
   const providers = await ScriptedProviders.start({ id: "retrieval-effort",
-    steps: [rerankStep("high"), rerankStep("xhigh"), rerankStep("max"), rerankStep("deadline-base")] });
+    // The deadline leg never reaches the rerank stage (HyDE is cut first), so it has no rerank step.
+    steps: [rerankStep("high"), rerankStep("xhigh"), rerankStep("max")] });
   const engine = await EngineFixture.start({ id: "RETRIEVAL-05", profile,
     initArgs: ["--dimensions", "4"], serverConfig: rerankConfig(providers.urls.reranker!) });
   let primaryFailed: boolean = false;
@@ -1015,7 +1017,11 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     const reply = await delivery;
     readReceipt(reply.body.narrowing);
     expect(reply.body.retrieval_meta.partial).toBe(true);
-    expect(sorted(reply.body.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
+    // The deadline pack is the best admitted owner pack (P-RECALL-006), so other admitted claims may
+    // fill the limit; the authored rows must be present and lead it (FIX 22300).
+    const deliveredRefs = reply.body.items.map(item => item.short_id);
+    for (const row of rows) expect(deliveredRefs).toContain(row.ref);
+    expect(deliveredRefs.slice(0, rows.length).sort()).toEqual(sorted(rows.map(row => row.ref)));
     expect(reply.raw).not.toContain(fixture.lateAnswer);
     const bytes = new Uint8Array(reply.bytes);
     const delivered = JSON.stringify(reply.body);
@@ -1614,6 +1620,9 @@ async function clusterTool<V extends ClusterVerb>(engine: EngineFixture, verb: V
 }
 
 /* RETRIEVAL-10: MCP cohorts, rejected judgments, then receipted merge/split. */
+/* RETRIEVAL-10 is a budget case: its full judgment journey (five claims, four structural puts, ten
+ * MCP tool calls) exceeded the 30 s flow on gce-ci-2 (job 3, 10 Nov). Its stated bound is 90 s
+ * until it is measured; it belongs to the nightly tier. */
 suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should work", async () => {
   const fixture = await scenario<{
     clusters: Record<string, string[]>; ambiguousBridge: string;
@@ -1734,7 +1743,7 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
     }
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
-});
+}, 90_000);
 
 async function retrieval11OwnerRefusal(engine: EngineFixture, client: PublicHttpClient,
   verb: "vault.claims.review" | "vault.claims.settle" | "vault.consolidation.evidence",
