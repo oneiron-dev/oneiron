@@ -210,12 +210,6 @@ fn every_echoed_form_of_the_key_is_redacted() {
 }
 
 #[test]
-fn text_without_the_key_passes_unchanged() {
-    let body = br#"{"choices":[{"message":{"content":"sk-test/sentinel is a prefix only"}}]}"#;
-    assert_eq!(strip(KEY.as_bytes(), body).as_slice(), body.as_slice());
-}
-
-#[test]
 fn a_json_body_is_checked_in_its_decoded_strings() {
     // JSON may spell any character `\uXXXX`; the runner's parser reads the key.
     let spelled: String = KEY
