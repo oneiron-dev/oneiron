@@ -586,3 +586,331 @@ fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
         "{drain:?}"
     );
 }
+
+/// Review #6982 round 2 (F1): a Proposed CLAIM served by the recorded lane wakes its feed
+/// program once, even though the default Surfaceable lane would withhold it.
+#[test]
+fn a_feed_program_wakes_for_a_proposed_claim_it_is_shown() {
+    use oneiron::registry::ENTITY_TYPE_CLAIM;
+    use oneiron::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let lane = vault.scoped_read(fixture.reader_key());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_CLAIM],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe to claim changes")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("settle arming");
+    drain(&vault, T0);
+
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "fixture.proposed",
+        ClaimSubject::Entity(fixture.owner),
+        rmpv::Value::from("a proposed claim"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("build the proposed claim");
+    vault
+        .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("put the proposed claim");
+
+    let recorded = lane.recorded_lane().expect("the owner's recorded lane");
+    let FeedRead::Page(page) = vault
+        .feed_read(
+            &recorded,
+            &FeedReadRequest {
+                subscription,
+                limit: None,
+            },
+        )
+        .expect("read proposed claim changes")
+    else {
+        panic!("the claim subscription returns a page");
+    };
+    assert!(
+        page.entries.iter().any(|entry| entry.entity == claim),
+        "the recorded lane is shown the proposed claim: {page:?}"
+    );
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        1,
+        "a proposed claim the recorded lane is shown wakes its program"
+    );
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release again"),
+        0,
+        "the same proposed claim wakes its program only once"
+    );
+}
+
+fn put_diary(vault: &Vault, author: EntityId, markdown: &str) -> EntityId {
+    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+
+    let receipt = vault
+        .memory(author, EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: author },
+            markdown: markdown.into(),
+            source_revision_ref: [0x7a; 16],
+            mask: None,
+        })
+        .expect("author a private diary note");
+    EntityId::from_hex(&receipt.id_hex).expect("the diary receipt's note id")
+}
+
+// Both endpoints are readable through a different, consented pair. That pair must not
+// authorize the edge this test will add between the owner's other diary and the foreign one.
+fn readable_diary_pair(vault: &Vault, fixture: &Fixture) -> (EntityId, EntityId, EntityId) {
+    let other_author = EntityId::now();
+    vault
+        .put_entity(
+            &other_author,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"other diary author",
+        )
+        .expect("put the other diary author");
+    let owner_diary = put_diary(vault, fixture.owner, "the owner's separate private thought");
+    let other_diary = put_diary(vault, other_author, "the other author's private thought");
+    let consented_diary = put_diary(vault, fixture.owner, "the owner's consented private thought");
+    let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let other = vault.memory(other_author, EdgeActorClass::Human);
+    owner
+        .link_diary_coreference(consented_diary, other_diary)
+        .expect("link the separate consented diary pair");
+    owner
+        .grant_diary_coreference(consented_diary, other_diary)
+        .expect("the owner's consent for the separate pair");
+    other
+        .grant_diary_coreference(consented_diary, other_diary)
+        .expect("the other author's consent for the separate pair");
+    (other_author, owner_diary, other_diary)
+}
+
+fn read_feed_page(
+    vault: &Vault,
+    lane: &oneiron::claim::ScopedRead<'_>,
+    subscription: EntityId,
+) -> oneiron::feeds::FeedPage {
+    let FeedRead::Page(page) = vault
+        .feed_read(
+            lane,
+            &FeedReadRequest {
+                subscription,
+                limit: None,
+            },
+        )
+        .expect("read the feed page")
+    else {
+        panic!("the live subscription returns a page");
+    };
+    page
+}
+
+fn feed_has_diary_pair(page: &oneiron::feeds::FeedPage, a: EntityId, b: EntityId) -> bool {
+    page.entries.iter().any(|entry| {
+        entry.edge.as_ref().is_some_and(|edge| {
+            edge.kind == oneiron::EdgeKind::SameAs.name()
+                && ((edge.source == a && edge.target == b)
+                    || (edge.source == b && edge.target == a))
+        })
+    })
+}
+
+/// Review #6981 round 1, finding 1 (F2): a SameAs edge between different authors' diaries
+/// is withheld in both directions without that pair's consent, even when both ends are readable.
+#[test]
+fn an_edge_between_diaries_without_their_consent_is_not_in_the_feed() {
+    use oneiron::registry::ENTITY_TYPE_NOTE;
+
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let (_other_author, note_a, note_b) = readable_diary_pair(&vault, &fixture);
+    let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let lane = vault.scoped_read(owner.read_key().expect("the owner's read key"));
+    assert!(
+        lane.is_entity_readable(&note_a)
+            .expect("read the owner's diary"),
+        "the owner is shown the first endpoint before the unconsented link"
+    );
+    assert!(
+        lane.is_entity_readable(&note_b)
+            .expect("read the other diary"),
+        "the separate consented pair makes the second endpoint readable"
+    );
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Edges],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_NOTE],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe to diary edges")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("settle arming");
+    drain(&vault, T0);
+
+    owner
+        .link_diary_coreference(note_a, note_b)
+        .expect("link the diary pair without its consent");
+    let (left, right) = if note_a < note_b {
+        (note_a, note_b)
+    } else {
+        (note_b, note_a)
+    };
+    assert!(
+        vault
+            .edge_exists(&left, oneiron::EdgeKind::SameAs, &right)
+            .expect("read the stored diary link"),
+        "the opaque link acknowledgement really stored the unconsented pair"
+    );
+    let page = read_feed_page(&vault, &lane, subscription);
+    assert!(
+        !feed_has_diary_pair(&page, note_a, note_b),
+        "neither direction of the unconsented diary pair is in the feed: {page:?}"
+    );
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        0,
+        "the unconsented pair wakes no program despite readable endpoints"
+    );
+}
+
+/// Review #6981 round 1, findings 1 and 2 (F2/F3): exact mutual consent reveals a diary
+/// edge already scanned while hidden, and wakes it once within four releases with no new edge.
+#[test]
+fn an_edge_between_diaries_is_shown_once_they_consent_and_wakes_the_program() {
+    use oneiron::registry::ENTITY_TYPE_NOTE;
+
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let (other_author, note_a, note_b) = readable_diary_pair(&vault, &fixture);
+    let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let other = vault.memory(other_author, EdgeActorClass::Human);
+    let lane = vault.scoped_read(owner.read_key().expect("the owner's read key"));
+    assert!(
+        lane.is_entity_readable(&note_a)
+            .expect("read the owner's diary"),
+        "the owner is shown the first endpoint before the unconsented link"
+    );
+    assert!(
+        lane.is_entity_readable(&note_b)
+            .expect("read the other diary"),
+        "the separate consented pair makes the second endpoint readable"
+    );
+    let request = FeedSubscribeRequest {
+        selector: FeedSelector {
+            sources: vec![FeedSource::Edges],
+            kinds: Vec::new(),
+            entity_types: vec![ENTITY_TYPE_NOTE],
+            predicates: Vec::new(),
+        },
+        start: FeedStart::Head,
+    };
+    let subscription = vault
+        .feed_subscribe(&lane, &request)
+        .expect("subscribe to diary edges")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("settle arming");
+    drain(&vault, T0);
+
+    owner
+        .link_diary_coreference(note_a, note_b)
+        .expect("link the diary pair before its consent");
+    let (left, right) = if note_a < note_b {
+        (note_a, note_b)
+    } else {
+        (note_b, note_a)
+    };
+    assert!(
+        vault
+            .edge_exists(&left, oneiron::EdgeKind::SameAs, &right)
+            .expect("read the stored diary link"),
+        "the row exists before the wake scan passes it"
+    );
+    let hidden = read_feed_page(&vault, &lane, subscription);
+    assert!(
+        !feed_has_diary_pair(&hidden, note_a, note_b),
+        "the pair is hidden before consent despite readable endpoints: {hidden:?}"
+    );
+    assert_eq!(
+        vault
+            .release_feed_program_wakes(T0)
+            .expect("scan the hidden edge"),
+        0,
+        "the program scans past the hidden edge without a wake"
+    );
+
+    let after_link = vault
+        .feed_subscribe(&lane, &request)
+        .expect("watch for any new diary edge after the link")
+        .subscription;
+    owner
+        .grant_diary_coreference(note_a, note_b)
+        .expect("the owner's consent for this exact pair");
+    let unilateral = read_feed_page(&vault, &lane, subscription);
+    assert!(
+        !feed_has_diary_pair(&unilateral, note_a, note_b),
+        "one author's consent does not reveal the pair: {unilateral:?}"
+    );
+    assert_eq!(
+        vault
+            .release_feed_program_wakes(T0)
+            .expect("release after one consent"),
+        0,
+        "one author's consent wakes nothing"
+    );
+    other
+        .grant_diary_coreference(note_b, note_a)
+        .expect("the other author's consent for this exact pair");
+    let new_edges = read_feed_page(&vault, &lane, after_link);
+    assert!(
+        new_edges.entries.is_empty(),
+        "consent writes no new edge the selector takes: {new_edges:?}"
+    );
+    let shown = read_feed_page(&vault, &lane, subscription);
+    assert!(
+        feed_has_diary_pair(&shown, note_a, note_b),
+        "both consents reveal the original edge without acknowledging it: {shown:?}"
+    );
+
+    let mut woken = Vec::new();
+    for _ in 0..4 {
+        woken.push(
+            vault
+                .release_feed_program_wakes(T0)
+                .expect("rejudge the scanned edge"),
+        );
+    }
+    assert_eq!(
+        woken.iter().sum::<usize>(),
+        1,
+        "the newly shown, already scanned edge wakes its program once: {woken:?}"
+    );
+}
