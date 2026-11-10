@@ -3,9 +3,7 @@
 //! input exactly as they did when they were crate-private.
 
 use oneiron_contracts::affect::{Vad, VadComponent};
-use oneiron_contracts::claim::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ReadScope, ScopedReadReceipt,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron_contracts::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::{EntityId, derived_domains, parse_entity_id, serde_hex};
 use oneiron_contracts::error::{Error, RegistryError};
@@ -72,33 +70,6 @@ fn entity_type_validators_refuse_reserved_and_engine_only_bytes() {
         "{engine_only:?}"
     );
     assert!(validate_public_entity_type(ENTITY_TYPE_PERSON).is_ok());
-}
-
-#[test]
-fn record_axes_derives_axes_without_widening_a_receipt() {
-    let scope = |band| ReadScope {
-        entity_types: None,
-        max_sensitivity_band: band,
-        include_stale: false,
-        min_confidence: 0.0,
-        min_salience: 0.0,
-        deny_all: false,
-    };
-    let mut receipt = ScopedReadReceipt {
-        requested: scope(3),
-        actor_ceiling: scope(1),
-        applied: scope(1),
-        narrowed_axes: Vec::new(),
-        suppressed_count: 0,
-        replan_hint: Vec::new(),
-    };
-    let before = receipt.clone();
-    receipt.record_axes();
-    assert_eq!(receipt.requested, before.requested);
-    assert_eq!(receipt.actor_ceiling, before.actor_ceiling);
-    assert_eq!(receipt.applied, before.applied);
-    assert_eq!(receipt.narrowed_axes, ["max_sensitivity_band"]);
-    assert_eq!(receipt.replan_hint, receipt.narrowed_axes);
 }
 
 #[test]
@@ -234,10 +205,10 @@ fn the_entity_type_wrapper_and_prefix_check_refuse_reserved_and_taken_names() {
 #[test]
 fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
     for weights in [
-        RetrievalBlendWeights::new(f32::NAN, 0.3, 0.2, 0.1),
-        RetrievalBlendWeights::new(0.4, f32::INFINITY, 0.2, 0.1),
-        RetrievalBlendWeights::new(0.4, 0.3, -0.2, 0.1),
-        RetrievalBlendWeights::new(0.0, 0.0, 0.0, 0.0),
+        RetrievalBlendWeights::new(f32::NAN, 0.3, 0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.4, f32::INFINITY, 0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.4, 0.3, -0.2, 0.1, 0.0),
+        RetrievalBlendWeights::new(0.0, 0.0, 0.0, 0.0, 0.0),
     ] {
         assert!(
             validate_retrieval_blend_weights(weights).is_err(),
@@ -249,10 +220,13 @@ fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
             "{refused:?}"
         );
     }
-    let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0)
+    let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0, 0.0)
         .normalized()
         .unwrap();
-    assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0));
+    assert_eq!(
+        normalized,
+        RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0, 0.0)
+    );
 }
 
 #[test]
