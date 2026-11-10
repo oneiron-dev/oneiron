@@ -7,9 +7,9 @@ use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::ProposalSpoolFloor;
-use crate::code_sandbox::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::code_sandbox::source::prepare_source;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
+use crate::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
