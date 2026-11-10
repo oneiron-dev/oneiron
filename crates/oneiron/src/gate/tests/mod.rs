@@ -45,8 +45,6 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
-// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
-#[cfg(any())]
 mod consolidation_readers;
 mod credential_lifetimes;
 mod critical_confirm_holds;
