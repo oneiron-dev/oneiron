@@ -208,6 +208,17 @@ fn edge_provenance_claim_body_with(
     edge_ref.extend_from_slice(&[0x11; 16]);
     edge_ref.push(EdgeKind::Mentions as u8);
     edge_ref.extend_from_slice(&[0x22; 16]);
+    // FIX 8909: the write door deleted the legacy evid carrier; the validated
+    // class persists as the value-record actor_class key (0 = human). A caller
+    // passing evid=None forges the missing-class shape: no injection.
+    let val = match (val, evid.is_some()) {
+        (rmpv::Value::Map(mut record), true) => {
+            record.push((rmpv::Value::from("actor_class"), rmpv::Value::from(0u8)));
+            rmpv::Value::Map(record)
+        }
+        (val, _) => val,
+    };
+    let _ = evid; // never emitted: both-places fails closed, record-only passes
     let mut entries = vec![
         (
             rmpv::Value::from("pred"),
@@ -215,10 +226,25 @@ fn edge_provenance_claim_body_with(
         ),
         (rmpv::Value::from("val"), val),
         (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
+        // FIX 7761: D18 requires the band and basis beside conf (house mapping:
+        // certain >= 0.9, high >= 0.7, medium >= 0.4, else low).
+        (
+            rmpv::Value::from("confBand"),
+            rmpv::Value::from(if conf >= 0.9 {
+                "certain"
+            } else if conf >= 0.7 {
+                "high"
+            } else if conf >= 0.4 {
+                "medium"
+            } else {
+                "low"
+            }),
+        ),
+        (
+            rmpv::Value::from("confBasis"),
+            rmpv::Value::from("deterministic_fallback"),
+        ),
     ];
-    if let Some(evid) = evid {
-        entries.push((rmpv::Value::from("evid"), evid));
-    }
     if let Some(from) = valid_from {
         entries.push((rmpv::Value::from("from"), rmpv::Value::from(from)));
     }

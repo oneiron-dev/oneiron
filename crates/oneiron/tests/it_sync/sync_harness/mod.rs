@@ -72,6 +72,8 @@ pub(crate) fn test_config_with_embedding() -> VaultConfig {
 pub(crate) fn open_vault_with_memory_keystore(path: &std::path::Path, cfg: VaultConfig) -> Vault {
     let vault = Vault::open(path, cfg).unwrap();
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // P6c (96df97d2238): load the install signer before replay enters a transaction.
+    vault.prepare_install_signing().unwrap();
     vault
 }
 

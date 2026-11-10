@@ -56,6 +56,10 @@ fn test_config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
+    // FIX 7957/9599 (604f9388019): isolate subject-month work from bootstrap notifications.
+    for key in vault.sync_state_keys_with_prefix("lm:w:1970-01:").unwrap() {
+        vault.sync_state_delete(&key).unwrap();
+    }
     (dir, vault)
 }
 
@@ -146,6 +150,8 @@ fn hard_delete_routes_through_live_window_doc_with_carrier_15_scrub() {
     let (_dir, vault) = open_vault();
     let id = EntityId::now();
     let (manager, window) = open_routed_window(&vault, "node-a", &id, b"live-route-secret");
+    // FIX 3787/5133 (a0d15200af5, b7a4b1fe82d): checkpoint recovery before the payload delta.
+    window.persist_state(&vault).unwrap();
     let hex_id = id.to_hex();
 
     // A post-open commit so the window has a payload-carrying `u:` row to
@@ -397,6 +403,25 @@ fn production_open_window_replays_pending_tombstones_before_mirrors() {
     setup
         .get_map("entities")
         .insert(bystander.to_hex().as_str(), bystander_blob.as_slice())
+        .unwrap();
+    // FIX 7774 (d2423e39bbc): pre-carry the bystander's birth edge, not recovery work.
+    let birth_facet = vault.default_facet().unwrap();
+    let birth_key = oneiron::sync::bridge::format_edge_key(
+        &bystander,
+        oneiron::EdgeKind::FacetOf,
+        &birth_facet,
+    );
+    let birth_value = oneiron::sync::bridge::encode_edge_value_for_crdt(
+        oneiron::EdgeKind::FacetOf,
+        1.0,
+        LEARNED_AT,
+        None,
+        None,
+    )
+    .unwrap();
+    setup
+        .get_map("edges")
+        .insert(birth_key.as_str(), birth_value.as_slice())
         .unwrap();
     setup.commit();
     vault

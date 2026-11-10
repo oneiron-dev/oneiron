@@ -109,6 +109,8 @@ fn receipt_body_entries(scope_entity_hex: &str) -> Vec<(Value, Value)> {
         ("sweep_queued_at".into(), Value::Nil),
         ("sweep_complete_at".into(), Value::Nil),
         ("affected_revision_ids".into(), Value::Array(vec![])),
+        ("erase_complete_at".into(), Value::Nil),
+        ("custody_retirements".into(), Value::Array(vec![])),
         ("verification".into(), Value::Map(vec![])),
     ]
 }

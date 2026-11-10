@@ -154,6 +154,15 @@ fn write_rung0_fixture(vault: &Vault) -> Result<Rung0Fixture> {
             &fixture.graph_claim,
             about_weight,
         )
+        // FIX 10024/10046 (8c949422af9 #4178): a CLAIM-filtered walk drops the
+        // invisible PERSON seed, so reach the golden claim from a visible CLAIM
+        // source over a real hop instead of teleport self-mass.
+        .edge(
+            &fixture.lexical_claim,
+            EdgeKind::Mentions,
+            &fixture.graph_claim,
+            0.6,
+        )
         .commit()?;
 
     for id in fixture.claims() {
@@ -190,7 +199,7 @@ fn run_model_free_channels(vault: &Vault, fixture: &Rung0Fixture) -> Result<Vec<
         .run_with_pending_vectors()?;
     let graph = vault
         .query()
-        .search_ppr(&[fixture.graph_seed], 1)
+        .search_ppr(&[fixture.lexical_claim], 1)
         .filter_types(&[ENTITY_TYPE_CLAIM])
         .limit(QUERY_LIMIT)
         .run_with_pending_vectors()?;

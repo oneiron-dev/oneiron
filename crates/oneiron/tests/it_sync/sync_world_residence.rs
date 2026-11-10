@@ -266,6 +266,20 @@ fn cross_month_world_edges_in_both_directions_stage_until_the_other_month_arrive
         )
         .unwrap();
     }
+    // FIX 7757/7774 (d2423e39bbc): a world-subject CLAIM needs its substrate FACET row.
+    let world_facet = oneiron::claim::substrate_facet_id(world).expect("world substrate facet");
+    source
+        .put_entity(
+            &world_facet,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            TimeRange {
+                start: jan,
+                end: jan,
+            },
+            jan,
+            b"world-substrate-facet",
+        )
+        .expect("world substrate facet row");
     for (id, at) in [(january, jan), (february, feb)] {
         let mut body = ClaimBody::new(
             "test.two_month_cycle",

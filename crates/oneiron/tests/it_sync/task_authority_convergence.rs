@@ -262,9 +262,12 @@ impl TaskPair {
         // an Auto ceiling, so `tasks.create` takes direct effect instead of
         // parking a proposal. It is authored on node A and reaches node B the
         // same way everything else here does — by replicating.
-        let owner = EntityId::from_bytes([0xE1; 16]).unwrap();
-        a.vault
-            .put_entity(&owner, ENTITY_TYPE_PERSON, time_range(now), now, b"owner")
+        // FIX (a32044b3d27 #1307, 8a5feef95bd #1373): owner acts revalidate live
+        // vault ownership at commit, so use the embedded owner actor instead of
+        // a synthetic PERSON that authenticates but owns nothing.
+        let owner = a
+            .vault
+            .ensure_embedded_owner_actor()
             .expect("store the owner actor");
         converge(&a, &b, &window);
         // Each device holds the owner's standing cancel grant: the authority to
