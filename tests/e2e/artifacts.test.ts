@@ -496,7 +496,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   const museLoop07Registered = await engine.client.call("vault.artifacts.put", {
     name: `muse-loop-07-${museLoop07Marker}.txt`, media_type: "text/plain", occurred_at: museLoop07T0 + 1,
   });
-  const museLoop07ArtifactRef = museLoop07Registered.entity_ref;
+  const museLoop07ArtifactRef = museLoop07Registered.id_hex;
   const museLoop07RegisteredArtifact = await engine.client.call("vault.get", {
     entity_ref: museLoop07ArtifactRef,
   });
@@ -563,10 +563,13 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
     artifact_ref: museLoop07ArtifactRef, proposal_ref: museLoop07Proposal.proposal_ref,
   };
   const museLoop07ProposerKeepRefusal = await museLoop07FacadeRefusal(
-    () => museLoop07Agent.client.call("vault.artifacts.keep", museLoop07Settle1),
+    () => museLoop07Agent.client.call("vault.artifacts.keep", {
+      ...museLoop07Settle1, brief_ref: `brief:muse-loop-07-${museLoop07Marker}`,
+    }),
     "Proposer Keep of its own proposal",
   );
-  museLoop07ExpectHttpRefusal(museLoop07ProposerKeepRefusal, 403);
+  // A named brief without a covering grant returns SettleNotAuthorized (400).
+  museLoop07ExpectHttpRefusal(museLoop07ProposerKeepRefusal, 400);
   const museLoop07RefusedKeepReceiptRef = museLoop07ProposerKeepRefusal.error?.receiptRef;
   if (typeof museLoop07RefusedKeepReceiptRef !== "string" || !museLoop07RefusedKeepReceiptRef) {
     throw new Error("The HTTP proposer Keep refusal carried no receiptRef");
