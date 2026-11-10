@@ -470,7 +470,8 @@ fn calendar_invite_confirmed_booking_grant_satisfies_no_cold_invite() {
     let grant_id = crate::test_util::entity(0x58);
     vault
         .mint_standing_outbound_grant(
-            &grant_id,
+            &crate::test_util::embedded_owner_proof(&vault),
+            grant_id,
             &crate::genui::GrantMintIntent {
                 principal_ref: actor_ref.to_hex(),
                 origin_component_id: "one_1786_test".to_owned(),
@@ -480,7 +481,6 @@ fn calendar_invite_confirmed_booking_grant_satisfies_no_cold_invite() {
                     contact_ref: "guest@example.test".to_owned(),
                 },
             },
-            NOW,
         )
         .expect("mint booking grant");
 
