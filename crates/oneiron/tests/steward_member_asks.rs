@@ -226,3 +226,90 @@ fn a_stewards_add_member_call_becomes_an_ask_an_owner_applies() {
             .is_empty()
     );
 }
+
+/// Review of #6917: the ask door took an add the membership door refuses. A
+/// person with an open invitation to the vault is no member yet, and the add
+/// effect refuses a second invitation, so the Steward's ask is refused at
+/// filing and nothing is stored.
+#[test]
+fn a_steward_cannot_ask_to_add_a_person_who_holds_an_open_invitation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let steward = person(&vault);
+    let invitee = person(&vault);
+    let (owner_proof, steward_proof, invitee_proof) = (
+        proof(&vault, owner),
+        proof(&vault, steward),
+        proof(&vault, invitee),
+    );
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: steward,
+                    role: Some(Role::Steward),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault with a Steward");
+    let invitation = vault
+        .shared_invitations(&steward_proof, SHARED)
+        .expect("the Steward's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward's founding invitation");
+    vault
+        .accept_shared_invitation(&steward_proof, SHARED, &invitation.id)
+        .expect("the Steward accepts");
+
+    // The Owner invites the person: an open invitation, no membership yet.
+    vault
+        .add_shared_member(&owner_proof, SHARED, invitee, None)
+        .expect("the Owner's invitation");
+    assert_eq!(
+        vault
+            .shared_invitations(&invitee_proof, SHARED)
+            .expect("invitations")
+            .len(),
+        1
+    );
+    // The add door refuses a second invitation while that one is open.
+    assert!(
+        vault
+            .add_shared_member(&owner_proof, SHARED, invitee, None)
+            .is_err()
+    );
+
+    // So the Steward's ask to add them is refused, by either door.
+    let add = MemberAskChange::Add {
+        member: invitee.to_hex(),
+        role: None,
+    };
+    assert!(
+        vault
+            .ask_shared_member_change(&steward_proof, SHARED, add.clone())
+            .is_err(),
+        "an ask the add door cannot apply is refused at filing"
+    );
+    assert!(
+        vault
+            .shared_member_change(&steward_proof, SHARED, add, None)
+            .is_err()
+    );
+    assert!(
+        vault
+            .shared_member_asks(&owner_proof, SHARED)
+            .expect("asks")
+            .is_empty(),
+        "no ask is stored"
+    );
+}

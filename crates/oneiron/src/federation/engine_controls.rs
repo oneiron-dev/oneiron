@@ -331,6 +331,31 @@ impl Vault {
     }
 }
 
+/// The engine-control receipts' actor scrub, named in the table's
+/// declaration (review of #6918): a hard erase of an actor takes out every
+/// receipt of a change it made, and every receipt whose knob or rendered
+/// value names it, so no row keeps naming an erased actor. The knobs stay as
+/// they were set.
+pub(crate) fn erase_engine_control_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    let named = actor.to_hex();
+    for (id, change) in ENGINE_CONTROL_CHANGE.scan(&vault.store, txn)? {
+        if change.by == *actor
+            || change.knob.contains(named.as_str())
+            || change.value.contains(named.as_str())
+        {
+            ENGINE_CONTROL_CHANGE.delete(&vault.store, txn, &id)?;
+        }
+    }
+    Ok(())
+}
+
 /// The five knobs that mix work with consent (S66-3), by their stored
 /// tables: no holder changes them; each stays an owner act at its own door.
 pub const ENGINE_CONTROLS_OWNER_ONLY_KNOBS: [&str; 5] = [
