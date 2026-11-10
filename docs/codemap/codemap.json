@@ -15867,7 +15867,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "fn": 1
      }
     },
@@ -87649,7 +87649,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -99172,6 +99172,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/provisional_confirm_source_label.rs",
+     "purpose": "A provisional entity named only in a relationship-scoped MESSAGE, once confirmed, stays inside that…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101081,7 +101089,7 @@
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7250,
-   "test_files": 925
+   "test_files": 926
   },
   "oneiron-agent-runtime": {
    "files": [
