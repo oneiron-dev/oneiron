@@ -3,13 +3,16 @@
 //! change runs through the one check and writes its receipt in the writer
 //! that stores the row. The owner's rows stand over a holder's: a holder
 //! never replaces or clears a pin the owner set, since a pin fixes the value
-//! until its setter changes it; and a work budget's holder value never
-//! exceeds the owner's own row for that knob and scope, which it never
-//! replaces or clears. Every other catalog key stays the owner's to set.
+//! until its setter changes it; a holder's pin at a narrower scope never
+//! stands over the owner's (the read walks the owner's pins first, and the
+//! door refuses a holder's pin under the owner's pin for the whole vault);
+//! and a work budget's holder value never exceeds the owner's own row for
+//! that knob and scope, which it never replaces or clears. Every other
+//! catalog key stays the owner's to set.
 
 use super::{
-    SETTING, SettingMode, SettingRow, SettingScope, SettingSpec, StoredSettingRow, checked_spec,
-    clear_row_in_txn, invalid, put_row_in_txn, scoped_row_key, setting_spec, witness,
+    SETTING, Setter, SettingMode, SettingRow, SettingScope, SettingSpec, StoredSettingRow,
+    checked_spec, clear_row_in_txn, invalid, put_row_in_txn, scoped_row_key, setting_spec, witness,
 };
 use crate::Vault;
 use crate::dreamer_runner::maintenance::agent_health::{
@@ -93,24 +96,25 @@ fn rendered(scope: &SettingScope, mode: SettingMode, value: Option<f64>) -> Stri
     serde_json::json!({"scope": scope, "mode": mode.as_str(), "value": value}).to_string()
 }
 
-/// The row over `spec`, `mode` and `scope` when one of the vault's owners
-/// set it.
+/// The row over `spec`, `mode` and `scope` when the owner's door wrote it:
+/// every row but a holder's. It stays the owner's when its setter was since
+/// erased, or holds the vault no more.
 fn owner_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    owners: &[EntityId],
     spec: &SettingSpec,
     mode: SettingMode,
     scope: &SettingScope,
 ) -> Result<Option<StoredSettingRow>> {
     Ok(SETTING
         .get(&vault.store, txn, &scoped_row_key(spec.key, mode, scope))?
-        .filter(|row| owners.iter().any(|owner| owner.to_hex() == row.by)))
+        .filter(|row| !row.by_holder))
 }
 
 /// Refuses a holder's change the owner's rows stand over: a pin the owner
-/// set, any row the owner set over a work budget, and a work-budget value
-/// above the owner's own row for that knob and scope.
+/// set, a new pin under the owner's pin for the whole vault, any row the
+/// owner set over a work budget, and a work-budget value above the owner's
+/// own row for that knob and scope.
 fn owner_rows_admit(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -120,17 +124,28 @@ fn owner_rows_admit(
     class: EngineControlClass,
     value: Option<f64>,
 ) -> Result<()> {
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    if owner_row_in_txn(vault, txn, &owners, spec, mode, scope)?.is_some()
+    if owner_row_in_txn(vault, txn, spec, mode, scope)?.is_some()
         && (mode == SettingMode::Pin || class == WorkBudget)
     {
         return Err(invalid("the owner set this row; only the owner changes it"));
+    }
+    // The read gives the owner's vault pin precedence over a holder's pin at
+    // any narrower scope, so that pin would never be in force: the door says
+    // so, where a stored row and its receipt would claim a change.
+    if value.is_some()
+        && mode == SettingMode::Pin
+        && *scope != SettingScope::Vault
+        && owner_row_in_txn(vault, txn, spec, SettingMode::Pin, &SettingScope::Vault)?.is_some()
+    {
+        return Err(invalid(
+            "the owner pinned this setting for the whole vault; only the owner changes it",
+        ));
     }
     if class == WorkBudget
         && let Some(value) = value
     {
         for owner_mode in [SettingMode::Pin, SettingMode::Seed] {
-            if let Some(cap) = owner_row_in_txn(vault, txn, &owners, spec, owner_mode, scope)?
+            if let Some(cap) = owner_row_in_txn(vault, txn, spec, owner_mode, scope)?
                 && value > cap.value
             {
                 return Err(invalid(
@@ -153,7 +168,8 @@ impl Vault {
     ///
     /// [`crate::Error::InvalidClaimBody`] for a key a holder may not tune, a
     /// value outside its catalog bounds, broken row terms, a pin or work
-    /// budget the owner set, or a work budget above the owner's cap;
+    /// budget the owner set, a pin under the owner's pin for the whole
+    /// vault, or a work budget above the owner's cap;
     /// `InvalidConfig` when `holder` holds no live `engine.controls`; store
     /// failures.
     pub fn put_setting_row_as_holder(
@@ -173,7 +189,8 @@ impl Vault {
             |wtxn| {
                 owner_rows_admit(self, &*wtxn, spec, scope, row.mode, class, Some(row.value))?;
                 let witness = witness::holder_put_in_txn(self, wtxn, holder, scope, row)?;
-                put_row_in_txn(self, wtxn, spec, scope, row, holder, witness)
+                let setter = Setter::Holder(holder);
+                put_row_in_txn(self, wtxn, spec, scope, row, setter, witness)
             },
         )
     }
