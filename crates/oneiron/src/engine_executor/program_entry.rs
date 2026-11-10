@@ -127,6 +127,13 @@ impl JsCodeModeRuntime for PinnedSourceRuntime<'_> {
         self.runtime.bind_proposal_spool(spool);
     }
 
+    fn bind_sandbox_backends(
+        &mut self,
+        backends: Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+    ) {
+        self.runtime.bind_sandbox_backends(backends);
+    }
+
     fn run_step(
         &mut self,
         step: JsCodeModeStep<'_>,

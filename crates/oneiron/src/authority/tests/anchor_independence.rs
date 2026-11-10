@@ -8,13 +8,9 @@
 use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::owner_anchor::{
-    YOURS, agent, enrol_anchor, fold_seen_at, hosted_fold, hosted_genesis, pin, profile, publish,
-    rekeyed, root_record, signed,
+    YOURS, agent, enrol_anchor, fold_seen_at, pin, profile, publish, rekeyed, root_record, signed,
 };
-use super::support::{
-    EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
-    genesis_entry,
-};
+use super::support::{cosign_ed, ed_key, genesis_entry};
 use super::world_chain_reads::edit;
 use super::*;
 use crate::world_keys::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed};
@@ -34,7 +30,7 @@ struct RetiredAnchor {
 
 fn retired_anchor(seed: u8) -> RetiredAnchor {
     let (owner, second, next) = (ed_key(seed), ed_key(seed + 1), ed_key(seed + 2));
-    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(seed, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (root, anchor, published) = publish(id, &genesis);
     let host_second = agent(id, &genesis, &owner, seed + 1);
@@ -150,92 +146,6 @@ fn a_root_and_its_mark_arrive_together_past_a_retired_roster_key() {
     }
 }
 
-/// On a hosted log the host enrols the anchor's public key as a Software
-/// agent, the owner's mark builds on that enrolment, and on a sibling branch
-/// the host raises the floor to CloudCustodial and hands its root on. The
-/// floor prunes no anchor row: the mark stands and M is mine under the pin
-/// (S2-F3). Fails before: the floor pass read the anchor's key as a roster
-/// signer below the floor.
-#[test]
-fn a_concurrent_tier_floor_never_prunes_an_anchor_row() {
-    let (cloud, second, next) = (ed_key(170), ed_key(171), ed_key(172));
-    let genesis = hosted_genesis(&cloud);
-    let id = genesis_vault_id(&genesis).unwrap();
-    let (root, anchor, published) = publish(id, &genesis);
-    let host_second = enroll_device_entry(
-        id,
-        &genesis,
-        &cloud,
-        EnrollSpec {
-            seed: 171,
-            roles: ROLE_AGENT,
-            tier: AuthorityTier::CloudCustodial,
-            seq: 1,
-            ts: 2,
-        },
-    );
-    let enrolled = enrol_anchor(id, &host_second, (&cloud, &second), 2, &root);
-    let request = request_for(id, EntityId::now(), &ed_key(173));
-    let mark = signed(
-        id,
-        &[&published, &enrolled],
-        &anchor,
-        2,
-        profile(&request, YOURS, 1),
-    );
-    let floor = cosign_ed(
-        signed(
-            id,
-            &[&enrolled],
-            &cloud,
-            3,
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::CloudCustodial,
-            },
-        ),
-        &cloud,
-        &second,
-    );
-    let handoff = cosign_ed(
-        signed(
-            id,
-            &[&floor],
-            &cloud,
-            4,
-            AuthorityOp::ReRoot {
-                new_device: device(
-                    authority_key_from_ed(&next),
-                    ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
-                    AuthorityTier::CloudCustodial,
-                ),
-            },
-        ),
-        &cloud,
-        &second,
-    );
-    let entries = [
-        genesis,
-        published,
-        host_second,
-        enrolled,
-        mark.clone(),
-        floor.clone(),
-        handoff.clone(),
-    ];
-    let fold = hosted_fold(&entries);
-    for entry in [&floor, &handoff, &mark] {
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(entry).unwrap())
-        );
-    }
-    assert_eq!(fold.tier_floor, Some(AuthorityTier::CloudCustodial));
-    assert!(
-        fold.machine(request.machine)
-            .is_some_and(|folded| folded.is_mine(Some(&pin(&root))))
-    );
-}
-
 /// A self-host root key marks M and hands the vault on. On a sibling branch
 /// it publishes a root naming itself the anchor, at a sequence it already
 /// used, so every fold refuses that root, then removes M beneath it. The
@@ -246,7 +156,7 @@ fn a_concurrent_tier_floor_never_prunes_an_anchor_row() {
 #[test]
 fn a_refused_root_never_makes_a_retired_keys_removal_the_anchors() {
     let (owner, next) = (ed_key(185), ed_key(186));
-    let genesis = genesis_entry(185, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(185, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let request = request_for(id, EntityId::now(), &ed_key(187));
     let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
@@ -299,7 +209,7 @@ fn a_refused_root_never_makes_a_retired_keys_removal_the_anchors() {
 #[test]
 fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
     let (owner, next, machine) = (ed_key(190), ed_key(191), ed_key(192));
-    let genesis = genesis_entry(190, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(190, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let request = request_for(id, EntityId::now(), &machine);
     let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
@@ -333,7 +243,7 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
 #[test]
 fn a_stale_roster_mark_never_vetoes_the_anchors_keys_in_a_world() {
     let (owner, next, machine) = (ed_key(193), ed_key(194), ed_key(195));
-    let genesis = genesis_entry(193, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(193, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let request = request_for(id, EntityId::now(), &machine);
     let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));

@@ -16,6 +16,8 @@ use crate::{Vault, VaultConfig};
 /// field it could enter.
 const NEVER_A_PAYLOAD: &str = "sk-live-THIS-MUST-NEVER-BE-PERSISTED";
 const HANDLE: &str = "custody://byoa/endpoint-key";
+// The BYOA exhaust stream cap, removed by 568cd1d34bd (Rule 5 part 3, L07-B: captures land whole through a disk spool).
+const BYOA_MAX_EXHAUST_STREAM_BYTES: usize = 4 * 1024 * 1024;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())

@@ -262,6 +262,9 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+// Primitive A (slice 6.4): scoped reads with source versions any agent makes
+// behind its own grant.
+pub mod snapshot_read;
 pub mod training_pack;
 // FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
 pub mod drafter;
@@ -315,6 +318,8 @@ pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
 pub mod genui;
+pub mod guest_error;
+pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
