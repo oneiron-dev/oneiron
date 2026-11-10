@@ -25,11 +25,21 @@ mod tests {
     /// The DSS material check of `doc` under `anchors`, for the `covered`
     /// chain certificates.
     fn material_check(doc: &Document, anchors: &[&TestCa], covered: &[&[u8]]) -> Checks<'static> {
+        let anchor_ders: Vec<&[u8]> = anchors.iter().map(|ca| ca.cert_der.as_slice()).collect();
+        material_check_ders(doc, &anchor_ders, covered)
+    }
+
+    /// [`material_check`] with the anchors given as certificate DERs.
+    fn material_check_ders(
+        doc: &Document,
+        anchors: &[&[u8]],
+        covered: &[&[u8]],
+    ) -> Checks<'static> {
         let limits = process_operation_limits();
         let memory = limits.memory.ledger().unwrap();
         let anchors: Vec<EmbeddedCert> = anchors
             .iter()
-            .map(|ca| EmbeddedCert::from_der(&ca.cert_der).unwrap())
+            .map(|der| EmbeddedCert::from_der(der).unwrap())
             .collect();
         let covered = covered_of(covered);
         let mut checks = Checks::new(limits);
@@ -239,7 +249,15 @@ mod tests {
         let first = test_ca("issuer");
         let second = test_ca("issuer");
         let second_leaf = leaf_under(&second, "leaf");
-        let rows: Vec<(&str, Document, Vec<&TestCa>, &[u8], _)> = vec![
+        // The issuer's link certificate for its new key is a configured
+        // trust anchor, and /Certs holds the new key's own self-signed
+        // certificate, which is the one that verifies the CRL (Sol,
+        // report-shadow-f4 section 1.2).
+        let issuer = test_ca("issuer");
+        let issuer_leaf = leaf_under(&issuer, "leaf");
+        let next = test_ca("issuer");
+        let anchored_link = link_certificate(&issuer, &next);
+        let rows: Vec<(&str, Document, Vec<&[u8]>, &[u8], _)> = vec![
             (
                 "the issuer's separate CRL-signing key lists the leaf",
                 dss_doc(
@@ -253,7 +271,7 @@ mod tests {
                     )],
                     &[],
                 ),
-                vec![&anchor],
+                vec![anchor.cert_der.as_slice()],
                 anchor_leaf.as_slice(),
                 failed,
             ),
@@ -270,7 +288,7 @@ mod tests {
                     )],
                     &[],
                 ),
-                vec![&old],
+                vec![old.cert_der.as_slice()],
                 old_leaf.as_slice(),
                 failed,
             ),
@@ -287,7 +305,7 @@ mod tests {
                     )],
                     &[],
                 ),
-                vec![&first, &second],
+                vec![first.cert_der.as_slice(), second.cert_der.as_slice()],
                 second_leaf.as_slice(),
                 missing,
             ),
@@ -301,14 +319,31 @@ mod tests {
                     ],
                     &[],
                 ),
-                vec![&first, &second],
+                vec![first.cert_der.as_slice(), second.cert_der.as_slice()],
                 second_leaf.as_slice(),
                 passed,
+            ),
+            (
+                "the issuer's anchored link certificate certifies the key that lists the leaf",
+                dss_doc(
+                    &[issuer_leaf.clone(), next.cert_der.clone()],
+                    &[build_crl(
+                        &next,
+                        THIS_UPDATE,
+                        NEXT_UPDATE,
+                        None,
+                        vec![serial_of(&issuer_leaf)],
+                    )],
+                    &[],
+                ),
+                vec![issuer.cert_der.as_slice(), anchored_link.as_slice()],
+                issuer_leaf.as_slice(),
+                failed,
             ),
         ];
         let mut wrong = Vec::new();
         for (row, doc, anchors, leaf, expected) in rows {
-            let checks = material_check(&doc, &anchors, &[leaf]);
+            let checks = material_check_ders(&doc, &anchors, &[leaf]);
             let found = dss_finding(&checks);
             if found != expected {
                 wrong.push(format!("{row}: {found:?}"));
