@@ -274,7 +274,7 @@ sync = [
 test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks"]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
-# it). Enabled only via the self dev-dependency below. Even under
+# it). Enable explicitly for rolling-tier test builds. Even under
 # `--all-features` the production `Vault::open` path always seeds; the unseeded
 # opener is an explicit test-named function, not a silent config field.
 # Also turns on the lower crates' test-only constructors this crate's tests use.
@@ -290,18 +290,15 @@ test-support = [
 [dev-dependencies]
 wat = "1"
 oneiron-guest = { path = "../oneiron-guest" }
-# Self dev-dependency that turns on `test-support` for this crate's own tests
-# (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
-# nextest / CI / verify.sh flag-free — no --features needed.
-oneiron = { path = ".", features = ["test-support"] }
 # The sandbox backends, for the integration tests that run them (core split 5b.1).
 oneiron-agent-runtime = { path = "../oneiron-agent-runtime" }
 tempfile = "3"
-proptest = "1"
+# Keep property generators without enabling bit-vec/default in the shipped graph.
+proptest = { version = "1", default-features = false, features = ["std", "fork", "timeout"] }
 # The process-memory keystore the engine's tests share; never a host's adapter.
-oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
+oneiron-keystore = { path = "../oneiron-keystore" }
 # The stack painter that sizes the owner anchor's stack wipes.
-oneiron-crypto = { path = "../oneiron-crypto", features = ["stack-probe"] }
+oneiron-crypto = { path = "../oneiron-crypto" }
 # Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
 zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
@@ -312,16 +309,21 @@ trybuild = "1"
 # engine's signer (contract-grounded test vectors, ONE-1140).
 ed25519-dalek = { workspace = true }
 
+# The fixture-dependent cluster belongs to the rolling tier. The single-session
+# trybuild target `tests/type_boundaries_compilefail.rs` is auto-discovered.
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["test-support"]
+
 # The consolidated sync-cluster integration binary. The feature gate lives
 # here at the target level, so the whole cluster (including the formerly
 # undeclared `#![cfg(feature = "sync")]` files it absorbed) is skipped —
 # not silently compiled to empty binaries — when `sync` is off.
-# `tests/it/main.rs` (default features) and the single-session trybuild target
-# `tests/type_boundaries_compilefail.rs` are auto-discovered.
 [[test]]
 name = "it_sync"
 path = "tests/it_sync/main.rs"
-required-features = ["sync"]
+required-features = ["sync", "test-support"] # sync_harness uses MemoryKeystore (test-support forwards oneiron-keystore/test-keystore)
 
 [[bench]]
 name = "sync_memory"

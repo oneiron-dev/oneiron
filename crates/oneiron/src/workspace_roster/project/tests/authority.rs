@@ -20,7 +20,7 @@ pub(crate) fn sign_with(
     id: EntityId,
     body: &mut ProjectRecord,
     holder: Option<EntityId>,
-    anchor: Option<ProjectAnchor>,
+    anchor: Option<Vec<ProjectAnchorLink>>,
     expires_at: Option<u64>,
 ) -> Result<ProjectWriteProof> {
     let version = ProjectProofVersion::V3;
@@ -33,7 +33,7 @@ pub(super) fn sign_legacy(
     id: EntityId,
     body: &mut ProjectRecord,
     holder: Option<EntityId>,
-    anchor: Option<ProjectAnchor>,
+    anchor: Option<Vec<ProjectAnchorLink>>,
 ) -> Result<ProjectWriteProof> {
     sign_as(
         vault,
@@ -51,7 +51,7 @@ fn sign_as(
     id: EntityId,
     body: &mut ProjectRecord,
     holder: Option<EntityId>,
-    anchor: Option<ProjectAnchor>,
+    anchor: Option<Vec<ProjectAnchorLink>>,
     expires_at: Option<u64>,
     version: ProjectProofVersion,
 ) -> Result<ProjectWriteProof> {
@@ -92,10 +92,10 @@ fn sign_as(
         )?;
     }
     let signed_at = slip.claims.issued_at;
-    let anchor = anchor.map(Box::new);
-    let challenge =
-        body.authority_at(version)
-            .write_challenge(id, version, signed_at, anchor.as_deref())?;
+    let anchor = anchor.unwrap_or_default();
+    let challenge = body
+        .authority_at(version)
+        .write_challenge(id, version, signed_at, &anchor)?;
     let holder_signature = match holder {
         Some(actor) => holder_key(actor)
             .sign(&slip.binding_transcript(&challenge)?)
@@ -132,7 +132,7 @@ pub(crate) fn sign_project(
                     .authority()
                     .board_action(&body.authority_at(ProjectProofVersion::V3)))
     });
-    let anchor = prior.as_ref().map(ProjectRecord::anchor);
+    let anchor = prior.as_ref().map(ProjectRecord::anchor).transpose()?;
     sign_with(vault, id, body, (!host).then_some(actor), anchor, None)
 }
 
@@ -576,7 +576,7 @@ fn a_forged_spawn_or_depth_restore_is_refused_live_and_hidden_after_replay() -> 
     // The outsider signs a depth restore over the current authority.
     let mut restored = vault.project(child_id)?.unwrap();
     restored.depth_remaining = 9;
-    let anchor = restored.anchor();
+    let anchor = restored.anchor()?;
     sign_with(
         &vault,
         child_id,
@@ -816,16 +816,17 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
                 &holder_key(actor),
             )?;
         }
-        let mut anchor = before.anchor();
+        let mut anchor = before.anchor()?;
         if position == 3 {
-            anchor.authority.roster = Some(BTreeSet::from([overlay_id.to_hex()]));
+            anchor.last_mut().ok_or_else(invalid)?.authority.roster =
+                Some(BTreeSet::from([overlay_id.to_hex()]));
         }
         let mut changed = before.clone();
         changed.write_proof = Some(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: vec![0; 64],
             signed_at: slip.claims.issued_at,
-            anchor: Some(Box::new(anchor)),
+            anchor,
             version: ProjectProofVersion::V3,
         });
         let bytes = encode(&changed)?;
@@ -1044,7 +1045,7 @@ fn a_non_leader_change_by_sync_is_quarantined_not_dropped() -> Result<()> {
         child_id,
         &mut takeover,
         Some(outsider),
-        Some(before.anchor()),
+        Some(before.anchor()?),
         None,
     )?;
     assert_eq!(
@@ -1314,7 +1315,7 @@ fn only_the_board_adds_a_member_and_the_leader_may_remove_one() -> Result<()> {
     // leader and the board. Signing one over the same state is no way for the
     // leader to seat the board (Sol roster review 1).
     let mut body = vault.project(child_id)?.unwrap();
-    let anchor = body.anchor();
+    let anchor = body.anchor()?;
     sign_legacy(
         &vault,
         child_id,

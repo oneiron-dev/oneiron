@@ -257,9 +257,10 @@ pub(super) fn delete_thread_facts(
 /// takes part as that PERSON: `actor.subject_ref` is the stored answer to who
 /// stands behind an actor (ARCH-0063 R7), the same anchor OF-531 reads.
 /// Every other AGENT_DEF (an ORG-anchored house mind, an unanchored team lead
-/// or worker) is an agent. The actor class decides nothing: an AGENT_DEF
-/// only ever carries `Agent`. Anything else takes part in no room. Claims
-/// and bylines keep the original actor.
+/// or worker, an agent anchored to its own model PERSON on the PEOPLE board)
+/// is an agent. The actor class decides nothing: an AGENT_DEF only ever
+/// carries `Agent`. Anything else takes part in no room. Claims and bylines
+/// keep the original actor.
 pub(crate) fn join_subject_for_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
