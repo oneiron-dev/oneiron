@@ -55632,7 +55632,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/asset_resolve.rs",
@@ -55684,7 +55684,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/export.rs",
-     "purpose": "The public export verb renders the full vault and hydratable short refs",
+     "purpose": "The public export verb writes the whole-vault archive (OF-222), whose short refs hydrate, and the lossy OKF…",
      "surface": {}
     },
     {
@@ -89665,7 +89665,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_party_migration.rs",
-     "purpose": "Task verb tests: the one-time open migration that gives a consult minted before party facts existed the fact…",
+     "purpose": "Task verb tests: a consult with no party fact gives nobody standing",
      "surface": {}
     },
     {
@@ -91614,7 +91614,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/vault/tests.rs",
@@ -91851,7 +91851,9 @@
      "notable": [],
      "path": "src/vault_cleanup/qodo_tests.rs",
      "purpose": "Correctness regressions for the Qodo cleanup repair",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -98416,6 +98418,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/family_claim_facet.rs",
+     "purpose": "[CHANNEL-IDENTITY-CLAIM-FACET] and [COUNTERPARTY-CONTACT-CLAIM-FACET]: the two family doors write their…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99083,6 +99093,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/microvm_intermediate_symlink.rs",
+     "purpose": "[MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]: a base-mount read whose path crosses a symlinked directory is…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
      "surface": {}
@@ -99279,6 +99297,14 @@
      "notable": [],
      "path": "tests/stewardship_source_label.rs",
      "purpose": "The stewardship reach-out keeps the audience of the record it cites (OPUS-LEAKS, lead call G \"leaks today\")",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stopped_folder_attach_facet.rs",
+     "purpose": "A folder attached to a stopped vault lands its Markdown files (FIX-LIST [E2E-FOLDER-ATTACH-ABSENT-FACET]…",
      "surface": {}
     },
     {
@@ -101013,7 +101039,7 @@
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7249,
-   "test_files": 918
+   "test_files": 921
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129796,7 +129822,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -134256,7 +134282,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 3,
-      "mod": 24,
+      "mod": 25,
       "re-export": 2
      }
     },
@@ -140694,6 +140720,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/big_rung.rs",
+     "purpose": "Doors for `tests/big_rung_written_reply.rs` (FIX 22368): the decision the Big rung stores from a written reply",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/mod.rs",
+     "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "UsageError"
      ],
@@ -141424,6 +141470,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/big_rung_written_reply.rs",
+     "purpose": "FIX 22368: the Big rung's written reply (`reply = \"json\"` or `\"lines\"`, the path without token scores)…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -142233,6 +142287,13 @@
      "layout": "file",
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
+    "test_doors": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`"
+    },
     "usage": {
      "files": 14,
      "impl_vault": false,
@@ -142292,8 +142353,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1825,
-   "test_files": 184
+   "source_files": 1827,
+   "test_files": 185
   },
   "oneiron-skill-attribution": {
    "files": [
