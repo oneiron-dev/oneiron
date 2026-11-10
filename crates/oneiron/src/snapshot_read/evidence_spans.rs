@@ -139,7 +139,8 @@ pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()>
 ///
 /// # Errors
 ///
-/// A request that fails [`validate_evidence_spans`]; ranges over a row that
+/// A request that fails [`validate_evidence_spans`]; a TURN whose text holds
+/// a lifted secret, for a reader other than the owner; ranges over a row that
 /// is no TURN, over a TURN with no text, past the text's end, through a
 /// UTF-8 character or over only the line breaks between MESSAGE rows; the
 /// caller's read lane; and storage errors.
@@ -174,7 +175,26 @@ pub fn evidence_spans(
                 return Ok(withheld());
             };
             let spans = match text {
-                Some(turn) => turn_spans(&turn, &input.ranges)?,
+                Some(turn) => {
+                    // A span is cut from the stored text, so one could cut
+                    // through a lifted key: a reader other than the owner
+                    // reads such a TURN's words only masked, whole, through
+                    // `vault.snapshot.page` (review of #6964).
+                    if super::source_version::served_turn_text_in_txn(
+                        memory,
+                        &read,
+                        txn,
+                        &input.source,
+                        &turn,
+                    )?
+                    .1
+                    {
+                        return Err(MemoryError::bad_request(
+                            "this TURN's text holds a lifted secret: its byte spans are served to the vault owner only",
+                        ));
+                    }
+                    turn_spans(&turn, &input.ranges)?
+                }
                 None if input.ranges.is_empty() => Vec::new(),
                 None => {
                     return Err(MemoryError::bad_request(
