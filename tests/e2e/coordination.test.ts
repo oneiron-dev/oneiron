@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
@@ -876,33 +876,78 @@ function coordination04Step(providers: ScriptedProviders, id: string, purpose: s
   });
 }
 
-/** Diagnostic for the parked live run: a branch that is not Leased fails with its last_error first, since the
- * fleet log keeps only the first 400 characters of a failure reason. */
-function expectParkedBranchLeased(
+/** Diagnostic for the parked live run: a branch that is not Leased fails with its stored reason and the engine's own
+ * failure warning first, since the fleet log keeps only the first 400 characters of a failure reason. The stored
+ * last_error is only the stable code (agent_run_failed); the warning carries the underlying error. */
+async function expectParkedBranchLeased(
+  engine: EngineFixture,
   label: string,
   branch: { state: string; last_error?: string | null; attempt_count: number; asks: readonly unknown[] } | undefined,
-): void {
+): Promise<void> {
   if (branch?.state === "Leased") return;
-  throw new Error(`${label}: last_error=${(branch?.last_error ?? "none").slice(0, 280)} | state=${branch?.state ?? "missing"}`
-    + ` attempts=${branch?.attempt_count ?? 0} asks=${branch?.asks.length ?? 0}`);
+  const warning = await serverRunFailureWarning(engine);
+  throw new Error(`${label}: state=${branch?.state ?? "missing"} last_error=${(branch?.last_error ?? "none").slice(0, 60)}`
+    + ` attempts=${branch?.attempt_count ?? 0} asks=${branch?.asks.length ?? 0} | engine: ${warning.slice(0, 260)}`);
 }
 
-async function grantAgentAutoCeiling(owner: PublicHttpClient, agentRef: string): Promise<void> {
+/** The last agent-run failure warning in the server's captured log. Diagnostic only, after a failure: it stops the
+ * server, which writes that log into the fixture's artifacts, and reads it before close deletes them. */
+async function serverRunFailureWarning(engine: EngineFixture): Promise<string> {
+  await engine.kill();
+  const warnings: string[] = [];
+  for (const name of await readdir(engine.artifacts.root)) {
+    if (!/^server-[a-f0-9]+\.json$/.test(name)) continue;
+    const capture = JSON.parse(await readFile(resolve(engine.artifacts.root, name), "utf8")) as
+      { stdout?: string; stderr?: string; logs?: readonly string[] };
+    for (const text of [capture.stdout ?? "", capture.stderr ?? "", ...(capture.logs ?? [])])
+      for (const raw of text.split("\n")) {
+        const line = raw.replace(/\u001b\[[0-9;]*m/g, "");
+        const at = line.search(/an agent run (failed|did not settle|cannot be claimed|thread did not start)/);
+        if (at >= 0) warnings.push(line.slice(at).replace(/AttemptId \{ bytes: \[[0-9, ]+\] \}/g, "AttemptId"));
+      }
+  }
+  return warnings.at(-1) ?? "no agent-run failure warning in the server log";
+}
+
+/** The asking agent's ask authority, each part read back after the put: an actor-bound Auto ceiling, and a read
+ * grant on TURN records. Ask admission checks that the asker can read the question it cites
+ * (task_ask.rs validate_task_answer_unit), and the owner witnessed that TURN. That reader key carries no actor
+ * class, so the grant names the exact actor_ref and no actor_class; it grants read only, on TURNs only. */
+async function grantAgentAskAuthority(owner: PublicHttpClient, agentRef: string): Promise<void> {
   const before: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
   const manifest = before.manifests.find(row => row.manifest_ref === before.default_manifest_ref);
   if (!manifest) throw new Error("Default policy manifest is absent");
   const row: FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number] = {
     actor_class: "agent", actor_ref: agentRef, ceiling: "auto",
   };
+  const questionRead: Facade.PolicyScopedGrantRow = {
+    actor_ref: agentRef, effector: "core:read", receipt_required: false,
+    scope: {
+      worlds: { kind: "all" }, facets: { kind: "all" },
+      bands: { kind: "some", values: [1] }, // Kind bands hold type bytes: 1 is ENTITY_TYPE_TURN.
+      audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] },
+      sensitivity: { kind: "at_most", value: "restricted" },
+    },
+  };
   const put: FacadeInput<"vault.gate.policy.put"> = {
     manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
-    manifest: { ...manifest.manifest, actor_ceilings: [...manifest.manifest.actor_ceilings, row] },
+    manifest: {
+      ...manifest.manifest,
+      actor_ceilings: [...manifest.manifest.actor_ceilings, row],
+      scoped_grants: [...(manifest.manifest.scoped_grants ?? []), questionRead],
+    },
   };
   const receipt = await owner.call("vault.gate.policy.put", put);
   expect(receipt.receipt_ref.length).toBeGreaterThan(0);
   const after: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
   const live = after.manifests.find(row => row.manifest_ref === after.default_manifest_ref);
   expect(live?.manifest.actor_ceilings).toContainEqual(row);
+  expect(live?.manifest.scoped_grants?.find(grant => grant.actor_ref === agentRef)).toMatchObject({
+    effector: "core:read", receipt_required: false,
+    scope: { bands: { kind: "some", values: [1] }, verbs: { kind: "some", values: ["read"] } },
+  });
+  const stored = await owner.call("vault.agents.get", { agent_def_ref: agentRef });
+  expect(stored.definition.ceiling).toBe("auto");
 }
 
 /* COORDINATION-04 (partial, Engine E2E-PARTIAL option A).
@@ -949,7 +994,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     const workerRef = await coordination04Agent(owner, c.inputs.child.leader);
     const leader = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
     expect((await leader.client.call("self.actor", {})).actor_ref).toBe(leaderRef);
-    await grantAgentAutoCeiling(owner, leaderRef);
+    await grantAgentAskAuthority(owner, leaderRef);
 
     // The leader's run asks its owner a real question and parks on it (a durable wait).
     const occurred = 1769947200; // Public setup input, never an engine clock override.
@@ -994,7 +1039,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
       view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-04 leader run commits its asking step" });
     // The whole branch first, so a failure prints its last_error.
     const parkedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-    expectParkedBranchLeased("COORDINATION-04 after its asking step", parkedBranch);
+    await expectParkedBranchLeased(engine, "COORDINATION-04 after its asking step", parkedBranch);
     expect(parkedBranch?.state).toBe("Leased");
     expect((await coordination04Status(owner, task)).phase.phase).not.toBe("terminal");
 
@@ -1066,7 +1111,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(secondAfter?.landed_attempt ?? null).toBeNull();
     // The parked leader run kept its lease across the restart (the whole branch first: its last_error).
     const restartedBranch = (await owner.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-    expectParkedBranchLeased("COORDINATION-04 after the restart", restartedBranch);
+    await expectParkedBranchLeased(engine, "COORDINATION-04 after the restart", restartedBranch);
     expect(restartedBranch?.state).toBe("Leased");
 
     // ---- The board approves: exactly the asked slice lands, with one child. ----
@@ -1683,7 +1728,7 @@ async function coordination08ParkedRun(
   // Parked, not settled: the try keeps its lease (store.rs:1173-1174) and the TASK stays open.
   // The whole branch first, so a failure prints its last_error.
   const parkedBranch = (await engine.client.call("vault.runs.branches.get", { task_ref: task })).branches[0];
-  expectParkedBranchLeased(`COORDINATION-08 ${label}`, parkedBranch);
+  await expectParkedBranchLeased(engine, `COORDINATION-08 ${label}`, parkedBranch);
   expect(parkedBranch?.state).toBe("Leased");
   expect((await coordination08Status(engine.client, task)).phase.phase).not.toBe("terminal");
   return { task, run };
@@ -1755,7 +1800,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(edited.definition.version).toBe("2");
     const endsRead = await owner.call("vault.agents.get", { agent_def_ref: ends });
     expect(endsRead.definition.refusal).toEqual({ bond: lowest, logistics: highest });
-    await grantAgentAutoCeiling(owner, personal);
+    await grantAgentAskAuthority(owner, personal);
 
     const conversation = await owner.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
@@ -1841,7 +1886,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     // A voice objection proceeds: her TASK stays open, and her run stays parked on its ask.
     expect((await coordination08Status(owner, held.task)).phase.phase).not.toBe("terminal");
     const heldBranch = (await owner.call("vault.runs.branches.get", { task_ref: held.task })).branches[0];
-    expectParkedBranchLeased("COORDINATION-08 after her own refusal", heldBranch);
+    await expectParkedBranchLeased(engine, "COORDINATION-08 after her own refusal", heldBranch);
     expect(heldBranch?.state).toBe("Leased");
 
     // ---- Failure step: restart. Dials and refusal records are durable. ----
