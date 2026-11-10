@@ -570,10 +570,6 @@ fn useful_question(candidate: EntityId) -> DecisionQuestion {
         accept_type: false,
     }
 }
-// NOTE (wave 2): the protected `shared_merge_the_scan_flags_waits_for_the_owner`
-// test still constructs `Useful(true)` and its body is byte-identical by rule,
-// so this shell stays for it. `&UsefulUpstreamDecisions` cannot be built inline
-// without touching that body; left unported, see the wave report.
 struct Useful(bool);
 
 impl std::ops::Deref for Useful {
