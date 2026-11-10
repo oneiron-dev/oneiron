@@ -7,9 +7,9 @@ use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::ProposalSpoolFloor;
-use crate::code_sandbox::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::code_sandbox::source::prepare_source;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
+use crate::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
@@ -27,7 +27,7 @@ use crate::{
 use crate::{
     code_sandbox::microvm::{
         CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmOutputSpool,
-        MicroVmOutputStreamBodies, MicroVmSandboxAdapter, SandboxBackends,
+        MicroVmOutputStreamBodies, MicroVmSandboxAdapter,
     },
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
@@ -161,11 +161,11 @@ impl Vault {
     }
 
     /// Run the installed exact script in the configured foreign code-mode VM,
-    /// on the isolating backend `backends` carries for the Foreign tier.
-    /// No configured isolating backend means a refusal, not an in-process run.
+    /// on the isolating backend this vault's installed backends carry for the
+    /// Foreign tier. No configured isolating backend means a refusal, not an
+    /// in-process run.
     pub fn run_script_pack(
         self: &Arc<Self>,
-        backends: &dyn SandboxBackends,
         request: PackScriptRun<'_>,
         transport: Arc<dyn CredentialReadTransport>,
     ) -> Result<PackScriptOutcome> {
@@ -179,7 +179,7 @@ impl Vault {
         self.require_pack_grants_verified(request.name, &requested)?;
         let run_id = EntityId::now();
         let mut backend = crate::code_sandbox::microvm::select_backend_for_tier(
-            backends,
+            &*self.runtime().sandbox_backends(),
             SandboxGuestTier::Foreign,
         )?
         .ok_or_else(|| invalid("foreign tier selected no isolation"))?;

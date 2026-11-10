@@ -136,6 +136,10 @@ mod tests {
     use crate::registry::ENTITY_TYPE_PERSON;
     use crate::store::GRAPH_VERSION_KEY;
 
+    // Record version leading every encoded body, moved private into the store
+    // crate by 1a05cd05d2f (#4409) and 6ced3b16a21 (#5778).
+    const CODE_MEMORY_RECORD_VERSION: u8 = 1;
+
     fn id(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).expect("valid entity id")
     }
@@ -149,9 +153,16 @@ mod tests {
     }
 
     fn locator() -> CodeMemoryLocator {
+        // A cursor-anchored span on the symbol's file document at a version
+        // replaced the path and commit revision (029b5966b0a, FIX 7810).
         CodeMemoryLocator {
-            path_at_revision: "crates/oneiron/src/code_memory.rs".to_owned(),
-            revision: CodeMemoryRevision::Commit("abc123def456".to_owned()),
+            span: CodeSpanAnchor {
+                document_id: [0xD0; 32],
+                start: b"cursor-start".to_vec(),
+                end: b"cursor-end".to_vec(),
+                content_hash: [0xC0; 32],
+            },
+            version: vec![(1, 0)],
             validity: range(1_780_000_000),
         }
     }
@@ -238,8 +249,9 @@ mod tests {
         );
 
         // The whole dual-anchor rule in one assertion: the locator's path is
-        // nowhere in the key that carries attachment identity.
-        let path = locator().path_at_revision.into_bytes();
+        // nowhere in the key that carries attachment identity. The file
+        // document stands where the path stood (029b5966b0a, FIX 7810).
+        let path = locator().span.document_id.to_vec();
         let key = attachment_key(&symbol, &slot_name(), note);
         assert!(!key.windows(path.len()).any(|window| window == path));
     }

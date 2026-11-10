@@ -8009,7 +8009,6 @@ dependencies = [
  "lzma-rust2 0.16.2",
  "memmap2",
  "ocrs",
- "oneiron",
  "oneiron-agent-runtime",
  "oneiron-authority",
  "oneiron-base",
