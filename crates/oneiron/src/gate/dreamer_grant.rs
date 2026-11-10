@@ -308,7 +308,8 @@ pub(super) fn with_shipped_dreamer_rows(manifest: Vec<u8>) -> Result<Vec<u8>> {
 /// one is already there.
 fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
     let mut entries = decode_live(live)?;
-    if !push_dreamer_rows(&mut entries, actor_ref, true, true)? {
+    let whole = crate::federation::scope_codec::read_preset();
+    if !push_dreamer_rows(&mut entries, actor_ref, Some(&whole), true)? {
         return Ok(None);
     }
     encode_live(entries).map(Some)
@@ -317,10 +318,13 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
 /// `live` as the policy fold reads it once a base agent holds its reach
 /// through a Steward grant (untangle 6.3): every row that names `actor_ref`
 /// in `actor_ceilings`, `scoped_grants` and `source_trust` taken out, then
-/// the rows the grant's `verbs` give put back. `read` gives the read grant;
-/// `derive` gives the Auto actor ceiling and the `Generated` permit. They are
-/// the rows [`with_dreamer_rows`] writes, so a grant with both verbs reads
-/// exactly as the three rows did. `None` when nothing moved.
+/// the rows the grant's `verbs` give put back. `read` gives the read grant,
+/// over `read_scope`: the standing grant's own scope met with the read preset
+/// (S67-READ-AXES = C), so a grant the owner narrowed on worlds, bands,
+/// audience or sensitivity reads inside them. `derive` gives the Auto actor
+/// ceiling and the `Generated` permit. They are the rows [`with_dreamer_rows`]
+/// writes, so a grant with both verbs and every data axis whole, as the host
+/// mints it, reads exactly as the three rows did. `None` when nothing moved.
 ///
 /// Taking the rows out never fails on a shape the policy decode accepts, so
 /// a pack that decodes is never read as it was written (review of #6913).
@@ -334,6 +338,7 @@ pub(crate) fn body_with_steward_rows(
     live: &[u8],
     actor_ref: &str,
     verbs: &std::collections::BTreeSet<String>,
+    read_scope: Option<&crate::federation::Scope>,
 ) -> Result<Option<Vec<u8>>> {
     let mut entries = decode_live(live)?;
     let stripped = strip_actor_rows(&mut entries, actor_ref);
@@ -341,12 +346,9 @@ pub(crate) fn body_with_steward_rows(
     if derive {
         list_generated_shorthand(&mut entries);
     }
-    let changed = match push_dreamer_rows(
-        &mut entries,
-        actor_ref,
-        verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB),
-        derive,
-    ) {
+    let read =
+        read_scope.filter(|_| verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB));
+    let changed = match push_dreamer_rows(&mut entries, actor_ref, read, derive) {
         Ok(pushed) => stripped | pushed,
         // A list that will not take the grant's rows leaves the pack with
         // the agent's written rows out, never as it was written: the written
@@ -479,12 +481,13 @@ fn strip_actor_rows(entries: &mut Vec<(Value, Value)>, actor_ref: &str) -> bool 
     changed
 }
 
-/// Adds the Dreamer's read row (`read`) and its two landing rows (`derive`)
-/// unless a row already names it. Returns whether it added any.
+/// Adds the Dreamer's read row (over the scope `read`, when there is one)
+/// and its two landing rows (`derive`) unless a row already names it.
+/// Returns whether it added any.
 fn push_dreamer_rows(
     entries: &mut Vec<(Value, Value)>,
     actor_ref: &str,
-    read: bool,
+    read: Option<&crate::federation::Scope>,
     derive: bool,
 ) -> Result<bool> {
     let mut changed = false;
@@ -502,7 +505,7 @@ fn push_dreamer_rows(
             ]),
         )?;
     }
-    if read {
+    if let Some(scope) = read {
         changed |= push_unless_bound(
             entry_mut(entries, POLICY_SCOPED_GRANTS_KEY),
             actor_ref,
@@ -518,9 +521,7 @@ fn push_dreamer_rows(
                 ),
                 (
                     Value::from("scope"),
-                    crate::federation::scope_codec::encode_scope_value(
-                        &crate::federation::scope_codec::read_preset(),
-                    )?,
+                    crate::federation::scope_codec::encode_scope_value(scope)?,
                 ),
                 (Value::from("receipt_required"), Value::Boolean(false)),
             ]),
