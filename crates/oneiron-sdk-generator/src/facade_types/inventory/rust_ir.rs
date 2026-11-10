@@ -319,6 +319,7 @@ impl Inventory {
             .get(&(target.clone(), path.clone()))
             .cloned();
         let (text, place) = if let Some(own) = own {
+            self.index.record_dependency(&target, &own);
             let text = self
                 .index
                 .files
@@ -343,6 +344,7 @@ impl Inventory {
             else {
                 return Ok(None);
             };
+            self.index.record_dependency(&target, &parent);
             let whole = self
                 .index
                 .files
@@ -827,7 +829,8 @@ impl Inventory {
 
     /// A type with a handwritten `Serialize`, as what its
     /// serializer writes when that is plain. Only the first `impl Serialize` found (of the item's crate, else any)
-    /// is read.
+    /// is read; every file with an `impl Serialize` (and, where they are read, `impl Deserialize`) of that name is a
+    /// dependency, since an edit to any of them can change which one is first.
     fn manual(
         &mut self,
         item: &ItemRef,
@@ -840,6 +843,9 @@ impl Inventory {
             .get(&item.name)
             .cloned()
             .unwrap_or_default();
+        for (crate_name, file, _) in &all {
+            self.index.record_dependency(crate_name, file);
+        }
         let own: Vec<_> = all
             .iter()
             .filter(|(crate_name, _, _)| *crate_name == item.crate_name)
@@ -898,13 +904,16 @@ impl Inventory {
                 }
             }
             // A handwritten pair that reads a wire mirror writes that mirror.
-            for (crate2, file2, position2) in self
+            let de_impls = self
                 .index
                 .de_impls
                 .get(&item.name)
                 .cloned()
-                .unwrap_or_default()
-            {
+                .unwrap_or_default();
+            for (crate2, file2, _) in &de_impls {
+                self.index.record_dependency(crate2, file2);
+            }
+            for (crate2, file2, position2) in de_impls {
                 let text2 = self
                     .index
                     .files

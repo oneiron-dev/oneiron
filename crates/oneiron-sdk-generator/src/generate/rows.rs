@@ -776,6 +776,7 @@ impl Generator {
             facade_rows: Vec::new(),
             type_names,
             inventory: None,
+            fragment_dependencies: BTreeSet::new(),
         };
         generator.host_sets()?;
         generator.callable_sets()?;

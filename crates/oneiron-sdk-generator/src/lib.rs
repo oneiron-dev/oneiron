@@ -6,9 +6,10 @@
 //! dict insertion order, and the refusal texts (`GenerateError` carries the line Python printed last).
 //!
 //! The public API: `outputs` (every output, in the generator's order), `write_out_dir` (the `--out-dir` mode, which
-//! crates/oneiron-sdk-build runs in-process), `CRATES` and `INPUTS` (what the generator reads, for the build crate's
-//! input digest), `Outputs` and `GenerateError`. Both functions run the generator on a thread of its own with a
-//! 256 MiB stack: the type walk recurses deeply on the engine's types.
+//! crates/oneiron-sdk-build runs in-process, plus the run's dependency set in `DEPENDENCIES_FILE`), `CRATES` and
+//! `INPUTS` (what the generator may read, for the build crate's input digest), `Outputs` and `GenerateError`. Both
+//! functions run the generator on a thread of its own with a 256 MiB stack: the type walk recurses deeply on the
+//! engine's types.
 
 mod catalog_fragment;
 mod error;
@@ -75,12 +76,27 @@ pub fn outputs(root: &Path) -> Result<Outputs, GenerateError> {
     on_generator_thread(move || generate::Generator::new(&root)?.outputs())
 }
 
+/// The file [`write_out_dir`] writes beside the outputs: the run's dependency set, every file its outputs depend on
+/// (the `INPUTS` files, each verb file, and each crate source file the type inventories' lookups read), one path from
+/// the repository root per line, sorted. `oneiron-sdk-build` watches these files. It is not an output: no output path
+/// names it, no output byte depends on it, and the binary's `--out-dir` mode does not write it.
+pub const DEPENDENCIES_FILE: &str = ".sdk-deps";
+
 /// The `--out-dir <dir>` mode: every output under `<dir>/<repo path>`, and the three
-/// generated agent-SDK docs under `<dir>/docs/agent-sdk/` (SDKGEN-DOCS = A). It writes into `dir` as given and runs
-/// no other process.
+/// generated agent-SDK docs under `<dir>/docs/agent-sdk/` (SDKGEN-DOCS = A); then the run's dependency set in
+/// `<dir>/.sdk-deps` ([`DEPENDENCIES_FILE`]). It writes into `dir` as given and runs no other process.
 pub fn write_out_dir(root: &Path, dir: &Path) -> Result<(), GenerateError> {
     let (root, dir): (PathBuf, PathBuf) = (root.to_path_buf(), dir.to_path_buf());
-    on_generator_thread(move || generate::Generator::new(&root)?.write_out_dir(&dir))
+    on_generator_thread(move || {
+        let mut generator = generate::Generator::new(&root)?;
+        generator.write_out_dir(&dir)?;
+        let mut text = String::new();
+        for path in generator.dependencies() {
+            text.push_str(&path);
+            text.push('\n');
+        }
+        generate::outputs::write_text(&generate::outputs::join(&dir, DEPENDENCIES_FILE), &text)
+    })
 }
 
 /// The generator after its module level (the verb rows read and checked, the row sets built), for the binary's
