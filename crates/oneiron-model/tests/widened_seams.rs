@@ -170,6 +170,8 @@ fn only_a_fallback_finish_marks_an_output_as_failed() {
         },
         usage: LlmUsage::zero(),
         finish_reason,
+        reply_assertions: Default::default(),
+        token_scores: None,
     };
     let fallback = FinishReason::Other {
         name: "fallback:deterministic".to_owned(),
