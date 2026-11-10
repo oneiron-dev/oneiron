@@ -77,16 +77,19 @@ pub(super) fn request_for(
     key: &SigningKey,
 ) -> MachineEnrolmentRequest {
     let machine_key = key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
     MachineEnrolmentRequest {
         vault_id,
         machine,
         machine_key,
+        device_class,
         encryption_key: encryption_key(),
         machine_proof: key
             .sign(&machine_profile_proof_transcript(
                 &vault_id,
                 machine,
                 &machine_key,
+                device_class,
                 &encryption_key(),
             ))
             .to_bytes(),
@@ -114,7 +117,7 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         let (_dir, install, request) = joining(host.vault_id);
         let folded = host
             .vault
-            .enroll_machine(&host.issuer, &host.owner, &request, role)
+            .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
             .unwrap();
         assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
@@ -143,10 +146,11 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         assert!(
             host.vault
                 .enroll_machine(
-                    &host.issuer,
                     &host.owner,
+                    ActSurface::ThisInstall,
                     &request,
-                    MachineRole::Owned(MachineOwnership::Yours)
+                    MachineRole::Owned(MachineOwnership::Yours),
+                    None,
                 )
                 .is_err()
         );
@@ -157,19 +161,21 @@ fn only_the_owners_yours_makes_a_machine_mine() {
     let (_dir, _install, request) = joining(host.vault_id);
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Rented),
+            None,
         )
         .unwrap();
     assert!(!is_mine(&host.vault, request.machine));
     host.vault
         .set_machine_role(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     assert!(is_mine(&host.vault, request.machine));
@@ -180,10 +186,11 @@ fn only_the_owners_yours_makes_a_machine_mine() {
     assert!(
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &taken,
-                MachineRole::Owned(MachineOwnership::Yours)
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .is_err()
     );
@@ -206,24 +213,31 @@ fn a_removed_machine_never_comes_back() {
     let (_dir, _install, request) = joining(host.vault_id);
     let yours = MachineRole::Owned(MachineOwnership::Yours);
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, yours)
+        .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, yours, None)
         .unwrap();
     let removed = host
         .vault
         .set_machine_role(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             request.machine,
             MachineRole::Removed,
+            None,
         )
         .unwrap();
     assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
     for retry in [
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, request.machine, yours),
+            .set_machine_role(
+                &host.owner,
+                ActSurface::ThisInstall,
+                request.machine,
+                yours,
+                None,
+            ),
         host.vault
-            .enroll_machine(&host.issuer, &host.owner, &request, yours),
+            .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, yours, None),
     ] {
         assert!(retry.is_err());
     }
@@ -241,10 +255,11 @@ fn a_machine_never_changes_its_key() {
     let (first, second) = (ed_key(89), ed_key(90));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request_for(host.vault_id, machine, &first),
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let proved = |key: &SigningKey| {
@@ -329,11 +344,14 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();
@@ -409,10 +427,11 @@ fn a_forged_mark_never_makes_a_machine_mine() {
     // Only the owner's door lands it.
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     assert!(is_mine(&host.vault, machine));
@@ -423,7 +442,7 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
     let Host {
         _dir,
         vault,
-        issuer,
+        issuer: _,
         owner,
         vault_id,
     } = host;
@@ -432,10 +451,11 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         .unwrap();
     vault
         .enroll_machine(
-            &issuer,
             &owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     assert!(
@@ -482,9 +502,11 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100).unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
 
     let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
+        &checkpoint_key,
         &backups.path().join("replacement"),
         VaultConfig::default(),
         &vault,
@@ -502,6 +524,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 
     let (beside, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &checkpoint_key,
         &backups.path().join("beside"),
         VaultConfig::default(),
         &vault,
@@ -513,6 +536,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 
     let (elsewhere, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &backups.path().join("elsewhere"),
         VaultConfig::default(),
         crate::recovery::checkpoint::RestoreReason::Restore,
@@ -532,9 +556,16 @@ fn an_activated_archive_joins_as_a_new_machine() {
     let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
     vault.snapshot_checkpoint(&image, 100).unwrap();
-    let (replacement, _) =
-        Vault::restore_checkpoint_replacing(&image, &staged, VaultConfig::default(), &vault, 200)
-            .unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &checkpoint_key,
+        &staged,
+        VaultConfig::default(),
+        &vault,
+        200,
+    )
+    .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
         .swap_in_replacement(&replacement, || {
@@ -578,6 +609,7 @@ fn pair_and_bind(
         .issue_machine_pairing_link(
             &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             crate::federation::Scope::top(),
             3600,
             PairingPrincipal::default(),

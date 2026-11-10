@@ -45,40 +45,48 @@ pub(super) fn actor_skill_fit(
     })
 }
 
-/// A held edit cost is no cost estimate.
+/// A held edit-cost head is no cost estimate: the shared cell's head claim
+/// reads only once its critical confirm settles.
 pub(super) fn edit_cost(
     vault: &Vault,
     subject: EntityId,
     reader: ConsolidationReader,
 ) -> Result<()> {
-    let session = test_id(0x45);
-    let turn = test_id(0x46);
-    put_raw_entity_row(
-        vault,
-        &session,
-        crate::registry::ENTITY_TYPE_SESSION,
-        b"session",
-    )?;
-    put_raw_entity_row(vault, &turn, ENTITY_TYPE_TURN, b"turn")?;
-    let mut body = observed(
-        crate::claim::PREDICATE_ACTOR_EDIT_COST,
-        subject,
-        Value::F32(0.75),
-    )?;
-    body.valid_from = Some(10);
-    body.evidence =
-        Some(crate::actor_claims::ActorClaimEvidence::chat(session, vec![turn], 1)?.to_value());
-    let Value::Map(mut scope) = crate::actor_claims::edit_cost_scope("outbound") else {
-        panic!("{reader:?}: edit cost scope is not a map");
+    use crate::learning::{
+        Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation,
     };
-    scope.push((Value::from("evidence_taint"), Value::from("generated")));
-    body.scope = Some(Value::Map(scope));
-    put_reserved(vault, test_id(HELD), &body)?;
-    check_transition(vault, test_id(HELD), reader, |v, _| {
-        Ok(
-            crate::edit_distance::attribution::edit_cost_for(v, &subject, "outbound")?
-                == Some(0.75),
-        )
+    // The cell the attribution lane writes for this actor in this scope: an
+    // actor is its own executor, and "outbound" keys verbatim.
+    let cell = LearningCell::new(LearningPredicate::EditCost, subject)
+        .executor(subject.to_hex())
+        .consent_scope("outbound");
+    // One amended receipt at 0.75, the row shape the lane lands per receipt.
+    let mut evidence = LearningEvidence::anchored(
+        "gate-edit-cost-test",
+        10,
+        Anchor::OwnerVerdict,
+        Observation::Magnitude(0.75),
+    );
+    evidence.outcome_label = Some("amended".to_owned());
+    crate::learning::record_evidence(vault, &cell, &evidence, 10)?;
+    let head = {
+        let rtxn = vault.store.env.read_txn()?;
+        let heads = crate::learning::project::active_heads_in_txn(vault, &rtxn, &cell)?;
+        let Some((head, _, _)) = heads.into_iter().next() else {
+            panic!("{reader:?}: no edit-cost head landed");
+        };
+        head
+    };
+    check_transition(vault, head, reader, |v, _| {
+        Ok(crate::edit_distance::attribution::edit_cost_for(
+            v,
+            &subject,
+            &subject.to_hex(),
+            "outbound",
+            None,
+            None,
+        )?
+        .is_some_and(|estimate| estimate.mean() == 0.75))
     })
 }
 

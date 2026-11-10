@@ -1181,11 +1181,7 @@ fn volume_clock_rollback_fails_closed_and_elapsed_window_resets() {
         .apply_channel_identity_autonomy(&request, &owner)
         .unwrap();
     let reference = state.mode.action_grant_ref.unwrap();
-    let StandingOutboundGrantScope::ChannelIdentityEnvelope { envelope_ref, .. } =
-        state.action_grant.unwrap().scope
-    else {
-        panic!("identity action");
-    };
+    let envelope_ref = state.action_grant.expect("identity action").envelope_ref;
     let mut key = crate::outbound_grant::CHANNEL_IDENTITY_GRANT_USAGE_PREFIX.to_vec();
     key.extend_from_slice(envelope_ref.as_bytes());
     assert!(
