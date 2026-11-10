@@ -47,10 +47,16 @@ struct Fixture {
 }
 
 /// A vault whose Dreamer landed one fact about a new person, and whose wake
-/// pass has read that person's facts since: a reader sees `about` lines
-/// only while they are written from the facts a wake pass last read, so
-/// lines published from these facts read back at once.
+/// pass has read that person's facts since.
 fn fixture() -> Fixture {
+    let fixture = fixture_before_any_wake();
+    wake_reads_about_facts(&fixture.vault).expect("the wake pass reads the person's facts");
+    fixture
+}
+
+/// A vault whose Dreamer landed one fact about a new person, before any wake
+/// pass has read that person's facts: the person has no `about` row yet.
+fn fixture_before_any_wake() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let dreamer = dreamer(&vault).expect("the Dreamer");
@@ -62,7 +68,6 @@ fn fixture() -> Fixture {
     let person = claim_subject(&vault, *claim)
         .expect("read")
         .expect("the fact is about the person");
-    wake_reads_about_facts(&vault).expect("the wake pass reads the person's facts");
     Fixture {
         _dir: dir,
         vault,
@@ -113,6 +118,20 @@ fn about_line(fixture: &Fixture) -> Option<String> {
         .vault
         .person_about(fixture.person, Some(3))
         .expect("read")
+}
+
+#[test]
+fn about_lines_published_before_any_wake_pass_read_back_at_once() {
+    let fixture = fixture_before_any_wake();
+    let (digest, bands) = facts(&fixture);
+    assert!(!bands.is_empty(), "the person has a fact");
+    let (landed, reasons) = commit_one(&fixture, about(&fixture, digest, &bands));
+    assert!(landed, "the lines land: {reasons:?}");
+    assert_eq!(
+        about_line(&fixture).as_deref(),
+        Some(LINE),
+        "the publish read the facts it was written from in its own write"
+    );
 }
 
 #[test]

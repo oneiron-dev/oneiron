@@ -156,6 +156,30 @@ fn named(named: &Named) -> ItemRef {
     }
 }
 
+/// Writes the shipped policy with a `core:read` grant for `reader`, as an
+/// owner's policy lets a member read: the rows `reader` names and cites then
+/// read back to it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_core_read(vault: &Vault, reader: EntityId) -> Result<()> {
+    super::consolidation::shipped_policy_with_reader(vault, &reader.to_hex())
+}
+
+/// Writes the shipped policy with a `core:read` grant for `reader` that
+/// reaches rows of the kinds `kinds` alone: a row of any other kind is
+/// outside its read.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_core_read_of_kinds(vault: &Vault, reader: EntityId, kinds: &[u8]) -> Result<()> {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.bands = crate::federation::ScopeAxis::Some(kinds.iter().copied().collect());
+    super::consolidation::shipped_policy_with_read_scope(vault, &reader.to_hex(), &scope)
+}
+
 /// Commits `claims` as one batch by `actor` of `class`, in run `run`.
 ///
 /// # Errors
