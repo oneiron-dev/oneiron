@@ -48,12 +48,6 @@ struct Store {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AgentPut {
-    id: String,
-    definition: Value,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
 }
@@ -433,13 +427,13 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 input: args.input,
             })
         }
+        // The linked import and `self.verbs.call` decode the row the same way.
         "vault.agents.put" => {
-            let args: AgentPut = parse(input)?;
-            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
-                &args.id,
-                args.definition,
+            return crate::code_run::run_verb_call(
+                RunVerb::VaultAgentsPut,
+                parse::<Value>(input)?,
                 now,
-            )?))
+            );
         }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
@@ -594,9 +588,13 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 json!({"failed": true})
             }
         }
-        SelfDispatchOutcome::AgentDefinitionPut(value) => {
-            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
-        }
+        // The row's output, as `self.verbs.call` reads every row's reply.
+        SelfDispatchOutcome::AgentDefinitionPut(value) => json!({
+            "output": crate::code_run::AgentPutOutput {
+                id: value.id.to_hex(),
+                disposition: value.disposition.as_str().to_owned(),
+            }
+        }),
         SelfDispatchOutcome::AgentSpawn(value) => {
             json!({ "output": crate::code_run::AgentSpawnOutput::from(value.clone()) })
         }
