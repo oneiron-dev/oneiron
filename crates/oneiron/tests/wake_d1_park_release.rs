@@ -753,14 +753,9 @@ impl llm::LlmBackend for SettlementStepBackend {
     }
 }
 
-/// Owner Stop retires a receipt only a real terminal step and settlement can pin.
-#[test]
-fn the_owner_stop_retires_the_stopped_trys_step_receipts() -> Result<()> {
-    let (_dir, vault) = open_vault()?;
-    let store = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_micro(&store, "stop-paid-step", 10)?;
-    let parked = park_drained(&vault, &store, &queued, 20)?;
-    let request = llm::LlmRequest {
+/// One model request for the scripted backend: a text step of the consolidation purpose.
+fn paid_step_request() -> llm::LlmRequest {
+    llm::LlmRequest {
         model: llm::ModelId::new("test/model@r1").expect("model id"),
         envelope: llm::CallEnvelope {
             scope: llm::Scope::default(),
@@ -787,12 +782,21 @@ fn the_owner_stop_retires_the_stopped_trys_step_receipts() -> Result<()> {
         params: Default::default(),
         provider_options: Default::default(),
         host_segments: None,
-    };
+    }
+}
+
+/// Owner Stop retires a receipt only a real terminal step and settlement can pin.
+#[test]
+fn the_owner_stop_retires_the_stopped_trys_step_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-paid-step", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
     let step_hash = block_on_ready(doors::settle_paid_step(
         &vault,
         queued.attempt.id,
         &SettlementStepBackend,
-        request,
+        paid_step_request(),
         21,
     ))?;
     assert!(
@@ -874,6 +878,67 @@ fn the_owner_stop_settles_the_stopped_trys_owed_charge() -> Result<()> {
         ),
         (0, Some(37), 963, 0, 0),
         "FAILBEFORE park-stop settlement: Stop retires every reservation and charges its owed units"
+    );
+    Ok(())
+}
+
+/// Review 6998 P1: a settlement that fails leaves the call's measured charge owed on its reservation (FIX 8728),
+/// and the owed row the paid send wrote before it went. The stop charges that call once, not once from each.
+#[test]
+fn the_owner_stop_charges_a_retained_call_once() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-owed-call", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let budget_id = "park-stop-owed-call";
+    let units = block_on_ready(doors::retain_owed_call_charge(
+        &vault,
+        queued.attempt.id,
+        &SettlementStepBackend,
+        paid_step_request(),
+        budget_id,
+        21,
+    ))?;
+    assert_eq!(units, 38, "the scripted step's measured usage");
+    let retained = store
+        .budget_reservation(budget_id, queued.attempt.id)?
+        .expect("retained reservation");
+    assert_eq!(
+        retained.owed_units, units,
+        "the measured usage is owed on the reservation"
+    );
+    let before = store.budget(budget_id)?.expect("the budget line");
+    assert_eq!(
+        (
+            before.spent_units(),
+            before.remaining_units,
+            before.reserved_units
+        ),
+        (Some(0), 900, 100)
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )?;
+    assert_eq!(state, "cancelled");
+    let after = store
+        .budget(budget_id)?
+        .expect("the budget line after Stop");
+    assert_eq!(
+        (
+            doors::attempt_budget_reservation_count(&vault, queued.attempt.id)?,
+            after.spent_units(),
+            after.remaining_units,
+            after.reserved_units,
+            after.overdraft_units,
+        ),
+        (0, Some(units), 1_000 - units, 0, 0),
+        "FAILBEFORE review 6998 P1: Stop charges a call a failed settlement retained once"
     );
     Ok(())
 }
