@@ -97,6 +97,7 @@ pub(crate) use access_gate::{
 mod actor_key;
 mod agent_grants;
 mod authority_fingerprint;
+mod grant_alternatives;
 mod guest_bound;
 mod owner_authority;
 mod records_cover;
