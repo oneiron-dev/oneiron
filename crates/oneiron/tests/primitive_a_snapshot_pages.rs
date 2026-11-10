@@ -561,9 +561,10 @@ mod withheld_row {
         let reader = vault.memory(agent, EdgeActorClass::Agent);
 
         // A < B < C are the first CLAIM rows: every seeded CLAIM follows C.
-        let a = EntityId::from_bytes(1u128.to_be_bytes())?;
-        let b = EntityId::from_bytes(2u128.to_be_bytes())?;
-        let c = EntityId::from_bytes(3u128.to_be_bytes())?;
+        // Ids 1 and 2 are the reserved base world and default project.
+        let a = EntityId::from_bytes(0x10u128.to_be_bytes())?;
+        let b = EntityId::from_bytes(0x11u128.to_be_bytes())?;
+        let c = EntityId::from_bytes(0x12u128.to_be_bytes())?;
         for id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
             assert!(id > c, "a seeded CLAIM sorts after the fixture's rows");
         }
