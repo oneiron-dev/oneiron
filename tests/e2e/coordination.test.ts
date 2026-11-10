@@ -822,10 +822,10 @@ async function coordination04Scenario(): Promise<Coordination04Scenario> {
   if (!row) throw new Error("Missing COORDINATION-04 fixture scenario");
   return row as Coordination04Scenario; // Fixture discriminant, not an invented wire DTO.
 }
-async function coordination04Agent(client: PublicHttpClient, label: string): Promise<string> {
+async function coordination04Agent(client: PublicHttpClient, label: string, ceiling?: "auto"): Promise<string> {
   const agent_def_ref = coordination04InputId(label);
   const created = await client.call("vault.agents.create", {
-    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `COORDINATION-04 ${label}`, version: "1" },
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `COORDINATION-04 ${label}`, version: "1", ...(ceiling === undefined ? {} : { ceiling }) },
   });
   expect(created.agent_def_ref).toBe(agent_def_ref);
   return agent_def_ref;
@@ -887,6 +887,24 @@ function expectParkedBranchLeased(
     + ` attempts=${branch?.attempt_count ?? 0} asks=${branch?.asks.length ?? 0}`);
 }
 
+async function grantAgentAutoCeiling(owner: PublicHttpClient, agentRef: string): Promise<void> {
+  const before: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
+  const manifest = before.manifests.find(row => row.manifest_ref === before.default_manifest_ref);
+  if (!manifest) throw new Error("Default policy manifest is absent");
+  const row: FacadeInput<"vault.gate.policy.put">["manifest"]["actor_ceilings"][number] = {
+    actor_class: "agent", actor_ref: agentRef, ceiling: "auto",
+  };
+  const put: FacadeInput<"vault.gate.policy.put"> = {
+    manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
+    manifest: { ...manifest.manifest, actor_ceilings: [...manifest.manifest.actor_ceilings, row] },
+  };
+  const receipt = await owner.call("vault.gate.policy.put", put);
+  expect(receipt.receipt_ref.length).toBeGreaterThan(0);
+  const after: FacadeResult<"vault.gate.policy.get"> = await owner.call("vault.gate.policy.get", {});
+  const live = after.manifests.find(row => row.manifest_ref === after.default_manifest_ref);
+  expect(live?.manifest.actor_ceilings).toContainEqual(row);
+}
+
 /* COORDINATION-04 (partial, Engine E2E-PARTIAL option A).
  * Promise: a leader's live run cannot widen its own slice. A spawn asking for more than the run
  *   holds is only a proposal (no child runs), the leader cannot approve it, the board's decline is
@@ -927,10 +945,11 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     const ownerRef = engine.pairedActor.principalRef;
     // board-human binds to the owner, as in COORDINATION-01: the root board answers as the owner.
     expect(c.inputs.parent.board).toEqual(["board-human"]);
-    const leaderRef = await coordination04Agent(owner, c.inputs.parent.leader);
+    const leaderRef = await coordination04Agent(owner, c.inputs.parent.leader, "auto");
     const workerRef = await coordination04Agent(owner, c.inputs.child.leader);
     const leader = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
     expect((await leader.client.call("self.actor", {})).actor_ref).toBe(leaderRef);
+    await grantAgentAutoCeiling(owner, leaderRef);
 
     // The leader's run asks its owner a real question and parks on it (a durable wait).
     const occurred = 1769947200; // Public setup input, never an engine clock override.
@@ -1559,11 +1578,11 @@ async function coordination08Reason(client: PublicHttpClient, conversation: stri
   if (!turn) throw new Error("Reason TURN is not readable");
   return turn.id_hex;
 }
-async function coordination08Agent(client: PublicHttpClient, label: string, dial: Facade.RefusalDial): Promise<string> {
+async function coordination08Agent(client: PublicHttpClient, label: string, dial: Facade.RefusalDial, ceiling?: "auto"): Promise<string> {
   const agent_def_ref = coordination08InputId(label);
   const created = await client.call("vault.agents.create", {
     agent_def_ref, definition: { agent_id: label, display_name: label,
-      desc: `COORDINATION-08 ${label}`, version: "1", refusal: dial },
+      desc: `COORDINATION-08 ${label}`, version: "1", refusal: dial, ...(ceiling === undefined ? {} : { ceiling }) },
   });
   expect(created.agent_def_ref).toBe(agent_def_ref);
   expect(created.definition.refusal).toEqual(dial);
@@ -1716,7 +1735,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
 
     // ---- Declared dials, read back as declared. ----
     const work = await coordination08Agent(owner, c.inputs.workAgent.label, c.inputs.workAgent.dial);
-    const personal = await coordination08Agent(owner, c.inputs.personalAgent.label, c.inputs.personalAgent.dial);
+    const personal = await coordination08Agent(owner, c.inputs.personalAgent.label, c.inputs.personalAgent.dial, "auto");
     for (const [agent, dial] of [[work, c.inputs.workAgent.dial], [personal, c.inputs.personalAgent.dial]] as const) {
       const read = await owner.call("vault.agents.get", { agent_def_ref: agent });
       expect(read.definition.refusal).toEqual(dial);
@@ -1736,6 +1755,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(edited.definition.version).toBe("2");
     const endsRead = await owner.call("vault.agents.get", { agent_def_ref: ends });
     expect(endsRead.definition.refusal).toEqual({ bond: lowest, logistics: highest });
+    await grantAgentAutoCeiling(owner, personal);
 
     const conversation = await owner.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
