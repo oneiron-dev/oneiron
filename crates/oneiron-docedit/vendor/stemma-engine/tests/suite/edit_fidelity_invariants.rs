@@ -347,6 +347,7 @@ fn set_run_formatting_is_faithful() {
         vec![EditStep::SetRunFormatting {
             block_id: NodeId::from(ids[0].as_str()),
             expect: "Confidential".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,
@@ -375,6 +376,7 @@ fn set_run_formatting_extended_is_faithful() {
     let steps = vec![EditStep::SetRunFormatting {
         block_id: block_id.clone(),
         expect: "Confidential".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks: InlineMarkSet {
             bold: true,
@@ -837,6 +839,7 @@ fn layered_edit_on_already_tracked_document() {
     let step2 = EditStep::SetRunFormatting {
         block_id: NodeId::from(ids[1].as_str()),
         expect: "Second".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks: InlineMarkSet {
             bold: true,
@@ -2837,6 +2840,7 @@ fn comment_create_is_an_annotation_surviving_accept_and_reject() {
         &txn(
             vec![EditStep::CommentCreate {
                 block_id,
+                story: None,
                 expect: "Confidential Information".to_string(),
                 occurrence: None,
                 semantic_hash: None,
