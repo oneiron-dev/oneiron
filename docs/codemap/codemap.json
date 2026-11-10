@@ -98979,6 +98979,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_reverts_dreamer_claim.rs",
+     "purpose": "The owner takes back what the Dreamer landed (owner ruling 18 Oct: \"autoapply + revert rather than holdout\"…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/policy_row_verbs.rs",
      "purpose": "Public-door policy-row proof independent of unrelated lib-test compilation",
      "surface": {}
@@ -100823,7 +100831,7 @@
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7242,
-   "test_files": 906
+   "test_files": 907
   },
   "oneiron-agent-runtime": {
    "files": [
