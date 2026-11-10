@@ -334,8 +334,9 @@ fn a_row_larger_than_the_bytes_per_page_is_named_and_not_served() -> TestResult 
     let (_dir, vault) = open_vault()?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
+    let mut mine = Vec::new();
     for learned_at in 1..=3 {
-        put_person(&vault, learned_at)?;
+        mine.push(put_person(&vault, learned_at)?);
     }
     replace_bounds(
         &vault,
@@ -353,7 +354,10 @@ fn a_row_larger_than_the_bytes_per_page_is_named_and_not_served() -> TestResult 
     )?;
     let served = page(&memory, &handle, None, None)?;
     assert!(served.rows.is_empty(), "no row fits 16 bytes");
-    assert_eq!(served.oversized.len(), 3);
+    // The vault's own seeded PERSON rows are named too, beside these three.
+    for id in &mine {
+        assert!(served.oversized.iter().any(|row| row.entity == *id));
+    }
     assert!(served.oversized.iter().all(|row| row.bytes > 16));
     assert_eq!(served.next, None, "the cursor moved past every named row");
     assert_eq!(served.served, 0);
