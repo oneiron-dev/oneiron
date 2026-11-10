@@ -1581,6 +1581,8 @@ async function museGate02AwaitAudit(
 // vault.authority.audit and engine.awaitReceipt; revoked through
 // vault.consent.revoke. One restart sits between the standing grant's reuse
 // and its revocation, so the same agent loses the grant mid-flow.
+// P-GATE-010 (reworded): the issuer revokes with a receipt; the grantee
+// may drop its own grant with no ask.
 // What stays unproved: the same trio on action and foreign-actor
 // scope-exceed confirmations (ARCH-0072 #living), the generic effect-digest
 // doors (vault.consent.approve_once / deny / create_standing_grant) with a
@@ -1649,6 +1651,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     const otherWhy = `${fixture.agentReason} muse-gate-02 other agent`;
     const restartWhy = `${fixture.agentReason} muse-gate-02 after restart`;
     const afterRevokeWhy = `${fixture.agentReason} muse-gate-02 after revoke`;
+    const afterRenounceWhy = `${fixture.agentReason} muse-gate-02 after renounce`;
 
     // No grant: the ask is held for the owner and carries no value.
     const onceAsk = await museGate02OpenPendingAsk(asker.client, handle, onceWhy, fixture.credential);
@@ -1756,18 +1759,13 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     } satisfies FacadeInput<"vault.disclosure.reveals">);
     expect(pendingAfterRestart.some((row) => row.receipt.reveal === afterRestartAsk.reveal)).toBe(false);
 
-    // Only the owner revokes; the holder's attempt changes nothing.
-    await museGate02Refused403(() => asker.client.call("vault.consent.revoke", {
-      grant: standingGrant,
-    } satisfies FacadeInput<"vault.consent.revoke">));
-    const rowAfterRefusedRevoke = await museGate02FindRegistryRow(engine, standingGrant);
-    expect(rowAfterRefusedRevoke.grant_ref).toBe(standingGrant);
-
-    // Owner revokes: gone from the live registry, kept in its history and
-    // in the authority audit, and the asker's next use asks again.
+    // The issuer (the owner, whose yes created the grant) revokes in the
+    // registry with a receipt: gone from the live registry, kept in its
+    // history and authority audit, and the asker's next use asks again.
     const revoked = await engine.client.call("vault.consent.revoke", {
       grant: standingGrant,
     } satisfies FacadeInput<"vault.consent.revoke">);
+    expect(revoked).toMatchObject({ outcome: "revoked", reason_code: "gate.consent.revoked" });
     const activeAfterRevoke = await museGate02Registry(engine);
     expect(activeAfterRevoke.rows.some((row) => row.grant_ref === standingGrant)).toBe(false);
     expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
@@ -1779,8 +1777,28 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     );
 
     const afterRevokeAsk = await museGate02OpenPendingAsk(asker.client, handle, afterRevokeWhy, fixture.credential);
-    const finalDenied = await museGate02Answer(engine, afterRevokeAsk.reveal, "deny");
-    await museGate02WaitDenied(asker.client, afterRevokeAsk.reveal, handle, afterRevokeWhy, fixture.credential);
+    // The grantee may drop its own Grant at any time, with no ask (a narrowing, P-GATE-010).
+    const renewedAnswered = await museGate02Answer(engine, afterRevokeAsk.reveal, "standing");
+    const renewedGrant = renewedAnswered.grant_ref
+      ?? (await engine.client.call("vault.disclosure.reveals", {
+      } satisfies FacadeInput<"vault.disclosure.reveals">))
+        .find((row) => row.receipt.reveal === afterRevokeAsk.reveal)?.grant_ref
+      ?? undefined;
+    if (!renewedGrant) throw new Error("Approve-and-stop-asking after revoke created no observable grant");
+    expect(renewedGrant).not.toBe(standingGrant);
+    await museGate02WaitGranted(asker.client, afterRevokeAsk.reveal, handle, afterRevokeWhy, fixture.credential);
+    // The asker renounces its own grant: the call lands (no 403, no 202 ask), with the revoke receipt.
+    const renounced = await asker.client.call("vault.consent.revoke", {
+      grant: renewedGrant,
+    } satisfies FacadeInput<"vault.consent.revoke">);
+    expect(renounced).toMatchObject({ outcome: "revoked", reason_code: "gate.consent.revoked" });
+    const activeAfterRenounce = await museGate02Registry(engine);
+    expect(activeAfterRenounce.rows.some((row) => row.grant_ref === renewedGrant)).toBe(false);
+    expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
+    // The grant stops reading: the asker's next use asks again.
+    const afterRenounceAsk = await museGate02OpenPendingAsk(asker.client, handle, afterRenounceWhy, fixture.credential);
+    const finalDenied = await museGate02Answer(engine, afterRenounceAsk.reveal, "deny");
+    await museGate02WaitDenied(asker.client, afterRenounceAsk.reveal, handle, afterRenounceWhy, fixture.credential);
 
     await engine.artifacts.json("muse-gate02-summary.json", {
       handle, grant_ref: standingGrant,
@@ -1788,6 +1806,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
       deny_receipt_ref: denied.receipt_ref,
       standing_receipt_ref: standingAnswered.receipt_ref,
       revoke_outcome: revoked.outcome,
+      renewed_grant_ref: renewedGrant, renounce_outcome: renounced.outcome,
       grant_audit_entry_ref: grantAudit.entry_ref,
       revoke_audit_entry_ref: revokeAudit.entry_ref,
       final_deny_receipt_ref: finalDenied.receipt_ref,
