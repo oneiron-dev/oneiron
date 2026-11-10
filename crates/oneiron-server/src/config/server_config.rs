@@ -679,15 +679,11 @@ impl ServeConfig {
     /// (FIX 2544, 2709).
     pub fn base_vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
-        // `[runtime] clock`: the clock the vault reads. Config validation
-        // refused a manual clock file it could not read; one that has gone
-        // since is logged, and the vault stays on the host's clock.
-        match self.runtime.store_clock() {
-            Ok(Some(clock)) => config.store_clock = clock,
-            Ok(None) => {}
-            Err(error) => {
-                tracing::error!(%error, "the vault stays on the host's clock");
-            }
+        // `[runtime] clock`: the clock the vault reads. A manual clock stays
+        // manual even if its file has gone since validation; it never falls
+        // back to the host's clock.
+        if let Some(clock) = self.runtime.store_clock() {
+            config.store_clock = clock;
         }
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;

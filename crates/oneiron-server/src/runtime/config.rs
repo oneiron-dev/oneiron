@@ -174,6 +174,11 @@ impl RuntimeConfig {
             self.seat_host_aliases = aliases;
         }
         if let Some(clock) = value.clock {
+            // As in `RuntimeConfigOverride::merge`: the system clock drops a
+            // lower layer's file, not one named beside it.
+            if clock == super::RuntimeClock::System && value.clock_file.is_none() {
+                self.clock_file = None;
+            }
             self.clock = clock;
         }
         if let Some(clock_file) = value.clock_file {
@@ -238,24 +243,19 @@ impl RuntimeConfig {
     }
 
     /// The vault clock `[runtime] clock` names: `None` for the system clock,
-    /// which a vault config already holds. A manual clock whose file can no
-    /// longer be read is `None` too, and the error says why; config
-    /// validation refuses that file before a server starts
+    /// which a vault config already holds. A manual clock is always a manual
+    /// clock, never the host's: one whose file cannot be read reads zero
+    /// ([`super::ManualClockFile`]). Config validation refuses such a file,
+    /// or a manual clock with none, before a server starts
     /// ([`Self::validate_clock`]).
-    ///
-    /// # Errors
-    /// The manual clock's file cannot be read.
-    pub fn store_clock(&self) -> anyhow::Result<Option<oneiron::store::ports::StoreClock>> {
-        match (self.clock, &self.clock_file) {
-            (super::RuntimeClock::Manual, Some(path)) => {
-                let clock = super::ManualClockFile::open(path)
-                    .map_err(|error| anyhow::anyhow!("runtime: clock_file: {error}"))?;
-                Ok(Some(clock.store_clock()))
-            }
-            (super::RuntimeClock::Manual, None) => {
-                anyhow::bail!("runtime: clock = \"manual\" needs clock_file")
-            }
-            (super::RuntimeClock::System, _) => Ok(None),
+    #[must_use]
+    pub fn store_clock(&self) -> Option<oneiron::store::ports::StoreClock> {
+        match self.clock {
+            super::RuntimeClock::System => None,
+            super::RuntimeClock::Manual => Some(
+                super::ManualClockFile::new(self.clock_file.clone().unwrap_or_default())
+                    .store_clock(),
+            ),
         }
     }
 

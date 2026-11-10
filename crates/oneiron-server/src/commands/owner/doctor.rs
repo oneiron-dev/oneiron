@@ -31,7 +31,7 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         }
     };
     // The shape `serve` and `import` open the vault in: the config's
-    // dimensions, map size and dictionaries, under the flags, and a sealed
+    // clock, dimensions, map size and dictionaries, under the flags, and a sealed
     // vault's page seal from this device's keystore (FIX 1944). The rest stays
     // the server default, so a configured embedder that disagrees with the
     // vault does not keep doctor from reporting it. Settings that do not
@@ -43,6 +43,9 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
     let dict_search_paths = match serve_config {
         Ok(config) => {
             vault_config.page_seal = config.device_page_seal();
+            if let Some(clock) = config.runtime.store_clock() {
+                vault_config.store_clock = clock;
+            }
             vault_config.dimensions = config.dimensions;
             vault_config.map_size = config.map_size;
             embedder = config.embedder;
