@@ -7,6 +7,11 @@
 //! `engine.controls`. Each is checked at each read, so a narrowed or revoked
 //! grant reads nothing from its next call on. The Coach holds both by
 //! default (6.6a); the owner can give them to any agent.
+//!
+//! These rows are the engine's own, kept for the whole vault, and no reader
+//! here filters them by project, world, band or sensitivity. So the grant
+//! must reach the whole vault: one narrowed to part of it (a vault or holder
+//! override row) reads none of them (review of #6996).
 
 use super::grant_scope;
 use super::system_agent_grant::SystemAgent;
@@ -35,8 +40,9 @@ impl SubstrateRead {
 
 impl Vault {
     /// Whether `reader` may make the substrate read `read` now: the vault's
-    /// human owner, or the holder of a live Steward grant naming the verb
-    /// the read needs ([`Self::steward_grant_with_verb_in`]).
+    /// human owner, or the holder of a live Steward grant that names the verb
+    /// the read needs and reaches the whole vault
+    /// ([`Self::whole_vault_steward_grant_with_verb_in`]).
     pub(crate) fn substrate_read_allowed_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -49,7 +55,7 @@ impl Vault {
             return Ok(true);
         }
         Ok(self
-            .steward_grant_with_verb_in(txn, reader.entity_ref(), read.grant())?
+            .whole_vault_steward_grant_with_verb_in(txn, reader.entity_ref(), read.grant())?
             .is_some())
     }
 
@@ -111,10 +117,13 @@ pub(crate) fn admit_substrate_read_by(
     Err(MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         &format!(
-            "{verb} reads for the vault owner, or for a holder of a Steward grant naming `{}`",
+            "{verb} reads for the vault owner, or for a holder of a Steward grant naming `{}` that reaches the whole vault",
             read.grant()
         ),
-        &["Ask the owner for the grant; the Coach holds it by default."],
+        &[
+            "Ask the owner for the grant; the Coach holds it by default.",
+            "A grant narrowed to some projects, worlds, bands or a sensitivity ceiling does not read these vault-wide rows.",
+        ],
     ))
 }
 
