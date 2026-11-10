@@ -19,6 +19,7 @@ use oneiron::dreamer_runner::{
     EnqueueDreamerConsolidationAttempt, ParkResumer,
 };
 use oneiron::edge::EdgeActorClass;
+use oneiron::llm;
 use oneiron::memory::DreamerParkCauseView;
 use oneiron::task_verb::run_cancel::RunCancelOutcome;
 use oneiron::test_doors::wake_d1_park_release as doors;
@@ -491,6 +492,453 @@ fn a_stale_release_of_an_earlier_park_refuses() -> Result<()> {
         doors::park_notice_seen(&vault, &second)?,
         Some(false),
         "the later park's notice stays raised"
+    );
+    Ok(())
+}
+
+/// Parks `queued` as the host's drain cancels the server's Dreamer pass after admission, and returns the park.
+/// The parked try keeps the server's lease, as on a running server.
+fn park_drained(
+    vault: &Vault,
+    store: &DreamerRunnerStore<'_>,
+    queued: &DreamerAttemptStatus,
+    now: u64,
+) -> Result<DreamerParkedAttemptRecord> {
+    let node_id = doors::load_or_mint_client_id(vault)?;
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, now);
+    input.lease_owner = DREAMER_SERVER_PARK_OWNER.to_owned();
+    let mut driver = DreamerWakeDriver::new(vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        input,
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1, "the pass parks the try");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_eq!(parked.cause, DreamerParkCause::Cancelled);
+    assert_eq!(parked.park_owner, DREAMER_SERVER_PARK_OWNER);
+    Ok(parked)
+}
+
+/// Runs one server Dreamer pass at `now` with a completing executor, and returns how many tries it ran.
+fn run_server_pass(vault: &Vault, now: u64) -> Result<u32> {
+    let node_id = doors::load_or_mint_client_id(vault)?;
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, now);
+    input.lease_owner = DREAMER_SERVER_PARK_OWNER.to_owned();
+    let mut completer = CompletingExecutor {
+        completed_units: 25,
+        executed: 0,
+    };
+    let mut driver = DreamerWakeDriver::new(vault, "wake", frozen_deadline(0, 180_000));
+    block_on_ready(driver.run_wake_pass(input, &mut completer, &WakeCancellation::new()))?;
+    Ok(completer.executed)
+}
+
+/// Engine 08:3x: the owner stops a try the host's drain parked. The parked try keeps its lease, so the run tree's
+/// cancel refuses it; the owner's stop on the park door ends it, clears its park, and no later pass runs it.
+#[test]
+fn the_owner_stops_a_drained_park() -> Result<()> {
+    let store_clock = oneiron_store::ports::manual_clock::ManualClock::new(10);
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock.bundle();
+    let (_dir, vault) = open_vault_with(config)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "drained", 10)?;
+    store_clock.set(20);
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+
+    store_clock.set(25);
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )
+    .expect("FAILBEFORE park-stop: the owner stops a parked try");
+    assert_eq!(state, "cancelled");
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_none(),
+        "the stop clears the park"
+    );
+
+    for now in [30, 40] {
+        store_clock.set(now);
+        assert_eq!(
+            run_server_pass(&vault, now)?,
+            0,
+            "no later pass runs the stopped try"
+        );
+    }
+    let after = store.status(queued.attempt.id)?.expect("the try");
+    assert_eq!(after.attempt.state.as_str(), "cancelled");
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
+    Ok(())
+}
+
+/// Engine 08:3x: the owner stops a park that waits on his release instead of resuming it. The try ends, its park
+/// clears and its notice is resolved; no later pass runs it.
+#[test]
+fn the_owner_stops_an_executor_error_park_and_its_notice_resolves() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "owner act", 10)?;
+    let parked = park_executor_error(&vault, &store, &queued, 20)?;
+    assert_eq!(
+        doors::park_notice_seen(&vault, &parked)?,
+        Some(false),
+        "the park raised its notice"
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::ExecutorError,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )
+    .expect("FAILBEFORE park-stop: the owner stops a parked try");
+    assert_eq!(state, "cancelled");
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
+    assert_eq!(
+        doors::park_notice_seen(&vault, &parked)?,
+        Some(true),
+        "the stop resolves the park's notice"
+    );
+    assert_eq!(
+        run_server_pass(&vault, 30)?,
+        0,
+        "no later pass runs the stopped try"
+    );
+    Ok(())
+}
+
+/// Engine 08:3x: a stop names the exact park the owner read. A stop against a lease generation that is no longer
+/// the try's refuses, and the park stands.
+#[test]
+fn a_stop_of_a_changed_park_refuses() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "drained", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let stale = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)? + 1,
+    );
+    assert!(
+        matches!(stale, Err(oneiron::Error::ConcurrentWrite(_))),
+        "FAILBEFORE park-stop: a stop of a changed park refuses: {stale:?}"
+    );
+    assert!(
+        store.parked_attempt(queued.attempt.id)?.is_some(),
+        "the park stands"
+    );
+    Ok(())
+}
+
+/// Engine 08:3x: the stop serves the Dreamer server's own parks only. A park under any other owner keeps its own
+/// door, and the stop refuses it as a park it does not serve.
+#[test]
+fn a_stop_refuses_a_park_of_another_owner() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "worker park", 10)?;
+    let node_id = doors::load_or_mint_client_id(&vault)?;
+    // `run_input` leases under a caller-chosen worker, not the server.
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut CancelledParkExecutor,
+        &WakeCancellation::new(),
+    ))?;
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert_ne!(parked.park_owner, DREAMER_SERVER_PARK_OWNER);
+    let refused = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    );
+    assert!(
+        matches!(refused, Err(oneiron::Error::EntityNotFound)),
+        "FAILBEFORE park-stop: the stop refuses another owner's park: {refused:?}"
+    );
+    assert!(store.parked_attempt(queued.attempt.id)?.is_some());
+    Ok(())
+}
+
+/// Owner Stop abandons the stopped try's own Pending outbound intents.
+#[test]
+fn the_owner_stop_abandons_the_stopped_trys_pending_sends() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-pending-send", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    doors::insert_pending_send(&vault, queued.attempt.id, 20_000)?;
+    assert_eq!(
+        doors::pending_send_state(&vault, queued.attempt.id)?,
+        Some((oneiron::outbound_intent_ledger::IntentState::Pending, None)),
+        "the send is Pending immediately before Stop"
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )?;
+    assert_eq!(state, "cancelled");
+    assert_eq!(
+        doors::pending_send_state(&vault, queued.attempt.id)?,
+        Some((
+            oneiron::outbound_intent_ledger::IntentState::Abandoned,
+            Some(
+                oneiron::outbound_intent_ledger::RecordedOutboundOutcome::Abandoned(
+                    oneiron::outbound_intent_ledger::IntentEscalationReason::OwnerStopped,
+                )
+            ),
+        )),
+        "FAILBEFORE park-stop settlement: Stop abandons the try's Pending send as owner_stopped"
+    );
+    Ok(())
+}
+
+struct SettlementStepBackend;
+impl llm::LlmBackend for SettlementStepBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: llm::LlmRequest,
+        _lease: &'a llm::BudgetLease,
+    ) -> llm::LlmGenerateFuture<'a> {
+        Box::pin(async {
+            let mut usage = llm::LlmUsage::zero();
+            usage.input.total = 37;
+            usage.output.total = 1;
+            usage.output.text = 1;
+            Ok(llm::LlmResponse {
+                message: llm::LlmMessage {
+                    role: llm::LlmMessageRole::Assistant,
+                    content: vec![llm::ContentPart::Text {
+                        text: "paid".into(),
+                        signature: None,
+                    }],
+                },
+                usage,
+                finish_reason: llm::FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: llm::LlmRequest,
+        _lease: &'a llm::BudgetLease,
+    ) -> llm::LlmStreamResult<'a> {
+        Err(llm::LlmError::Fatal(llm::FatalLlmError::InvalidRequest))
+    }
+}
+
+/// One model request for the scripted backend: a text step of the consolidation purpose.
+fn paid_step_request() -> llm::LlmRequest {
+    llm::LlmRequest {
+        model: llm::ModelId::new("test/model@r1").expect("model id"),
+        envelope: llm::CallEnvelope {
+            scope: llm::Scope::default(),
+            purpose: llm::CallPurpose::Consolidation,
+            class: llm::CallClass::BestEffort,
+            tier: llm::TierPrecedence::for_purpose(
+                &llm::CallPurpose::Consolidation,
+                llm::ModelTierRef("default".into()),
+            ),
+            response_format: llm::ResponseFormat::Text,
+            locality: llm::ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
+            seat_effort: None,
+        },
+        messages: vec![llm::LlmMessage {
+            role: llm::LlmMessageRole::User,
+            content: vec![llm::ContentPart::Text {
+                text: "paid step".into(),
+                signature: None,
+            }],
+        }],
+        tools: Vec::new(),
+        params: Default::default(),
+        provider_options: Default::default(),
+        host_segments: None,
+    }
+}
+
+/// Owner Stop retires a receipt only a real terminal step and settlement can pin.
+#[test]
+fn the_owner_stop_retires_the_stopped_trys_step_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-paid-step", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let step_hash = block_on_ready(doors::settle_paid_step(
+        &vault,
+        queued.attempt.id,
+        &SettlementStepBackend,
+        paid_step_request(),
+        21,
+    ))?;
+    assert!(
+        doors::step_charged(&vault, queued.attempt.id, &step_hash)?,
+        "the terminal memo reads charged immediately before Stop"
+    );
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )?;
+    assert_eq!(state, "cancelled");
+    assert!(
+        !doors::step_charged(&vault, queued.attempt.id, &step_hash)?,
+        "FAILBEFORE park-stop settlement: Stop retires the try's paid-step receipt"
+    );
+    Ok(())
+}
+
+/// Owner Stop pays the measured usage a failed settlement retained on this try.
+#[test]
+fn the_owner_stop_settles_the_stopped_trys_owed_charge() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-owed-charge", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let budget_id = "park-stop-owed";
+    doors::retain_owed_charge(
+        &vault,
+        oneiron::dreamer_runner::ReserveDreamerBudget {
+            budget_id: budget_id.to_owned(),
+            child_attempt: queued.attempt.id,
+            budget_total_units: 1_000,
+            reserve_units: 100,
+            now: 21,
+        },
+        37,
+    )?;
+    let retained = store
+        .budget_reservation(budget_id, queued.attempt.id)?
+        .expect("retained reservation");
+    assert_eq!(retained.owed_units, 37, "the measured usage is still owed");
+    assert_eq!(
+        doors::attempt_budget_reservation_count(&vault, queued.attempt.id)?,
+        1
+    );
+    let before = store.budget(budget_id)?.expect("the budget line");
+    assert_eq!(
+        (
+            before.spent_units(),
+            before.remaining_units,
+            before.reserved_units
+        ),
+        (Some(0), 900, 100)
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )?;
+    assert_eq!(state, "cancelled");
+    let after = store
+        .budget(budget_id)?
+        .expect("the budget line after Stop");
+    assert_eq!(
+        (
+            doors::attempt_budget_reservation_count(&vault, queued.attempt.id)?,
+            after.spent_units(),
+            after.remaining_units,
+            after.reserved_units,
+            after.overdraft_units,
+        ),
+        (0, Some(37), 963, 0, 0),
+        "FAILBEFORE park-stop settlement: Stop retires every reservation and charges its owed units"
+    );
+    Ok(())
+}
+
+/// Review 6998 P1: a settlement that fails leaves the call's measured charge owed on its reservation (FIX 8728),
+/// and the owed row the paid send wrote before it went. The stop charges that call once, not once from each.
+#[test]
+fn the_owner_stop_charges_a_retained_call_once() -> Result<()> {
+    let (_dir, vault) = open_vault()?;
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "stop-owed-call", 10)?;
+    let parked = park_drained(&vault, &store, &queued, 20)?;
+    let budget_id = "park-stop-owed-call";
+    let units = block_on_ready(doors::retain_owed_call_charge(
+        &vault,
+        queued.attempt.id,
+        &SettlementStepBackend,
+        paid_step_request(),
+        budget_id,
+        21,
+    ))?;
+    assert_eq!(units, 38, "the scripted step's measured usage");
+    let retained = store
+        .budget_reservation(budget_id, queued.attempt.id)?
+        .expect("retained reservation");
+    assert_eq!(
+        retained.owed_units, units,
+        "the measured usage is owed on the reservation"
+    );
+    let before = store.budget(budget_id)?.expect("the budget line");
+    assert_eq!(
+        (
+            before.spent_units(),
+            before.remaining_units,
+            before.reserved_units
+        ),
+        (Some(0), 900, 100)
+    );
+
+    let state = doors::stop_as_owner(
+        &vault,
+        &embedded_owner_proof(&vault),
+        &attempt_hex(&queued),
+        DreamerParkCauseView::Cancelled,
+        parked.parked_at,
+        attempt_count(&store, &queued)?,
+    )?;
+    assert_eq!(state, "cancelled");
+    let after = store
+        .budget(budget_id)?
+        .expect("the budget line after Stop");
+    assert_eq!(
+        (
+            doors::attempt_budget_reservation_count(&vault, queued.attempt.id)?,
+            after.spent_units(),
+            after.remaining_units,
+            after.reserved_units,
+            after.overdraft_units,
+        ),
+        (0, Some(units), 1_000 - units, 0, 0),
+        "FAILBEFORE review 6998 P1: Stop charges a call a failed settlement retained once"
     );
     Ok(())
 }

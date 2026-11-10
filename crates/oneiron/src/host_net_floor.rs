@@ -1,5 +1,7 @@
 //! The host floor guests' network work charges (FIX 5978, FIX 5979,
-//! FIX 6299, FIX 6304).
+//! FIX 6299, FIX 6304). Host work: the sandbox's egress relay charges it,
+//! and so does every other host socket path, so it lives beside the host's
+//! descriptor line, not in the sandbox (lead 08:0x, F5).
 //!
 //! Each descriptor and worker thread a guest's socket entries and relays
 //! hold takes one permit of the process's descriptor line

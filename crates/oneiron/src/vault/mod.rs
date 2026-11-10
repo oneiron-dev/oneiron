@@ -251,11 +251,16 @@ pub struct Vault {
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).
-    pub(crate) host_net_floor: std::sync::Arc<crate::code_sandbox::egress::VaultHostFloor>,
+    pub(crate) host_net_floor: std::sync::Arc<crate::host_net_floor::VaultHostFloor>,
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
         std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
+    /// The isolating backends the binary that built this vault installed
+    /// ([`Vault::install_sandbox_backends`], F1-6); none until it installs
+    /// them, and then every tier that needs isolation is refused.
+    pub(crate) sandbox_backends:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
