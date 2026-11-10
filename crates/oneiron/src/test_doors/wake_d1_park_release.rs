@@ -142,3 +142,190 @@ pub fn stop_as_owner(
     )?;
     Ok(view.state)
 }
+
+/// Writes one Pending send at sequence zero through the production ledger writer.
+/// No transport is invoked.
+///
+/// # Errors
+/// The ledger's validation or storage errors.
+#[doc(hidden)]
+pub fn insert_pending_send(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<()> {
+    let request = crate::outbound_intent_ledger::OutboundCallRequest::new(
+        attempt,
+        0,
+        "park-stop-server",
+        "park-stop-tool",
+        b"stop-fixture payload".to_vec(),
+        now_ms,
+    );
+    let pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
+        request,
+        true,
+        crate::outbound_intent_ledger::BudgetChargeMarker {
+            key_ref: None,
+            budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: now_ms,
+        },
+    )
+    .map_err(intent_ledger_error)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        crate::outbound_intent_ledger::insert_pending_in_txn(vault, wtxn, &pending)
+            .map_err(intent_ledger_error)
+    })
+}
+
+/// Reads the state and recorded outcome of `attempt`'s sequence-zero send.
+///
+/// # Errors
+/// The ledger's validation or storage errors.
+#[doc(hidden)]
+pub fn pending_send_state(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<
+    Option<(
+        crate::outbound_intent_ledger::IntentState,
+        Option<crate::outbound_intent_ledger::RecordedOutboundOutcome>,
+    )>,
+> {
+    let txn = vault.store.env.read_txn()?;
+    let row =
+        crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(vault, &txn, attempt, 0)
+            .map_err(intent_ledger_error)?;
+    Ok(row.map(|record| (record.state, record.recorded_outcome)))
+}
+
+fn intent_ledger_error(error: crate::outbound_intent_ledger::IntentLedgerError) -> crate::Error {
+    match error {
+        crate::outbound_intent_ledger::IntentLedgerError::Engine(error) => error,
+        _ => crate::Error::CorruptedIndex("outbound intent ledger row"),
+    }
+}
+
+/// Runs a supplied backend through the production step writer and pins its paid receipt.
+///
+/// # Errors
+/// The model-step, reservation or settlement writer's validation or storage errors.
+#[doc(hidden)]
+pub async fn settle_paid_step(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    backend: &dyn crate::llm::LlmBackend,
+    request: crate::llm::LlmRequest,
+    now: u64,
+) -> Result<[u8; 32]> {
+    let owner = embedded_owner(vault);
+    let ctx = crate::llm::DurableStepContext {
+        vault,
+        attempt_id: attempt,
+        run_id: None,
+        envelope_actor: crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        subject: owner,
+        deadline: None,
+        now_ms: now * 1_000,
+    };
+    let guard = crate::llm::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        crate::llm::BudgetExhaustionPolicy::Suspend,
+    );
+    let outcome = crate::llm::call_as_step(&ctx, backend, &guard, request)
+        .await
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    let crate::llm::StepOutcome::Finished {
+        binding, response, ..
+    } = outcome
+    else {
+        return Err(crate::Error::InvalidConfig(
+            "the scripted step did not finish".into(),
+        ));
+    };
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    store.reserve_budget(crate::dreamer_runner::ReserveDreamerBudget {
+        budget_id: "wake".into(),
+        child_attempt: attempt,
+        budget_total_units: 10_000,
+        reserve_units: 100,
+        now,
+    })?;
+    store.settle_budget_with_step_receipts(
+        crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: "wake".into(),
+            child_attempt: attempt,
+            actual_units: response.usage.input.total + response.usage.output.total,
+            now,
+        },
+        &[binding],
+    )?;
+    Ok(binding.step_hash)
+}
+
+/// Whether the production paid-step reader still sees this exact memo charged.
+///
+/// # Errors
+/// The store's or the terminal memo reader's.
+#[doc(hidden)]
+pub fn step_charged(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .step_charge_marked_in_txn(&txn, attempt, step_hash)
+}
+
+/// Reserves a parked try's budget and retains measured spend through the
+/// production failed-settlement writer, without charging it yet.
+///
+/// # Errors
+/// The reservation's or owed-charge writer's storage and validation errors.
+#[doc(hidden)]
+pub fn retain_owed_charge(
+    vault: &Vault,
+    reservation: crate::dreamer_runner::ReserveDreamerBudget,
+    owed_units: u64,
+) -> Result<()> {
+    let settlement = crate::dreamer_runner::SettleDreamerBudget {
+        budget_id: reservation.budget_id.clone(),
+        child_attempt: reservation.child_attempt,
+        actual_units: owed_units,
+        now: reservation.now,
+    };
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    assert!(matches!(
+        store.reserve_budget(reservation)?,
+        crate::dreamer_runner::DreamerBudgetReserveOutcome::Reserved(_)
+    ));
+    store.owe_unsettled_charge(&settlement)
+}
+
+/// Counts all retained budget reservations naming `attempt`, on every line.
+/// Production keys end in the attempt id; values use the production codec.
+///
+/// # Errors
+/// The store's or the reservation row codec's.
+#[doc(hidden)]
+pub fn attempt_budget_reservation_count(
+    vault: &Vault,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<usize> {
+    let table = crate::side_table::SideTable::<
+        Vec<u8>,
+        crate::dreamer_runner::DreamerBudgetReservation,
+        crate::side_table::Raw,
+    >::new(&crate::side_table::DREAMER_BUDGET_RESERVATION);
+    let txn = vault.store.env.read_txn()?;
+    Ok(table
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .filter(|(key, _)| key.ends_with(attempt.as_bytes()))
+        .count())
+}
