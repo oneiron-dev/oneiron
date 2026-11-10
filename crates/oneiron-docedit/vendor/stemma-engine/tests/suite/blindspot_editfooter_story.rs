@@ -207,6 +207,7 @@ fn tracked_edit_footer_reject_restores_accept_keeps_and_body_untouched() {
         expect: "Draft Footer".to_string(),
         semantic_hash: None,
         content: text_content("Final Footer"),
+        exact_marks: false,
         rationale: None,
     }];
 
@@ -254,6 +255,7 @@ fn edited_footer_text_serializes_into_footer_part_not_body() {
         expect: "Draft Footer".to_string(),
         semantic_hash: None,
         content: text_content("Serialized Footer"),
+        exact_marks: false,
         rationale: None,
     }];
 

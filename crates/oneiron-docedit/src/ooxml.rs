@@ -389,11 +389,6 @@ pub fn escape_text(text: &str) -> String {
 mod tests {
     use super::*;
 
-    const LIMITS: XmlLimits = XmlLimits {
-        max_depth: 16,
-        max_nodes: 64,
-    };
-
     #[test]
     fn dtd_unbound_prefix_second_root_and_limits_are_refused() {
         for bad in [
@@ -403,12 +398,17 @@ mod tests {
             b"<a>text</a>tail",
             b"<a b=\"1\" b=\"2\"/>",
         ] {
-            assert!(XmlTree::parse(bad, LIMITS).is_err(), "{bad:?}");
+            assert!(
+                XmlTree::parse(bad, &Resources::measuring()).is_err(),
+                "{bad:?}"
+            );
         }
+        // Rule 5 (#3932, #4288; Engine call T0H-RULE5-COUNT-ASSERTS = A):
+        // depth is an observation, never a refusal, so a 17-deep tree parses.
         let deep = "<a>".repeat(17) + &"</a>".repeat(17);
         assert_eq!(
-            XmlTree::parse(deep.as_bytes(), LIMITS).map(|_| ()),
-            Err(XmlError("XML node or depth limit"))
+            XmlTree::parse(deep.as_bytes(), &Resources::measuring()).map(|_| ()),
+            Ok(())
         );
     }
 }

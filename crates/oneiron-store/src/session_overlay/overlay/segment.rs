@@ -301,11 +301,13 @@ mod hygiene_tests {
                 entity_type: 1,
                 occurred: TimeRange { start: 1, end: 1 },
                 learned_at: 1,
+                row_version: None,
                 data: b"journal-private".to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
             },
+            source_run: None,
         })?;
         let watched = ACTIVE_SEGMENT.with(|slot| {
             let borrow = slot.borrow();
