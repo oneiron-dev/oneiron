@@ -19,7 +19,8 @@ pub(crate) use proposal::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
     ProjectDetectionVerdict, claim_project_detection, erase_card_actor_in_txn,
     erase_pending_actor_in_txn, fail_project_detection, project_house_agent,
-    seeded_house_agent, settle_project_detection, stage_project_detection_in_txn,
+    project_house_agent_in_txn, seeded_house_agent, settle_project_detection,
+    stage_project_detection_in_txn,
 };
 mod asks;
 mod branch;

@@ -102,6 +102,24 @@ pub fn bind_host_owner(
     vault.bind_host_owner_for_test(issuer, person)
 }
 
+/// Binds the host root's key to `actor` at `class` (`human`, `agent` or
+/// `system`), as the crate's own `test_util::bind_test_agent` does, so a test
+/// can write as one of the vault's agents once its vault is rooted. The host
+/// key holds one live binding: the actor it bound before, the owner after
+/// [`bind_host_owner`], is unbound until a test binds it again.
+///
+/// # Errors
+/// The authority log's.
+#[doc(hidden)]
+pub fn bind_host_actor(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    actor: EntityId,
+    class: &str,
+) -> crate::Result<()> {
+    vault.bind_host_actor_for_test(issuer, actor, class)
+}
+
 /// Appends `Sent` to an esign document's ledger, as sending it does.
 ///
 /// # Errors

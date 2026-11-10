@@ -2,6 +2,11 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
+    /// One bind or unbind of a house mind's org link (HOUSE-BIND = A): binder, house, org, role,
+    /// workspace and grant. Key: id16 (house) + id16 (receipt).
+    HOUSE_LINK_RECEIPT: VaultMeta b"house_link.receipt.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::store::actor_scrubs::erase_house_link_actor_in_txn;
     /// Where one project ask went: its project, placing TASK and ask (content, not authority).
     /// Key: id16 (ask).
     PROJECT_ASK: VaultMeta b"project.ask.v1/" Named

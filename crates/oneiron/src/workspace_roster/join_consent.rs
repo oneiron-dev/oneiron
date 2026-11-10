@@ -542,7 +542,7 @@ fn standing_of_in_txn(
             ) {
                 return Ok(Standing::Unknown);
             }
-            if let Some((org, own)) = house_org_in_txn(vault, txn, agent, at)? {
+            if let Some((org, own)) = house_org_in_txn(vault, txn, agent)? {
                 return Ok(Standing::House { org, own });
             }
             match agent_person_in_txn(vault, txn, agent, at)? {
@@ -571,37 +571,20 @@ fn standing_of_in_txn(
 }
 
 /// The ORG `agent` stands for when it is a workspace house mind: a stored
-/// roster preset names it as the house pen and its subject anchor names that
-/// preset's ORG. `own` when the preset's workspace is this shared vault.
+/// roster preset names it as the house pen and a live grant seats it in that
+/// preset's shared vault (HOUSE-BIND = A). `own` when the preset's workspace
+/// is this shared vault. The agent's own subject anchor plays no part: a
+/// house keeps its model PERSON.
 fn house_org_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
-    at: u64,
 ) -> Result<Option<(EntityId, bool)>> {
-    let presets: Vec<_> = super::records::PRESET
-        .scan(&vault.store, txn)?
-        .into_iter()
-        .map(|(_, row)| row.preset)
-        .collect();
-    if !presets.iter().any(|preset| preset.house_actor_ref == agent) {
-        return Ok(None);
-    }
-    let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-        .filter(|anchor| {
-            anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Org
-        })
-    else {
-        return Ok(None);
-    };
     let here = vault
         .shared_vault_creation_in_txn(txn)?
         .map(|creation| creation.vault_id);
     let mut found = None;
-    for preset in presets {
-        if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
-            continue;
-        }
+    for (preset, _) in super::house_link::house_links_in_txn(vault, txn, agent)? {
         let own = here == Some(preset.workspace_vault_id);
         if own || found.is_none() {
             found = Some((preset.org_ref, own));

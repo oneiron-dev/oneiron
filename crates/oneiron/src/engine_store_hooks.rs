@@ -551,6 +551,15 @@ impl StoreActorScrubs for EngineActorScrubs {
         crate::workspace_roster::erase_member_actor_in_txn(vault, wtxn, actor)
     }
 
+    fn erase_house_link_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_house_link_actor_in_txn(vault, wtxn, actor)
+    }
+
     fn erase_member_intent_actor_in_txn(
         &self,
         vault: &crate::Vault,

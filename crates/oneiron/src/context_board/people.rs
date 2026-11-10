@@ -68,7 +68,8 @@ pub struct PersonRow {
     pub name: String,
     pub kind: PersonKind,
     /// `owner`, `member` or `contact` for a human; `preset` or `custom` for
-    /// an agent.
+    /// an agent, and for a house mind that runs an org its link, `runs <org>
+    /// as <role>` (HOUSE-BIND = A).
     pub role: String,
     /// One line for the reader's sensitivity band, when the about job has
     /// written one.
@@ -164,6 +165,8 @@ impl People {
                 }
             }
         }
+        // A house that runs an org reads its link as its role (HOUSE-BIND = A).
+        let house_roles = crate::workspace_roster::house_role_lines_in_txn(vault, &rtxn)?;
         // Every read below the roster's own transaction opens its own, so the
         // census is taken first and the reader's read runs after it closes.
         let mut found = Vec::new();
@@ -209,12 +212,11 @@ impl People {
                         .unwrap_or_else(|| def.agent_id.clone()),
                     handle,
                     kind: PersonKind::Agent,
-                    role: if def.logical_id.is_some() {
-                        "preset"
-                    } else {
-                        "custom"
-                    }
-                    .to_owned(),
+                    role: match house_roles.get(agent) {
+                        Some(runs) => runs.clone(),
+                        None if def.logical_id.is_some() => "preset".to_owned(),
+                        None => "custom".to_owned(),
+                    },
                     about: None,
                 },
                 Some(_) => person_row_without_definition(vault, at, person, handle, &body),
