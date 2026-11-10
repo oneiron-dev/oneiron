@@ -135,7 +135,9 @@ fn a_derived_claim_never_supersedes_user_stated_truth() {
         ClaimSubject::Entity(fixture.person),
         rmpv::Value::from("a black filter coffee"),
         1.0,
-        ClaimApprovalStatus::Approved,
+        // A proposal, so the owner's write meets no criticality confirm; the
+        // UserStated guard holds it all the same.
+        ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )
     .expect("a claim body");
