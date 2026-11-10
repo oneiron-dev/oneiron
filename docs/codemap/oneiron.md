@@ -3150,7 +3150,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/host/results.rs` | src | m | 24 crate-vis | — | Stored result binding, admission and reads for one JS host |
 | `src/engine_executor/host/skill_delivery.rs` | src | s | 2 crate-vis | — | A skill body a call's answer delivered to the step's own program (FIX 3608): what the call's native producer… |
 | `src/engine_executor/host/type_feedback.rs` | src | s | 6 crate-vis | — | The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's… |
-| `src/engine_executor/mod.rs` | src | s | 3 mod · 11 re-export · 8 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/mod.rs` | src | s | 3 mod · 11 re-export · 9 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 5 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
 | `src/engine_executor/program_entry/injection.rs` | src | s | 12 crate-vis | — | The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry… |
 | `src/engine_executor/record.rs` | src | m | 1 struct · 2 fn · 31 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
@@ -7447,11 +7447,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/task_exposure.rs` | src | s | 1 struct · 1 fn | TaskExposure | — |
 | `src/team/team_shape.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const | CoordinationPattern, TeamShape | — |
 | `src/temporal.rs` | src | s | 1 enum · 1 re-export | TemporalAnchorMode | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
+| `src/test_doors/code_reply_healer.rs` | src | s | 5 fn | — | Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply… |
 | `src/test_doors/consolidation.rs` | src | m | 1 struct · 2 fn | UnboundPass | One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a… |
 | `src/test_doors/dag_append.rs` | src | s | 2 fn | — | Doors for `tests/dag_append_composed_source.rs` (DAG-APPEND-SOURCE-LABEL): the source label each of the DAG… |
 | `src/test_doors/label_writers.rs` | src | s | 4 fn | — | Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`… |
 | `src/test_doors/live_run_claim_put.rs` | src | s | 4 fn | — | Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures… |
-| `src/test_doors/mod.rs` | src | s | 8 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 9 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/retrieval_policy_default_floor.rs` | src | s | 1 fn | — | The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs` |
 | `src/test_doors/run_hold.rs` | src | s | 6 fn | — | Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override… |
 | `src/test_doors/untangle_regressions.rs` | src | m | 3 struct · 1 enum · 25 fn | ClaimGateDecision, DreamerLandingRow, RevokeAnswer, SideDoorTurnText | Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)… |
@@ -8052,6 +8053,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
 | `tests/code_memory.rs` | test | XL | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics — public contract suite (ONE-1608) |
+| `tests/code_reply_healer.rs` | test | m | — | — | CR02-T0: CODE-RUNTIME-02 repair-format checks through the library test door |
 | `tests/common/mod.rs` | test | s | 7 crate-vis | — | Shared fixture helpers for `oneiron` integration tests |
 | `tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs` | test | s | — | — | (a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: every… |
 | `tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs` | test | s | — | — | (b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the… |
@@ -8142,6 +8144,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/key_value_credential_read.rs` | test | s | — | — | [E2E-KV-GET-PREFILTER]: the keyed store's own reader under a read credential |
 | `tests/linked_self_verb_surface.rs` | test | s | — | — | The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can… |
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
+| `tests/machine_peer_binding_facet.rs` | test | s | — | — | A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary… |
 | `tests/microvm_intermediate_symlink.rs` | test | s | — | — | [MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]: a base-mount read whose path crosses a symlinked directory is… |
 | `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/owner_reverts_dreamer_claim.rs` | test | s | — | — | The owner takes back what the Dreamer landed (owner ruling 18 Oct: "autoapply + revert rather than holdout"… |
