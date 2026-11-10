@@ -209,6 +209,13 @@ fn fixture() -> Fixture {
             NOW,
         )
         .expect("owner creates the All, ceiling-Proposed author");
+    // A put over a stored row is admitted only on a lane that reads the row.
+    // Each author reads the rows it updates; the permit grants a read alone.
+    for reader in [author, wide_author] {
+        vault
+            .install_read_permit_for_test(oneiron::WriteActor::new(reader, EdgeActorClass::Agent))
+            .expect("the author reads the stored rows it updates");
+    }
     Fixture {
         vault,
         owner_person,
