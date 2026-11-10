@@ -79,7 +79,7 @@ fn serve(config: &Path, port: u16, log: &Path) -> Server {
         .stdout(Stdio::null())
         .stderr(std::fs::File::create(log).expect("server log file"));
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {
@@ -1158,6 +1158,7 @@ fn seed_failed_task_and_open_turn(
     let principal = |minted: &Minted| {
         oneiron::EntityId::from_hex(minted.printed["principal_ref"].as_str().unwrap()).unwrap()
     };
+    let vault_path = vault.to_path_buf();
     let vault = oneiron::Vault::open_owned(vault, oneiron::VaultConfig::server()).unwrap();
 
     let created = oneiron::task_verb::sdk::tasks_create(
@@ -1201,15 +1202,14 @@ fn seed_failed_task_and_open_turn(
         })
         .unwrap();
 
-    // Minting a slip roots the vault in the host key: the owner acts only
-    // once the host has bound it, and a new project needs its signed birth.
-    let host = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
+    // The shipped mints rooted this vault under this install's own host
+    // issuer seed (#4015): their genesis bound the owner, so no hand-signed
+    // bind is needed or possible. The room below is born the way an
+    // owner's tap bears one: a card minted through the public door, signed
+    // by the host for the owner under the loaded issuer.
+    oneiron_server::config::KeystoreConfig::default().install_on(&vault, &vault_path);
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    bind_owner(&vault, &host, owner);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let issuer = vault.load_host_slip_issuer().unwrap();
     let project_signer = vault.owner_project_signer(&issuer).unwrap();
     let owner_proof = vault
         .authenticate_owner(
@@ -1219,31 +1219,77 @@ fn seed_failed_task_and_open_turn(
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    let root = vault.root_project().unwrap();
-    let project = oneiron::EntityId::now();
-    let mut record =
-        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    record.roster.extend(
-        std::iter::once(writer)
-            .chain(members.iter().copied())
-            .map(|minted| principal(minted).to_hex()),
-    );
+    // The mint's source message goes through the witness door, never a raw
+    // put, with a caller-supplied id the card names.
+    let source_message = oneiron::EntityId::now().to_hex();
+    let staged: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
+        "conversation_ref": oneiron::EntityId::now().to_hex(),
+        "occurred_at": unix_seconds_now(),
+        "messages": [{ "id": source_message, "author": "user",
+            "message_type": "text", "content": "Does this sound like a project?",
+            "is_visible": true, "order": 0 }],
+    }))
+    .unwrap();
     vault
-        .create_project_with_owner(
-            project,
-            &record,
-            &oneiron::write_envelope::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
-            1,
-            oneiron::authority::AuthorityKey::Ed25519(host.verifying_key().to_bytes()),
-            |message| {
-                use ed25519_dalek::Signer;
-                Ok(host.sign(message).to_bytes().to_vec())
-            },
-            &owner_proof,
-            &project_signer,
-        )
-        .expect("the owner's signed project birth");
-    let room = record.home_room.clone();
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .witness(&staged)
+        .expect("the owner stages the card's source message");
+    let leader = oneiron::EntityId::from_hex(
+        &vault
+            .project(vault.root_project().unwrap())
+            .expect("the root project reads")
+            .expect("the root project is stored")
+            .leader,
+    )
+    .unwrap();
+    // The agents sit on the card's board, so the minted roster seats them
+    // in the home room exactly as the old signed birth did.
+    let card = oneiron::genui::ProjectProposalCard::new(
+        "e2e-room-seed-card",
+        owner.to_hex(),
+        source_message,
+        oneiron::genui::ProjectGoalDraft {
+            goal: "Seed a room the agents stand in".to_owned(),
+            why: "The tier and actor promises need a project room".to_owned(),
+            axes: vec!["coverage".to_owned()],
+        },
+        oneiron::genui::ProjectProposalPicks {
+            leader_agent_def_ref: leader.to_hex(),
+            board_human_refs: std::iter::once(owner)
+                .chain(
+                    std::iter::once(writer)
+                        .chain(members.iter().copied())
+                        .map(principal),
+                )
+                .map(|actor| actor.to_hex())
+                .collect(),
+            budget_share_bps: 1200,
+            starting_skill_refs: vec![],
+        },
+    )
+    .expect("the seeding card validates");
+    let tap = oneiron::genui::ConsentActionRequest::new(
+        card.card_id.clone(),
+        oneiron::genui::PROJECT_PROPOSAL_MINT_ACTION_ID,
+        oneiron::genui::ConsentActionKind::ProjectMint,
+        oneiron::genui::ConsentActorIdentity::SurfaceActor {
+            actor_ref: owner.to_hex(),
+        },
+        oneiron::genui::ConsentSurface::Dashboard,
+        unix_seconds_now(),
+    )
+    .expect("the owner's tap validates");
+    let receipt = vault
+        .mint_project_from_card(&card, &tap, &owner_proof, &project_signer)
+        .expect("the owner's card mints the project");
+    let project =
+        oneiron::EntityId::from_hex(&receipt.project_id).expect("the mint names its project");
+    let room = vault
+        .project(project)
+        .expect("the minted project reads")
+        .expect("the minted project is stored")
+        .home_room
+        .clone();
     let turn = oneiron::EntityId::now().to_hex();
     let opened: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
         "conversation_ref": room, "turn_ref": turn, "occurred_at": unix_seconds_now(),
@@ -1260,6 +1306,11 @@ fn seed_failed_task_and_open_turn(
 
 /// Appends the host-signed authority entry that binds `owner` as the vault's
 /// human, as the host does when its owner first signs in.
+///
+/// Kept for the record: genesis binds the owner since H149, and the sealed
+/// host key (#4015) admits no hand-signed bind. The seed above mints its
+/// room through the public card door instead.
+#[allow(dead_code)]
 fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityId) {
     use ed25519_dalek::Signer;
     use oneiron::authority::{

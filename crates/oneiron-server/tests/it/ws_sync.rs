@@ -233,7 +233,7 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
             .expect("WebSocket stream ended unexpectedly")
             .expect("WebSocket error");
         match msg {
-            Message::Binary(data) => return data.to_vec(),
+            Message::Binary(data) => return unwrap_window_frame(data.to_vec()),
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected WebSocket message: {other:?}"),
         }
@@ -251,6 +251,45 @@ async fn next_window_frame(ws: &mut WsStream) -> Vec<u8> {
             _ => panic!("unexpected frame while waiting for window sync"),
         }
     }
+}
+
+/// Window bytes ride their pad envelope (FIX 7107): one `PadFree` envelope
+/// for these month windows, which hold no world pads.
+fn enveloped_update_frames(key: &str, update: &[u8]) -> Vec<Vec<u8>> {
+    let envelope = transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Update,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    };
+    envelope.encode_frames(key, window_sub_tags::UPDATE).unwrap()
+}
+
+async fn send_enveloped_update(ws: &mut WsStream, key: &str, update: &[u8]) {
+    for frame in enveloped_update_frames(key, update) {
+        ws.send(Message::Binary(frame.into())).await.unwrap();
+    }
+}
+
+/// Unwrap one received window frame's pad envelope. Every `UPDATE`
+/// arrives in its envelope (FIX 7107); notices and non-window frames pass
+/// through, since only updates carry one.
+fn unwrap_window_frame(frame: Vec<u8>) -> Vec<u8> {
+    if frame.first() != Some(&TAG_WINDOW_SYNC) {
+        return frame;
+    }
+    let (key, sub_tag, payload) = transport::decode_window_sync(&frame[1..])
+        .expect("a received window frame decodes");
+    if sub_tag != window_sub_tags::UPDATE {
+        return frame;
+    }
+    let envelope = transport::decode_window_pad_envelope(payload)
+        .expect("a received window UPDATE arrives in its pad envelope (FIX 7107)");
+    transport::encode_window_sync(key, sub_tag, &envelope.payload)
+        .into_result()
+        .expect("an unwrapped window update re-encodes")
 }
 
 async fn expect_no_binary(ws: &mut WsStream, duration: Duration) {
@@ -860,12 +899,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         .unwrap();
     author.commit();
     let before = author.export(ExportMode::all_updates()).unwrap();
-    client_b
-        .send(Message::Binary(
-            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &before).into(),
-        ))
-        .await
-        .unwrap();
+    send_enveloped_update(&mut client_b, "2026-02", &before).await;
 
     // Baseline: A is on the fan-out path before the revocation.
     let relayed = next_window_frame(&mut client_a).await;
@@ -885,12 +919,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         .unwrap();
     author.commit();
     let after = author.export(ExportMode::updates(&vv_before)).unwrap();
-    client_b
-        .send(Message::Binary(
-            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &after).into(),
-        ))
-        .await
-        .unwrap();
+    send_enveloped_update(&mut client_b, "2026-02", &after).await;
 
     let fanned_out = next_binary_or_close(&mut client_a).await;
     assert!(
@@ -1366,11 +1395,7 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
         .unwrap();
     author.commit();
     let update = author.export(ExportMode::all_updates()).unwrap();
-    let window_update = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
-    client_a
-        .send(Message::Binary(window_update.into()))
-        .await
-        .unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &update).await;
 
     let relayed = next_window_frame(&mut client_b).await;
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
@@ -1465,12 +1490,7 @@ async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
         .unwrap();
     author.commit();
     let prefix = author.export(ExportMode::all_updates()).unwrap();
-    writer
-        .send(Message::Binary(
-            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &prefix).into(),
-        ))
-        .await
-        .unwrap();
+    send_enveloped_update(&mut writer, "2026-02", &prefix).await;
     wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
     let mut follower = connect_root_without_hello(addr, &server, "causal-secret")
         .await
@@ -1497,12 +1517,7 @@ async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
         .unwrap();
     author.commit();
     let later = author.export(ExportMode::updates(&before)).unwrap();
-    writer
-        .send(Message::Binary(
-            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &later).into(),
-        ))
-        .await
-        .unwrap();
+    send_enveloped_update(&mut writer, "2026-02", &later).await;
     let response = next_window_frame(&mut follower).await;
     let (_, tag, _) = transport::decode_window_sync(&response[1..]).unwrap();
     assert_eq!(tag, window_sub_tags::VV_RESPONSE);
@@ -1536,8 +1551,7 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     author.commit();
     let update = author.export(ExportMode::all_updates()).unwrap();
 
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
-    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &update).await;
 
     // B receives the relayed WindowSync UPDATE with the exact payload.
     let relayed = next_window_frame(&mut client_b).await;
@@ -1601,8 +1615,7 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
         .unwrap();
     author.commit();
     let entity_update = author.export(ExportMode::all_updates()).unwrap();
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &entity_update);
-    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &entity_update).await;
 
     // The delete-propagation case: a TOMBSTONE relayed through the server
     // must survive a restart, or durable cross-device delete propagation is
@@ -1616,8 +1629,7 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     let tombstone_update = author
         .export(ExportMode::updates(&vv_before_tombstone))
         .unwrap();
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &tombstone_update);
-    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &tombstone_update).await;
 
     // Wait until both updates are durable, then "restart": kill the server
     // task and drop ALL in-RAM CRDT state.
@@ -1695,8 +1707,7 @@ async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() 
         .unwrap();
     author.commit();
     let ok_update = author.export(ExportMode::all_updates()).unwrap();
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ok_update);
-    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &ok_update).await;
     wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
 
     // Corrupt the monotonic seq row: the NEXT persist_imported_update trips
@@ -1717,8 +1728,7 @@ async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() 
         .unwrap();
     author.commit();
     let tombstone_update = author.export(ExportMode::updates(&vv_before)).unwrap();
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &tombstone_update);
-    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    send_enveloped_update(&mut client_a, "2026-02", &tombstone_update).await;
 
     // (a) The connection closes (Persistence error → fail-closed break).
     // Eviction happens before the error propagates, so once the close is
@@ -1934,8 +1944,7 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
         .unwrap();
     author.commit();
     let ordinary = author.export(ExportMode::all_updates()).unwrap();
-    let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
-    sender.send(Message::Binary(frame.into())).await.unwrap();
+    send_enveloped_update(&mut sender, "2026-02", &ordinary).await;
     let relayed = next_window_frame(&mut receiver).await;
     let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(payload, ordinary.as_slice());
@@ -1961,8 +1970,7 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
         .unwrap();
     author.commit();
     let update = author.export(ExportMode::updates(&before)).unwrap();
-    let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
-    sender.send(Message::Binary(frame.into())).await.unwrap();
+    send_enveloped_update(&mut sender, "2026-02", &update).await;
     assert_ws_closes(&mut sender, "local-only diagnostic update must be refused").await;
 
     // A later positive fetch is also a relay barrier: a wrongly broadcast

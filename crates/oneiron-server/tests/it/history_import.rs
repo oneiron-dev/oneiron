@@ -448,23 +448,88 @@ fn a_codex_reply_read_before_all_its_block_echoes_were_logged_lands_once() {
     assert_eq!(home.search("so 19.99 rounds"), 1);
 }
 
-/// The largest resident set any child process of this test has reached.
+/// Runs `oneiron import <source> <path> [--dry-run]` like [`Home::import`]
+/// and returns its report with the peak resident set of that child alone.
+///
+/// `getrusage(RUSAGE_CHILDREN)` is process-wide: a sibling test's huge
+/// import (a 1 GiB log read whole, a million messages landed) pollutes it.
+/// This reaps exactly the child it ran (`wait4`) and reports its own peak.
 #[cfg(unix)]
-fn peak_child_bytes() -> u64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: `getrusage` fills the `rusage` it is given; zeroed is a valid
-    // `rusage` either way.
-    let usage = unsafe {
-        libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
-        usage.assume_init()
+fn import_measured(home: &Home, source: &str, path: &Path, dry_run: bool) -> (Value, u64) {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+    command
+        .args(["import", source])
+        .arg(path)
+        .arg("--config")
+        .arg(&home.config)
+        .env_remove("ONEIRON_VAULT_PATH");
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("test fixture");
+    let mut stdout = child.stdout.take().expect("test fixture");
+    let mut stderr = child.stderr.take().expect("test fixture");
+    let (stdout, stderr, status, usage) = std::thread::scope(|scope| {
+        // Drained while the child runs, so it never blocks on a full pipe.
+        let out = scope.spawn(|| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut stdout, &mut bytes).expect("test fixture");
+            bytes
+        });
+        let err = scope.spawn(|| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut stderr, &mut bytes).expect("test fixture");
+            bytes
+        });
+        let pid = child.id() as libc::pid_t;
+        let mut status = 0;
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        let usage = loop {
+            // SAFETY: `wait4` fills the status and `rusage` it is given;
+            // zeroed is a valid `rusage` either way. `pid` is this child,
+            // waited once: nothing else waits for it.
+            let waited = unsafe { libc::wait4(pid, &mut status, 0, usage.as_mut_ptr()) };
+            if waited == pid {
+                // SAFETY: `wait4` returned this child's pid, so it filled
+                // the `rusage`.
+                break unsafe { usage.assume_init() };
+            }
+            (std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted)
+                .then_some(())
+                .expect("test fixture: the import's wait failed");
+        };
+        // Already reaped: never waited again.
+        std::mem::forget(child);
+        (
+            out.join().expect("test fixture"),
+            err.join().expect("test fixture"),
+            status,
+            usage,
+        )
+    });
+    let output = std::process::Output {
+        status: std::process::ExitStatus::from_raw(status),
+        stdout,
+        stderr,
     };
+    let succeeded = output.status.success();
+    let failure = format!("import {source}: {}", String::from_utf8_lossy(&output.stderr));
+    succeeded.then_some(()).expect(failure.as_str());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report on stdout");
     let max = u64::try_from(usage.ru_maxrss).unwrap_or(0);
     // Linux counts kilobytes; macOS counts bytes.
-    if cfg!(target_os = "macos") {
+    let peak = if cfg!(target_os = "macos") {
         max
     } else {
         max * 1024
-    }
+    };
+    (report, peak)
 }
 
 /// An export zip whose `conversations.json` is `head`, `filler` bytes of
@@ -503,9 +568,8 @@ fn an_export_holding_a_long_list_beside_its_conversations_imports_in_bounded_mem
     let zip_path = home.dir.path().join("padded-export.zip");
     zip_padded_export(&zip_path, &head, b"0,", 64 << 20, b"0]}");
 
-    let report = home.import("chatgpt", &zip_path, false);
+    let (report, peak) = import_measured(&home, "chatgpt", &zip_path, false);
     assert_eq!(totals(&report), (6, 0, 0, 0));
-    let peak = peak_child_bytes();
     assert!(
         peak < 1 << 30,
         "the import peaked at {peak} bytes for a 64 MiB export"
