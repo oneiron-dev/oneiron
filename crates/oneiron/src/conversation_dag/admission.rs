@@ -141,7 +141,10 @@ pub(crate) fn guard_record_put(
     if kind == ENTITY_TYPE_TURN
         && let Some(room) = room_turn_owner(store, txn, id)?
     {
-        guard_erased_author_body(store, txn, room, body)?;
+        guard_erased_author_body(store, store, txn, room, body)?;
+    }
+    if kind == ENTITY_TYPE_TURN {
+        guard_landing_reply_edges(store, store, txn, id, body, None, true)?;
     }
     // Only a prior TURN is read whole. Any other prior row, a custody record
     // among them, is checked for presence by its type byte, so its body is
@@ -390,6 +393,7 @@ fn turn_person(body: &[u8]) -> Result<Option<EntityId>> {
 
 fn guard_erased_person(
     store: &impl ManifestDbs,
+    authority: &Store,
     txn: &heed::RoTxn<'_>,
     room: &EntityId,
     record: &EntityId,
@@ -403,11 +407,16 @@ fn guard_erased_person(
     let body = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("room TURN header"))?;
-    guard_erased_author_body(store, txn, *room, body)
+    guard_erased_author_body(store, authority, txn, *room, body)
 }
 
+/// Checks a room TURN's author on raw puts and membership edges, local or
+/// replicated. The landing writer is admitted only for an exact reply to a
+/// stored, signed summary landing in this room; missing author rows do not
+/// exempt that derived writer. Other authors keep their existing rules.
 fn guard_erased_author_body(
     store: &impl ManifestDbs,
+    authority: &Store,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     body: &[u8],
@@ -416,16 +425,19 @@ fn guard_erased_author_body(
         // A known author is a PERSON, the AGENT_DEF a witness TURN stamps for
         // its Agent writer (FIX 7129), or the scope summary landing writer on
         // its landing's reply; any other known author is a bad carrier now.
-        // An unknown id stays admissible, as recipients do: a peer may deliver
-        // the TURN before (or without) its author's row. The erasure fence is
-        // keyed by id and still applies.
-        let admitted = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
-            .map(|row| row.first().copied())
-        {
-            None | Some(Some(crate::registry::ENTITY_TYPE_PERSON)) => true,
-            Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => witness_turn(body),
-            Some(Some(crate::registry::ENTITY_TYPE_MACHINE)) => landing_reply(body, person)?,
-            Some(_) => false,
+        // Other unknown ids stay admissible, as recipients do: a peer may
+        // deliver a TURN before its author's row. The derived landing writer
+        // still needs its signed landing. The erasure fence applies by id.
+        let admitted = if person == crate::scope_summary::landing_writer_id()? {
+            landing_reply(store, authority, txn, Some(room), body, person)?.is_some()
+        } else {
+            match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
+                .map(|row| row.first().copied())
+            {
+                None | Some(Some(crate::registry::ENTITY_TYPE_PERSON)) => true,
+                Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => witness_turn(body),
+                Some(_) => false,
+            }
         };
         if !admitted {
             return Err(invalid("room TURN author must be a PERSON"));
@@ -437,23 +449,161 @@ fn guard_erased_author_body(
     Ok(())
 }
 
-/// Whether a TURN by a MACHINE `author` is a scope summary landing's reply:
-/// the author is the landing writer, and the body carries the `summary` key
-/// the DAG door stamps on a summary's reply (SUMMARY-AS-RECORD-PERMIT-SHAPE =
-/// A). Every other MACHINE author, and any other TURN by that writer, stays
-/// out of a room. The append door further admits only the reply its landing
-/// admitted (`scope_summary::check_landing_append`).
-fn landing_reply(body: &[u8], author: EntityId) -> Result<bool> {
+/// The target of an exact reply by the landing writer, backed by a stored
+/// scope SUMMARY and its MACHINE-signed merge.summary landing. The room,
+/// text and complete door-stamped body shape must match; mere possession of
+/// a summary id is not authority. Used on local and replicated puts/edges.
+/// The append door's thread-local landing permit remains an additional check.
+fn landing_reply(
+    store: &impl ManifestDbs,
+    authority: &Store,
+    txn: &heed::RoTxn<'_>,
+    room: Option<EntityId>,
+    body: &[u8],
+    author: EntityId,
+) -> Result<Option<EntityId>> {
     if author != crate::scope_summary::landing_writer_id()? {
-        return Ok(false);
+        return Ok(None);
     }
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
-        return Ok(false);
+        return Err(invalid("invalid landing reply body"));
     };
-    Ok(fields
-        .iter()
-        .any(|(key, _)| key.as_str() == Some("summary")))
+    // land_in_txn supplies only txt; stamp_body and append_at_in_txn add
+    // these seven fields. No session, project, thread, MESSAGE or quote rides
+    // the canonical trunk reply, including inside its reply pointer.
+    let keys = [
+        "txt", "dag_kind", "actor", "actor_class", "addr", "reply_to", "summary", "to",
+    ];
+    if !bytes.is_empty()
+        || fields.len() != keys.len()
+        || keys.iter().any(|name| {
+            fields
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some(*name))
+                .count()
+                != 1
+        })
+    {
+        return Err(invalid("invalid landing reply fields"));
+    }
+    let get = |name| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    if get("dag_kind").and_then(rmpv::Value::as_str) != Some("record")
+        || get("actor_class").and_then(rmpv::Value::as_u64)
+            != Some(crate::EdgeActorClass::System as u64)
+        || get("addr").and_then(rmpv::Value::as_str) != Some("reply")
+        || !get("to")
+            .and_then(rmpv::Value::as_array)
+            .is_some_and(Vec::is_empty)
+    {
+        return Err(invalid("invalid landing reply stamps"));
+    }
+    let pointer = get("reply_to")
+        .and_then(rmpv::Value::as_map)
+        .ok_or_else(|| invalid("invalid landing reply pointer"))?;
+    if pointer.len() != 2
+        || ["record", "revision"].iter().any(|name| {
+            pointer
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some(*name))
+                .count()
+                != 1
+        })
+    {
+        return Err(invalid("invalid landing reply pointer fields"));
+    }
+    let Some(super::DagReplyTarget::Turn { record: target, .. }) =
+        super::quote::stored_target(ENTITY_TYPE_TURN, body)?
+    else {
+        return Err(invalid("invalid landing reply target"));
+    };
+    let summary = oneiron_store::scope_summary::codec::reply_summary(body)?
+        .ok_or_else(|| invalid("landing reply requires a summary"))?;
+    let text = get("txt")
+        .and_then(rmpv::Value::as_str)
+        .ok_or_else(|| invalid("invalid landing reply text"))?;
+    // A mismatch is the remote row's fault and refuses as invalid. A local
+    // storage fault stays itself, so replay aborts instead of quarantining
+    // a true reply as a forgery.
+    crate::scope_summary::validate_landing_reply_in(
+        store, authority, txn, &summary, room, text, target,
+    )
+    .map_err(|err| match err {
+        Error::Record(_) | Error::Claim(_) | Error::EntityNotFound => {
+            invalid("landing reply does not match a stored signed landing")
+        }
+        local => local,
+    })?;
+    Ok(Some(target))
+}
+
+/// Binds a landing writer TURN's edges to its signed landing: every stored
+/// or proposed RepliesTo names the landing's turn, and a ChildOf waits for
+/// the landing (a conversation ChildOf also checks the room through
+/// [`guard_erased_author_body`]).
+///
+/// At a body put (`at_put`), a TURN that no ChildOf or RepliesTo places yet
+/// joins nothing, so its first edge checks it instead. Replay applies every
+/// entity before any edge (`sync/window/forward.rs`, the entity pass, then
+/// the edge pass), and the landing's ClaimOf is an edge: a check at the put
+/// would refuse every replicated reply, and the remote refusal of a DAG body
+/// is terminal (`sync/ingest/entity.rs`, `RefusalRetry::of`).
+fn guard_landing_reply_edges(
+    store: &impl ManifestDbs,
+    authority: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+    body: &[u8],
+    proposed: Option<EntityId>,
+    at_put: bool,
+) -> Result<()> {
+    // Another author, or a byline that does not decode, is not this rule's:
+    // room admission refuses a bad byline itself.
+    let Ok(Some(author)) = turn_person(body) else {
+        return Ok(());
+    };
+    if author != crate::scope_summary::landing_writer_id()? {
+        return Ok(());
+    }
+    let mut replies = Vec::new();
+    for edge in store.port_edges(
+        txn,
+        record,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::RepliesTo),
+        None,
+    )? {
+        replies.push(edge?.target);
+    }
+    let room = room_turn_owner(store, txn, record)?;
+    if at_put
+        && room.is_none()
+        && replies.is_empty()
+        && store
+            .port_edges(
+                txn,
+                record,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::ChildOf),
+                None,
+            )?
+            .next()
+            .is_none()
+    {
+        return Ok(());
+    }
+    let Some(target) = landing_reply(store, authority, txn, room, body, author)? else {
+        return Ok(());
+    };
+    if proposed.into_iter().chain(replies).any(|reply| reply != target) {
+        return Err(invalid("landing reply RepliesTo differs from its landing"));
+    }
+    Ok(())
 }
 
 /// Whether a TURN body is the witness door's: it carries the `speaker`
@@ -542,6 +692,7 @@ pub(crate) fn guard_room_membership_delete(
 
 pub(crate) fn pin_membership(
     store: &impl ManifestDbs,
+    authority: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &EntityId,
     kind: EdgeKind,
@@ -553,11 +704,21 @@ pub(crate) fn pin_membership(
         && crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
-        guard_erased_person(store, txn, conversation, record)?;
+        guard_erased_person(store, authority, txn, conversation, record)?;
         if room_turn_owner(store, txn, record)?.is_some_and(|owner| owner != *conversation) {
             return Err(invalid("room TURN cannot change owner"));
         }
         ROOM_OWNERS.put(store, txn, record, conversation)?;
+    }
+    if matches!(kind, EdgeKind::ChildOf | EdgeKind::RepliesTo)
+        && let Some(raw) = store.port_entity_raw(txn, record)?
+        && raw.first() == Some(&ENTITY_TYPE_TURN)
+    {
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("landing reply TURN header"))?;
+        let proposed = (kind == EdgeKind::RepliesTo).then_some(*conversation);
+        guard_landing_reply_edges(store, authority, txn, record, body, proposed, false)?;
     }
     if is_dag_membership(store, txn, kind, conversation)? {
         pin_record(store, txn, record)?;
@@ -948,5 +1109,14 @@ pub(crate) fn validate_received_edge(
     target: EntityId,
     value: crate::edge::DecodedEdgeValue,
 ) -> Result<()> {
-    validate_received_edge_shape(store, txn, source, kind, target, value)
+    validate_received_edge_shape(store, txn, source, kind, target, value)?;
+    if kind == EdgeKind::RepliesTo
+        && let Some(raw) = store.port_entity_raw(txn, &source)?
+    {
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("landing reply TURN header"))?;
+        guard_landing_reply_edges(store, store, txn, &source, body, Some(target), false)?;
+    }
+    Ok(())
 }

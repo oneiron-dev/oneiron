@@ -10,7 +10,11 @@
 //! MACHINE signature, which only the host-provisioned signer gives. Its DAG
 //! append is refused unless it is the reply the landing on this thread
 //! admitted, with that landing's summary, turn and conversation
-//! ([`check_landing_append`]).
+//! ([`check_landing_append`]). Shared TURN admission also requires the exact
+//! summary text and door-owned reply fields, in the summary's conversation,
+//! backed by a stored merge header signed by this MACHINE. Every RepliesTo
+//! edge must name that header's subject, including raw and replicated writes;
+//! a missing landing refuses rather than deferring the writer's authority.
 //!
 //! When slice 6.7 lands, the summary commits through `vault.derive.commit` by
 //! the generating agent under its Steward derive grant, and this writer and
