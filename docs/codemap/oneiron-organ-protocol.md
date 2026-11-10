@@ -31,4 +31,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/value/wire.rs` | src | m | 4 crate-vis | — | A value on the wire: written piece by piece and read token by token, with no recursion, and carried through… |
 | `src/wire.rs` | src | m | 22 struct · 10 enum · 6 fn · 7 const · 1 re-export | Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, CancelReason +24 | The protocol's messages |
 | `tests/frames.rs` | test | s | — | — | A frame is bounded by what it decodes to, not only by its bytes: a peer cannot make the other side… |
-| `tests/sessions.rs` | test | s | — | — | The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`): a session speaks the lower… |
+| `tests/sessions.rs` | test | s | — | — | The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`) |
