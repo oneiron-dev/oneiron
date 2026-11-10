@@ -26,7 +26,7 @@
 //! let mut vault = std::ptr::null_mut();
 //! // SAFETY: a null path is refused before any read, and `vault` is writable.
 //! let status = unsafe {
-//!     oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault)
+//!     oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, 0, &mut vault)
 //! };
 //! assert_eq!(status, oneiron_ffi::OneironStatus::NullArg);
 //! ```
@@ -35,7 +35,7 @@
 //!
 //! ```compile_fail,E0133
 //! let mut vault = std::ptr::null_mut();
-//! oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault);
+//! oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, 0, &mut vault);
 //! ```
 //!
 //! The owning descriptors move rather than copy, so one value reaches its
