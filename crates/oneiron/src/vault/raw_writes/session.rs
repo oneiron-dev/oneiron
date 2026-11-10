@@ -243,11 +243,29 @@ impl Memory<'_> {
             }
             // A put that changes or drops the source audience an identity
             // row names, as the room composes that row before this segment,
-            // is the owner's act, refused as on base (review of #7006). The
-            // lane above has refused a row the caller does not read as
-            // missing, so this refusal tells no unread row apart.
+            // is the owner's act, refused as on base (review of #7006).
             if !identity_puts.is_empty() {
                 let view = session.read_view()?;
+                // The lane above judged base alone. An identity row the room
+                // holds that the caller does not read there answers as
+                // missing too, as on base (FIX 6068), before its audience is
+                // compared: the refusal below must tell no unread row apart.
+                if let CoreWriteLane::Read(reader) | CoreWriteLane::Target(reader) = &lane
+                    && !self.vault().turn_doors_owner_in(reader, wtxn)?
+                {
+                    let room = self
+                        .vault()
+                        .scoped_read_in_session(reader.actor_key().clone(), &view);
+                    for put in &identity_puts {
+                        let held = !matches!(
+                            crate::vault::live_entity_row_in_txn(&view, wtxn, &put.id)?,
+                            crate::vault::LiveEntityRow::Absent
+                        );
+                        if held && !room.is_entity_readable_in(wtxn, &put.id)? {
+                            return Err(Error::EntityNotFound);
+                        }
+                    }
+                }
                 for put in &identity_puts {
                     if crate::claim::identity_put_moves_source_audience_in_txn(
                         &view, wtxn, &put.id, put.data,
