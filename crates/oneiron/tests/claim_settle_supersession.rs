@@ -50,6 +50,12 @@ impl Fixture {
         let owner_proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
             .expect("owner proof");
+        // A named agent reads nothing by its identity alone. The owner grants
+        // the proposer read and propose, as a paired agent session holds: the
+        // proposal names the subject, a row the proposer must read.
+        vault
+            .grant_foreign_principal(&owner_proof, &agent.to_hex())
+            .expect("the owner grants the proposer read and propose");
         Self {
             vault,
             owner,
