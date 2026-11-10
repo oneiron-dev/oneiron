@@ -274,12 +274,18 @@ impl TaskPair {
         // BEFORE minting the cancel grant, which binds to the policy frontier.
         let policy_pack_ref = EntityId::now();
         let policy_pack = rmpv::Value::Map(vec![
-            (rmpv::Value::from("schema_version"), rmpv::Value::from("1.2")),
+            (
+                rmpv::Value::from("schema_version"),
+                rmpv::Value::from("1.2"),
+            ),
             (
                 rmpv::Value::from("pack_id"),
                 rmpv::Value::from("task-authority-owner-ceiling"),
             ),
-            (rmpv::Value::from("pack_version"), rmpv::Value::from("1.0.0")),
+            (
+                rmpv::Value::from("pack_version"),
+                rmpv::Value::from("1.0.0"),
+            ),
             (
                 rmpv::Value::from("min_engine_version"),
                 rmpv::Value::from("0.0.0"),
