@@ -497,7 +497,11 @@ mod withheld_row {
         Ok(agent)
     }
 
-    /// A CLAIM about `subject` at the sensitivity band `sensitivity`.
+    /// A CLAIM about `subject` at the sensitivity band `sensitivity`. The
+    /// predicate sits under the default manifest's `profile.` rule
+    /// (criticality normal): a predicate no rule names takes the manifest's
+    /// critical default, and the Gate parks that approved write as pending
+    /// (gate.pending.criticality_floor).
     fn put_claim(
         vault: &Vault,
         subject: EntityId,
@@ -505,7 +509,7 @@ mod withheld_row {
         sensitivity: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut body = ClaimBody::new(
-            "fixture.snapshot_cursor",
+            "profile.note",
             ClaimSubject::Entity(subject),
             Value::from("a snapshot cursor fixture"),
             1.0,
