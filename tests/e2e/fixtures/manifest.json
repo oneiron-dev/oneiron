@@ -10,10 +10,10 @@
         "revision": "437433b99f702078631058579c9fd89e41e5b6cf0ba0efb6e32cf24be74e0a17"
       },
       "licence": "Apache-2.0",
-      "sha256": "8e36ee3d438b2fc4b0e1d78f4a79815745fcbc351ec0ade1d1a7430fcdd54327",
+      "sha256": "41d0e3ed1519552783f22e1107b5f94f4602d3780b9aa67a734588facf0e4dda",
       "expectedFacts": {
         "plannedFiles": 29,
-        "plannedTests": 267,
+        "plannedTests": 276,
         "publicRegistryRows": 443,
         "excludedRegistryRows": 3
       },
@@ -34,6 +34,15 @@
         "MEMORY-06",
         "MEMORY-07",
         "MEMORY-08",
+        "MUSE-DURA-01",
+        "MUSE-DURA-02",
+        "MUSE-DURA-03",
+        "MUSE-DURA-04",
+        "MUSE-DURA-05",
+        "MUSE-DURA-06",
+        "MUSE-DURA-07",
+        "MUSE-DURA-08",
+        "MUSE-DURA-09",
         "DOCUMENTS-01",
         "DOCUMENTS-02",
         "DOCUMENTS-03",

@@ -61,6 +61,22 @@
         "file": "privacy.test.ts",
         "ruling": "Engine NOTE 2026-11-10 09:56 JST (Muse Wonder label cases)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-DURA-01",
+          "MUSE-DURA-02",
+          "MUSE-DURA-03",
+          "MUSE-DURA-04",
+          "MUSE-DURA-05",
+          "MUSE-DURA-06",
+          "MUSE-DURA-07",
+          "MUSE-DURA-08",
+          "MUSE-DURA-09"
+        ],
+        "file": "memory.test.ts",
+        "ruling": "Engine NOTE 2026-11-10 10:35 JST (Muse Wonder durability cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
       }
     ]
   },
@@ -198,7 +214,7 @@
       "file": "memory.test.ts",
       "area": "Memory and editable documents",
       "slots": 1,
-      "estimatedSeconds": 45,
+      "estimatedSeconds": 150,
       "tests": [
         {
           "id": "MEMORY-01",
@@ -326,6 +342,127 @@
             "/registry/oneiron/#OF-434",
             "/registry/oneiron/#OF-464",
             "/registry/oneiron/#OF-172"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-01",
+          "name": "A receipted durable write survives a kill and restarts and reads back equal",
+          "rows": [],
+          "source": [
+            "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#recovery"
+          ],
+          "promises": [
+            "P-DURA-031"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-02",
+          "name": "A hard delete is gone from recall and export before its content-free receipt returns, owner maintain completes its queued sweep, and it stays gone after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#harderase-v1",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s7-title"
+          ],
+          "promises": [
+            "P-DURA-001",
+            "P-DURA-002",
+            "P-DURA-004",
+            "P-DURA-005"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-03",
+          "name": "An agent never erases, with or without a grant attempt; the owner erases by hand and the record stays gone after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0073-vault-auto-cleanup-v1/#never-auto",
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#ladder-actors"
+          ],
+          "promises": [
+            "P-DURA-009",
+            "P-DURA-010",
+            "P-DURA-015"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-04",
+          "name": "Owner previewed erase takes effect at once over HTTP and CLI, spares a live same-bytes holder unless also_same_bytes is chosen, and stays erased after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#erase-same-bytes-built",
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#erase-shared",
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#ladder-actors"
+          ],
+          "promises": [
+            "P-DURA-011",
+            "P-DURA-021",
+            "P-DURA-022"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-05",
+          "name": "A prior owner export keeps an erased record while the live vault loses it",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#key-store"
+          ],
+          "promises": [
+            "P-DURA-017",
+            "P-DURA-018"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-06",
+          "name": "waits on a public same-vault replica sync fixture and a grant-gated peer window-update ingress that can carry a tombstone-removal delta",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#materialization-gate"
+          ],
+          "promises": [
+            "P-DURA-006",
+            "P-DURA-007"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-07",
+          "name": "Unsaved off-record turns vanish at close or restart, a holder save lands every kept turn, whole-vault export skips the live room, copy notices name the actor, and a propose-only agent cannot save",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0052-off-record-branch-store-v1/#d5-built",
+            "/oneiron/core/oneiron-arch-0052-off-record-branch-store-v1/#d5-export",
+            "/oneiron/core/oneiron-arch-0052-off-record-branch-store-v1/#d5-save-grant",
+            "/oneiron/core/oneiron-arch-0052-off-record-branch-store-v1/#target"
+          ],
+          "promises": [
+            "P-DURA-024",
+            "P-DURA-027",
+            "P-DURA-028",
+            "P-DURA-029",
+            "P-DURA-030"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-08",
+          "name": "In a shared vault an ordinary record erase waits for the Owner veto window, and a legal hold keeps only its target while vault erase lands",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#ladder-actors",
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#legal-hold-clone-ruling"
+          ],
+          "promises": [
+            "P-DURA-012",
+            "P-DURA-023"
+          ]
+        },
+        {
+          "id": "MUSE-DURA-09",
+          "name": "waits on a public same-vault replica sync fixture (enrol a second device of this vault, drive and observe sync/apply, take it offline and back, and read artifact bytes locally on that replica)",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/#materialization-gate"
+          ],
+          "promises": [
+            "P-DURA-006"
           ]
         }
       ]
