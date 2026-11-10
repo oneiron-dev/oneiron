@@ -4,6 +4,7 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod code_reply_healer;
 pub mod consolidation;
 pub mod dag_append;
 pub mod live_run_claim_put;
