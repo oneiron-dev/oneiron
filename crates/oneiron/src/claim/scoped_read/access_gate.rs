@@ -581,6 +581,15 @@ pub(crate) fn identity_put_moves_source_audience_in_txn(
     Ok(before != IdentitySourceAudience::Unnamed && identity_source_audience(body) != before)
 }
 
+/// The below-owner refusal of a put that changes or drops the source
+/// audience a stored identity row names, on base and in an off-record room
+/// alike (review of #7006).
+pub(crate) fn owner_only_audience_change() -> crate::error::Error {
+    crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+        "only the vault owner changes the audience an identity was named under",
+    ))
+}
+
 /// [`relationship_read_keyed`] for an identity row. A row whose body names
 /// no source audience is decided readable, as every identity row was. One
 /// that names it is gated on it as a MESSAGE is on its own `rel` and

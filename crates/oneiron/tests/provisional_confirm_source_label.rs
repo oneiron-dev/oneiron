@@ -14,6 +14,9 @@
 //! - Zora, confirmed from the open MESSAGE, is read by every member, as every
 //!   confirmed person was: nothing that was open narrows.
 //!
+//! - A member of R may not rewrite her without that audience, on base or
+//!   staged in an off-record room (review rounds 1 and 2 of #7006).
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
 //! assertion is the leak check.
 //!
@@ -35,11 +38,12 @@ use oneiron::memory::extraction::{
     NerSpan,
 };
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::off_record::OffRecordBackendClass;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{MentionLink, TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
-use oneiron::{EntityId, ModelId, Vault, VaultConfig};
+use oneiron::{EntityId, ModelId, RawEntityPut, Vault, VaultConfig};
 use oneiron_authority::federation::scope_codec::read_preset;
 
 const CHECKPOINT: &str = "0123456789abcdef";
@@ -554,5 +558,66 @@ fn a_below_owner_put_does_not_drop_a_confirmed_persons_audience() {
     assert_eq!(
         missing.code, "NOT_FOUND",
         "a row the writer does not read answers as missing: {missing:?}"
+    );
+}
+
+/// Review round 2 of #7006: a raw put bound to an off-record room stages in
+/// the room, not through the base commit, and meets the same refusal. A
+/// member of R, in a room, rewrites the PERSON named only in R with a body
+/// that names no audience; the room would serve that rewrite to a member
+/// outside R who shares it, with no owner act.
+#[test]
+fn an_off_record_raw_put_does_not_drop_a_confirmed_persons_audience() {
+    let fixture = tagged_fixture();
+    let room = fixture
+        .vault
+        .off_record_session_vault()
+        .enter("opus-leaks-7006-room", OffRecordBackendClass::Local)
+        .expect("FIXTURE: an off-record room");
+    let stage = |writer: EntityId, id: &EntityId, name: &str| {
+        let body = rmp_serde::to_vec_named(&serde_json::json!({ "name": name })).expect("body");
+        let now = fixture.vault.now_recorded_at();
+        fixture
+            .vault
+            .memory(writer, EdgeActorClass::Human)
+            .in_off_record_session(room.session_ref())
+            .raw_put_entity(RawEntityPut {
+                id: *id,
+                entity_type: ENTITY_TYPE_PERSON,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: &body,
+            })
+    };
+    let zora = fixture.minted_in(fixture.open_message);
+    fixture.confirm(&zora);
+    stage(fixture.insider, &zora, "Zora K.").expect(
+        "FIXTURE: a member stages in the room a rewrite of a PERSON confirmed from an open MESSAGE",
+    );
+
+    let mirela = fixture.minted_in(fixture.hidden_message);
+    fixture.confirm(&mirela);
+    let put = stage(fixture.insider, &mirela, "Mirela");
+    let outsider_in_room = fixture
+        .vault
+        .memory(fixture.outsider, EdgeActorClass::Human)
+        .in_off_record_session(room.session_ref())
+        .get_entity(&mirela.to_hex())
+        .map(|read| read.value.is_some());
+    let refusal = put.expect_err(&format!(
+        "LEAK: a member of R staged in an off-record room a rewrite of the PERSON named only \
+         in R's MESSAGE without its audience (the outsider reads it in the room: \
+         {outsider_in_room:?})"
+    ));
+    assert_eq!(
+        refusal.code, "FORBIDDEN",
+        "the owner's act, refused: {refusal:?}"
+    );
+    assert!(
+        fixture.reads(fixture.insider, &mirela),
+        "the member of R still reads the PERSON"
     );
 }

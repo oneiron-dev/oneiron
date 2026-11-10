@@ -10,7 +10,9 @@
 //!   vector stages in the room's overlay as one segment, every op or none,
 //!   after the refusals its base write meets: the public raw-put and edge
 //!   checks, the actor's proof, the caller's write lane over stored rows,
-//!   an agent definition's owner-only widening, a claim's gate on base
+//!   an agent definition's owner-only widening, an identity row's
+//!   owner-only source audience over the room's rows (review of #7006),
+//!   a claim's gate on base
 //!   policy, whose decision the room does not keep, and, under a read lane,
 //!   a claim's typed record refs resolved over the room (FIX 11062). It rides no turn of the room, so close drops it with the room;
 //!   nothing reaches base unless the vault comes to hold it.
@@ -144,6 +146,7 @@ impl Memory<'_> {
         let source_run = crate::skill_attribution::current_run_write_token();
         let mut entries = Vec::with_capacity(ops.len());
         let mut agent_puts = Vec::new();
+        let mut identity_puts = Vec::new();
         // Each staged claim's gate decision, kept beside it (FIX 9967).
         let mut decisions = Vec::new();
         for op in ops {
@@ -152,6 +155,9 @@ impl Memory<'_> {
                     decisions.extend(self.admit_staged_put(&session, put)?);
                     if put.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
                         agent_puts.push(put);
+                    }
+                    if crate::tagging::label_kind_admitted(put.entity_type) {
+                        identity_puts.push(put);
                     }
                     let op = BatchOp::Put {
                         id: put.id,
@@ -234,6 +240,22 @@ impl Memory<'_> {
             }
             if !lane.admits_puts_in(wtxn, &put_ids)? {
                 return Err(Error::EntityNotFound);
+            }
+            // A put that changes or drops the source audience an identity
+            // row names, as the room composes that row before this segment,
+            // is the owner's act, refused as on base (review of #7006). The
+            // lane above has refused a row the caller does not read as
+            // missing, so this refusal tells no unread row apart.
+            if !identity_puts.is_empty() {
+                let view = session.read_view()?;
+                for put in &identity_puts {
+                    if crate::claim::identity_put_moves_source_audience_in_txn(
+                        &view, wtxn, &put.id, put.data,
+                    )? {
+                        refusal = Some(crate::claim::owner_only_audience_change().into());
+                        return Err(Error::InvariantViolation("a bound raw write was refused"));
+                    }
+                }
             }
             for entry in entries {
                 apply(wtxn, entry)?;
