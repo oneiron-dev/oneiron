@@ -265,6 +265,169 @@ fn close_while_holding_own_segment_fails_fast() -> Result<()> {
 }
 
 #[test]
+fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
+    let budget = 8;
+    let overlay = SessionOverlay::new(budget);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, b"a", &[1_u8; 5])?;
+    segment.commit()?;
+    assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+    let segment = overlay.install_txn_segment()?;
+    match overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 2]) {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
+            budget_bytes,
+            attempted_bytes,
+        })) => {
+            assert_eq!(budget_bytes, budget);
+            assert_eq!(attempted_bytes, budget + 1);
+        }
+        Err(other) => panic!("unexpected preflight error: {other}"),
+        Ok(()) => panic!("over-budget mutation escaped preflight"),
+    }
+    match segment.commit() {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("empty post-preflight apply returned OffRecordOverlayFull")
+        }
+        Err(other) => panic!("empty post-preflight apply failed: {other}"),
+    }
+    assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+    // Production staging cannot create this state: preflight above rejects it.
+    // Injecting it test-only proves the post-base-commit helper is structurally
+    // budget-free and cannot construct OffRecordOverlayFull even at 9/8 bytes.
+    let segment = overlay.install_txn_segment()?;
+    ACTIVE_SEGMENT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let active = slot.as_mut().expect("the test segment is installed");
+        active.mutations.push(OverlayMutation::Put {
+            keyspace: OverlayKeyspace::Entities,
+            key: b"b".to_vec(),
+            value: vec![2_u8; 2],
+        });
+    });
+    match segment.commit() {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("post-commit apply reconstructed OffRecordOverlayFull")
+        }
+        Err(other) => panic!("post-commit apply failed: {other}"),
+    }
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 2);
+    assert_eq!(snapshot.bytes_used(), budget + 1);
+    Ok(())
+}
+
+#[test]
+fn delete_removes_overlay_only_rows_but_retains_base_masks() -> Result<()> {
+    let keyspace = OverlayKeyspace::Entities;
+    let key = b"key";
+
+    let overlay_only = SessionOverlay::new(64);
+    let segment = overlay_only.install_txn_segment()?;
+    overlay_only.put(keyspace, key, b"overlay")?;
+    overlay_only.delete_with_base_backing(keyspace, key, false)?;
+    segment.commit()?;
+    let snapshot = overlay_only.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), 0);
+    assert_eq!(snapshot.row_count(keyspace), 0);
+
+    // delete -> re-put -> delete on a base-backed key must still end tombstoned:
+    // base backing is read from the base row, not the intervening overlay Present.
+    let base_backed = SessionOverlay::new(64);
+    let segment = base_backed.install_txn_segment()?;
+    base_backed.delete_with_base_backing(keyspace, key, true)?;
+    base_backed.put(keyspace, key, b"replacement")?;
+    base_backed.delete_with_base_backing(keyspace, key, true)?;
+    segment.commit()?;
+    let snapshot = base_backed.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), key.len());
+    assert_eq!(
+        snapshot.merge_rows(keyspace, vec![(key.to_vec(), b"base".to_vec())]),
+        Vec::<(Vec<u8>, Vec<u8>)>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn delete_duplicate_removes_overlay_only_value_without_tombstone() -> Result<()> {
+    let keyspace = OverlayKeyspace::TextPostings;
+    let key = b"term";
+    let mut base_value = vec![0_u8; 17];
+    base_value[15] = 1;
+    let mut overlay_value = vec![0_u8; 17];
+    overlay_value[15] = 2;
+    let (_dir, env, base) = dupsort_test_db();
+    let mut setup_txn = env.write_txn()?;
+    base.put(&mut setup_txn, key, &base_value)?;
+    setup_txn.commit()?;
+
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(keyspace, key, &overlay_value)?;
+    overlay.delete_duplicate(keyspace, key, &overlay_value, false)?;
+    segment.commit()?;
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), 0);
+
+    let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+    let rtxn = env.read_txn()?;
+    let values = view
+        .get_duplicates(&rtxn, key)?
+        .expect("different base posting remains visible")
+        .map(|row| row.map(|(_, value)| value.into_owned()))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(values, vec![base_value]);
+    Ok(())
+}
+
+#[test]
+fn delete_duplicate_retains_base_backed_tombstone() -> Result<()> {
+    let keyspace = OverlayKeyspace::TextPostings;
+    let key = b"term";
+    let mut value = vec![0_u8; 17];
+    value[15] = 1;
+    let (_dir, env, base) = dupsort_test_db();
+    let mut setup_txn = env.write_txn()?;
+    base.put(&mut setup_txn, key, &value)?;
+    setup_txn.commit()?;
+
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    overlay.delete_duplicate(keyspace, key, &value, true)?;
+    segment.commit()?;
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), key.len() + value.len());
+
+    let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+    let rtxn = env.read_txn()?;
+    assert!(view.get_duplicates(&rtxn, key)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn abort_reclaims_staged_journal_bytes() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnPut,
+        put_op(vec![7_u8; 128]),
+    ))?;
+    drop(segment);
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.journal_ops(scope).len(), 0);
+    assert_eq!(snapshot.bytes_used(), 0);
+    Ok(())
+}
+
+#[test]
 fn stage_journal_without_segment_fails_closed() {
     let overlay = SessionOverlay::new(4096);
     let scope = JournalScope::new(EntityId::now(), EntityId::now());
