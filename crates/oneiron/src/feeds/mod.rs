@@ -24,8 +24,9 @@
 //!   whether or not anything was scanned, and `more` says only that the page is full.
 //! - **A cursor idle past retention gets a gap, never a skip** (lead call K). A cursor in a pruned
 //!   source not acknowledged for [`FEED_RETENTION_SECS`] no longer holds the prune floor, and its
-//!   subscription's reads answer [`FeedRead::Gap`] until [`Vault::feed_resync`]: the reader takes
-//!   a snapshot and resyncs. The rule reads the cursor's age alone, never which rows went.
+//!   subscription's reads answer [`FeedRead::Gap`] until [`Vault::feed_resync`]: the reader
+//!   resyncs, then takes a snapshot, so no change falls between the two. The rule reads the
+//!   cursor's age alone, never which rows went.
 //! - **One cursor mechanism.** The change log positions and the settlement feed are the fact
 //!   hooks' own. A subscription following settlements counts as that feed's reader, so it records
 //!   settlements while hooks are off, and its prune keeps every row a subscription has not
@@ -444,11 +445,12 @@ pub enum FeedRead {
     /// The next page.
     Page(FeedPage),
     /// A cursor lay idle past [`FEED_RETENTION_SECS`], so rows it had not acknowledged may be
-    /// gone. No page is read until the reader takes a snapshot and calls [`Vault::feed_resync`].
+    /// gone. No page is read until the reader calls [`Vault::feed_resync`]; it then takes a
+    /// snapshot, and pages on from the resync.
     Gap(FeedGap),
 }
 
-/// The typed gap answer: resync from a snapshot.
+/// The typed gap answer: resync, then rebuild from a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FeedGap {
     pub resync_from: FeedResyncFrom,
@@ -458,7 +460,7 @@ pub struct FeedGap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FeedResyncFrom {
-    /// A snapshot read of the vault as it stands.
+    /// A snapshot read of the vault, taken after [`Vault::feed_resync`].
     Snapshot,
 }
 
@@ -640,27 +642,24 @@ impl Vault {
             more: false,
         };
         for (source, cursor) in cursors {
-            let after = cursor.position()?;
-            let scanned = match source {
-                FeedSource::Changes => changes_after_in_txn(self, &txn, after, limit)?,
-                FeedSource::Settlements => settlements_after_in_txn(self, &txn, after, limit)?,
-                FeedSource::Edges => edges::edges_after_in_txn(self, &txn, after, limit)?,
-                FeedSource::Redirty => edges::redirty_after_in_txn(self, &txn, after, limit)?,
-            };
+            let shown = shown_after_in_txn(
+                self,
+                reader,
+                &txn,
+                &row.selector,
+                source,
+                cursor.position,
+                Some(limit),
+            )?;
             // One token per source, scanned or not, so a page gives no sign of what it passed.
-            let through = match scanned.through {
-                Some(position) => Some(FeedPosition::of(position)?),
-                None => cursor.position,
-            };
             page.through.push(seal_position(
                 &row,
                 request.subscription,
                 source,
-                through.as_ref(),
+                shown.through.as_ref(),
             )?);
-            let shown = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?;
-            page.more |= shown.len() >= limit;
-            for mut entry in shown {
+            page.more |= shown.full;
+            for mut entry in shown.entries {
                 entry.position =
                     seal_position(&row, request.subscription, source, Some(&entry.position))?;
                 page.entries.push(entry);
@@ -691,8 +690,11 @@ impl Vault {
     }
 
     /// Moves every cursor of `reader`'s subscription to its source's head and refreshes it, in
-    /// one write: the way back past a [`FeedRead::Gap`]. The reader takes its snapshot first, so
-    /// a change that lands between the two is in the snapshot or in the next page.
+    /// one write: the way back past a [`FeedRead::Gap`]. The reader calls it first and takes its
+    /// snapshot after (review #6942 round 2): every change that commits after the resync is in
+    /// the next pages, and the snapshot holds every change before it, so none is lost. A change
+    /// between the two may be in both; a reader applies feed entries over its snapshot as it
+    /// applies any later change.
     ///
     /// # Errors
     ///
@@ -784,7 +786,7 @@ pub(crate) fn ack_feed_in_txn(
             ))?;
         if current.lapsed(source, at) {
             return Err(invalid(
-                "a feed cursor lay idle past retention: resync from a snapshot first",
+                "a feed cursor lay idle past retention: resync, then take a snapshot",
             ));
         }
         let moved = match position {
@@ -958,16 +960,39 @@ pub(crate) fn subscription_stands_in_txn(
     SUBSCRIPTIONS.contains(&vault.store, txn, &(actor, subscription))
 }
 
-/// Rows a feed-woken program's wake looks at, at most, in each source after its cursor (slice
-/// 6.8c).
-const WAKE_SCAN_ROWS: usize = 16 * FEED_READ_MAX_LIMIT;
+/// Chunks of a source one release of a feed-woken program scans at most (slice 6.8c); the scan
+/// goes on from where it stopped at the next release.
+const WAKE_SCAN_CHUNKS: usize = 16;
+
+/// Where a feed-woken program's wake scan stands in each source, kept with its trigger between
+/// releases (review #6982): each release scans on from the last row it looked at, so a long run
+/// of rows the lane does not show delays the wake by some releases and never hides a shown row
+/// behind it for good. The subscriber's cursor never moves for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FeedWakeScan {
+    sources: Vec<SourceWakeScan>,
+}
+
+/// One source's wake scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SourceWakeScan {
+    source: FeedSource,
+    /// The subscription's cursor the scan started from: a cursor that moved starts it again.
+    cursor: Option<FeedPosition>,
+    /// The last row looked at.
+    scanned: Option<FeedPosition>,
+    /// The last entry the lane is shown among the rows looked at.
+    shown: Option<FeedPosition>,
+}
 
 /// What wakes a feed-woken program (slice 6.8c, lead call K), judged as `reader`'s reads would
-/// be: `None` when nothing `reader` is shown waits after the cursors; otherwise a mark of the
-/// last entry each source would show it, so the program wakes once per set of entries it can
-/// see and never for a change its lane does not show. A cursor idle past retention marks the gap
-/// its read would answer, which shows no row either. `None` too when the subscription is not
-/// `reader`'s.
+/// be, and where its scan stands after this release; `None` when the subscription is not
+/// `reader`'s. The mark is `None` when nothing `reader` is shown waits after the cursors;
+/// otherwise it names the last entry each source shows it, so the program wakes once per set of
+/// entries it can see and never for a change its lane does not show. A cursor idle past
+/// retention marks the gap its read would answer, which shows no row either. Each source scans
+/// on from `prior` while its cursor stands where `prior` found it, at most
+/// [`WAKE_SCAN_CHUNKS`] chunks a release.
 ///
 /// # Errors
 ///
@@ -976,7 +1001,8 @@ pub(crate) fn feed_wake_mark(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     subscription: EntityId,
-) -> Result<Option<String>> {
+    prior: &FeedWakeScan,
+) -> Result<Option<(Option<String>, FeedWakeScan)>> {
     let _bodies = reader.prepare_point_read::<Error>()?;
     let txn = vault.store.env.read_txn()?;
     let actor = live_reader_actor_in(reader, &txn)?;
@@ -984,6 +1010,7 @@ pub(crate) fn feed_wake_mark(
         return Ok(None);
     };
     let now = vault.store.clock.now_recorded_at();
+    let mut next = FeedWakeScan::default();
     let mut marks = Vec::new();
     for source in &row.selector.sources {
         let cursor = CURSORS
@@ -992,38 +1019,44 @@ pub(crate) fn feed_wake_mark(
                 "feed subscription without its cursor",
             ))?;
         if cursor.lapsed(*source, now) {
-            return Ok(Some(format!("gap:{}", cursor.updated_at)));
+            return Ok(Some((
+                Some(format!("gap:{}", cursor.updated_at)),
+                FeedWakeScan::default(),
+            )));
         }
-        let mut after = cursor.position()?;
-        let mut looked = 0;
-        let mut last = None;
-        while looked < WAKE_SCAN_ROWS {
-            let scanned = match source {
-                FeedSource::Changes => {
-                    changes_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Settlements => {
-                    settlements_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Edges => {
-                    edges::edges_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Redirty => {
-                    edges::redirty_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-            };
-            let Some(through) = scanned.through else {
+        let mut scan = prior
+            .sources
+            .iter()
+            .find(|kept| kept.source == *source && kept.cursor == cursor.position)
+            .cloned()
+            .unwrap_or_else(|| SourceWakeScan {
+                source: *source,
+                cursor: cursor.position.clone(),
+                scanned: cursor.position.clone(),
+                shown: None,
+            });
+        let mut start = scan
+            .scanned
+            .as_ref()
+            .map(|position| position.parse().map(|(_, position)| position))
+            .transpose()?;
+        for _ in 0..WAKE_SCAN_CHUNKS {
+            let scanned = scan_source_in_txn(vault, &txn, *source, start)?;
+            let Some(end) = scanned.through else {
                 break;
             };
-            looked += scanned.entries.len().max(1);
-            if let Some(shown) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
-                last = Some(shown.position.0);
+            if let Some(last) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
+                scan.shown = Some(last.position);
             }
-            after = Some(through);
+            scan.scanned = Some(FeedPosition::of(end)?);
+            start = Some(end);
         }
-        marks.extend(last);
+        if let Some(shown) = &scan.shown {
+            marks.push(shown.0.clone());
+        }
+        next.sources.push(scan);
     }
-    Ok((!marks.is_empty()).then(|| marks.join("\n")))
+    Ok(Some(((!marks.is_empty()).then(|| marks.join("\n")), next)))
 }
 
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
@@ -1440,6 +1473,85 @@ fn settlements_after_in_txn(
         });
     }
     Ok(scanned)
+}
+
+/// What one source shows a reader after a position.
+struct ShownAfter {
+    /// The entries the reader is shown, in order, at most the limit.
+    entries: Vec<FeedEntry>,
+    /// Where the next read of the source starts: the last entry given when the limit filled,
+    /// otherwise the source's last row, or the start position when the source had none.
+    through: Option<FeedPosition>,
+    /// The limit filled before the source's end.
+    full: bool,
+}
+
+/// The entries of `source` after `after` that `selector` takes and `reader`'s lane shows now,
+/// up to `limit` of them (lead call K, review #6942 round 2). The limit counts shown entries
+/// only: the scan goes on past every row the lane does not show, or the selector does not take,
+/// to fill the page or reach the source's end. So a page, its `through` and its `more` depend on
+/// the shown entries alone, and the count of pages tells nothing of hidden rows. A reader that
+/// is shown little scans to the head on each read; its ack moves the start past what it
+/// scanned, once.
+///
+/// # Errors
+///
+/// The reads.
+fn shown_after_in_txn(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    selector: &FeedSelector,
+    source: FeedSource,
+    after: Option<FeedPosition>,
+    limit: Option<usize>,
+) -> Result<ShownAfter> {
+    let mut shown = ShownAfter {
+        entries: Vec::new(),
+        through: after,
+        full: false,
+    };
+    let mut start = shown
+        .through
+        .as_ref()
+        .map(|position| position.parse().map(|(_, position)| position))
+        .transpose()?;
+    loop {
+        let scanned = scan_source_in_txn(vault, txn, source, start)?;
+        let Some(end) = scanned.through else {
+            return Ok(shown);
+        };
+        for entry in shown_in_txn(reader, txn, selector, scanned.entries)? {
+            if limit.is_some_and(|limit| shown.entries.len() >= limit) {
+                break;
+            }
+            shown.entries.push(entry);
+        }
+        if let Some(limit) = limit
+            && shown.entries.len() >= limit
+        {
+            shown.through = shown.entries.last().map(|entry| entry.position.clone());
+            shown.full = true;
+            return Ok(shown);
+        }
+        shown.through = Some(FeedPosition::of(end)?);
+        start = Some(end);
+    }
+}
+
+/// One chunk of `source` after `after`: up to [`FEED_READ_MAX_LIMIT`] candidates.
+fn scan_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FeedSource,
+    after: Option<Position>,
+) -> Result<Scanned> {
+    match source {
+        FeedSource::Changes => changes_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Settlements => settlements_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Edges => edges::edges_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Redirty => edges::redirty_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+    }
 }
 
 /// The candidates `selector` takes and `reader`'s lane shows now. Nothing is told of the rest.
