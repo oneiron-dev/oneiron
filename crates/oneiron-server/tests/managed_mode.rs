@@ -119,6 +119,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
+        "--keystore-dir".to_owned(),
+        path("keys"),
         "--http-socket".to_owned(),
         path("http.sock"),
         "--ctl-socket".to_owned(),
@@ -391,15 +393,18 @@ fn an_unknown_contract_version_is_refused_before_any_io() {
     let dir = tempfile::tempdir().unwrap();
     let full = managed_argv(dir.path());
 
-    let bad = with_flag_value(&full, "--contract-version", "3");
+    // Version 3 is the supported contract since #3266 (CONTRACT_VERSION = 3),
+    // so the unknown probe is the next version, not a literal.
+    let unknown = CONTRACT_VERSION + 1;
+    let bad = with_flag_value(&full, "--contract-version", &unknown.to_string());
     let error = ManagedArgs::from_serve_args(&parse_serve(&bad)).unwrap_err();
     assert!(
         matches!(
             error,
             ManagedError::UnknownContractVersion {
-                found: 3,
+                found,
                 expected: CONTRACT_VERSION
-            }
+            } if found == unknown
         ),
         "unexpected: {error}"
     );
@@ -1319,20 +1324,21 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     let before = probe_entity_id(0x01);
     let during = probe_entity_id(0x02);
 
-    // Unfrozen, the served write path commits for real — the entity reads back
-    // — so the refusal below is a change of behaviour rather than a surface
-    // that never worked in the first place.
+    // Ruled (#3222, FIX 2222 / FIX 5255 part 3): a managed request with no
+    // caller slip and no owner attestation is anonymous, never the host root,
+    // so these bare requests get 401 where they once got the root's 200. The
+    // unfrozen 401 still differs from the frozen typed 503 below.
     let accepted = http_over_unix(&http, &conversation_write(&before)).await;
-    assert!(accepted.starts_with("HTTP/1.1 200 OK"), "{accepted}");
+    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{before}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
+    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
 
     // The supervisor's authenticated socket is the principal. An arbitrary
     // forwarded actor/token claim cannot replace that contract identity.
     let forwarded = http_over_unix(&http, &format!(
         "GET /api/entity/{before} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer v2.scope=core:read;principal_ref=ffffffffffffffffffffffffffffffff.unsigned\r\nx-oneiron-actor: hostile\r\nConnection: close\r\n\r\n"
     )).await;
-    assert!(forwarded.starts_with("HTTP/1.1 200 OK"), "{forwarded}");
+    assert!(forwarded.starts_with("HTTP/1.1 401"), "{forwarded}");
 
     // The supervisor asks for quiescence. The lifecycle tick starts a
     // housekeeping pass at boot, admitted like a served write, so the first
@@ -1367,7 +1373,7 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     );
     // Never a silent accept: nothing was committed under that id.
     let absent = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(absent.starts_with("HTTP/1.1 404"), "{absent}");
+    assert!(absent.starts_with("HTTP/1.1 401"), "{absent}");
     // The sync socket is a write path too. Its frames ride past every
     // per-request gate, so a frozen engine refuses the handshake itself.
     let upgrade = http_over_unix(&http, WS_UPGRADE_REQUEST).await;
@@ -1381,10 +1387,11 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
         CtlResponse::Ok { ok } => assert!(ok),
         other => panic!("expected an ok reply, got {other:?}"),
     }
+    // Anonymous again (#3222), but past the freeze gate: 401, not the 503.
     let accepted = http_over_unix(&http, &conversation_write(&during)).await;
-    assert!(accepted.starts_with("HTTP/1.1 200 OK"), "{accepted}");
+    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
+    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
 
     boot.abort();
 }
@@ -1530,6 +1537,19 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     use tower::ServiceExt;
 
     let fixture = spawn_ctl_fixture();
+    let issuer = oneiron::test_support::test_host_issuer();
+    let slip = fixture.server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let timestamp = fixture.server.vault().now_recorded_at();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let binding =
+        serde_json::json!({"timestamp": timestamp, "nonce": nonce, "signature": signature});
     let app = oneiron_server::managed::build_managed_app(
         Arc::clone(&fixture.server),
         Arc::clone(&fixture.state),
@@ -1548,6 +1568,8 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     let request = Request::builder()
         .method("POST")
         .uri("/v1/core/conversations")
+        .header("authorization", format!("Bearer {}", slip.to_token().unwrap()))
+        .header("x-oneiron-binding", binding.to_string())
         .header("content-type", "application/json")
         .header("content-length", len)
         .body(Body::from_stream(stream))
