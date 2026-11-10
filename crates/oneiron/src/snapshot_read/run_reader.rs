@@ -132,7 +132,9 @@ pub fn settled_step_as_reader(
     if !own {
         return Err(not_the_callers(VERB));
     }
-    match crate::llm::settled_step_for_caller(memory, attempt, step_hash)? {
+    // The response as this reader reads it: a masked reader reads each
+    // lifted key as its handle (review of #6968).
+    match crate::llm::settled_step_for_reader(memory, attempt, step_hash)? {
         None => Ok(None),
         Some(CallerSettledStep::Readable(view)) => Ok(Some(*view)),
         Some(CallerSettledStep::Withheld { .. }) => Err(MemoryError::new(

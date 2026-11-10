@@ -3,15 +3,20 @@
 //! other than the owner reads the library through its own read, with the
 //! judgment `site_skills_for` already makes: only a live, loadable, shared
 //! skill with a runtime package that its read admits, as the package alone,
-//! without the owner's provenance or admission receipts. On main an agent's
-//! read is refused as the owner's door; the owner's read is unchanged.
+//! without the owner's provenance or admission receipts. An agent reads
+//! through the owner's grant of SKILL reads; with none it reads no skill. On
+//! main an agent's read is refused as the owner's door; the owner's read is
+//! unchanged.
 //!
 //! Public paths only: the generated engine fns in `oneiron::verbs`.
 
+use std::collections::BTreeSet;
+
 use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+use oneiron::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 use oneiron::memory::MEMORY_CODE_NOT_FOUND;
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
-use oneiron::verbs::{HubSkillRequest, SkillLibraryListRequest};
+use oneiron::verbs::{AgentGrantMintRequest, HubSkillRequest, SkillLibraryListRequest};
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
@@ -74,6 +79,34 @@ fn an_agent_lists_only_loadable_skills_without_the_owners_evidence() -> TestResu
     let reader = vault.memory(agent, EdgeActorClass::Agent);
     let owner_actor = vault.ensure_embedded_owner_actor()?;
     let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+
+    // An agent reads the library through its own read: with no grant it
+    // reads no skill at all.
+    assert!(
+        oneiron::verbs::vault_skills_list(&reader, page())?
+            .skills
+            .is_empty(),
+        "an agent with no read grant reads no skill"
+    );
+    // The owner grants it reads of SKILL rows, and no other kind.
+    let _grant = oneiron::verbs::vault_agents_grants_mint(
+        &owner,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope: Scope {
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::All,
+                bands: ScopeAxis::Some(BTreeSet::from([oneiron::registry::ENTITY_TYPE_SKILL])),
+                audience: ScopeAxis::All,
+                verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
+                sensitivity: SensitivityCeiling::AtMost(Sensitivity::Sensitive),
+            },
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+        },
+    )?;
 
     // The owner's library holds every skill, the candidate among them.
     let owned = oneiron::verbs::vault_skills_list(&owner, page())?;
