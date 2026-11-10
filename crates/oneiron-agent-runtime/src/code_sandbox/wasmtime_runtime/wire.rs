@@ -354,7 +354,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             // A row the run answers itself is its own typed call, so it keeps
             // the effect, gate and replay row it has always had.
             if let Some(verb) = RunVerb::from_name(&args.verb) {
-                return crate::code_run::run_verb_call::run_verb_call(verb, args.input, now);
+                return crate::code_run::run_verb_call(verb, args.input, now);
             }
             let verb =
                 AgentVerb::from_name(&args.verb).ok_or_else(|| failure("unknown SDK verb"))?;
@@ -808,7 +808,7 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
             agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
-                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+                include_str!("../../../../oneiron/src/dreamer_wake/wake_policy_defaults.json"),
             )
             .expect("shipped wake policy")
             .agent_cadence,

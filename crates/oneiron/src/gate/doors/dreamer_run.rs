@@ -7,8 +7,9 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::constants::{
-    DREAMER_PROVENANCE_IMPORT_REVIEW_KEY, DREAMER_PROVENANCE_RUN_ID_KEY,
-    DREAMER_PROVENANCE_RUN_KEY, DREAMER_PROVENANCE_RUNNER_KEY, DREAMER_PROVENANCE_SURFACE_KEY,
+    CHECKED_PRODUCER_PROVENANCE_KEY, DREAMER_PROVENANCE_IMPORT_REVIEW_KEY,
+    DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY, DREAMER_PROVENANCE_RUNNER_KEY,
+    DREAMER_PROVENANCE_SURFACE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER,
 };
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
@@ -97,6 +98,29 @@ pub(in crate::gate) fn derivation_class_write(envelope: &WriteEnvelope) -> bool 
         |(key, value)| key.as_str() == Some(DREAMER_PROVENANCE_SURFACE_KEY)
             && value.as_str() == Some(crate::derive::DERIVE_SURFACE)
     ))
+}
+
+/// Whether `envelope` is an agent's live-run claim put (FIX 3983): a Generated producer the host's
+/// auto checker reviews as it reviews a Dreamer write (review 6881 P1). The live-run door stamps the marker on
+/// its Auto request and on that request's Proposed resubmission: a checker hold on the resubmission pends it at
+/// Proposed, which persists its pending review (review 6908 P1). Code mode's Proposed put carries no marker.
+pub(in crate::gate) fn live_run_claim_put_from_write_envelope(envelope: &WriteEnvelope) -> bool {
+    if !matches!(
+        envelope.actor().actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::System
+    ) || !matches!(
+        envelope.approval(),
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+    ) {
+        return false;
+    }
+    let Value::Map(entries) = envelope.provenance().value() else {
+        return false;
+    };
+    entries.iter().any(|(key, value)| {
+        key.as_str() == Some(CHECKED_PRODUCER_PROVENANCE_KEY)
+            && value.as_str() == Some(LIVE_RUN_CLAIM_PUT_PRODUCER)
+    })
 }
 
 /// The actual promotion attempt named beside a Dreamer run. This is a replay

@@ -142,7 +142,7 @@ pub(super) async fn forward(
         profile.validate().map_err(io::Error::other)?;
         let spec = profile.spec(staged.source).map_err(io::Error::other)?;
         let backend = oneiron::code_sandbox::microvm::select_backend_for_session(
-            &oneiron::code_sandbox::SANDBOX_BACKENDS,
+            &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
             oneiron::code_sandbox::SandboxGuestTier::Untrusted,
             profile.runtime,
             &profile.image,

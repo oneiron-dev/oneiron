@@ -235,10 +235,11 @@ fn reverse_rematerialize_scan(
         entities_in_range = kept;
     }
     let device_only = withhold.worlds(vault)?;
-    // One snapshot for the pass's source-audience verdicts, kept across its
-    // rows and edge ends (FIX 16254).
-    let lineage_txn = vault.store.env.read_txn()?;
-    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
+    // One pass for the source-audience verdicts, kept across its rows and
+    // edge ends while no write commits (FIX 16254). Each ask reads in a
+    // snapshot of its own: the loop opens read transactions between asks
+    // (WINDOW-LINEAGE-RSLOT).
+    let mut lineage = crate::source_audience::LineagePass::per_ask(vault);
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
