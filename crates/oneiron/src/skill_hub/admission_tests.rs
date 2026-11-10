@@ -897,10 +897,12 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
         at(20),
         20,
     )?;
-    let ask =
-        fixture
-            .vault
-            .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    // Captured before prepare: the exact question value the ask carries
+    // (the ask exposes no question accessor).
+    let question = useful_question(id);
+    let ask = fixture
+        .vault
+        .prepare_shared_skill_merge(id, fixture.resident, question.clone())?;
     fixture
         .vault
         .approve_shared_skill_merge(&ask, &fixture.owner)?;
@@ -911,20 +913,28 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
             .merge_shared_skill_delta(&ask, &wrong_seat.useful_decisions(), &NoReplay, at(21), 21)
             .is_err()
     );
-    // NOTE (wave 2): a wrong-question receipt is unrepresentable now — the
-    // engine stamps the receipt itself (c2a4a506975) — so this answers validly
-    // and its refusal assert is reported as unportable.
-    let wrong_question = useful_judge(true);
+    // A wrong-question receipt is unrepresentable through the merge door: the
+    // engine stamps the receipt's question itself. Exercise the same binding
+    // check the door runs, on a valid ladder decision with a swapped question.
+    let judge = useful_judge(true);
+    let mut decision = judge.useful_decisions().decide(
+        &question,
+        fixture.resident,
+        &[id, fixture.baseline],
+        &serde_json::json!({
+            "base": {"skill_id": "fixture.base"},
+            "candidate": {"skill_id": "fixture.base"},
+        }),
+        crate::model_decision::Reversibility::ReversibleRead,
+    )?;
+    assert!(super::shared_gate::checked_useful_decision(
+        &question,
+        fixture.resident,
+        &decision,
+    )?);
+    decision.receipt.question = EntityId::now();
     assert!(
-        fixture
-            .vault
-            .merge_shared_skill_delta(
-                &ask,
-                &wrong_question.useful_decisions(),
-                &NoReplay,
-                at(21),
-                21
-            )
+        super::shared_gate::checked_useful_decision(&question, fixture.resident, &decision)
             .is_err()
     );
     for house in [
