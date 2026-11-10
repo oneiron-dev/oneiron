@@ -137,8 +137,19 @@ pub(super) fn stage_same_as_in_txn(
     }
     let candidate = candidate.with_evidence_taint(meet)?;
     let status_claim = EntityId::now();
-    let outcome =
-        stage_candidate_in_txn(vault, txn, context, &item.local, status_claim, &candidate)?;
+    // Both claims were read under the actor's own read above. The status
+    // claim keeps the unbound lane: the gate's reference check admits an
+    // edge subject only once its edge is live, and a proposed link has none
+    // yet.
+    let outcome = stage_candidate_in_txn(
+        vault,
+        txn,
+        context,
+        &item.local,
+        status_claim,
+        &candidate,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     if !matches!(outcome, ItemOutcome::Landed { .. }) {
         return Ok(outcome);
     }
