@@ -3099,7 +3099,9 @@ function museRecall03ExpectClaimWorlds(
   for (const row of rows) {
     const value = row.value;
     if (typeof value !== "string") throw new Error("Read-back claim value is not text");
-    expect(row.claim_scope.world_id).toBe(expectedWorldByValue.get(value));
+    const expectedWorld = expectedWorldByValue.get(value);
+    if (expectedWorld === undefined) throw new Error(`Read-back claim value ${value} was not seeded`);
+    expect(row.claim_scope.world_id).toBe(expectedWorld);
   }
 }
 
@@ -4103,7 +4105,7 @@ type museRecall06Mention = {
 
 function museRecall06EventText(event: MuseRecall06Event): string {
   if (event.kind === "error") return `${event.code} ${event.message}`;
-  if (event.kind === "eose" || event.kind === "gap") return "";
+  if (event.kind !== "snapshot" && event.kind !== "data") return "";
   const value: unknown = event.value;
   if (typeof value === "string") return value;
   if (value instanceof Uint8Array) return new TextDecoder().decode(value);
