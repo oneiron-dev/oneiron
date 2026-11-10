@@ -627,7 +627,10 @@ fn a_feed_program_wakes_for_a_proposed_claim_it_is_shown() {
 
     let (_dir, vault) = open();
     let fixture = Fixture::new(&vault);
-    let lane = vault.scoped_read(fixture.reader_key());
+    // The owner's read key, as the feed verbs read with it (`Memory::read_lane`) and the
+    // owner's program wake builds it, not the bare actor key.
+    let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let lane = vault.scoped_read(owner.read_key().expect("the owner's read key"));
     let subscription = vault
         .feed_subscribe(
             &lane,
@@ -648,7 +651,7 @@ fn a_feed_program_wakes_for_a_proposed_claim_it_is_shown() {
     drain(&vault, T0);
 
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "fixture.proposed",
         ClaimSubject::Entity(fixture.owner),
         rmpv::Value::from("a proposed claim"),
@@ -657,11 +660,18 @@ fn a_feed_program_wakes_for_a_proposed_claim_it_is_shown() {
         ClaimLifecycleStatus::Active,
     )
     .expect("build the proposed claim");
+    body.source = Some(ClaimSource::UserStated);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("put the proposed claim");
 
     let recorded = lane.recorded_lane().expect("the owner's recorded lane");
+    assert!(
+        recorded
+            .is_entity_readable(&claim)
+            .expect("read the proposed claim"),
+        "the owner's recorded lane reads the proposed claim"
+    );
     let FeedRead::Page(page) = vault
         .feed_read(
             &recorded,
