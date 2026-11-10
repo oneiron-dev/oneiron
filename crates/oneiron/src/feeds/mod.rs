@@ -951,16 +951,39 @@ pub(crate) fn subscription_stands_in_txn(
     SUBSCRIPTIONS.contains(&vault.store, txn, &(actor, subscription))
 }
 
-/// Rows a feed-woken program's wake looks at, at most, in each source after its cursor (slice
-/// 6.8c).
-const WAKE_SCAN_ROWS: usize = 16 * FEED_READ_MAX_LIMIT;
+/// Chunks of a source one release of a feed-woken program scans at most (slice 6.8c); the scan
+/// goes on from where it stopped at the next release.
+const WAKE_SCAN_CHUNKS: usize = 16;
+
+/// Where a feed-woken program's wake scan stands in each source, kept with its trigger between
+/// releases (review #6982): each release scans on from the last row it looked at, so a long run
+/// of rows the lane does not show delays the wake by some releases and never hides a shown row
+/// behind it for good. The subscriber's cursor never moves for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FeedWakeScan {
+    sources: Vec<SourceWakeScan>,
+}
+
+/// One source's wake scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SourceWakeScan {
+    source: FeedSource,
+    /// The subscription's cursor the scan started from: a cursor that moved starts it again.
+    cursor: Option<FeedPosition>,
+    /// The last row looked at.
+    scanned: Option<FeedPosition>,
+    /// The last entry the lane is shown among the rows looked at.
+    shown: Option<FeedPosition>,
+}
 
 /// What wakes a feed-woken program (slice 6.8c, lead call K), judged as `reader`'s reads would
-/// be: `None` when nothing `reader` is shown waits after the cursors; otherwise a mark of the
-/// last entry each source would show it, so the program wakes once per set of entries it can
-/// see and never for a change its lane does not show. A cursor idle past retention marks the gap
-/// its read would answer, which shows no row either. `None` too when the subscription is not
-/// `reader`'s.
+/// be, and where its scan stands after this release; `None` when the subscription is not
+/// `reader`'s. The mark is `None` when nothing `reader` is shown waits after the cursors;
+/// otherwise it names the last entry each source shows it, so the program wakes once per set of
+/// entries it can see and never for a change its lane does not show. A cursor idle past
+/// retention marks the gap its read would answer, which shows no row either. Each source scans
+/// on from `prior` while its cursor stands where `prior` found it, at most
+/// [`WAKE_SCAN_CHUNKS`] chunks a release.
 ///
 /// # Errors
 ///
@@ -969,7 +992,8 @@ pub(crate) fn feed_wake_mark(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     subscription: EntityId,
-) -> Result<Option<String>> {
+    prior: &FeedWakeScan,
+) -> Result<Option<(Option<String>, FeedWakeScan)>> {
     let _bodies = reader.prepare_point_read::<Error>()?;
     let txn = vault.store.env.read_txn()?;
     let actor = live_reader_actor_in(reader, &txn)?;
@@ -977,6 +1001,7 @@ pub(crate) fn feed_wake_mark(
         return Ok(None);
     };
     let now = vault.store.clock.now_recorded_at();
+    let mut next = FeedWakeScan::default();
     let mut marks = Vec::new();
     for source in &row.selector.sources {
         let cursor = CURSORS
@@ -985,38 +1010,44 @@ pub(crate) fn feed_wake_mark(
                 "feed subscription without its cursor",
             ))?;
         if cursor.lapsed(*source, now) {
-            return Ok(Some(format!("gap:{}", cursor.updated_at)));
+            return Ok(Some((
+                Some(format!("gap:{}", cursor.updated_at)),
+                FeedWakeScan::default(),
+            )));
         }
-        let mut after = cursor.position()?;
-        let mut looked = 0;
-        let mut last = None;
-        while looked < WAKE_SCAN_ROWS {
-            let scanned = match source {
-                FeedSource::Changes => {
-                    changes_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Settlements => {
-                    settlements_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Edges => {
-                    edges::edges_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-                FeedSource::Redirty => {
-                    edges::redirty_after_in_txn(vault, &txn, after, FEED_READ_MAX_LIMIT)?
-                }
-            };
-            let Some(through) = scanned.through else {
+        let mut scan = prior
+            .sources
+            .iter()
+            .find(|kept| kept.source == *source && kept.cursor == cursor.position)
+            .cloned()
+            .unwrap_or_else(|| SourceWakeScan {
+                source: *source,
+                cursor: cursor.position.clone(),
+                scanned: cursor.position.clone(),
+                shown: None,
+            });
+        let mut start = scan
+            .scanned
+            .as_ref()
+            .map(|position| position.parse().map(|(_, position)| position))
+            .transpose()?;
+        for _ in 0..WAKE_SCAN_CHUNKS {
+            let scanned = scan_source_in_txn(vault, &txn, *source, start)?;
+            let Some(end) = scanned.through else {
                 break;
             };
-            looked += scanned.entries.len().max(1);
-            if let Some(shown) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
-                last = Some(shown.position.0);
+            if let Some(last) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
+                scan.shown = Some(last.position);
             }
-            after = Some(through);
+            scan.scanned = Some(FeedPosition::of(end)?);
+            start = Some(end);
         }
-        marks.extend(last);
+        if let Some(shown) = &scan.shown {
+            marks.push(shown.0.clone());
+        }
+        next.sources.push(scan);
     }
-    Ok((!marks.is_empty()).then(|| marks.join("\n")))
+    Ok(Some(((!marks.is_empty()).then(|| marks.join("\n")), next)))
 }
 
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
@@ -1477,16 +1508,7 @@ fn shown_after_in_txn(
         .map(|position| position.parse().map(|(_, position)| position))
         .transpose()?;
     loop {
-        let scanned = match source {
-            FeedSource::Changes => changes_after_in_txn(vault, txn, start, FEED_READ_MAX_LIMIT)?,
-            FeedSource::Settlements => {
-                settlements_after_in_txn(vault, txn, start, FEED_READ_MAX_LIMIT)?
-            }
-            FeedSource::Edges => edges::edges_after_in_txn(vault, txn, start, FEED_READ_MAX_LIMIT)?,
-            FeedSource::Redirty => {
-                edges::redirty_after_in_txn(vault, txn, start, FEED_READ_MAX_LIMIT)?
-            }
-        };
+        let scanned = scan_source_in_txn(vault, txn, source, start)?;
         let Some(end) = scanned.through else {
             return Ok(shown);
         };
@@ -1505,6 +1527,21 @@ fn shown_after_in_txn(
         }
         shown.through = Some(FeedPosition::of(end)?);
         start = Some(end);
+    }
+}
+
+/// One chunk of `source` after `after`: up to [`FEED_READ_MAX_LIMIT`] candidates.
+fn scan_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FeedSource,
+    after: Option<Position>,
+) -> Result<Scanned> {
+    match source {
+        FeedSource::Changes => changes_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Settlements => settlements_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Edges => edges::edges_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Redirty => edges::redirty_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
     }
 }
 

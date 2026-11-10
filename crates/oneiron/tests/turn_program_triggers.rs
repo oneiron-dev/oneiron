@@ -10,6 +10,7 @@ use oneiron::feeds::{
     FeedAckRequest, FeedRead, FeedReadRequest, FeedSelector, FeedSource, FeedStart,
     FeedSubscribeRequest,
 };
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON};
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
@@ -329,6 +330,89 @@ fn a_feed_program_is_not_woken_by_a_change_it_would_not_be_shown() {
     );
     put_person(&vault);
     assert_eq!(vault.release_feed_program_wakes(T0).expect("release"), 1);
+}
+
+/// Review #6982: a feed program's wake scan goes on from where the last release stopped, so a
+/// run of changes its subscription does not take, longer than one release scans, delays the
+/// wake and never hides the change it is shown behind them. 4,097 CODE_SYMBOLs (one more than a
+/// release scans) stand before the PERSON.
+#[test]
+fn a_feed_program_wakes_for_a_change_behind_a_long_run_it_is_not_shown() {
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let lane = vault.scoped_read(fixture.reader_key());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_PERSON],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("release");
+    drain(&vault, T0);
+
+    for chunk in 0..9 {
+        let mut batch = vault.batch();
+        for _ in 0..(if chunk < 8 { 512 } else { 1 }) {
+            batch = batch.put(
+                &EntityId::now(),
+                ENTITY_TYPE_CODE_SYMBOL,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"symbol",
+            );
+        }
+        batch.commit().expect("symbols");
+    }
+    put_person(&vault);
+
+    let mut woken = Vec::new();
+    for _ in 0..4 {
+        woken.push(vault.release_feed_program_wakes(T0).expect("release"));
+    }
+    assert_eq!(
+        woken.iter().sum::<usize>(),
+        1,
+        "the PERSON wakes it once, after the run: {woken:?}"
+    );
+}
+
+/// Review #6982: a pass admits a bounded number of owed wakes, and a later pass admits the rest
+/// even when it records no new wake. 257 one-shot timers, all due, are one more than a pass
+/// admits; two housekeeping passes leave none owed.
+#[test]
+fn a_later_pass_admits_the_wakes_an_earlier_pass_left_owed() {
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    for due in 0..257 {
+        fixture.arm(
+            &vault,
+            ProgramTrigger::Timer {
+                first_at: 1_000 + due,
+                every_secs: 0,
+            },
+        );
+    }
+    for _ in 0..2 {
+        vault
+            .housekeeping(HousekeepingBudget::unbounded())
+            .expect("housekeeping");
+    }
+    let left = drain(&vault, T0);
+    assert_eq!(
+        (left.admitted, left.refused, left.held),
+        (0, 0, 0),
+        "no wake is left owed: {left:?}"
+    );
 }
 
 /// An idle program wakes once per idle stretch, after its quiet time, and never while a turn
