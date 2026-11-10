@@ -103,12 +103,20 @@ function sourceId(item: MemoryItem): string {
   return item.record.id;
 }
 
+/** A diary entry is an owner-only note: ordinary recall leaves it out by design
+ * (ARCH-0032), so it is read through the diary's own door, then directly. */
+async function ownDiary(engine: EngineFixture, reason: string): Promise<FacadeResult<"self.memory.diary.query">> {
+  return engine.client.call("self.memory.diary.query", { agent: engine.pairedActor.principalRef, reason });
+}
 async function expectDiary(
   engine: EngineFixture, query: string, entryId: string, content: string,
 ): Promise<void> {
-  const item = await recallItem(engine, query);
-  expect(item.provenance.source_revision_ids).toContain(entryId);
-  expect(item.value_text).toContain(query);
+  const diary = await ownDiary(engine, "Verify the owner's portability fixture diary");
+  if (diary.state !== "granted") throw new Error(`Diary read was ${diary.state}`);
+  const entry = diary.entries.find(row => row.id === entryId);
+  expect(entry).toBeDefined();
+  expect(entry!.markdown).toContain(query);
+  expect(entry!.markdown).toBe(content);
   const read = await engine.client.call("vault.get", { entity_ref: entryId });
   expect(read.value?.body).toMatchObject({ markdown: content });
 }
@@ -379,7 +387,8 @@ suite.test(test, "PORTABILITY-02", "Owner same-build restore should work", async
   const destination = resolve(engine.root, "restored-vault");
   const restoreArgs = ["restore", backup.backup.path, "--unlock", "passkey", "--credential", credential,
     "--trust", trustFile, "--vault-path", destination, ...ownerArgs(engine)];
-  const restored = await engine.cli.run(restoreArgs, key, undefined, true);
+  // Diagnostic stderr (redacted) is kept, so a failed restore names its refusal.
+  const restored = await engine.cli.run(restoreArgs, key, undefined, true, true);
   expect(restored.exitCode).toBe(0);
   const receipt = JSON.parse(restored.stdout) as FreshRestore;
   expect(receipt.checkpoint_id).toBe(backup.checkpoint_id);
@@ -511,7 +520,8 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   expect(refusedFresh.signal).toBeNull();
   expect(await readdir(engine.root)).not.toContain("restored-vault");
   // Identical command and destination, only the private PRF input changes.
-  const restored = await engine.cli.run(restoreArgs, key, undefined, true);
+  // Diagnostic stderr (redacted) is kept, so a failed restore names its refusal.
+  const restored = await engine.cli.run(restoreArgs, key, undefined, true, true);
   expect(restored.exitCode).toBe(0);
   expect(restored.signal).toBeNull();
   const receipt = JSON.parse(restored.stdout) as FreshRestore;
@@ -527,10 +537,11 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   await engine.restart(); // The original paired owner must authenticate the restored vault.
   await expectDiary(engine, facts.owner.query, saved.entry_id, note);
   await expectBlob(engine, artifact.artifact_id, blob);
-  const notBackedUp = await engine.client.call("vault.recall", {
-    query: facts.owner.afterBackupQuery, effort: "light", limit: 20,
-  });
-  expect(notBackedUp.items.some(item => item.value_text.includes(facts.owner.afterBackupQuery))).toBe(false);
+  const notBackedUp = await ownDiary(engine, "Verify that restoration excluded the later diary entry");
+  if (notBackedUp.state !== "granted") throw new Error(`Diary read was ${notBackedUp.state}`);
+  expect(notBackedUp.entries.some(row => row.id === later.entry_id)).toBe(false);
+  expect(notBackedUp.entries.some(row => row.markdown.includes(facts.owner.afterBackupQuery))).toBe(false);
+  expect((await engine.client.call("vault.get", { entity_ref: later.entry_id })).value).toBeNull();
   const status = (await engine.client.request<OwnerStatus>("GET", "/v1/owner/status")).body;
   expect(status.location.vault).toBe(destination);
   expect(status.location.backups.restores).toEqual(expect.arrayContaining([
