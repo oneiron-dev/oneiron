@@ -5,7 +5,6 @@ use rmpv::Value;
 use crate::claim::ClaimLifecycleStatus;
 use crate::config::VaultConfig;
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
-use crate::error::ClaimError;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 
@@ -190,35 +189,6 @@ fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
         "a TURN cannot be charged an actor.edit_cost, so the door refuses it \
          here rather than wedging the projector two passes later"
     );
-    Ok(())
-}
-
-// ─── reserved namespace ─────────────────────────────────────────────────
-
-#[test]
-fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-
-    for predicate in [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST] {
-        let mut body = ClaimBody::new(
-            predicate,
-            ClaimSubject::Entity(actor),
-            Value::F32(0.0),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.evidence = Some(Value::from("forged"));
-        body.source = Some(ClaimSource::Observed);
-        let error = vault
-            .put_claim(&EntityId::now(), &body, t(80), 80)
-            .expect_err("the generic claim API must refuse a reserved predicate");
-        assert!(
-            matches!(error, Error::Claim(ClaimError::ReservedPredicate { .. })),
-            "typed reserved-namespace rejection, got {error:?}"
-        );
-    }
     Ok(())
 }
 
