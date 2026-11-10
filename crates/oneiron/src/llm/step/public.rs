@@ -18,8 +18,7 @@ use super::{
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, SpendScopeId, agent_dispatch_actor,
-    decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -114,7 +113,15 @@ pub async fn submit_as_owner(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    admitted(submit(vault, Submitter::Owner(owner), input, Some((backend, guard))).await?)
+    admitted(
+        submit(
+            vault,
+            Submitter::Owner(owner),
+            input,
+            Some((backend, guard)),
+        )
+        .await?,
+    )
 }
 
 /// Resume this owner's frozen saved work before provider admission. A new
@@ -139,26 +146,32 @@ pub struct RunStepCaller<'a> {
     pub actor: WriteActor,
     pub lease: &'a HostBinding,
     pub definition: &'a AgentDefinition,
+    /// Whether the host still holds the run attached for this caller, which
+    /// the lease alone does not say: a credential that reads no longer ends
+    /// it. Asked outside any transaction, before a step is read or prepared
+    /// and before its result is saved.
+    pub attached: &'a (dyn Fn() -> bool + Send + Sync),
 }
 
 /// [`submit_as_owner`] for a live run's own actor. The step is kept under
 /// the agent and the first try of its run's retry lineage, so a retried try
 /// replays it and no other run of the agent shares its key. The lease and
 /// the actor are read before the identity, in the preparing writer and in
-/// the final writer. The definition's model list holds a fresh call.
+/// the final writer, and the host's attachment is asked before each writer.
+/// The definition's model list holds a fresh call.
 ///
-/// A run that spends under a scope steps on that scope's own guard, and
-/// what the guard used is booked on the scope in the commit that saves the
-/// result, so a replay of a saved step books nothing. `unscoped_guard` is
-/// the host's line for a run with no scope.
+/// `guard` is the step's logical allowance, as the owner's is. The host
+/// books what the step's physical calls spend on the run's spend scope, on
+/// its own live lease, so a replay of a saved step, which makes no call,
+/// books nothing.
 pub async fn submit_as_run_actor(
     vault: &Vault,
     caller: RunStepCaller<'_>,
     input: ModelStepSubmit,
     backend: &dyn LlmBackend,
-    unscoped_guard: &BudgetGuard,
+    guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    let execution = Some((backend, unscoped_guard));
+    let execution = Some((backend, guard));
     admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
 }
 
@@ -181,20 +194,6 @@ pub fn receipt_as_run_actor(
     receipt(vault, Submitter::Run(caller), input)
 }
 
-/// The scope a live run's step spends under, as [`submit_as_run_actor`]
-/// reads it: the leased try's own, or the try's it retries. `None` for an
-/// unmetered run. The host sizes the physical call's line by it.
-pub fn run_step_spend_scope(
-    vault: &Vault,
-    caller: RunStepCaller<'_>,
-) -> MemoryResult<Option<SpendScopeId>> {
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let record = run_lease_in_txn(vault, &txn, caller)?.ok_or_else(not_the_runs_actor)?;
-    Ok(AgentDispatcher::new(vault)
-        .attempt_spend_scope_in_txn(&txn, record.id)?
-        .map(|row| row.scope))
-}
-
 /// Who submits a step: the vault owner on their proof, or a live run's own
 /// actor on its lease.
 #[derive(Clone, Copy)]
@@ -204,15 +203,22 @@ enum Submitter<'a> {
 }
 
 /// What a submitter's check answers in one snapshot: the actor the step is
-/// kept under, the step's identity, and the scope a run's step spends
-/// under.
+/// kept under, and the step's identity.
 struct Standing {
     actor: WriteActor,
     id: AttemptId,
-    scope: Option<SpendScopeId>,
 }
 
 impl Submitter<'_> {
+    /// Refuses a run its host no longer holds attached. Asked outside any
+    /// transaction: the host's answer reads the vault itself.
+    fn attached(&self) -> MemoryResult<()> {
+        match self {
+            Self::Run(caller) if !(caller.attached)() => Err(not_the_runs_actor()),
+            _ => Ok(()),
+        }
+    }
+
     /// [`Self::standing_in_txn`] in its own read transaction.
     fn standing(&self, vault: &Vault, step_key: &str) -> MemoryResult<Standing> {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
@@ -234,7 +240,6 @@ impl Submitter<'_> {
                 Ok(Standing {
                     actor: WriteActor::new(actor, EdgeActorClass::Human),
                     id: identity(actor, step_key)?,
-                    scope: None,
                 })
             }
             Self::Run(caller) => {
@@ -244,9 +249,6 @@ impl Submitter<'_> {
                 Ok(Standing {
                     actor: caller.actor,
                     id: run_identity(caller.actor.entity_ref(), launch, step_key)?,
-                    scope: AgentDispatcher::new(vault)
-                        .attempt_spend_scope_in_txn(txn, record.id)?
-                        .map(|row| row.scope),
                 })
             }
         }
@@ -303,7 +305,9 @@ fn first_try_in_txn(
             ));
         }
         first = previous;
-        earlier = queue.get_in_txn(txn, previous)?.and_then(|row| row.retry_of);
+        earlier = queue
+            .get_in_txn(txn, previous)?
+            .and_then(|row| row.retry_of);
     }
     Ok(first)
 }
@@ -312,7 +316,7 @@ fn not_the_runs_actor() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         "a run's model step needs the run's own actor on its live lease",
-        &["Submit from the agent run that still holds its try's lease."],
+        &["Submit from the agent run that still holds its try's lease and its attachment."],
     )
 }
 
@@ -332,14 +336,12 @@ async fn resume_saved(
     if let Some(receipt) = saved_terminal(vault, submitter, input)? {
         return Ok(Some(receipt));
     }
-    let Standing { actor, id, .. } = submitter.standing(vault, &input.step_key)?;
+    let Standing { actor, id } = submitter.standing(vault, &input.step_key)?;
     let frozen = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         SUBMISSIONS
             .get(&vault.store, &txn, &id)?
-            .filter(|row| {
-                row.actor == actor.entity_ref() && same_frozen_request(&row.input, input)
-            })
+            .filter(|row| row.actor == actor.entity_ref() && same_frozen_request(&row.input, input))
             .map(|row| row.input)
     };
     let Some(frozen) = frozen else {
@@ -355,12 +357,8 @@ async fn submit(
     execution: Option<(&dyn LlmBackend, &BudgetGuard)>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
+    submitter.attached()?;
     let standing = submitter.standing(vault, &input.step_key)?;
-    // A fresh call is held to the run's model list. Saved work answers
-    // without it, as a model removed since does (FIX 8180).
-    if let (Submitter::Run(caller), Some(_)) = (&submitter, &execution) {
-        ensure_listed(caller.definition, &input.request.model)?;
-    }
     let (actor, id) = (standing.actor.entity_ref(), standing.id);
     let digest = input
         .request
@@ -442,6 +440,12 @@ async fn submit(
         if terminal_result(vault, txn, &row) {
             return Ok(Some((row, None, None)));
         }
+        // A fresh call is held to the run's model list. Saved work answered
+        // above without it, as a model removed since does (FIX 8180), and a
+        // refusal here leaves nothing written.
+        if let (Submitter::Run(caller), Some(_)) = (&submitter, &execution) {
+            ensure_listed(caller.definition, &input.request.model)?;
+        }
         // Capture the real saved response in THIS writer before taking the
         // same attempt's lease. A miss leaves all queue state untouched.
         let recovery = if execution.is_none() {
@@ -498,22 +502,11 @@ async fn submit(
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
     };
-    // A run that spends under a scope steps on that scope's own guard, so
-    // what the guard used is this step's spend and nothing else's.
-    let scope_line = match (&standing.scope, execution.is_some()) {
-        (Some(scope), true) => Some((
-            scope,
-            AgentDispatcher::new(vault).guard_for_scope(scope)?,
-        )),
-        _ => None,
-    };
-    let outcome = if let Some((backend, unscoped_guard)) = execution {
+    let outcome = if let Some((backend, guard)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
-            scope_line
-                .as_ref()
-                .map_or(unscoped_guard, |(_, guard)| guard),
+            guard,
             row.input.request.clone(),
             &FallbackRegistry::standard(),
             usize::from(row.input.retry.max_attempts - 1),
@@ -527,44 +520,13 @@ async fn submit(
         })?;
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
-    let spent = scope_line
-        .as_ref()
-        .map(|(scope, guard)| (*scope, guard.read().used_units))
-        .filter(|(_, units)| *units > 0);
-    row.result = Some(match step_result(vault, id, &row, outcome) {
-        Ok(result) => result,
-        Err(error) => {
-            // No result is saved, so no commit below carries the spend: it
-            // is booked here, whole, before the fault is answered.
-            if let Some((scope, units)) = spent
-                && let Err(unbooked) = AgentDispatcher::new(vault).record_guard_spend(scope, units)
-            {
-                tracing::warn!(
-                    kind = ?unbooked.kind(),
-                    scope = scope.as_str(),
-                    units,
-                    "a run's model-step spend was not booked"
-                );
-            }
-            return Err(error);
-        }
-    });
-    let lapsed = vault.try_with_write_txn(|txn| -> MemoryResult<_> {
-        let stands = submitter.revalidate_in_txn(vault, txn);
-        // The spend already happened, so it is booked whole on the run's
-        // scope in this commit whether or not the lease outlived the call.
-        // The saved result below is this booking's key: a later call of the
-        // step answers from it and reaches no model.
-        if let Some((scope, units)) = spent {
-            AgentDispatcher::new(vault).record_guard_spend_in_txn(txn, scope, units)?;
-        }
-        match (stands, submitter) {
-            (Ok(()), _) => {}
-            // A run whose lease lapsed during the call keeps its booking and
-            // saves no result under a lease it no longer holds.
-            (Err(refusal), Submitter::Run(_)) => return Ok(Some(refusal)),
-            (Err(refusal), Submitter::Owner(_)) => return Err(refusal),
-        }
+    row.result = Some(step_result(vault, id, &row, outcome)?);
+    // A run its host let go, or whose lease lapsed, while the call ran saves
+    // no result under a standing it no longer has: the key's next call
+    // resumes the same attempt.
+    submitter.attached()?;
+    vault.try_with_write_txn(|txn| -> MemoryResult<()> {
+        submitter.revalidate_in_txn(vault, txn)?;
         let queue = AttemptQueue::new(vault);
         let now = vault.now_recorded_at();
         match row.result.as_ref() {
@@ -596,11 +558,8 @@ async fn submit(
         // The attempt settles on the outcome; a terminal claim erased since it
         // logged keeps this copy erased too (FIX 9929).
         put_submission_in_txn(vault, txn, &id, &mut row)?;
-        Ok(None)
+        Ok(())
     })?;
-    if let Some(refusal) = lapsed {
-        return Err(refusal);
-    }
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
 }
 
@@ -691,11 +650,12 @@ fn saved_terminal(
     input: &ModelStepSubmit,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(input)?;
+    submitter.attached()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let Standing { actor, id, .. } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
-    let row = SUBMISSIONS.get(&vault.store, &txn, &id)?.filter(|row| {
-        row.actor == actor.entity_ref() && terminal_result(vault, &txn, row)
-    });
+    let Standing { actor, id } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
+    let row = SUBMISSIONS
+        .get(&vault.store, &txn, &id)?
+        .filter(|row| row.actor == actor.entity_ref() && terminal_result(vault, &txn, row));
     drop(txn);
     let Some(mut row) = row.filter(|row| erased(row) || same_frozen_request(&row.input, input))
     else {
@@ -761,9 +721,10 @@ fn receipt(
     submitter: Submitter<'_>,
     input: &ModelStepReceiptRequest,
 ) -> MemoryResult<ModelStepReceipt> {
+    submitter.attached()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     // The submitter is checked before the key is judged, as before.
-    let Standing { actor, id, .. } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
+    let Standing { actor, id } = submitter.standing_in_txn(vault, &txn, &input.step_key)?;
     if input.step_key.trim().is_empty() {
         return Err(MemoryError::bad_request("step_key must not be empty"));
     }
