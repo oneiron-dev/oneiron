@@ -426,6 +426,106 @@ fn context<'a>(
     }
 }
 
+// ── bound round trips ────────────────────────────────────────────────
+
+#[test]
+fn booking_page_invite_scope_round_trips_without_retagging_existing_scopes() {
+    let page = entity(0x72);
+    let scopes = [
+        StandingOutboundGrantScope::Contact {
+            contact_ref: "contact:one".to_owned(),
+        },
+        StandingOutboundGrantScope::VerbClass {
+            verb_class: "send".to_owned(),
+        },
+        StandingOutboundGrantScope::Channel {
+            channel: "email".to_owned(),
+        },
+        StandingOutboundGrantScope::BriefVerbClass {
+            brief_ref: "brief:one".to_owned(),
+            verb_class: "send".to_owned(),
+        },
+        StandingOutboundGrantScope::ScopedMcp {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal,
+            tool_data_classes: vec![
+                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+            ],
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        StandingOutboundGrantScope::BookingPageInvites { page_ref: page },
+    ];
+    let principal = "owner";
+    let id = entity(0x73);
+    let frontier = [0xB6; 32];
+    for scope in scopes {
+        let bound = scope
+            .grant_bound(principal, id, &frontier)
+            .expect("grant bound");
+        let (_, _, _, decoded) =
+            StandingOutboundGrantScope::from_bound(&bound).expect("decode scope bound");
+        assert_eq!(decoded, scope, "a round trip must not retag a scope");
+        assert_eq!(decoded.dial_label(), scope.dial_label());
+        let crate::consent::BoundEnvelope::Action(envelope) = bound.envelope() else {
+            panic!("outbound grant must have an action envelope");
+        };
+        assert_eq!(
+            envelope
+                .selectors()
+                .iter()
+                .any(|selector| selector.starts_with("page:")),
+            matches!(scope, StandingOutboundGrantScope::BookingPageInvites { .. }),
+            "only a booking-page scope carries its page selector"
+        );
+        assert_eq!(
+            envelope
+                .selectors()
+                .iter()
+                .any(|selector| selector.starts_with("tool_data_class:")),
+            matches!(scope, StandingOutboundGrantScope::ScopedMcp { .. }),
+            "only a scoped-MCP scope carries its tool-data-class selector"
+        );
+    }
+}
+
+#[test]
+fn booking_page_invite_scope_without_its_page_fails_closed() {
+    use crate::consent::{BoundEnvelope, ConsentGrantRow, ConsentOwnerStamp, StandingConsentGrant};
+    use crate::store::GateDecisionId;
+
+    let mut bound = StandingOutboundGrantScope::BookingPageInvites {
+        page_ref: entity(0x72),
+    }
+    .grant_bound("owner", entity(0x73), &[0xB6; 32])
+    .expect("grant bound");
+    let BoundEnvelope::Action(envelope) = &mut bound.envelope else {
+        panic!("outbound grant must have an action envelope");
+    };
+    envelope
+        .selectors
+        .retain(|selector| !selector.starts_with("page:"));
+    assert!(
+        StandingOutboundGrantScope::from_bound(&bound).is_none(),
+        "a booking-page bound that names no page must authorize nothing"
+    );
+    let row = ConsentGrantRow {
+        grant: StandingConsentGrant::from_bound(bound).expect("action grant"),
+        status: StandingOutboundGrantStatus::Active,
+        owner_stamp: ConsentOwnerStamp {
+            actor: entity(0x71),
+            principal_ref: "owner".to_owned(),
+            decision_id: GateDecisionId::now(),
+        },
+        created_at: NOW,
+        bypass: None,
+    };
+    assert!(
+        StandingOutboundGrant::from_row(&row).is_none(),
+        "a booking-page row that names no page must authorize nothing"
+    );
+}
+
 // ── mint ────────────────────────────────────────────────────────────
 
 #[test]
