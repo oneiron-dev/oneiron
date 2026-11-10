@@ -13,9 +13,8 @@ excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.te
 11 Nov 05:37 JST) cite their drivable PROMISE-REGISTER ids in
 `promises`; each `source` lists those promises' canon anchors. The retrieval file
 has 21 cases and an estimated 300 seconds. The plan pin's `expectedFacts` counts
-are derived from the plan, not maintained independently. This branch's unchanged
-`support/run.ts` preflight still requires 242 IDs; its plan-derived-count change
-must be integrated before the expanded plan can run on the fleet. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+are derived from the plan, not maintained independently, and the `support/run.ts`
+preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
 `vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
 DTOs. Bind each method's declared type rather than applying a casing rule to
