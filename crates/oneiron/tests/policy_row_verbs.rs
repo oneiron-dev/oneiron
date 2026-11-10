@@ -48,21 +48,25 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
     let id = EntityId::now();
     {
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        // Scan Off still masks custody-known values, so keep the On fixture separate.
+        let scanned_token = ["gh", "p_", "abcdefghijklmnopqrstuvwxyz0123456789"].concat();
+        let scanned_turn = format!("user: the token is {scanned_token}");
+        let scanned_id = EntityId::now();
         vault.put_entity(
-            &id,
+            &scanned_id,
             TURN,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
-            turn.as_bytes(),
+            scanned_turn.as_bytes(),
         )?;
-        let stored = vault.get(&id)?.expect("masked turn must read back");
+        let stored = vault.get(&scanned_id)?.expect("masked turn must read back");
         let stored = String::from_utf8(stored)?;
         assert!(
             stored.contains("[secret sc"),
             "scan-on write must mask the token, got {stored:?}"
         );
         assert!(
-            !stored.contains(token.as_str()),
+            !stored.contains(scanned_token.as_str()),
             "masked text must not hold the raw token"
         );
         let owner = vault.ensure_embedded_owner_actor()?;
