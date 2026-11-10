@@ -228,6 +228,7 @@ pub mod dispatch_byoa;
 pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
+pub mod feeds;
 pub mod run_tree;
 pub mod runtime_hooks;
 pub mod self_heal;
@@ -261,6 +262,9 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+// Primitive A (slice 6.4): scoped reads with source versions any agent makes
+// behind its own grant.
+pub mod snapshot_read;
 pub mod training_pack;
 // FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
 pub mod drafter;
@@ -698,6 +702,11 @@ mod m8_forward_oracle;
 #[cfg(test)]
 pub(crate) mod test_util;
 
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
 /// Doors for tests that drive the engine from another crate. Not API.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

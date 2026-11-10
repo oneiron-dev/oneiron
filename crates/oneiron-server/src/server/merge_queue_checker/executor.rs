@@ -94,17 +94,21 @@ impl QueueCheckExecutor {
                 "the isolated checker needs the image's immutable toolchain identity",
             ));
         }
-        let backend =
-            select_backend_for_session(SandboxGuestTier::Untrusted, runtime.clone(), image)
-                .map_err(|error| {
-                    QueueCheckNeed::new(
-                        &["merge_queue.checker_backend"],
-                        format!(
-                            "no isolated check backend runs on this host ({error}); provision \
+        let backend = select_backend_for_session(
+            &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
+            SandboxGuestTier::Untrusted,
+            runtime.clone(),
+            image,
+        )
+        .map_err(|error| {
+            QueueCheckNeed::new(
+                &["merge_queue.checker_backend"],
+                format!(
+                    "no isolated check backend runs on this host ({error}); provision \
                              one, or opt in with [merge_queue].checker_backend = \"host\""
-                        ),
-                    )
-                })?;
+                ),
+            )
+        })?;
         let executor = backend.name().to_owned();
         self.backend = Some(backend);
         Ok(QueueCheckEnvironment {
