@@ -311,10 +311,14 @@ impl Vault {
         // Each mark is read under the program's own lane, outside the write that records it.
         let mut scans = Vec::with_capacity(armed.len());
         for (actor, registration, reader) in armed {
+            // The lane the feed verbs read with (`Memory::read_lane(Recorded)`), so a claim the
+            // program's read would be shown, a Proposed one among them, wakes it (review #6982).
             let scanned = match reader {
                 Some((subscription, key, prior)) => crate::feeds::feed_wake_mark(
                     self,
-                    &self.scoped_read(key),
+                    &self
+                        .scoped_read(key)
+                        .with_claim_status(crate::claim::ClaimReadStatus::Recorded),
                     subscription,
                     &prior,
                 )?,

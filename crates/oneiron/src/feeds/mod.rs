@@ -955,10 +955,21 @@ pub(crate) fn subscription_stands_in_txn(
 /// goes on from where it stopped at the next release.
 const WAKE_SCAN_CHUNKS: usize = 16;
 
+/// Chunks of a source one release judges again from the cursor, once its scan stands at the
+/// source's end (review #6981): a row the lane was not shown when it was scanned may be shown
+/// later (a grant, an approval, a diary pair's consent) with no new row for the scan to find.
+const WAKE_RECHECK_CHUNKS: usize = 1;
+
+/// Domain of the digest over the entries a wake scan's lane is shown.
+const WAKE_SHOWN_DOMAIN: &[u8] = b"oneiron:feed-wake-shown:v1";
+
 /// Where a feed-woken program's wake scan stands in each source, kept with its trigger between
-/// releases (review #6982): each release scans on from the last row it looked at, so a long run
-/// of rows the lane does not show delays the wake by some releases and never hides a shown row
-/// behind it for good. The subscriber's cursor never moves for it.
+/// releases. Each release scans on from the last row it looked at, so a long run of rows the
+/// lane does not show delays the wake by some releases and never hides a shown row behind it
+/// for good (review #6982). Once the scan stands at the source's end, a recheck judges the rows
+/// between the cursor and the scan's end again, a chunk a release, and the program wakes once
+/// for each change it finds in what the lane is shown there (review #6981). The subscriber's
+/// cursor never moves for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FeedWakeScan {
     sources: Vec<SourceWakeScan>,
@@ -970,10 +981,45 @@ struct SourceWakeScan {
     source: FeedSource,
     /// The subscription's cursor the scan started from: a cursor that moved starts it again.
     cursor: Option<FeedPosition>,
+    /// The scan on from the cursor.
+    run: WakeRun,
+    /// The recheck from the cursor under way, if one is.
+    recheck: Option<WakeRun>,
+    /// The digest of the last recheck that found the lane shown other entries than `run` held:
+    /// it joins the mark, so each such change wakes the program once.
+    revised: Option<String>,
+}
+
+/// A run of a source's rows from a cursor, and the entries the lane is shown among them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct WakeRun {
     /// The last row looked at.
     scanned: Option<FeedPosition>,
     /// The last entry the lane is shown among the rows looked at.
     shown: Option<FeedPosition>,
+    /// A digest over every entry the lane is shown among them, in order.
+    digest: [u8; 32],
+}
+
+impl WakeRun {
+    fn from_cursor(cursor: Option<FeedPosition>) -> Self {
+        Self {
+            scanned: cursor,
+            shown: None,
+            digest: [0; 32],
+        }
+    }
+
+    /// Adds the next entry the lane is shown.
+    fn push(&mut self, position: FeedPosition) {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(WAKE_SHOWN_DOMAIN);
+        hasher.update(&self.digest);
+        hasher.update(&(position.0.len() as u64).to_be_bytes());
+        hasher.update(position.0.as_bytes());
+        self.digest = *hasher.finalize().as_bytes();
+        self.shown = Some(position);
+    }
 }
 
 /// What wakes a feed-woken program (slice 6.8c, lead call K), judged as `reader`'s reads would
@@ -983,7 +1029,8 @@ struct SourceWakeScan {
 /// entries it can see and never for a change its lane does not show. A cursor idle past
 /// retention marks the gap its read would answer, which shows no row either. Each source scans
 /// on from `prior` while its cursor stands where `prior` found it, at most
-/// [`WAKE_SCAN_CHUNKS`] chunks a release.
+/// [`WAKE_SCAN_CHUNKS`] chunks a release, then rechecks [`WAKE_RECHECK_CHUNKS`] a release; a
+/// recheck that finds the lane shown other entries than before adds its digest to the mark.
 ///
 /// # Errors
 ///
@@ -1023,31 +1070,81 @@ pub(crate) fn feed_wake_mark(
             .unwrap_or_else(|| SourceWakeScan {
                 source: *source,
                 cursor: cursor.position.clone(),
-                scanned: cursor.position.clone(),
-                shown: None,
+                run: WakeRun::from_cursor(cursor.position.clone()),
+                recheck: None,
+                revised: None,
             });
-        let mut start = scan
-            .scanned
-            .as_ref()
-            .map(|position| position.parse().map(|(_, position)| position))
-            .transpose()?;
-        for _ in 0..WAKE_SCAN_CHUNKS {
-            let scanned = scan_source_in_txn(vault, &txn, *source, start)?;
-            let Some(end) = scanned.through else {
-                break;
-            };
-            if let Some(last) = shown_in_txn(reader, &txn, &row.selector, scanned.entries)?.pop() {
-                scan.shown = Some(last.position);
+        let at_end = run_on_in_txn(
+            vault,
+            reader,
+            &txn,
+            &row.selector,
+            *source,
+            &mut scan.run,
+            WAKE_SCAN_CHUNKS,
+        )?;
+        // The recheck covers the rows the scan looked at, so it runs only while the scan stands
+        // at the source's end in this snapshot: when it ends, both runs judged the same rows.
+        if at_end && scan.run.scanned != scan.cursor {
+            let mut recheck = scan
+                .recheck
+                .take()
+                .unwrap_or_else(|| WakeRun::from_cursor(scan.cursor.clone()));
+            let ended = run_on_in_txn(
+                vault,
+                reader,
+                &txn,
+                &row.selector,
+                *source,
+                &mut recheck,
+                WAKE_RECHECK_CHUNKS,
+            )? || recheck.scanned == scan.run.scanned;
+            if !ended {
+                scan.recheck = Some(recheck);
+            } else if recheck.digest != scan.run.digest {
+                scan.revised = Some(crate::receipt::hex_lower(&recheck.digest));
+                scan.run = recheck;
             }
-            scan.scanned = Some(FeedPosition::of(end)?);
-            start = Some(end);
         }
-        if let Some(shown) = &scan.shown {
-            marks.push(shown.0.clone());
+        if let Some(shown) = &scan.run.shown {
+            marks.push(match &scan.revised {
+                Some(revised) => format!("{}#{revised}", shown.0),
+                None => shown.0.clone(),
+            });
         }
         next.sources.push(scan);
     }
     Ok(Some(((!marks.is_empty()).then(|| marks.join("\n")), next)))
+}
+
+/// Scans `source` on from where `run` stands, at most `chunks` chunks, adding each entry
+/// `reader` is shown; `true` once it finds no row after `run`.
+fn run_on_in_txn(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    selector: &FeedSelector,
+    source: FeedSource,
+    run: &mut WakeRun,
+    chunks: usize,
+) -> Result<bool> {
+    let mut start = run
+        .scanned
+        .as_ref()
+        .map(|position| position.parse().map(|(_, position)| position))
+        .transpose()?;
+    for _ in 0..chunks {
+        let scanned = scan_source_in_txn(vault, txn, source, start)?;
+        let Some(end) = scanned.through else {
+            return Ok(true);
+        };
+        for entry in shown_in_txn(reader, txn, selector, scanned.entries)? {
+            run.push(entry.position);
+        }
+        run.scanned = Some(FeedPosition::of(end)?);
+        start = Some(end);
+    }
+    Ok(false)
 }
 
 /// Whether any subscription follows `source` in `txn`: the fact hooks' feed then records each
