@@ -304,7 +304,7 @@ pub fn retain_owed_charge(
         store.reserve_budget(reservation)?,
         crate::dreamer_runner::DreamerBudgetReserveOutcome::Reserved(_)
     ));
-    store.owe_unsettled_charge(&settlement)
+    store.owe_unsettled_charge(&settlement, &[])
 }
 
 /// Counts all retained budget reservations naming `attempt`, on every line.
@@ -401,11 +401,14 @@ pub async fn retain_owed_call_charge(
             &owed,
         )
     })?;
-    store.owe_unsettled_charge(&crate::dreamer_runner::SettleDreamerBudget {
-        budget_id: budget_id.to_owned(),
-        child_attempt: attempt,
-        actual_units: units,
-        now,
-    })?;
+    store.owe_unsettled_charge(
+        &crate::dreamer_runner::SettleDreamerBudget {
+            budget_id: budget_id.to_owned(),
+            child_attempt: attempt,
+            actual_units: units,
+            now,
+        },
+        &[binding],
+    )?;
     Ok(units)
 }
