@@ -48,7 +48,6 @@ use std::fmt;
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::federation::Scope;
 use oneiron::feeds::{
     FeedAckRequest, FeedReadRequest, FeedSelector, FeedSource, FeedStart, FeedSubscribeRequest,
@@ -72,8 +71,6 @@ pub const NEUTRAL_QUERY: &str = "harbor ledger amber lanterns";
 const WORD_DOMAIN: &[u8] = b"oneiron-testkit/canary/word/v1\0";
 /// The domain the relationship space selector is hashed from.
 const SPACE_DOMAIN: &[u8] = b"oneiron-testkit/canary/relationship-space/v1\0";
-/// The domain the test host issuer's seed is hashed from.
-const ISSUER_DOMAIN: &[u8] = b"oneiron-testkit/canary/host-issuer/v1\0";
 /// The namespace the owner's keyed canary is put under.
 const KV_NAMESPACE: &str = "canary";
 /// The key the owner's keyed canary is put under.
@@ -1035,18 +1032,11 @@ fn seed_verb(caller: &Memory<'_>, verb: &str, input: Value) -> Result<Value, See
         .map_err(|error| SeedError::from(format!("canary seed ({verb}): {error}")))
 }
 
-/// Roots the vault under the fixed test host issuer and profiles this
-/// install, so it carries the owner's Grant acts.
+/// Attaches the kit's one test host ([`crate::dreamer::attach_test_host`]),
+/// so the vault carries the owner's Grant acts and a later Dreamer pass over
+/// it presents the same issuer.
 fn root_vault(vault: &Vault) -> Result<(), SeedError> {
-    let seed: [u8; HOST_ISSUER_SEED_BYTES] = *blake3::hash(ISSUER_DOMAIN).as_bytes();
-    let issuer =
-        HostSlipIssuer::from_seed(&seed).map_err(|error| format!("the host issuer: {error}"))?;
-    vault
-        .ensure_host_root_slip(&issuer)
-        .map_err(|error| format!("rooting the vault: {error}"))?;
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .map_err(|error| format!("this install's machine profile: {error}"))?;
+    crate::dreamer::attach_test_host(vault).map_err(|error| format!("the test host: {error}"))?;
     Ok(())
 }
 
