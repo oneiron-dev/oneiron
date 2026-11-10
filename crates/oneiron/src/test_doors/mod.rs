@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod code_reply_healer;
+pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
 pub mod label_writers;
