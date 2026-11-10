@@ -119,8 +119,9 @@ pub fn run_stewardship_once(vault: &Vault, now: u64) -> Result<()> {
                 txn,
                 crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND,
                 DreamerAttemptPayload {
-                    attempt_type: crate::dreamer_runner::maintenance::stewardship::STEWARDSHIP_FACET
-                        .to_owned(),
+                    attempt_type:
+                        crate::dreamer_runner::maintenance::stewardship::STEWARDSHIP_FACET
+                            .to_owned(),
                     input: rmpv::Value::Nil,
                     parent_attempt: None,
                 },
