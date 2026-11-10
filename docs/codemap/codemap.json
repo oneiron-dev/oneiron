@@ -31799,7 +31799,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -34087,9 +34087,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ParkReleaseAction",
       "ParkReleaseView",
       "ReleaseParkedAttemptRequest"
      ],
@@ -34098,6 +34099,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
+      "enum": 1,
       "fn": 1,
       "struct": 2
      }
@@ -34191,7 +34193,7 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 4
      }
     },
@@ -34516,7 +34518,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 19,
       "struct": 1
      }
@@ -35075,7 +35077,7 @@
      "path": "src/dreamer_wake/owed.rs",
      "purpose": "The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -90284,13 +90286,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/wake_d1_park_release.rs",
      "purpose": "Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice…",
      "surface": {
-      "fn": 4
+      "fn": 12
      }
     },
     {
@@ -99238,7 +99240,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/wake_d1_park_release.rs",
