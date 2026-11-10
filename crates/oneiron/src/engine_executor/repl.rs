@@ -52,7 +52,7 @@ use crate::prompt::resolve_engine_executor_wire_prompt;
 use crate::runtime_hooks::VerbHookStop;
 use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -669,6 +669,10 @@ impl EngineNativeExecutor<'_> {
             ));
         }
     }
+}
+
+fn answering_model(response: &LlmResponse) -> Option<ModelId> {
+    ModelId::new(response.usage.served_model_id()?).ok()
 }
 
 /// The wait a turn hook's ask parks the run on, as a call's ask parks the

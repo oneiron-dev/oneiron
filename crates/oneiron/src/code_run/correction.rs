@@ -2,7 +2,7 @@
 //! 4412, 4413).
 //!
 //! One record per model response the live REPL normalized at one step: the
-//! run, the step, the attempt at that step, the configured model, the four
+//! run, the step, the attempt at that step, the answering model, the four
 //! ONE-1929 packaging repairs and the outcome. A clean or normalized response
 //! records with the checkpoint its step committed, in that commit's own
 //! transaction. A rejected response records before its error returns, in its
@@ -144,8 +144,10 @@ pub struct CodeRunCorrection {
     pub attempt: u64,
     /// When the record was written, in unix ms.
     pub recorded_at_ms: u64,
-    /// The full validated `provider/name@revision` id the run was configured
-    /// with, never a provider's wire label.
+    /// The full validated `provider/name@revision` id of the model that
+    /// answered: the ladder rung its served receipt names, else the model the
+    /// run was configured with (a seat id when no receipt names the rung).
+    /// Never a provider's wire label.
     pub model_id: String,
     /// The repairs the normalization made. For a rejected response, the
     /// repairs it made before the refusal.
@@ -172,6 +174,7 @@ pub(crate) struct CodeRunCorrectionDraft<'a> {
     run_id: EntityId,
     step: u64,
     model: &'a ModelId,
+    answered_by: Option<ModelId>,
     repairs: ExecutorWireRepairs,
     outcome: CodeRunCorrectionOutcome,
 }
@@ -194,6 +197,7 @@ impl<'a> CodeRunCorrectionDraft<'a> {
             run_id,
             step,
             model,
+            answered_by: None,
             repairs,
             outcome,
         }
@@ -212,9 +216,16 @@ impl<'a> CodeRunCorrectionDraft<'a> {
             run_id,
             step,
             model,
+            answered_by: None,
             repairs,
             outcome: CodeRunCorrectionOutcome::Rejected { reason },
         }
+    }
+
+    /// The validated model id from the reply's served receipt, when present.
+    pub(crate) fn answered_by(mut self, model: Option<ModelId>) -> Self {
+        self.answered_by = model;
+        self
     }
 
     pub(crate) const fn run_id(&self) -> EntityId {
@@ -252,7 +263,12 @@ impl<'a> CodeRunCorrectionDraft<'a> {
             step: self.step,
             attempt,
             recorded_at_ms: crate::unix_millis_now(),
-            model_id: self.model.as_str().to_owned(),
+            model_id: self
+                .answered_by
+                .as_ref()
+                .unwrap_or(self.model)
+                .as_str()
+                .to_owned(),
             repairs: self.repairs,
             exhausted: policy.exhausted(&self.outcome, model_repair_retries_used),
             outcome: self.outcome.clone(),
