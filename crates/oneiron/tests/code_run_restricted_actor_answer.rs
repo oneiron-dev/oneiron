@@ -320,8 +320,17 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
-fn seed_person(vault: &Vault, seed: u8) -> EntityId {
-    let id = EntityId::from_bytes([seed; 16]).expect("a test id");
+/// A fresh entity id.
+///
+/// UUIDv7 rather than a fixed byte pattern: an open vault already holds its
+/// seeded system agents at `[0xA1; 16]` through `[0xA6; 16]`, and a PERSON
+/// put at one of those ids is refused with `EntityTypeImmutable`.
+fn fresh_id() -> EntityId {
+    EntityId::from_bytes(uuid::Uuid::now_v7().into_bytes()).expect("a test id")
+}
+
+fn seed_person(vault: &Vault) -> EntityId {
+    let id = fresh_id();
     vault
         .put_entity(
             &id,
@@ -332,10 +341,6 @@ fn seed_person(vault: &Vault, seed: u8) -> EntityId {
         )
         .expect("a person lands");
     id
-}
-
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("a test id")
 }
 
 /// (conversations, turns, messages) on the vault, through the public reads.
@@ -391,10 +396,10 @@ fn recorded_outcome(outcome: &rmpv::Value) -> (Option<&str>, Option<&str>) {
 fn read_only_recall_run_returns_its_answer_and_witnesses_no_message() {
     let (_dir, vault) = open_vault();
     let factory = quickjs_factory();
-    let actor = seed_person(&vault, 0xA1);
+    let actor = seed_person(&vault);
     doors::install_actor_ceiling(&vault, &actor, Tier::ReadOnly.ceiling())
         .expect("a proposed ceiling");
-    let run_id = entity(0xB1);
+    let run_id = fresh_id();
     let before = transcript_counts(&vault);
 
     let (outcome, calls) = execute_run(
@@ -457,10 +462,10 @@ fn read_only_recall_run_returns_its_answer_and_witnesses_no_message() {
 fn propose_only_recall_run_returns_its_answer_and_witnesses_no_message() {
     let (_dir, vault) = open_vault();
     let factory = quickjs_factory();
-    let actor = seed_person(&vault, 0xA2);
+    let actor = seed_person(&vault);
     doors::install_actor_ceiling(&vault, &actor, Tier::ProposeOnly.ceiling())
         .expect("a proposed ceiling");
-    let run_id = entity(0xB2);
+    let run_id = fresh_id();
     let before = transcript_counts(&vault);
 
     let (outcome, calls) = execute_run(
@@ -512,10 +517,10 @@ fn propose_only_recall_run_returns_its_answer_and_witnesses_no_message() {
 fn full_access_recall_run_returns_its_answer_and_witnesses_its_message() {
     let (_dir, vault) = open_vault();
     let factory = quickjs_factory();
-    let actor = seed_person(&vault, 0xA3);
+    let actor = seed_person(&vault);
     doors::install_actor_ceiling(&vault, &actor, Tier::FullAccess.ceiling())
         .expect("an auto ceiling");
-    let run_id = entity(0xB3);
+    let run_id = fresh_id();
     let before = transcript_counts(&vault);
 
     let (outcome, calls) = execute_run(
@@ -593,12 +598,12 @@ fn full_access_recall_run_returns_its_answer_and_witnesses_its_message() {
 fn read_only_write_run_catches_its_denied_and_witnesses_no_message() {
     let (_dir, vault) = open_vault();
     let factory = quickjs_factory();
-    let actor = seed_person(&vault, 0xA4);
-    let subject = seed_person(&vault, 0xA5);
-    let claim = entity(0xC4);
+    let actor = seed_person(&vault);
+    let subject = seed_person(&vault);
+    let claim = fresh_id();
     doors::install_actor_ceiling(&vault, &actor, Tier::ReadOnly.ceiling())
         .expect("a proposed ceiling");
-    let run_id = entity(0xB4);
+    let run_id = fresh_id();
     let before = transcript_counts(&vault);
 
     let (outcome, calls) = execute_run(
