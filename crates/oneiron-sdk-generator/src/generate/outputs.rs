@@ -4,6 +4,7 @@
 //!
 //! No rustfmt pass: every `.rs` output is a build-time output, which the tree modes neither write nor check.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use super::{Generator, RowId};
 use crate::error::GenerateError;
 use crate::py::read_text;
 use crate::py::value::Dict;
+use crate::verb_table::{VERBS_DIR, verb_files};
 
 /// The outputs crates/oneiron-sdk-build produces at build time
 /// (untangle slice 4.3); the default run neither writes nor checks them in the tree. A set, read for membership.
@@ -519,6 +521,7 @@ impl Generator {
             &code_mode,
             super::HEADER,
             &self.type_names,
+            &mut self.fragment_dependencies,
         )? {
             files.insert(path, text);
         }
@@ -539,6 +542,27 @@ impl Generator {
         // As `agent-docs.py --from <dir> --out <dir>` would: its two outputs read back from `dir`.
         let docs = super::docs::generated_artifacts(&self.root, dir)?;
         super::docs::write(&docs, dir)
+    }
+
+    /// Every file the outputs depend on, as paths from the repository root, sorted: the fixed inputs (`INPUTS`' files),
+    /// each verb file, and the crate source files the two type inventories' lookups read (`INVENTORY`'s and the
+    /// catalog fragment's; see `facade_types::index`). Read after `outputs()`.
+    pub(crate) fn dependencies(&self) -> BTreeSet<String> {
+        let mut paths: BTreeSet<String> = crate::INPUTS
+            .iter()
+            .filter(|path| **path != VERBS_DIR)
+            .map(|path| (*path).to_owned())
+            .collect();
+        for file in verb_files(&self.root.join(VERBS_DIR)) {
+            if let Some(name) = file.file_name() {
+                paths.insert(format!("{VERBS_DIR}/{}", name.to_string_lossy()));
+            }
+        }
+        if let Some(inventory) = &self.inventory {
+            paths.extend(inventory.index.dependency_paths());
+        }
+        paths.extend(self.fragment_dependencies.iter().cloned());
+        paths
     }
 
     /// The `--package` mode: each named package's outputs written in the tree where they differ (the docs mirror's

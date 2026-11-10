@@ -124,6 +124,14 @@ runs for this. The run key covers the generator's source, `Cargo.lock`, the mani
 not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in `.cargo/config`, or
 `--config`). After changing one, delete `target/<profile>/sdk-generated`.
 
+An incremental build reruns those build scripts only when a file the last run depended on changes: a verb file,
+`type_names.json`, a hand-written input, a crate source file that defined an item the generator resolved, or a
+module file it walked (the run directory's `.sdk-deps` lists them), and `Cargo.lock` or the manifests. A body edit in
+any other crate file reruns nothing. The limit: a new file, or a new same-named item in a file the generator did not
+resolve from, is not seen by an incremental build until a watched file changes; delete
+target/<profile>/sdk-generated to force. A clean build always regenerates, and the merge train regenerates the SDK
+outputs on every train top (TRAIN-REGEN).
+
 The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron` and
 `bun run prepare` in `packages/oneiron-client` (each runs the generator with `cargo run`), and `maturin build`
 for `oneiron-py`. The agent-SDK reference generated from the verb table (`types.md`, `facade-types.md`,

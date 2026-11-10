@@ -10,11 +10,14 @@ use crate::py::read_text;
 use crate::py::text::{display_os_str, os_str_code_points};
 use crate::py::value::{Dict, Value};
 
+/// The verb table's directory, from the repository root.
+pub(crate) const VERBS_DIR: &str = "scripts/sdk/verbs";
+
 /// `directory.glob('*.json')`, sorted: every entry whose name ends in `.json` (a dot file, a directory or a broken
 /// link too; reading one then fails as Python's does). pathlib's glob yields nothing for a missing or unreadable
 /// directory and skips an entry it cannot read. `sorted()` of paths in one directory compares their names as Python
 /// strings, by code point (a byte that is not UTF-8 as its surrogate).
-fn verb_files(directory: &Path) -> Vec<PathBuf> {
+pub(crate) fn verb_files(directory: &Path) -> Vec<PathBuf> {
     let mut files: Vec<(Vec<u32>, PathBuf)> = Vec::new();
     if let Ok(entries) = fs::read_dir(directory) {
         for entry in entries.flatten() {
