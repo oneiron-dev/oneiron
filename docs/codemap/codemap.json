@@ -30027,7 +30027,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "mod": 5,
       "re-export": 25
      }
@@ -90217,7 +90217,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 3
+      "mod": 4
      }
     },
     {
@@ -90228,6 +90228,23 @@
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimGateDecision",
+      "DreamerLandingRow",
+      "RevokeAnswer",
+      "SideDoorTurnText"
+     ],
+     "path": "src/test_doors/untangle_regressions.rs",
+     "purpose": "Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)…",
+     "surface": {
+      "enum": 1,
+      "fn": 25,
+      "struct": 3
      }
     },
     {
@@ -99079,6 +99096,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/untangle_regressions.rs",
+     "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878), X02…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100585,7 +100610,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100755,8 +100780,8 @@
    },
    "over_bar": 240,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7239,
-   "test_files": 903
+   "source_files": 7240,
+   "test_files": 904
   },
   "oneiron-agent-runtime": {
    "files": [
