@@ -1,7 +1,7 @@
 use super::*;
 use crate::calendar::connectors::{
     CalendarConnectorSeatConfig, CalendarSyncOutcome, RemoteCalendarChange, RemoteCalendarObject,
-    RemoteSyncBatch, calendar_write_outbox_rows, run_calendar_connector_sync,
+    RemoteSyncBatch, calendar_write_outbox_rows, door, run_calendar_connector_sync,
 };
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::test_support::{
@@ -93,10 +93,10 @@ fn seat_config() -> CalendarConnectorSeatConfig {
 fn operation(vault: &Vault) -> CalendarConnectorOperation {
     let owner = crate::test_util::embedded_owner_proof(vault);
     let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
-    let registration = super::door::configure(
+    let registration = door::configure(
         &memory,
         &owner,
-        &super::door::CalendarConnectorConfigureRequest {
+        &door::CalendarConnectorConfigureRequest {
             config: seat_config(),
             endpoint: "https://caldav.work.test/".to_owned(),
         },
