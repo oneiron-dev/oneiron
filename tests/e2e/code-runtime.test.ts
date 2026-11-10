@@ -349,14 +349,19 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       expect(exhaustedData.error_code).toBe("code_run_failed");
       const rejectedRunId = await codeRuntime02NoExecution(engine, tools, packagingRow.runRef);
 
-      // (c) The stored repair's identity names the configured wire model; no repair-format oracle here.
+      // (c) Keep the configured provider model promised by CR02-B/P-OTHER-065, not the server's seat/config digest.
+      // CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: the repair record currently copies the synthetic generative seat id.
       const attributedRun = runs[0];
       if (!attributedRun) throw new Error("No forged-console run completed for attribution");
       const corrections = await owner.call("vault.code.corrections", { run_ref: attributedRun.runId });
       const repair = corrections.records.find(record => record.step === 0);
       if (!repair) throw new Error("The hostile reply kept no repair record");
       expect(repair.run_id).toBe(attributedRun.runId);
-      expect(repair.model_id).toBe(engineModelId);
+      try {
+        expect(repair.model_id).toBe(engineModelId);
+      } catch (error) {
+        throw new Error(`CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: repair model_id must name the configured provider model; expected=${engineModelId} received=${repair.model_id}`, { cause: error });
+      }
 
       // Both stored-read doors promise owner authority: refuse a paired agent and read each receipt.
       const agentRef = createHash("sha256").update("code-runtime02:cleaning-probe").digest("hex").slice(0, 32);
@@ -384,7 +389,11 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       const afterRepair = afterCorrections.records.find(record => record.step === repair.step && record.attempt === repair.attempt);
       if (!afterRepair) throw new Error("The stored repair record disappeared across restart");
       expect(afterRepair.run_id).toBe(attributedRun.runId);
-      expect(afterRepair.model_id).toBe(engineModelId);
+      try {
+        expect(afterRepair.model_id).toBe(engineModelId);
+      } catch (error) {
+        throw new Error(`CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: repair model_id after restart must name the configured provider model; expected=${engineModelId} received=${afterRepair.model_id}`, { cause: error });
+      }
       expect(await codeRuntime02NoExecution(engine, tools, packagingRow.runRef)).toBe(rejectedRunId);
       expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual(script.map(step => step.id));
     } finally {
@@ -541,11 +550,11 @@ function codeRuntime03AskProgram(ownerHex: string, turnHex: string, firstMarker:
     rec: null,
     decide: "first",
   };
-  return `console.log(${JSON.stringify(firstMarker)}); const asked = await ask(${JSON.stringify(spec)}); const group = asked.output.handle.group_ref; await wait({ handle: { group_ref: group }, step_key: "code-runtime-03-question" });`;
+  return `console.log(${JSON.stringify(firstMarker)}); const asked = await ask(${JSON.stringify(spec)}); const group = asked.handle.group_ref; await wait({ handle: { group_ref: group }, step_key: "code-runtime-03-question" });`;
 }
 
 function codeRuntime03ResumeProgram(groupHex: string, secondMarker: string): string {
-  return `const settled = await wait(${JSON.stringify({ handle: { group_ref: groupHex }, step_key: "code-runtime-03-question" })}); const ready = settled.output.Ready; finish(JSON.stringify({ picked: ready.picked, marker: ${JSON.stringify(secondMarker)} }));`;
+  return `const settled = await wait(${JSON.stringify({ handle: { group_ref: groupHex }, step_key: "code-runtime-03-question" })}); const ready = settled.Ready; finish(JSON.stringify({ picked: ready.picked, marker: ${JSON.stringify(secondMarker)} }));`;
 }
 
 /* CODE-RUNTIME-03 — promise: a code run parked on a question resumes after the

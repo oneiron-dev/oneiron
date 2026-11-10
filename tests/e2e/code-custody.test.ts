@@ -476,7 +476,7 @@ type LfsBatchResponse = {
 };
 // (Reuses this file's canon LFS wire types LfsObject/LfsBatchResponse; no new wire DTOs.)
 // (PublicHttpClient joins the clients.ts import union as a value: the transfer client below
-//  constructs it. PublicHttpError wraps transfer failures with status/code/message.)
+//  constructs it. Case-local wrappers retain status/code/message/suggestion/body on unexpected refusals.)
 
 const codeCustody06Occurred = 1769947200;
 const codeCustody06Repo = "custody06";
@@ -543,23 +543,28 @@ function codeCustody06TransferClient(engine: EngineFixture): PublicHttpClient {
   });
 }
 
-function codeCustody06TransferError(error: unknown, context: string): Error {
-  const budget = `request_timeout_ms=${codeCustody06TransferTimeoutMs}; flow_deadline_ms=${codeCustody06FlowTimeoutMs}`;
-  if (error instanceof PublicHttpError) {
-    const wire = error.error;
-    return new Error(`${context}: status=${error.reply.status} code=${wire?.code ?? "unavailable"} message=${wire?.message ?? error.message}; ${budget}`);
-  }
-  const code = error instanceof Error ? error.name : "unknown";
-  const message = error instanceof Error ? error.message : String(error);
-  return new Error(`${context}: status=unavailable (no HTTP reply retained) code=${code} message=${message}; ${budget}`);
-}
-
-async function codeCustody06Transfer<T>(context: string, run: () => Promise<T>): Promise<T> {
+async function codeCustody06ExpectedSuccess<T>(context: string, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    throw codeCustody06TransferError(error, context);
+    if (error instanceof PublicHttpError) {
+      const wire = error.error;
+      throw new Error(
+        `CODE-CUSTODY-06 ${context}: status=${error.reply.status} code=${wire?.code ?? "unavailable"} message=${wire?.message ?? error.message} suggestion=${wire?.suggestions?.[0] ?? "<none>"} body=${error.reply.raw.slice(0, 500)}`,
+        { cause: error },
+      );
+    }
+    const code = error instanceof Error ? error.name : "unknown";
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`CODE-CUSTODY-06 ${context}: status=unavailable (no HTTP reply retained) code=${code} message=${message}`, { cause: error });
   }
+}
+
+async function codeCustody06Transfer<T>(context: string, run: () => Promise<T>): Promise<T> {
+  return codeCustody06ExpectedSuccess(
+    `${context}; request_timeout_ms=${codeCustody06TransferTimeoutMs}; flow_deadline_ms=${codeCustody06FlowTimeoutMs}`,
+    run,
+  );
 }
 
 // CODE-CUSTODY-06 — Large blob fidelity and scoped deletion should work.
@@ -604,9 +609,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
     expect(codeCustody06Sha256(bytesA)).toBe(oid);
-    const putB = await engine.client.call("vault.artifacts.put", {
-      name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
-    });
+    const putB = await codeCustody06ExpectedSuccess("owner B put vault.artifacts.put", () =>
+      engine.client.call("vault.artifacts.put", {
+        name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
+      }));
     const appendB = await codeCustody06Transfer(`owner B append vault.artifacts.append ${transferBytes}`, () =>
       transfers.call("vault.artifacts.append", {
         artifact_ref: putB.id_hex, content_base64: contentBase64, occurred_at: codeCustody06Occurred,
@@ -614,19 +620,23 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     if (!("landed" in appendB)) throw new Error("Owner B append did not land");
     expect(appendB.landed.version).toBe(1);
     const versionB = appendB.landed.version;
-    const registered = await engine.client.call("vault.code.origin.register", {
-      repo: codeCustody06Repo, default_branch: "main",
-    });
+    // Register accepts a served name without .git and a short branch name.
+    const registered = await codeCustody06ExpectedSuccess(`owner register vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
+      engine.client.call("vault.code.origin.register", {
+        repo: codeCustody06Repo, default_branch: "main",
+      }));
     expect(registered.repo).toBe(codeCustody06Repo);
     expect(registered.default_branch).toBe("main");
     expect(registered.repo_id).toMatch(/^[a-f0-9]{32}$/);
-    const mirrorView = await engine.client.call("vault.code.origin.mirror.get", { repo: codeCustody06Repo });
+    const mirrorView = await codeCustody06ExpectedSuccess("registration read-back vault.code.origin.mirror.get", () =>
+      engine.client.call("vault.code.origin.mirror.get", { repo: codeCustody06Repo }));
     expect(mirrorView.repo).toBe(codeCustody06Repo);
     expect(mirrorView.mirror ?? null).toBeNull();
     const paths = codeCustody06LfsPaths(codeCustody06Repo, oid);
-    const uploadBatch = await engine.client.request<LfsBatchResponse>("POST", paths.batch, {
-      operation: "upload", transfers: ["basic"], objects: [{ oid, size }],
-    });
+    const uploadBatch = await codeCustody06ExpectedSuccess(`LFS upload batch POST ${paths.batch}`, () =>
+      engine.client.request<LfsBatchResponse>("POST", paths.batch, {
+        operation: "upload", transfers: ["basic"], objects: [{ oid, size }],
+      }));
     expect(uploadBatch.body.transfer).toBe("basic");
     const uploadEntry = uploadBatch.body.objects[0];
     if (!uploadEntry) throw new Error("Empty LFS upload batch answer");
@@ -645,13 +655,15 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       }));
     expect(put.body.oid).toBe(oid);
     expect(put.body.size).toBe(size);
-    const verify = await engine.client.request<{ oid: string; size: number; ok: boolean }>("POST", paths.verify, { oid, size });
+    const verify = await codeCustody06ExpectedSuccess(`LFS verify POST ${paths.verify}`, () =>
+      engine.client.request<{ oid: string; size: number; ok: boolean }>("POST", paths.verify, { oid, size }));
     expect(verify.body.oid).toBe(oid);
     expect(verify.body.size).toBe(size);
     expect(verify.body.ok).toBe(true);
-    const downloadBatch = await engine.client.request<LfsBatchResponse>("POST", paths.batch, {
-      operation: "download", transfers: ["basic"], objects: [{ oid, size }],
-    });
+    const downloadBatch = await codeCustody06ExpectedSuccess(`LFS download batch POST ${paths.batch}`, () =>
+      engine.client.request<LfsBatchResponse>("POST", paths.batch, {
+        operation: "download", transfers: ["basic"], objects: [{ oid, size }],
+      }));
     const downloadEntry = downloadBatch.body.objects[0];
     if (!downloadEntry) throw new Error("Empty LFS download batch answer");
     expect(downloadEntry.error).toBeUndefined();
@@ -665,29 +677,36 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(download.headers.get("content-type")).toBe("application/octet-stream");
     expect(codeCustody06Sha256(download.bytes)).toBe(oid);
     const agentId = codeCustody06AgentId();
-    const created = await engine.client.call("vault.agents.create", {
-      agent_def_ref: agentId,
-      definition: {
-        agent_id: "custody-06-reader", display_name: "custody-06-reader",
-        desc: "Custody case read-scoped agent", version: "1",
-      },
-    });
+    const created = await codeCustody06ExpectedSuccess("create authority probe vault.agents.create", () =>
+      engine.client.call("vault.agents.create", {
+        agent_def_ref: agentId,
+        definition: {
+          agent_id: "custody-06-reader", display_name: "custody-06-reader",
+          desc: "Custody case read-scoped agent", version: "1",
+        },
+      }));
     expect(created.agent_def_ref).toBe(agentId);
-    const agentRow = await engine.client.call("vault.get", { entity_ref: agentId });
+    const agentRow = await codeCustody06ExpectedSuccess("agent definition read-back vault.get", () =>
+      engine.client.call("vault.get", { entity_ref: agentId }));
     if (!agentRow.value) throw new Error("Agent definition unreadable");
     expect(agentRow.value.kind).toBe("AGENT_DEF");
     expect(agentRow.value.id_hex).toBe(agentId);
-    const full = await engine.pairActor({ principalRef: agentId, actorClass: "agent" });
-    const fullIdentity = await full.client.call("self.actor", {});
+    const full = await codeCustody06ExpectedSuccess("pair full-scope authority probe", () =>
+      engine.pairActor({ principalRef: agentId, actorClass: "agent" }));
+    const fullIdentity = await codeCustody06ExpectedSuccess("full-scope credential read-back self.actor", () =>
+      full.client.call("self.actor", {}));
     expect(fullIdentity.actor_ref).toBe(agentId);
     expect(fullIdentity.actor_class).toBe("agent");
-    const fullBatch = await full.client.request<LfsBatchResponse>("POST", paths.batch, {
-      operation: "download", transfers: ["basic"], objects: [{ oid, size }],
-    });
+    const fullBatch = await codeCustody06ExpectedSuccess(`full-scope LFS download batch POST ${paths.batch}`, () =>
+      full.client.request<LfsBatchResponse>("POST", paths.batch, {
+        operation: "download", transfers: ["basic"], objects: [{ oid, size }],
+      }));
     const fullEntry = fullBatch.body.objects[0];
     if (!fullEntry || !fullEntry.actions?.download?.href) throw new Error("Live grant reads no LFS action");
-    const agent = await engine.pairActor({ principalRef: agentId, actorClass: "agent", scope: ["core:read"] });
-    const identity = await agent.client.call("self.actor", {});
+    const agent = await codeCustody06ExpectedSuccess("pair read-scoped authority probe", () =>
+      engine.pairActor({ principalRef: agentId, actorClass: "agent", scope: ["core:read"] }));
+    const identity = await codeCustody06ExpectedSuccess("read-scoped credential read-back self.actor", () =>
+      agent.client.call("self.actor", {}));
     expect(identity.actor_ref).toBe(agentId);
     expect(identity.actor_class).toBe("agent");
     const refusedAppend = await agent.client.raw("POST", "/v1/core/facade/vault.artifacts.append", {
@@ -702,7 +721,8 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const refusalReceipt = refusedBody.receiptRef;
     if (typeof refusalReceipt !== "string" || !refusalReceipt.startsWith("call:"))
       throw new Error("Scope refusal wrote no call receipt");
-    const refusalRecord = await engine.client.call("vault.receipts.get", { receipt_ref: refusalReceipt });
+    const refusalRecord = await codeCustody06ExpectedSuccess("scope refusal receipt vault.receipts.get", () =>
+      engine.client.call("vault.receipts.get", { receipt_ref: refusalReceipt }));
     if (!refusalRecord) throw new Error("Scope refusal receipt unreadable");
     expect(refusedAppend.headers.get("x-oneiron-receipt-ref")).toBe(refusalReceipt);
     expect(refusalRecord.verb).toBe("vault.artifacts.append");
@@ -731,16 +751,18 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const registerReceipt = refusedRegisterBody.receiptRef;
     if (typeof registerReceipt !== "string" || !registerReceipt.startsWith("call:"))
       throw new Error("Owner-door refusal wrote no call receipt");
-    const registerRecord = await engine.client.call("vault.receipts.get", { receipt_ref: registerReceipt });
+    const registerRecord = await codeCustody06ExpectedSuccess("owner-door refusal receipt vault.receipts.get", () =>
+      engine.client.call("vault.receipts.get", { receipt_ref: registerReceipt }));
     if (!registerRecord) throw new Error("Owner-door refusal receipt unreadable");
     expect(refusedRegister.headers.get("x-oneiron-receipt-ref")).toBe(registerReceipt);
     expect(registerRecord.verb).toBe("vault.code.origin.register");
     expect(registerRecord.actor_ref).toBe(agentId);
     expect(registerRecord.actor_class).toBe("agent");
     expect(registerRecord.outcome).toEqual({ refused: { code: "FORBIDDEN" } });
-    const revoked = await engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
-      slip_id: codeCustody06SlipId(full.credential),
-    });
+    const revoked = await codeCustody06ExpectedSuccess("revoke full-scope slip POST /v1/core/slips/revoke", () =>
+      engine.client.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
+        slip_id: codeCustody06SlipId(full.credential),
+      }));
     expect(revoked.body.revoked).toBe(true);
     const deadPut = await full.client.raw("POST", "/v1/core/facade/vault.artifacts.put", {
       name: "custody-06-after-revoke", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
@@ -757,18 +779,21 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     });
     expect(deadLfs.status).toBe(401);
     expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
-    const stillLive = await agent.client.call("self.actor", {});
+    const stillLive = await codeCustody06ExpectedSuccess("independent read-scoped slip self.actor", () =>
+      agent.client.call("self.actor", {}));
     expect(stillLive.actor_ref).toBe(agentId);
-    const peerBatch = await peer.client.request<LfsBatchResponse>("POST", paths.batch, {
-      operation: "download", transfers: ["basic"], objects: [{ oid, size }],
-    });
+    const peerBatch = await codeCustody06ExpectedSuccess(`peer LFS isolation batch POST ${paths.batch}`, () =>
+      peer.client.request<LfsBatchResponse>("POST", paths.batch, {
+        operation: "download", transfers: ["basic"], objects: [{ oid, size }],
+      }));
     const peerEntry = peerBatch.body.objects[0];
     if (!peerEntry) throw new Error("Empty peer LFS batch answer");
     expect(peerEntry.actions).toBeUndefined();
     if (!peerEntry.error) throw new Error("Peer vault disclosed foreign bytes");
     expect(peerEntry.error.code).toBe(404);
     expect(peerEntry.error.message).toBe("object is not stored in this vault");
-    const preview = await engine.client.call("vault.records.erase_preview", { record: putA.id_hex });
+    const preview = await codeCustody06ExpectedSuccess("owner A erase preview vault.records.erase_preview", () =>
+      engine.client.call("vault.records.erase_preview", { record: putA.id_hex }));
     expect(preview.record).toBe(putA.id_hex);
     expect(preview.lfs_chunks).toEqual([]);
     expect(preview.same_bytes).toContain(putB.id_hex);
@@ -776,9 +801,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     if (!held) throw new Error("Erase preview names no surviving holder");
     expect(held.content_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(preview.preview_digest).toMatch(/^[a-f0-9]{64}$/);
-    const confirmed = await engine.client.call("vault.records.erase_confirm", {
-      record: putA.id_hex, preview_digest: preview.preview_digest, also_same_bytes: false,
-    });
+    const confirmed = await codeCustody06ExpectedSuccess("owner A erase vault.records.erase_confirm", () =>
+      engine.client.call("vault.records.erase_confirm", {
+        record: putA.id_hex, preview_digest: preview.preview_digest, also_same_bytes: false,
+      }));
     if (!("first" in confirmed)) throw new Error("Erase confirm did not settle");
     expect(confirmed.first.existed).toBe(true);
     expect(confirmed.same_bytes).toEqual([]);
@@ -799,7 +825,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       transfers.request<unknown>("GET", paths.object));
     expect(downloadAfter.bytes.length).toBe(size);
     expect(codeCustody06Sha256(downloadAfter.bytes)).toBe(oid);
-    await engine.restart();
+    await codeCustody06ExpectedSuccess("restart before durability read-backs", () => engine.restart());
     const goneAAfter = await engine.client.raw("POST", "/v1/core/facade/vault.artifacts.read", {
       artifact_ref: putA.id_hex, version: 1,
     });
