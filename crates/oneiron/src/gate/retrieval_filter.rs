@@ -248,8 +248,8 @@ impl RetrievalPolicyFloor {
         }
     }
 
-    fn from_scoped_grants<'a>(
-        grants: impl IntoIterator<Item = &'a PolicyScopedGrant>,
+    fn from_scoped_grants(
+        grants: impl IntoIterator<Item = &PolicyScopedGrant>,
         actor: &ScopedReadActorKey,
     ) -> Option<Self> {
         let mut saw_read_grant = false;
