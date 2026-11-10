@@ -3542,6 +3542,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     expect(delta.current.basis.connector).toBe(connector);
     expect(museGate06Sorted(delta.reask)).toEqual(["export_notes", "summarize_note"]);
     expect(museGate06Sorted(delta.carried)).toEqual(["read_notes", "send_note"]);
+    expect(museGate06Sorted(delta.dropped)).toEqual(["delete_note"]);
     await engine.artifacts.json("gate06-delta.json", delta);
 
     // Drift is durable state on the key, not a transient prompt: restart,
@@ -5339,6 +5340,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     // Covered by live standing grants: reuse inside the bound needs no
     // fresh approval digest. Delivery itself is not asserted; no
     // external channel transport exists in this fixture.
+    expect(bothSchedule.receipt.approval_digest ?? null).toBeNull();
     const bothNoGrantSchedule = await museGate11ScheduleAs(noGrantAgent.client, "both-grants-other-agent");
     expect(museGate11Delivered(bothNoGrantSchedule)).toBe(false);
 
