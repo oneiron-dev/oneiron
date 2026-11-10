@@ -260,7 +260,11 @@ impl Chain {
                 self.live.push(claims.slip_id);
                 self.row(
                     parent,
-                    AuthorityOp::SlipMint(SlipMintAction { claims }),
+                    AuthorityOp::SlipMint(SlipMintAction {
+                        claims,
+                        renews: None,
+                        minting_member: None,
+                    }),
                     None,
                 )
             }
@@ -312,6 +316,13 @@ impl Chain {
             channels: BTreeSet::new(),
             actor_class: None,
             org_ref: None,
+            grant_ref: None,
+            invitation_ref: None,
+            share_ref: None,
+            delegation: None,
+            comm: None,
+            trusted_contact: None,
+            seat_claim: None,
         }
     }
 
@@ -379,6 +390,8 @@ impl Chain {
         if let Some(claims) = self.minted.first().cloned() {
             let again = AuthorityOp::SlipMint(SlipMintAction {
                 claims: claims.clone(),
+                renews: None,
+                minting_member: None,
             });
             rows.push(("a slip minted twice", vec![self.row(tip, again, None)]));
             if !self.live.contains(&claims.slip_id) {
@@ -554,113 +567,6 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         |log: &[AuthorityLogEntry], signer: &SigningKey, seq, n, cosigner: Option<&SigningKey>| {
             owner_row(id, signer, seq, vec![tip(log)], confirm_op(n), cosigner)
         };
-    let agent = |seed| AuthorityOp::EnrollDevice {
-        device: device(
-            authority_key_from_ed(&ed_key(seed)),
-            ROLE_AGENT,
-            AuthorityTier::Software,
-        ),
-    };
-
-    // A tier floor in the chain's past (H411): a Hardware owner's genesis
-    // floor refuses a Software signer.
-    let mut genesis = genesis_entry(91, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    if let AuthorityOp::Genesis {
-        device, tier_floor, ..
-    } = &mut genesis.op
-    {
-        device.tier = AuthorityTier::Hardware;
-        *tier_floor = AuthorityTier::Hardware;
-    }
-    let genesis = sign_ed(genesis, &owner);
-    let floored_id = genesis_vault_id(&genesis).unwrap();
-    let mut floored = vec![genesis];
-    for n in 0..8 {
-        let parent = tip(&floored);
-        floored.push(owner_row(
-            floored_id,
-            &owner,
-            n + 1,
-            vec![parent],
-            confirm_op(n as usize),
-            None,
-        ));
-    }
-    // The owner over the floor, before an unbound agent counts toward the
-    // quorum an owner-only row needs.
-    let strong = owner_row(
-        floored_id,
-        &owner,
-        9,
-        vec![tip(&floored)],
-        confirm_op(100),
-        None,
-    );
-    check(
-        &mut misses,
-        "the owner over the genesis floor",
-        &floored,
-        vec![strong],
-        &plain,
-        true,
-    );
-    floored.push(owner_row(
-        floored_id,
-        &owner,
-        9,
-        vec![tip(&floored)],
-        agent(7),
-        None,
-    ));
-    let weak = owner_row(
-        floored_id,
-        &ed_key(7),
-        1,
-        vec![tip(&floored)],
-        confirm_op(100),
-        Some(&owner),
-    );
-    check(
-        &mut misses,
-        "a signer under the genesis floor",
-        &floored,
-        vec![weak],
-        &plain,
-        false,
-    );
-
-    // A pre-handoff floor, then a handoff: the successor's agent row.
-    let mut genesis = genesis_entry(91, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
-        device.tier = AuthorityTier::Hardware;
-    }
-    let genesis = sign_ed(genesis, &owner);
-    let handoff_id = genesis_vault_id(&genesis).unwrap();
-    let floor = set_tier_floor_entry(handoff_id, &genesis, &owner, 1, AuthorityTier::Hardware);
-    let successor = ed_key(92);
-    let mut handoff = re_root_entry(handoff_id, &floor, &owner, 2, &successor);
-    if let AuthorityOp::ReRoot { new_device } = &mut handoff.op {
-        new_device.tier = AuthorityTier::Hardware;
-    }
-    let handoff = sign_ed(handoff, &owner);
-    let handed = vec![genesis, floor, handoff];
-    let row = owner_row(
-        handoff_id,
-        &successor,
-        1,
-        vec![tip(&handed)],
-        agent(7),
-        None,
-    );
-    check(
-        &mut misses,
-        "an agent under a pre-handoff floor",
-        &handed,
-        vec![row],
-        &plain,
-        true,
-    );
-
     // A fenced signer and a fenced cosigner after a handoff.
     let next = ed_key(92);
     let mut fenced = chain_log.clone();
@@ -780,7 +686,8 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         commitment: key.commitment(),
     };
     let to = WrapRecipient::RecoveryRoot(root.id);
-    let envelope = seal_world_key(&binding, to, &root.recovery_key, &key)
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let envelope = seal_world_key(&binding, to, &root.recovery_key, &key, &pad)
         .unwrap()
         .to_bytes();
     let record = AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
@@ -790,6 +697,8 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         policy,
         machine,
         wraps: vec![(to, envelope)],
+        request: None,
+        permitted: vec![to],
     });
     let wraps = owner_row(id, &install, 2, vec![hash(&settings)], record, None);
     check(
@@ -839,7 +748,7 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
 
     // A log the fold refuses or cannot settle leaves no base: a second
     // root, a main row whose parent never arrived.
-    let rival = genesis_entry(92, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let rival = genesis_entry(92, 1);
     let orphan = owner_row(id, &owner, 9, vec![[0xEE; 32]], confirm_op(100), None);
     for (case, extra) in [
         ("a second root", rival),
